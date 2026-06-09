@@ -5,9 +5,13 @@ import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
+import './lib/i18n';
+import { applyTheme, readStoredTheme } from './lib/theme';
 import { router } from './router';
 
 import './styles/global.css';
+
+applyTheme(readStoredTheme());
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -19,11 +23,11 @@ createRoot(rootElement).render(
     <ErrorBoundary>
       <RouterProvider router={router} />
       <Toaster
-        theme="dark"
+        theme="system"
         position="bottom-right"
         toastOptions={{
           classNames: {
-            toast: 'border border-zinc-800 bg-zinc-900/95 text-zinc-100',
+            toast: 'border border-border-base bg-surface/95 text-fg',
           },
         }}
       />

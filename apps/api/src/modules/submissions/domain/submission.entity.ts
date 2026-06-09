@@ -15,11 +15,21 @@ export class SubmissionEntity {
     public readonly createdAt: Date,
     public reviewedAt: Date | null,
     public reviewerNote: string | null,
+    public materializedSlug: string | null,
     public readonly payload: CreateSubmissionInput,
   ) {}
 
   static create(payload: CreateSubmissionInput, source: SubmissionSource): SubmissionEntity {
-    return new SubmissionEntity(randomUUID(), 'pending', source, new Date(), null, null, payload);
+    return new SubmissionEntity(
+      randomUUID(),
+      'pending',
+      source,
+      new Date(),
+      null,
+      null,
+      null,
+      payload,
+    );
   }
 
   static restore(snapshot: {
@@ -29,6 +39,7 @@ export class SubmissionEntity {
     createdAt: Date;
     reviewedAt: Date | null;
     reviewerNote: string | null;
+    materializedSlug: string | null;
     payload: CreateSubmissionInput;
   }): SubmissionEntity {
     return new SubmissionEntity(
@@ -38,6 +49,7 @@ export class SubmissionEntity {
       snapshot.createdAt,
       snapshot.reviewedAt,
       snapshot.reviewerNote,
+      snapshot.materializedSlug,
       snapshot.payload,
     );
   }
@@ -56,11 +68,17 @@ export class SubmissionEntity {
     this.reviewerNote = reviewerNote ?? null;
   }
 
-  markMaterialized(): void {
+  markMaterialized(materializedSlug?: string, reviewerNote?: string): void {
     if (this.status !== 'approved') {
       throw new Error(`Submission ${this.id} must be approved before materialization`);
     }
     this.status = 'materialized';
+    if (materializedSlug) {
+      this.materializedSlug = materializedSlug;
+    }
+    if (reviewerNote) {
+      this.reviewerNote = reviewerNote;
+    }
   }
 
   toContract(): Submission {
@@ -72,6 +90,7 @@ export class SubmissionEntity {
       payload: this.payload,
       ...(this.reviewedAt ? { reviewedAt: this.reviewedAt.toISOString() } : {}),
       ...(this.reviewerNote ? { reviewerNote: this.reviewerNote } : {}),
+      ...(this.materializedSlug ? { materializedSlug: this.materializedSlug } : {}),
     };
   }
 

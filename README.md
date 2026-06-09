@@ -1,82 +1,108 @@
 # DotLearn
 
-A local-first, AI-extensible learning workbench. Each "topic" is a self-contained, type-safe module that bundles theory (MDX), interactive exercises (YAML), and optional custom sandbox UI. You generate new topics by asking your coding agent to use the `lesson-forge` skill — every topic produced by the skill is guaranteed to satisfy the same contract, run in the same player, and merge cleanly into forks.
+Локальная, AI-расширяемая учебная рабочая среда. Каждая «тема» — самодостаточный, типобезопасный модуль: теория в MDX, упражнения в YAML и опциональный кастомный sandbox. Новые темы генерируются скиллом `lesson-forge` — любая тема, прошедшая скилл, удовлетворяет одному контракту, запускается в одном плеере и без конфликтов вливается в форки.
 
-## Vision
+## Концепция
 
-You want to learn SQL → you ask the agent to "create a topic on SQL" → the agent invokes `lesson-forge` → it scaffolds the topic, generates lessons and exercises, validates them against a Zod contract, runs each exercise in the in-browser sandbox to verify the gold solution actually works, and opens a PR. You pull it, read the theory, solve the exercises in the embedded SQL editor. Next month — Python OOP. Same workflow, completely different content, identical UX.
+Хочешь выучить SQL → просишь агента «создай тему по SQL» → агент вызывает `lesson-forge` → тот разворачивает структуру, генерирует уроки и задачи, валидирует их против Zod-контракта, прогоняет каждое gold-решение в браузерном sandbox и открывает PR. Ты pull-ишь, читаешь теорию, решаешь упражнения во встроенном SQL-редакторе. Через месяц — Python OOP. Тот же workflow, совсем другой контент, идентичный UX.
 
-## Why another learning platform
+## Почему ещё одна обучающая платформа
 
-The space is crowded with AI tutors (OpenTutor, DeepTutor, AI-Shifu) and interactive playgrounds (BitLab, LiveCodes, Nexora). They split into two camps:
+В нише уже есть AI-тьюторы (OpenTutor, DeepTutor, AI-Shifu) и интерактивные песочницы (BitLab, LiveCodes, Nexora). Они делятся на два лагеря:
 
-- **Content-generation platforms** generate JSON/Markdown lessons inside fixed templates. Cannot introduce new interaction types without a developer.
-- **Interactive playgrounds** support rich runtimes but ship a static, hand-curated curriculum.
+- **Платформы генерации контента** генерят JSON/Markdown уроки в фиксированных шаблонах. Новые типы интерактивности — только через разработчика.
+- **Интерактивные песочницы** дают богатые рантаймы, но возят статическую, вручную составленную программу.
 
-DotLearn occupies the third niche: a **codegen-extensible** platform where the AI agent can introduce both new content *and* new types of interactivity, because each topic is a code-level module, not a row in a database. The Cursor skill `lesson-forge` keeps every agent-generated topic standardized.
+DotLearn занимает третью нишу: **codegen-расширяемая** платформа, где AI-агент может вводить и новый контент, *и* новые типы интерактивности — потому что каждая тема это код-модуль, а не строка в базе. Скилл `lesson-forge` гарантирует, что все темы стандартизованы.
 
-## Quickstart
+## Что внутри (после Phase 1)
+
+- **Plugin-free плеер**: открывается на `http://localhost:5173` без бэкенда, аккаунтов и интернета.
+- **6 типов упражнений**: theory-quiz, sql-query, python-function, javascript-function, fill-in-blanks, predict-output.
+- **2 живых рантайма**:
+  - sql.js в Web Worker для SQL-запросов;
+  - Pyodide в Web Worker (загружается с CDN при первом использовании) для Python.
+- **Monaco-редактор** в SQL- и Python-упражнениях с подсветкой и автокомплитом.
+- **Прогресс в IndexedDB** (Dexie): pass/fail по упражнению, активность по дням, серия (streak), GitHub-style heatmap на `/progress`.
+- **FSRS-планировщик** флэшкарт через `ts-fsrs` готов к использованию (требует темы с `flashcards/*.yaml`).
+- **MDX + Shiki**: теория рендерится с подсветкой кода и фронт-меттером.
+- **Светлая и тёмная темы**: переключаются в шапке, тема сохраняется в `localStorage`.
+- **BYOK-провайдеры**: `/settings` хранит ключи OpenAI / Anthropic / Ollama / OpenRouter в IndexedDB и проверяет соединение кнопкой Test connection. Ключи никогда не уходят на сервер.
+- **Опциональный бэкенд** (`apps/api`, NestJS): submissions + admin для пользовательских предложений тем.
+- **Валидатор**: `pnpm validate` запускает gold-решения каждого `sql-query` упражнения в sql.js под Node и сравнивает строки с `expected.rows`.
+
+## Быстрый старт
 
 ```bash
 pnpm install
 pnpm dev:web
 ```
 
-Open http://localhost:5173.
+Открой http://localhost:5173. Демо-темы `sql-fundamentals` и `python-oop` уже в репозитории.
 
-To add a topic, ask **Cursor** or **Claude Code** in this repo:
+Чтобы добавить свою тему — попроси **Cursor** или **Claude Code** в этом репозитории:
 
 > «Используй lesson-forge, добавь тему по SQL JOINs»
 
-The skill is mirrored under `.cursor/skills/lesson-forge/` and `.claude/skills/lesson-forge/` so it activates in either tool. It bootstraps `topics/sql-joins/` and walks the agent through the contract. Other agents (Aider, Continue, etc.) can read `AGENTS.md` at the repository root for the same conventions.
+Скилл зеркалится в `.cursor/skills/lesson-forge/` и `.claude/skills/lesson-forge/`, поэтому активируется в любом инструменте. Он разворачивает `topics/<slug>/` и ведёт агента по контракту. Другие агенты (Aider, Continue и т.п.) читают `AGENTS.md` в корне — это универсальный entry point.
 
-## Topic submission flow
+## Как присылать темы
 
-There are two ways outsiders can propose a topic:
+Способов два:
 
-1. **GitHub PR** — fork, run `lesson-forge` locally, submit a pull request. Quality is validated by CI against the contract.
-2. **In-app submission** — the "+ Add topic" button on the site opens a form that POSTs to `apps/api`. Submissions land in an admin queue. The maintainer reviews them at `/admin` and approves or rejects.
+1. **GitHub PR** — форкнул, запустил `lesson-forge` локально, прислал pull request. Качество проверяет CI против контракта.
+2. **Форма в приложении** — кнопка «+ Add topic» открывает форму, которая POST-ит в `apps/api`. Заявки попадают в очередь модерации; мейнтейнер смотрит их в `/admin` и одобряет/отклоняет.
 
-Both routes converge on the same review step.
+Оба маршрута сходятся в одной точке ревью.
 
-## Project layout
+## Структура проекта
 
 ```
 DotLearn/
 ├── apps/
-│   ├── web/                  # Vite + React, local-first UI
-│   └── api/                  # NestJS, optional backend (submissions, admin)
+│   ├── web/                  # Vite + React, локально-первый UI
+│   └── api/                  # NestJS, опциональный бэкенд (submissions, admin)
 ├── packages/
-│   ├── contracts/            # Zod schemas — single source of truth
-│   ├── lesson-engine/        # Topic loader + exercise runner
-│   ├── sandbox/              # sql.js / Pyodide adapters
-│   └── ai-providers/         # BYOK abstraction
-├── topics/                   # Content (auto-discovered)
-├── .cursor/
-│   ├── rules/                # Cursor project-wide AI rules
-│   └── skills/lesson-forge/  # Skill for Cursor
-├── .claude/
-│   └── skills/lesson-forge/  # Skill for Claude Code (mirror)
-├── CLAUDE.md                 # auto-loaded by Claude Code
-├── AGENTS.md                 # universal agent entry point
+│   ├── contracts/            # Zod-схемы — единый источник правды
+│   ├── lesson-engine/        # Topic loader + runners упражнений + Node CLI валидатор
+│   ├── sandbox/              # sql.js / Pyodide воркеры
+│   └── ai-providers/         # BYOK-абстракция: OpenAI/Anthropic/Ollama/OpenRouter
+├── topics/                   # Контент (автодискавери)
+│   ├── sql-fundamentals/
+│   └── python-oop/
+├── .cursor/skills/lesson-forge/
+├── .claude/skills/lesson-forge/
+├── AGENTS.md                 # универсальный entry point для агентов
 └── docs/
 ```
 
-## Run modes
+## Команды
 
-| Command | What it does |
+| Команда | Что делает |
 |---|---|
-| `pnpm dev:web` | Frontend only. Works fully offline once topics are loaded. BYOK in browser. |
-| `pnpm dev:api` | NestJS API for submissions / admin / AI proxy. |
-| `pnpm dev` | Both, in parallel. |
-| `pnpm validate` | Runs the topic contract validator across `topics/**`. |
-| `pnpm sync:skills` | Sync skill files from `.cursor/skills/` to `.claude/skills/` (single source of truth is Cursor). |
-| `pnpm check:skills` | CI-friendly check that the two skill directories are identical. |
+| `pnpm dev:web` | Фронтенд. Работает офлайн после первой загрузки тем. AI — BYOK в браузере. |
+| `pnpm dev:api` | NestJS API для submissions / admin / AI-прокси. |
+| `pnpm dev` | Оба процесса параллельно. |
+| `pnpm typecheck` | TS-проверка всех воркспейсов (Turborepo). |
+| `pnpm validate` | Прогоняет контракт-валидатор по `topics/**` и запускает gold-решения SQL. |
+| `pnpm build` | Production-сборка всех пакетов. |
+| `pnpm sync:skills` | Синхронизирует скиллы из `.cursor/skills/` в `.claude/skills/`. |
+| `pnpm check:skills` | CI-проверка, что зеркала идентичны. |
 
-## Status
+## Архитектурные инварианты
 
-This repository is a foundation, not a finished product. See [ROADMAP.md](./ROADMAP.md). The contracts and skill are the load-bearing pieces and are intentionally completed first.
+1. **`apps/web` работает без `apps/api`.** Local-first значит: SPA читает `topics/` напрямую через `import.meta.glob`, гоняет sandbox в Web Workers, ходит в AI-провайдеры из браузера через BYOK. Бэкенд — *опциональное усиление*, никогда не обязательная зависимость.
+2. **`packages/contracts` — единственное место, где встречаются оба мира.** Web валидирует манифесты тех же Zod-схем, которые API использует для DTO. TS-типы выводятся через `z.infer<>`.
+3. **Темы никогда не импортируют из `apps/*`.** Манифест может ссылаться на кастомный `sandbox.tsx`, но только когда без него действительно нельзя. Всё остальное — данные. Так форки сливаются чисто.
+4. **Скилл `lesson-forge` владеет контрактом.** Любое изменение формы темы — schemas + reference docs + шаблоны — должно идти одной транзакцией.
+5. **`.cursor/skills/lesson-forge/` — канонический источник скилла.** `scripts/sync-skills.mjs` зеркалит его в `.claude/skills/lesson-forge/`. CI прогоняет `pnpm check:skills`.
 
-## License
+Подробности — в [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## Статус
+
+Phase 1 (Minimum Viable Player) завершена: плеер запускается, упражнения интерактивны, прогресс сохраняется, темы валидируются end-to-end. Полный план развития — в [ROADMAP.md](./ROADMAP.md).
+
+## Лицензия
 
 MIT.

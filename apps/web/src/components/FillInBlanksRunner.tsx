@@ -2,9 +2,16 @@ import { Fragment, useMemo, useState } from 'react';
 
 import type { FillInBlanksExercise } from '@dotlearn/contracts';
 import { runFillInBlanks } from '@dotlearn/lesson-engine';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
+import { HintBlock } from '@/components/sandbox/HintBlock';
+import { Button } from '@/components/ui/Button';
+import { burstConfetti } from '@/components/ui/confetti';
 import { recordAttempt } from '@/lib/progress-db';
+
+import { useDifficultyLabel } from './ExerciseRunner';
 
 interface FillInBlanksRunnerProps {
   topicSlug: string;
@@ -37,12 +44,18 @@ const splitTemplate = (template: string): Segment[] => {
 type CheckState =
   | { kind: 'idle' }
   | { kind: 'pass' }
-  | { kind: 'fail'; failures: Array<{ blank: string; reason: string; got: string | undefined }> };
+  | {
+      kind: 'fail';
+      failures: Array<{ blank: string; reason: string; got: string | undefined }>;
+    };
 
 export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerProps) => {
+  const { t } = useTranslation('runners');
+  const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const segments = useMemo(() => splitTemplate(exercise.template), [exercise.template]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
+  const [pulse, setPulse] = useState(0);
 
   const update = (blank: string, value: string): void => {
     setValues((prev) => ({ ...prev, [blank]: value }));
@@ -52,7 +65,8 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
     const result = runFillInBlanks(exercise, values);
     if (result.ok) {
       setState({ kind: 'pass' });
-      toast.success('All blanks correct', { description: exercise.id });
+      toast.success(t('fillIn.correctToast'), { description: exercise.id });
+      burstConfetti();
       void recordAttempt(topicSlug, exercise.id, 'pass');
     } else {
       const details = (result.details ?? {}) as {
@@ -61,69 +75,72 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
       setState({ kind: 'fail', failures: details.failures ?? [] });
       void recordAttempt(topicSlug, exercise.id, 'fail');
     }
+    setPulse((p) => p + 1);
   };
 
+  const status: ExerciseCardStatus =
+    state.kind === 'pass' ? 'pass' : state.kind === 'fail' ? 'fail' : 'idle';
+
   return (
-    <div className="space-y-3">
-      <pre className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs font-mono overflow-x-auto whitespace-pre">
-        {segments.map((segment, index) =>
-          segment.kind === 'text' ? (
-            <Fragment key={index}>{segment.value}</Fragment>
-          ) : (
-            <input
-              key={index}
-              value={values[segment.value] ?? ''}
-              onChange={(event) => update(segment.value, event.target.value)}
-              placeholder={segment.value}
-              className="inline-block min-w-[6ch] bg-zinc-900 border-b border-indigo-500/60 px-1 text-indigo-100 focus:outline-none"
-              style={{ width: `${Math.max(8, (values[segment.value]?.length ?? 0) + 2)}ch` }}
-            />
-          ),
+    <ExerciseCard
+      type={exercise.type}
+      prompt={exercise.prompt}
+      difficultyLabel={difficultyLabel}
+      status={status}
+      pulse={pulse}
+    >
+      <div className="space-y-3">
+        <pre className="rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed">
+          {segments.map((segment, index) =>
+            segment.kind === 'text' ? (
+              <Fragment key={index}>{segment.value}</Fragment>
+            ) : (
+              <input
+                key={index}
+                value={values[segment.value] ?? ''}
+                onChange={(event) => update(segment.value, event.target.value)}
+                placeholder={segment.value}
+                className="inline-block min-w-[6ch] bg-surface-2/60 border-b-2 border-accent/60 px-1 text-accent rounded-sm focus:outline-none focus:border-accent focus:bg-accent/8 transition-colors"
+                style={{ width: `${Math.max(8, (values[segment.value]?.length ?? 0) + 2)}ch` }}
+              />
+            ),
+          )}
+        </pre>
+
+        <div className="flex items-center gap-2">
+          <Button variant="primary" size="sm" onClick={handleCheck}>
+            {t('fillIn.check')}
+          </Button>
+          <HintBlock hints={exercise.hints} />
+        </div>
+
+        {state.kind === 'pass' && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-200">
+            {t('fillIn.correct')}
+          </div>
         )}
-      </pre>
 
-      <button
-        type="button"
-        onClick={handleCheck}
-        className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-400"
-      >
-        Check blanks
-      </button>
-
-      {exercise.hints && exercise.hints.length > 0 && (
-        <details className="text-xs text-zinc-400">
-          <summary className="cursor-pointer hover:text-zinc-200">Hints</summary>
-          <ul className="mt-2 list-disc pl-5 space-y-1">
-            {exercise.hints.map((hint, index) => (
-              <li key={index}>{hint}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {state.kind === 'pass' && (
-        <div className="rounded-md border border-emerald-900/40 bg-emerald-950/30 p-3 text-sm text-emerald-200">
-          All blanks correct.
-        </div>
-      )}
-
-      {state.kind === 'fail' && (
-        <div className="rounded-md border border-rose-900/40 bg-rose-950/30 p-3 text-sm text-rose-200 space-y-1">
-          <p className="font-medium">{state.failures.length} blank(s) incorrect.</p>
-          <ul className="text-xs text-rose-100/80 list-disc pl-5">
-            {state.failures.map((failure) => (
-              <li key={failure.blank}>
-                <code>{failure.blank}</code>: {failure.reason}
-                {failure.got !== undefined && (
-                  <>
-                    {' '}got <code>{failure.got}</code>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+        {state.kind === 'fail' && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-200 space-y-1.5">
+            <p className="font-medium">
+              {t('fillIn.wrongHeader', { count: state.failures.length })}
+            </p>
+            <ul className="text-[12.5px] text-rose-100/80 space-y-1 font-mono">
+              {state.failures.map((failure) => (
+                <li key={failure.blank}>
+                  <code className="text-rose-300">{failure.blank}</code>: {failure.reason}
+                  {failure.got !== undefined && (
+                    <>
+                      {' · '}
+                      {t('fillIn.got')} <code className="text-rose-300">{failure.got}</code>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </ExerciseCard>
   );
 };

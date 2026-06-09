@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 
+import { useTranslation } from 'react-i18next';
+
 import type { ActivityRecord } from '@/lib/progress-db';
 
 interface ActivityHeatmapProps {
@@ -11,7 +13,7 @@ const isoDay = (date: Date): string => date.toISOString().slice(0, 10);
 
 const intensityClass = (count: number, max: number): string => {
   if (count === 0) {
-    return 'bg-zinc-800/60';
+    return 'bg-surface-2/60';
   }
   const ratio = max === 0 ? 0 : count / max;
   if (ratio < 0.25) return 'bg-emerald-900/70';
@@ -21,6 +23,7 @@ const intensityClass = (count: number, max: number): string => {
 };
 
 export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) => {
+  const { t } = useTranslation('heatmap');
   const grid = useMemo(() => {
     const totalDays = weeks * 7;
     const today = new Date();
@@ -71,21 +74,25 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
                 <span
                   key={dayOfWeek}
                   className={`size-3 rounded-sm ${intensityClass(cell.count, grid.max)}`}
-                  title={`${cell.day} — ${cell.count} attempted, ${cell.passed} passed`}
+                  title={t('tooltip', {
+                    day: cell.day,
+                    attempted: cell.count,
+                    passed: cell.passed,
+                  })}
                 />
               );
             })}
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-        <span>less</span>
-        <span className="size-3 rounded-sm bg-zinc-800/60" />
+      <div className="flex items-center gap-2 text-[10px] text-fg-subtle">
+        <span>{t('less')}</span>
+        <span className="size-3 rounded-sm bg-surface-2/60" />
         <span className="size-3 rounded-sm bg-emerald-900/70" />
         <span className="size-3 rounded-sm bg-emerald-700/80" />
         <span className="size-3 rounded-sm bg-emerald-500/90" />
         <span className="size-3 rounded-sm bg-emerald-300" />
-        <span>more</span>
+        <span>{t('more')}</span>
       </div>
     </div>
   );

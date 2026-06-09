@@ -40,7 +40,7 @@ Extract:
 - **Depth** ("introduction", "deep dive", "beginner to intermediate")
 - **Estimated hours** the learner should spend
 - **Runtime** required (sql, python, javascript, theory-only)
-- **Language** of the content (en or ru)
+- **Languages** the topic must ship in (subset of `en`, `ru`) and which one is the **primary** (original). DotLearn defaults primary to `ru` when the user is Russian-speaking; otherwise to `en`.
 
 If anything critical is missing, ask the user **once** with a structured question. Do not proceed without these five fields.
 
@@ -73,7 +73,7 @@ This is non-negotiable: never generate content before the user approves the plan
 
 ### 4. Scaffold the topic folder
 
-From `.cursor/skills/lesson-forge/templates/topic/`:
+From the templates folder (`templates/topic/` next to this SKILL.md):
 
 ```
 topics/<slug>/
@@ -87,22 +87,23 @@ Use the slug derived in step 1. Slug rules: lowercase, ASCII, hyphen-separated, 
 
 ### 5. Generate the manifest first
 
-The manifest is the **structural contract** of the topic. Write it before any lesson content. It must validate against `.cursor/skills/lesson-forge/schemas/manifest.schema.json`. After writing, immediately run schema validation. Do not proceed if it fails.
+The manifest is the **structural contract** of the topic. Write it before any lesson content. It must validate against `schemas/manifest.schema.json` next to this SKILL.md. After writing, immediately run schema validation. Do not proceed if it fails.
 
 Required fields and their semantics are in [reference/topic-contract.md](./reference/topic-contract.md).
 
 ### 6. Generate theory then exercises, concept by concept
 
-For each concept in the plan, in order:
+For each concept in the plan, in order, and **for each language** listed in `availableLanguages`:
 
-1. Write `theory/<NN>-<concept-id>.mdx` following [reference/content-style-guide.md](./reference/content-style-guide.md).
-2. Write `exercises/<NN>-<concept-id>.yaml`. Every exercise must:
+1. Write `theory/<NN>-<concept-id>.<lang>.mdx` following [reference/content-style-guide.md](./reference/content-style-guide.md). Filenames always carry the explicit language suffix; there is no untagged variant.
+2. Write `exercises/<NN>-<concept-id>.<lang>.yaml`. Every exercise must:
    - validate against `exercise.schema.json`
    - have a `solution` field
    - have an `expected` field that the `solution` actually produces when executed
+   - share its `id` with the corresponding exercise in other language variants of the same concept
 3. Mentally trace the solution against the fixture. If it would not match `expected`, fix the exercise before moving on.
 
-Always finish one concept fully before starting the next. Do not interleave.
+Always finish one concept fully (every language) before starting the next. Do not interleave concepts.
 
 ### 7. Validate
 
@@ -112,7 +113,7 @@ Run `pnpm validate` if available — the validator will execute every gold solut
 
 ### 8. Self-review
 
-Read [reference/quality-gates.md](./reference/quality-gates.md) — quality criteria section. Re-read each theory file and each exercise prompt as if you were the learner. Identify:
+Re-read each theory file and each exercise prompt as if you were the learner. Identify:
 
 - Vague pronouns ("it does that")
 - Unjustified claims
@@ -143,7 +144,7 @@ If the topic introduces a new exercise `type` or a new runtime, that's a **break
 
 ## Reference documents
 
-Load these on demand, not upfront:
+Load these on demand, not upfront. Paths are relative to this SKILL.md:
 
 - [reference/topic-contract.md](./reference/topic-contract.md) — full manifest specification
 - [reference/exercise-types.md](./reference/exercise-types.md) — catalog of allowed exercise `type` values

@@ -2,9 +2,16 @@ import { useState } from 'react';
 
 import type { PredictOutputExercise } from '@dotlearn/contracts';
 import { runPredictOutput } from '@dotlearn/lesson-engine';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
+import { HintBlock } from '@/components/sandbox/HintBlock';
+import { Button } from '@/components/ui/Button';
+import { burstConfetti } from '@/components/ui/confetti';
 import { recordAttempt } from '@/lib/progress-db';
+
+import { useDifficultyLabel } from './ExerciseRunner';
 
 interface PredictOutputRunnerProps {
   topicSlug: string;
@@ -34,10 +41,13 @@ const parseScalar = (raw: string): unknown => {
 };
 
 export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunnerProps) => {
+  const { t } = useTranslation('runners');
+  const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const [draft, setDraft] = useState('');
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
+  const [pulse, setPulse] = useState(0);
 
-  const handleCheck = () => {
+  const handleCheck = (): void => {
     const value =
       exercise.expected.kind === 'scalar'
         ? parseScalar(draft)
@@ -47,7 +57,8 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
     const result = runPredictOutput(exercise, value);
     if (result.ok) {
       setState({ kind: 'pass' });
-      toast.success('Correct prediction', { description: exercise.id });
+      toast.success(t('predict.correctToast'), { description: exercise.id });
+      burstConfetti();
       void recordAttempt(topicSlug, exercise.id, 'pass');
     } else {
       const details = (result.details ?? {}) as { expected?: unknown; actual?: unknown };
@@ -59,78 +70,84 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
       });
       void recordAttempt(topicSlug, exercise.id, 'fail');
     }
+    setPulse((p) => p + 1);
   };
 
   const inputHint =
     exercise.expected.kind === 'scalar'
-      ? 'enter a value (number, "string", true/false, null)'
+      ? t('predict.hint.scalar')
       : exercise.expected.kind === 'stdout'
-        ? 'enter the printed text exactly as it would appear'
-        : 'enter JSON array of row objects';
+        ? t('predict.hint.stdout')
+        : t('predict.hint.rows');
+
+  const status: ExerciseCardStatus =
+    state.kind === 'pass' ? 'pass' : state.kind === 'fail' ? 'fail' : 'idle';
 
   return (
-    <div className="space-y-3">
-      <pre className="rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs font-mono overflow-x-auto whitespace-pre">
-        {exercise.snippet}
-      </pre>
-      {exercise.expected.kind === 'stdout' ? (
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder={inputHint}
-          rows={3}
-          className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500/60"
-        />
-      ) : (
-        <input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder={inputHint}
-          className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500/60"
-        />
-      )}
+    <ExerciseCard
+      type={exercise.type}
+      prompt={exercise.prompt}
+      difficultyLabel={difficultyLabel}
+      status={status}
+      pulse={pulse}
+    >
+      <div className="space-y-3">
+        <pre className="rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
+          {exercise.snippet}
+        </pre>
+        {exercise.expected.kind === 'stdout' ? (
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={inputHint}
+            rows={3}
+            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+          />
+        ) : (
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={inputHint}
+            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+          />
+        )}
 
-      <button
-        type="button"
-        onClick={handleCheck}
-        disabled={draft.trim().length === 0}
-        className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Check prediction
-      </button>
-
-      {exercise.hints && exercise.hints.length > 0 && (
-        <details className="text-xs text-zinc-400">
-          <summary className="cursor-pointer hover:text-zinc-200">Hints</summary>
-          <ul className="mt-2 list-disc pl-5 space-y-1">
-            {exercise.hints.map((hint, index) => (
-              <li key={index}>{hint}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {state.kind === 'pass' && (
-        <div className="rounded-md border border-emerald-900/40 bg-emerald-950/30 p-3 text-sm text-emerald-200">
-          Correct.
+        <div className="flex items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={draft.trim().length === 0}
+            onClick={handleCheck}
+          >
+            {t('predict.check')}
+          </Button>
+          <HintBlock hints={exercise.hints} />
         </div>
-      )}
 
-      {state.kind === 'fail' && (
-        <div className="rounded-md border border-rose-900/40 bg-rose-950/30 p-3 text-sm text-rose-200 space-y-1">
-          <p className="font-medium">Not quite — {state.reason}.</p>
-          {state.expected !== undefined && (
-            <p className="text-xs text-rose-100/80">
-              expected: <code>{JSON.stringify(state.expected)}</code>
-            </p>
-          )}
-          {state.actual !== undefined && (
-            <p className="text-xs text-rose-100/80">
-              got: <code>{JSON.stringify(state.actual)}</code>
-            </p>
-          )}
-        </div>
-      )}
-    </div>
+        {state.kind === 'pass' && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-200">
+            {t('predict.correct')}
+          </div>
+        )}
+
+        {state.kind === 'fail' && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-200 space-y-1">
+            <p className="font-medium">{t('predict.wrong', { reason: state.reason })}</p>
+            {state.expected !== undefined && (
+              <p className="text-[12px] text-rose-100/80 font-mono">
+                {t('predict.expected')}:{' '}
+                <code className="text-emerald-300">{JSON.stringify(state.expected)}</code>
+              </p>
+            )}
+            {state.actual !== undefined && (
+              <p className="text-[12px] text-rose-100/80 font-mono">
+                {t('predict.got')}:{' '}
+                <code className="text-rose-300">{JSON.stringify(state.actual)}</code>
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </ExerciseCard>
   );
 };

@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { Link, useParams } from '@tanstack/react-router';
+import { ArrowLeft, ArrowRight, BookOpen, Check, Flame, ListTree } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
 import { TheoryContent } from '@/components/TheoryContent';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { cx } from '@/components/ui/cx';
+import { GlassSurface } from '@/components/ui/GlassSurface';
+import { ProgressRing } from '@/components/ui/ProgressRing';
+import { getCurrentLanguage } from '@/lib/i18n';
 import { getTheory } from '@/lib/theory';
-import { loadTopic } from '@/lib/topics';
+import { effectiveLanguage, loadTopic } from '@/lib/topics';
 import { useStreak, useTopicProgress } from '@/lib/use-progress';
 
 type LoadState =
@@ -17,6 +25,8 @@ type LoadState =
 
 export const TopicPage = () => {
   const { slug } = useParams({ from: '/topics/$slug' });
+  const { t, i18n } = useTranslation('topic');
+  const { t: tCommon } = useTranslation('common');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
   const progress = useTopicProgress(slug);
@@ -25,7 +35,8 @@ export const TopicPage = () => {
   useEffect(() => {
     let cancelled = false;
     setState({ kind: 'loading' });
-    loadTopic(slug)
+    const language = getCurrentLanguage();
+    loadTopic(slug, language)
       .then((bundle) => {
         if (cancelled) return;
         setState({ kind: 'ready', bundle });
@@ -41,7 +52,7 @@ export const TopicPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [slug, i18n.resolvedLanguage]);
 
   if (state.kind === 'loading') {
     return <TopicSkeleton />;
@@ -49,28 +60,56 @@ export const TopicPage = () => {
 
   if (state.kind === 'error') {
     return (
-      <div className="rounded-xl border border-rose-900/40 bg-rose-950/30 p-8">
-        <h2 className="font-semibold text-rose-100">Failed to load topic</h2>
-        <p className="mt-2 text-sm text-rose-300">{state.message}</p>
-        <Link to="/" className="inline-block mt-4 text-indigo-300 hover:text-indigo-200">
-          Back to home
-        </Link>
-      </div>
+      <GlassSurface intensity="medium" bordered className="rounded-2xl">
+        <div className="p-6">
+          <h2 className="font-display text-2xl text-rose-300">{t('failed')}</h2>
+          <p className="mt-2 text-sm text-fg-muted">{state.message}</p>
+          <Link to="/">
+            <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />} className="mt-4">
+              {tCommon('backToHome')}
+            </Button>
+          </Link>
+        </div>
+      </GlassSurface>
     );
   }
 
   const { bundle } = state;
   const { manifest } = bundle;
+  const currentLang = getCurrentLanguage();
+  const usedLang = effectiveLanguage(manifest, currentLang);
+  const showFallbackBanner = usedLang !== currentLang;
+  const activeIndex = bundle.manifest.concepts.findIndex(
+    (concept) => concept.id === activeConceptId,
+  );
   const activeConcept =
     bundle.concepts.find((concept) => concept.conceptId === activeConceptId) ?? bundle.concepts[0];
-  const activeManifestConcept = manifest.concepts.find(
-    (concept) => concept.id === activeConcept?.conceptId,
-  );
+  const activeManifestConcept =
+    manifest.concepts.find((concept) => concept.id === activeConcept?.conceptId) ??
+    manifest.concepts[0];
 
   const totalExercises = bundle.concepts.reduce(
     (sum, concept) => sum + concept.exercises.reduce((s, file) => s + file.exercises.length, 0),
     0,
   );
+
+  const theoryFilenames = activeConcept ? activeConcept.theory.map((file) => file.filename) : [];
+  const conceptExercises = activeConcept
+    ? activeConcept.exercises.flatMap((file) => file.exercises)
+    : [];
+  const conceptPassed = conceptExercises.filter(
+    (ex) => progress.byExercise.get(ex.id)?.status === 'pass',
+  ).length;
+  const conceptRatio = conceptExercises.length === 0 ? 0 : conceptPassed / conceptExercises.length;
+
+  const handleNav = (delta: 1 | -1): void => {
+    const next = activeIndex + delta;
+    const nextConcept = bundle.manifest.concepts[next];
+    if (nextConcept) {
+      setActiveConceptId(nextConcept.id);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -80,24 +119,42 @@ export const TopicPage = () => {
         totalExercises={totalExercises}
         streak={streak}
       />
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-8">
+      {showFallbackBanner && (
+        <GlassSurface intensity="subtle" bordered className="rounded-xl">
+          <div className="px-4 py-3 text-sm text-amber-300 flex items-center gap-2">
+            <Flame size={14} />
+            {t('fallbackBanner', { language: t(`languages.${usedLang}` as const) })}
+          </div>
+        </GlassSurface>
+      )}
+      <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
         <ConceptRail
           bundle={bundle}
           activeConceptId={activeConcept?.conceptId}
           onSelect={setActiveConceptId}
           progress={progress.byExercise}
         />
-        <section className="min-w-0">
+        <section className="min-w-0 space-y-6">
           {activeConcept && activeManifestConcept ? (
             <ConceptPanel
               slug={slug}
-              theoryFiles={activeManifestConcept.theoryFiles}
-              exercises={activeConcept.exercises.flatMap((file) => file.exercises)}
+              concept={activeManifestConcept}
+              theoryFiles={theoryFilenames}
+              exercises={conceptExercises}
+              passed={conceptPassed}
+              ratio={conceptRatio}
             />
           ) : (
-            <p className="text-zinc-500">No concepts in this topic.</p>
+            <p className="text-fg-subtle">{t('noConcepts')}</p>
           )}
+          <ConceptNav
+            prevTitle={bundle.manifest.concepts[activeIndex - 1]?.title}
+            nextTitle={bundle.manifest.concepts[activeIndex + 1]?.title}
+            onPrev={() => handleNav(-1)}
+            onNext={() => handleNav(1)}
+          />
         </section>
+        <TocSidebar conceptId={activeConcept?.conceptId} ratio={conceptRatio} />
       </div>
     </div>
   );
@@ -111,46 +168,62 @@ interface TopicHeaderProps {
 }
 
 const TopicHeader = ({ manifest, passed, totalExercises, streak }: TopicHeaderProps) => {
+  const { t } = useTranslation('topic');
   const ratio = totalExercises === 0 ? 0 : passed / totalExercises;
-  const percent = Math.round(ratio * 100);
   return (
-    <header className="space-y-3">
-      <div className="flex items-center gap-2 text-xs text-zinc-500 uppercase tracking-wide">
-        <span>{manifest.difficulty}</span>
-        <span>·</span>
-        <span>{manifest.runtime}</span>
-        <span>·</span>
-        <span>~{manifest.estimatedHours}h</span>
-        {streak > 0 && (
-          <>
-            <span>·</span>
-            <span className="text-amber-300">streak {streak}d</span>
-          </>
-        )}
-      </div>
-      <h1 className="text-3xl font-semibold tracking-tight">{manifest.title}</h1>
-      <div className="flex flex-wrap gap-1">
-        {manifest.tags.map((tag) => (
-          <span
-            key={tag}
-            className="text-[10px] uppercase tracking-wide text-zinc-400 bg-zinc-800/80 px-1.5 py-0.5 rounded"
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-      <div className="flex items-center gap-3 max-w-md">
-        <div className="flex-1 h-2 rounded-full bg-zinc-800 overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all"
-            style={{ width: `${percent}%` }}
-          />
+    <GlassSurface intensity="strong" tint="accent" bordered noiseOverlay className="rounded-2xl">
+      <div className="p-6 flex flex-wrap items-start justify-between gap-6">
+        <div className="space-y-3 min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-widest text-fg-subtle">
+            <Badge tone="accent" variant="soft">
+              {manifest.runtime}
+            </Badge>
+            <Badge tone="neutral" variant="outline">
+              {manifest.difficulty}
+            </Badge>
+            <span>~{manifest.estimatedHours}h</span>
+            {streak > 0 && (
+              <Badge tone="warning" variant="soft" icon={<Flame size={12} />}>
+                {t('streak', { count: streak })}
+              </Badge>
+            )}
+          </div>
+          <h1 className="font-display text-[clamp(28px,4vw,40px)] leading-tight tracking-tightish text-balance">
+            {manifest.title}
+          </h1>
+          <div className="flex flex-wrap gap-1.5">
+            {manifest.tags.map((tag) => (
+              <Badge key={tag} tone="neutral" variant="soft">
+                {tag}
+              </Badge>
+            ))}
+          </div>
         </div>
-        <span className="text-xs text-zinc-400 tabular-nums">
-          {passed}/{totalExercises} solved
-        </span>
+        <div className="flex items-center gap-3">
+          <ProgressRing
+            value={ratio}
+            size={72}
+            stroke={6}
+            indicatorClassName={
+              ratio === 1 ? 'text-emerald-400' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'
+            }
+            label={
+              <span className="tabular-nums text-[13px]">
+                {Math.round(ratio * 100)}
+                <span className="text-[9px] text-fg-subtle">%</span>
+              </span>
+            }
+            ariaLabel={`${Math.round(ratio * 100)}%`}
+          />
+          <div className="text-[12px] text-fg-muted leading-snug">
+            <div className="text-fg font-semibold tabular-nums">
+              {t('solved', { passed, total: totalExercises })}
+            </div>
+            <div className="text-fg-subtle">{manifest.concepts.length} · concepts</div>
+          </div>
+        </div>
       </div>
-    </header>
+    </GlassSurface>
   );
 };
 
@@ -162,8 +235,8 @@ interface ConceptRailProps {
 }
 
 const ConceptRail = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => (
-  <aside className="lg:sticky lg:top-20 self-start">
-    <nav className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden">
+  <aside className="lg:sticky lg:top-24 self-start">
+    <GlassSurface intensity="medium" bordered className="rounded-2xl overflow-hidden">
       <ol>
         {bundle.manifest.concepts.map((concept, index) => {
           const active = concept.id === activeConceptId;
@@ -172,27 +245,56 @@ const ConceptRail = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
           const passed = exercises.filter(
             (exercise) => progress.get(exercise.id)?.status === 'pass',
           ).length;
+          const ratio = exercises.length === 0 ? 0 : passed / exercises.length;
+          const done = exercises.length > 0 && passed === exercises.length;
           return (
             <li key={concept.id}>
               <button
                 type="button"
                 onClick={() => onSelect(concept.id)}
-                className={
-                  'w-full text-left px-4 py-3 border-b border-zinc-800/60 last:border-b-0 transition ' +
-                  (active
-                    ? 'bg-indigo-500/10 text-indigo-100'
-                    : 'text-zinc-300 hover:bg-zinc-900')
-                }
+                className={cx(
+                  'relative w-full text-left px-4 py-3 border-b border-border-base/40 last:border-b-0 transition-colors',
+                  active ? 'bg-accent/8 text-fg' : 'text-fg hover:bg-surface-2/40',
+                )}
+                aria-current={active ? 'true' : undefined}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium">
-                    {index + 1}. {concept.title}
+                {active && (
+                  <span
+                    aria-hidden
+                    className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-accent via-accent-2 to-accent-3"
+                  />
+                )}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className={cx(
+                        'grid place-items-center size-6 rounded-md font-mono text-[11px] tabular-nums shrink-0',
+                        done
+                          ? 'bg-emerald-500/15 text-emerald-300'
+                          : active
+                            ? 'bg-accent/15 text-accent'
+                            : 'bg-surface-2/80 text-fg-subtle',
+                      )}
+                    >
+                      {done ? <Check size={12} /> : index + 1}
+                    </span>
+                    <span className="text-[13.5px] font-medium truncate">{concept.title}</span>
+                  </div>
+                  <span className="text-[10px] text-fg-subtle tabular-nums shrink-0">
+                    {concept.estimatedMinutes}m
                   </span>
-                  <span className="text-xs text-zinc-500">{concept.estimatedMinutes}m</span>
                 </div>
-                <div className="mt-1 flex items-center gap-2">
-                  <ExerciseDots exercises={exercises} progress={progress} />
-                  <span className="text-xs text-zinc-500 tabular-nums">
+                <div className="mt-2 pl-[34px] flex items-center gap-2">
+                  <div className="flex-1 h-1 rounded-full bg-surface-2/60 overflow-hidden">
+                    <div
+                      className={cx(
+                        'h-full transition-[width] duration-slow',
+                        done ? 'bg-emerald-400' : 'bg-gradient-to-r from-accent to-accent-2',
+                      )}
+                      style={{ width: `${Math.round(ratio * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-fg-subtle tabular-nums">
                     {passed}/{exercises.length}
                   </span>
                 </div>
@@ -201,70 +303,64 @@ const ConceptRail = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
           );
         })}
       </ol>
-    </nav>
+    </GlassSurface>
   </aside>
-);
-
-interface ExerciseDotsProps {
-  exercises: Exercise[];
-  progress: Map<string, import('@/lib/progress-db').ProgressRecord>;
-}
-
-const ExerciseDots = ({ exercises, progress }: ExerciseDotsProps) => (
-  <div className="flex flex-wrap gap-1">
-    {exercises.map((exercise) => {
-      const status = progress.get(exercise.id)?.status;
-      const className =
-        status === 'pass'
-          ? 'bg-emerald-400'
-          : status === 'fail'
-            ? 'bg-rose-400'
-            : 'bg-zinc-700';
-      return (
-        <span
-          key={exercise.id}
-          className={`size-2 rounded-full ${className}`}
-          title={`${exercise.id} — ${status ?? 'not attempted'}`}
-        />
-      );
-    })}
-  </div>
 );
 
 interface ConceptPanelProps {
   slug: string;
+  concept: TopicBundle['manifest']['concepts'][number];
   theoryFiles: string[];
   exercises: Exercise[];
+  passed: number;
+  ratio: number;
 }
 
-const ConceptPanel = ({ slug, theoryFiles, exercises }: ConceptPanelProps) => {
+const ConceptPanel = ({ slug, concept, theoryFiles, exercises, passed, ratio }: ConceptPanelProps) => {
+  const { t } = useTranslation('topic');
   const theories = useMemo(
     () => theoryFiles.map((filename) => ({ filename, resolved: getTheory(slug, filename) })),
     [slug, theoryFiles],
   );
-
   return (
-    <article className="space-y-10">
-      {theories.map(({ filename, resolved }) => (
-        <section
-          key={filename}
-          className="rounded-xl border border-zinc-800 bg-zinc-900/30 px-6 py-5"
-        >
-          {resolved ? (
-            <TheoryContent Component={resolved.Component} />
-          ) : (
-            <p className="text-rose-300 text-sm">Theory file {filename} could not be loaded.</p>
-          )}
-        </section>
-      ))}
-      <section className="space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide">
-          Exercises ({exercises.length})
-        </h3>
+    <article className="space-y-8">
+      <header className="space-y-2">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-fg-subtle">
+          <BookOpen size={12} />
+          {t('theory')}
+          <span>·</span>
+          <span className="text-fg-muted">{concept.estimatedMinutes} min</span>
+        </div>
+        <h2 className="font-display text-3xl leading-tight tracking-tightish text-fg">
+          {concept.title}
+        </h2>
+      </header>
+
+      <div data-toc-root className="theory-root max-w-prose">
+        {theories.map(({ filename, resolved }) => (
+          <section key={filename}>
+            {resolved ? (
+              <TheoryContent Component={resolved.Component} />
+            ) : (
+              <p className="text-rose-300 text-sm">{t('theoryMissing', { filename })}</p>
+            )}
+          </section>
+        ))}
+      </div>
+
+      <section className="space-y-4 pt-2">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-display text-2xl text-fg tracking-tightish">{t('practice')}</h3>
+          <span className="text-[12px] text-fg-muted tabular-nums">
+            {passed}/{exercises.length} · {Math.round(ratio * 100)}%
+          </span>
+        </div>
         {exercises.length === 0 ? (
-          <p className="text-sm text-zinc-500 italic">No exercises for this concept yet.</p>
+          <GlassSurface intensity="subtle" bordered className="rounded-xl">
+            <p className="px-4 py-6 text-sm text-fg-subtle italic">{t('noExercises')}</p>
+          </GlassSurface>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4 stagger">
             {exercises.map((exercise) => (
               <ExerciseRunner key={exercise.id} topicSlug={slug} exercise={exercise} />
             ))}
@@ -275,12 +371,168 @@ const ConceptPanel = ({ slug, theoryFiles, exercises }: ConceptPanelProps) => {
   );
 };
 
+interface ConceptNavProps {
+  prevTitle: string | undefined;
+  nextTitle: string | undefined;
+  onPrev: () => void;
+  onNext: () => void;
+}
+
+const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) => {
+  const { t } = useTranslation('topic');
+  if (!prevTitle && !nextTitle) return null;
+  return (
+    <div className="flex items-stretch justify-between gap-3 pt-2">
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={!prevTitle}
+        className={cx(
+          'flex-1 max-w-[280px] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-left transition',
+          'hover:border-accent/40 hover:bg-surface-2/40 disabled:opacity-30 disabled:cursor-not-allowed',
+          'flex items-center gap-3',
+        )}
+      >
+        <ArrowLeft size={16} className="text-fg-subtle" />
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-widest text-fg-subtle">
+            {t('prevConcept')}
+          </div>
+          <div className="text-[13.5px] font-medium text-fg truncate">{prevTitle ?? '—'}</div>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={!nextTitle}
+        className={cx(
+          'flex-1 max-w-[280px] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-right transition',
+          'hover:border-accent/40 hover:bg-surface-2/40 disabled:opacity-30 disabled:cursor-not-allowed',
+          'flex items-center justify-end gap-3',
+        )}
+      >
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-widest text-fg-subtle">
+            {t('nextConcept')}
+          </div>
+          <div className="text-[13.5px] font-medium text-fg truncate">{nextTitle ?? '—'}</div>
+        </div>
+        <ArrowRight size={16} className="text-accent" />
+      </button>
+    </div>
+  );
+};
+
+interface TocEntry {
+  id: string;
+  text: string;
+  level: 2 | 3;
+}
+
+const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio: number }) => {
+  const { t } = useTranslation('topic');
+  const [entries, setEntries] = useState<TocEntry[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const collect = (): void => {
+      const root = document.querySelector('[data-toc-root]');
+      if (!root) {
+        setEntries([]);
+        return;
+      }
+      const nodes = root.querySelectorAll<HTMLElement>('[data-toc]');
+      const next: TocEntry[] = [];
+      nodes.forEach((node) => {
+        if (!node.id || !node.textContent) return;
+        next.push({
+          id: node.id,
+          text: node.textContent,
+          level: node.dataset.toc === 'h3' ? 3 : 2,
+        });
+      });
+      setEntries(next);
+    };
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => requestAnimationFrame(collect));
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [conceptId]);
+
+  useEffect(() => {
+    if (entries.length === 0) return;
+    const observer = new IntersectionObserver(
+      (events) => {
+        const visible = events.filter((e) => e.isIntersecting);
+        if (visible.length > 0) {
+          const first = visible.sort((a, b) => a.target.getBoundingClientRect().top - b.target.getBoundingClientRect().top)[0];
+          if (first) setActiveId(first.target.id);
+        }
+      },
+      { rootMargin: '-80px 0px -60% 0px', threshold: [0, 1] },
+    );
+    entries.forEach((entry) => {
+      const el = document.getElementById(entry.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [entries]);
+
+  return (
+    <aside className="hidden xl:block xl:sticky xl:top-24 self-start">
+      <GlassSurface intensity="subtle" bordered className="rounded-2xl">
+        <div className="p-4 space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-fg-subtle">
+              <ListTree size={11} />
+              {t('toc')}
+            </div>
+            <ProgressRing
+              value={ratio}
+              size={26}
+              stroke={3}
+              indicatorClassName={
+                ratio === 1 ? 'text-emerald-400' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'
+              }
+            />
+          </div>
+          {entries.length === 0 ? (
+            <p className="text-[12px] text-fg-subtle">—</p>
+          ) : (
+            <ul className="space-y-1">
+              {entries.map((entry) => (
+                <li key={entry.id}>
+                  <a
+                    href={`#${entry.id}`}
+                    className={cx(
+                      'block py-1 text-[12.5px] leading-snug transition-colors duration-fast',
+                      entry.level === 3 && 'pl-3 text-[12px]',
+                      activeId === entry.id
+                        ? 'text-accent font-medium'
+                        : 'text-fg-muted hover:text-fg',
+                    )}
+                  >
+                    {entry.text}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </GlassSurface>
+    </aside>
+  );
+};
+
 const TopicSkeleton = () => (
   <div className="space-y-6" aria-hidden>
-    <div className="h-8 w-64 rounded bg-zinc-800 animate-pulse" />
-    <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-8">
-      <div className="h-64 rounded-xl bg-zinc-900/40 animate-pulse" />
-      <div className="h-96 rounded-xl bg-zinc-900/40 animate-pulse" />
+    <div className="h-32 rounded-2xl bg-surface/40 animate-pulse" />
+    <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
+      <div className="h-72 rounded-2xl bg-surface/40 animate-pulse" />
+      <div className="h-96 rounded-2xl bg-surface/40 animate-pulse" />
+      <div className="hidden xl:block h-72 rounded-2xl bg-surface/40 animate-pulse" />
     </div>
   </div>
 );

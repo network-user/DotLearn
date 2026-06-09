@@ -32,6 +32,14 @@ export const ReviewSubmissionInput = z
   .strict();
 export type ReviewSubmissionInput = z.infer<typeof ReviewSubmissionInput>;
 
+export const MarkMaterializedInput = z
+  .object({
+    materializedSlug: z.string().regex(/^[a-z][a-z0-9-]*[a-z0-9]$/).optional(),
+    reviewerNote: z.string().max(2000).optional(),
+  })
+  .strict();
+export type MarkMaterializedInput = z.infer<typeof MarkMaterializedInput>;
+
 export const Submission = z
   .object({
     id: z.string().uuid(),
@@ -40,7 +48,39 @@ export const Submission = z
     createdAt: z.string().datetime(),
     reviewedAt: z.string().datetime().optional(),
     reviewerNote: z.string().optional(),
+    materializedSlug: z.string().optional(),
     payload: CreateSubmissionInput,
   })
   .strict();
 export type Submission = z.infer<typeof Submission>;
+
+export const SubmissionPublicPayload = CreateSubmissionInput.omit({
+  contactEmail: true,
+  notes: true,
+});
+export type SubmissionPublicPayload = z.infer<typeof SubmissionPublicPayload>;
+
+export const SubmissionPublic = z
+  .object({
+    id: z.string().uuid(),
+    status: SubmissionStatus,
+    source: SubmissionSource,
+    createdAt: z.string().datetime(),
+    reviewedAt: z.string().datetime().optional(),
+    materializedSlug: z.string().optional(),
+    payload: SubmissionPublicPayload,
+  })
+  .strict();
+export type SubmissionPublic = z.infer<typeof SubmissionPublic>;
+
+export const SubmissionSearchResult = z.object({
+  hits: z.array(SubmissionPublic),
+  total: z.number().int().min(0),
+});
+export type SubmissionSearchResult = z.infer<typeof SubmissionSearchResult>;
+
+export const SubmissionSuggestion = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+});
+export type SubmissionSuggestion = z.infer<typeof SubmissionSuggestion>;
