@@ -301,7 +301,7 @@ const ProposalCard = ({ submission }: ProposalCardProps) => {
       </footer>
       {payload.tags.length > 0 && (
         <ul className="flex flex-wrap gap-1">
-          {payload.tags.map((tag) => (
+          {payload.tags.map((tag: string) => (
             <li
               key={tag}
               className="text-[10px] uppercase tracking-wide text-fg-muted bg-surface-2/80 px-1.5 py-0.5 rounded"

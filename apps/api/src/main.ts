@@ -1,6 +1,8 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
@@ -9,14 +11,23 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 
 const DEFAULT_PORT = 3000;
 
+const parseAllowedOrigins = (): string[] => {
+  const raw = process.env.WEB_ORIGIN ?? 'http://localhost:5173';
+  return raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+};
+
 const bootstrap = async (): Promise<void> => {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
 
   app.setGlobalPrefix('api');
+  app.use(cookieParser());
   app.enableCors({
-    origin: ['http://localhost:5173'],
-    credentials: false,
+    origin: parseAllowedOrigins(),
+    credentials: true,
   });
   app.useGlobalPipes(
     new ValidationPipe({

@@ -8,13 +8,14 @@ export type SubmissionStatus = z.infer<typeof SubmissionStatus>;
 export const SubmissionSource = z.enum(['in-app', 'github-pr']);
 export type SubmissionSource = z.infer<typeof SubmissionSource>;
 
-export const CreateSubmissionInput = z
+const CreateSubmissionShape = z
   .object({
     title: z.string().min(5).max(80),
     outline: z.string().min(20).max(2000),
     suggestedRuntime: TopicRuntime,
     suggestedDifficulty: TopicDifficulty,
-    suggestedLanguage: TopicLanguage,
+    suggestedLanguages: z.array(TopicLanguage).min(1),
+    suggestedPrimaryLanguage: TopicLanguage,
     estimatedHours: z.number().min(0.25).max(200),
     tags: z.array(z.string().regex(TAG_PATTERN)).min(1).max(8),
     sources: z.array(z.string().url()).max(20).default([]),
@@ -22,6 +23,29 @@ export const CreateSubmissionInput = z
     notes: z.string().max(1000).optional(),
   })
   .strict();
+
+const checkLanguagePair = (
+  input: { suggestedLanguages: ('en' | 'ru')[]; suggestedPrimaryLanguage: 'en' | 'ru' },
+  ctx: z.RefinementCtx,
+): void => {
+  const unique = new Set(input.suggestedLanguages);
+  if (unique.size !== input.suggestedLanguages.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['suggestedLanguages'],
+      message: 'suggestedLanguages must not contain duplicates',
+    });
+  }
+  if (!unique.has(input.suggestedPrimaryLanguage)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['suggestedPrimaryLanguage'],
+      message: 'suggestedPrimaryLanguage must be listed in suggestedLanguages',
+    });
+  }
+};
+
+export const CreateSubmissionInput = CreateSubmissionShape.superRefine(checkLanguagePair);
 export type CreateSubmissionInput = z.infer<typeof CreateSubmissionInput>;
 
 export const ReviewSubmissionInput = z
@@ -54,10 +78,10 @@ export const Submission = z
   .strict();
 export type Submission = z.infer<typeof Submission>;
 
-export const SubmissionPublicPayload = CreateSubmissionInput.omit({
+export const SubmissionPublicPayload = CreateSubmissionShape.omit({
   contactEmail: true,
   notes: true,
-});
+}).superRefine(checkLanguagePair);
 export type SubmissionPublicPayload = z.infer<typeof SubmissionPublicPayload>;
 
 export const SubmissionPublic = z
