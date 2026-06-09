@@ -74,13 +74,16 @@ export const AdminLoginPage = ({ onSuccess }: AdminLoginPageProps) => {
             type="text"
             autoComplete="one-time-code"
             required
-            inputMode="numeric"
+            inputMode="text"
             pattern="[0-9A-Za-z-]+"
             value={form.totp}
             onChange={(event) => setForm((prev) => ({ ...prev, totp: event.target.value }))}
             className="form-input"
             placeholder={t('login.fields.totpPlaceholder')}
           />
+          <span className="mt-1 block text-[11px] text-fg-subtle">
+            {t('login.fields.totpHint')}
+          </span>
         </Field>
 
         {error && (

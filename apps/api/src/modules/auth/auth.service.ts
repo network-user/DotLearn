@@ -12,6 +12,7 @@ import { verifySync } from 'otplib';
 
 import { AUTH_CONFIG, type AuthConfig } from './auth.config';
 import { LockoutService } from './domain/lockout.service';
+import { SessionEpochService } from './domain/session-epoch.service';
 import { StepUpService } from './domain/step-up.service';
 import { TokenRevocationService } from './domain/token-revocation.service';
 
@@ -26,6 +27,7 @@ export interface AuthClaims {
   sub: string;
   jti: string;
   scope: 'access' | 'refresh';
+  epoch: number;
   exp: number;
   iat: number;
 }
@@ -63,6 +65,7 @@ export class AuthService {
     private readonly lockout: LockoutService,
     private readonly revocation: TokenRevocationService,
     private readonly stepUp: StepUpService,
+    private readonly sessionEpoch: SessionEpochService,
   ) {
     this.mutableBackupCodeHashes = [...config.backupCodeHashes];
   }
@@ -128,6 +131,11 @@ export class AuthService {
     }
   }
 
+  logoutAll(subject: string): { epoch: number } {
+    const epoch = this.sessionEpoch.bump(subject);
+    return { epoch };
+  }
+
   async stepUpVerify(subject: string, action: string, totp: string): Promise<number> {
     const lockoutKey = `stepup::${subject}`;
     const { locked, secondsRemaining } = this.lockout.isLocked(lockoutKey);
@@ -163,8 +171,9 @@ export class AuthService {
     const nowSec = Math.floor(Date.now() / 1000);
     const accessExp = nowSec + this.config.accessTtlSec;
     const refreshExp = nowSec + this.config.refreshTtlSec;
+    const epoch = this.sessionEpoch.current(login);
     const accessToken = this.jwt.sign(
-      { sub: login, scope: 'access', jti: accessJti },
+      { sub: login, scope: 'access', jti: accessJti, epoch },
       {
         secret: this.config.accessSecret,
         expiresIn: this.config.accessTtlSec,
@@ -172,7 +181,7 @@ export class AuthService {
       },
     );
     const refreshToken = this.jwt.sign(
-      { sub: login, scope: 'refresh', jti: refreshJti },
+      { sub: login, scope: 'refresh', jti: refreshJti, epoch },
       {
         secret: this.config.refreshSecret,
         expiresIn: this.config.refreshTtlSec,
@@ -196,6 +205,10 @@ export class AuthService {
       const payload = await this.jwt.verifyAsync<AuthClaims>(token, { secret });
       if (payload.scope !== expectedScope) {
         throw new UnauthorizedException('Wrong token scope');
+      }
+      const currentEpoch = this.sessionEpoch.current(payload.sub);
+      if ((payload.epoch ?? 0) < currentEpoch) {
+        throw new UnauthorizedException('Session revoked');
       }
       return payload;
     } catch (error) {

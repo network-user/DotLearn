@@ -17,8 +17,10 @@ import type { Request, Response } from 'express';
 import { ZodBodyPipe } from '../../common/zod/zod-body.pipe';
 import { AUTH_CONFIG, type AuthConfig } from './auth.config';
 import { AuthService } from './auth.service';
+import { RequireStepUp } from './decorators/require-step-up.decorator';
 import { LoginInput, StepUpInput } from './dto/auth.schemas';
 import { AdminAuthGuard, type AuthenticatedRequest } from './guards/admin-auth.guard';
+import { StepUpGuard } from './guards/step-up.guard';
 
 const REFRESH_COOKIE = 'dotlearn_admin_refresh';
 
@@ -114,6 +116,22 @@ export class AuthController {
       login: request.admin?.sub,
       expiresAt: new Date((request.admin?.exp ?? 0) * 1000).toISOString(),
     };
+  }
+
+  @Post('logout-all')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(AdminAuthGuard, StepUpGuard)
+  @RequireStepUp('auth.logout-all')
+  @ApiOperation({ summary: 'Revoke every active access and refresh token for the admin.' })
+  async logoutAll(
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    if (!request.admin) {
+      throw new Error('Authentication required');
+    }
+    this.auth.logoutAll(request.admin.sub);
+    response.clearCookie(REFRESH_COOKIE, this.cookieOptions(true));
   }
 
   private setRefreshCookie(response: Response, token: string, expiresAtSec: number): void {

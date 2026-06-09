@@ -99,6 +99,9 @@ export const logout = (accessToken?: string): Promise<void> =>
 export const stepUp = (accessToken: string, action: string, totp: string): Promise<StepUpResult> =>
   post<StepUpResult>('/api/admin/auth/step-up', { action, totp }, accessToken);
 
+export const logoutAll = (accessToken: string): Promise<void> =>
+  post<void>('/api/admin/auth/logout-all', undefined, accessToken);
+
 export const me = (
   accessToken: string,
 ): Promise<{ login: string | undefined; expiresAt: string }> =>
