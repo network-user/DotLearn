@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
-import { authenticator } from 'otplib';
+import { verifySync } from 'otplib';
 
 import { AUTH_CONFIG, type AuthConfig } from './auth.config';
 import { LockoutService } from './domain/lockout.service';
@@ -36,11 +36,16 @@ const sha256 = (value: string): string =>
 const verifyTotp = (code: string, secret: string, backupHashes: string[]):
   | { ok: true; usedBackupCodeHash?: string }
   | { ok: false } => {
-  authenticator.options = { window: 1 };
-  if (authenticator.check(code, secret)) {
-    return { ok: true };
+  const trimmed = code.trim();
+  try {
+    const result = verifySync({ token: trimmed, secret, epochTolerance: 30 });
+    if (result.valid) {
+      return { ok: true };
+    }
+  } catch {
+    /* fall through to backup codes */
   }
-  const candidate = sha256(code.toUpperCase().trim());
+  const candidate = sha256(trimmed.toUpperCase());
   if (backupHashes.includes(candidate)) {
     return { ok: true, usedBackupCodeHash: candidate };
   }

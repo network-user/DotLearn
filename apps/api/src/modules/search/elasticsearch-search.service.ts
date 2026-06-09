@@ -13,17 +13,17 @@ const DEFAULT_SUGGEST_LIMIT = 8;
 
 interface ElasticsearchSettings {
   node: string;
-  username?: string;
-  password?: string;
-  apiKey?: string;
+  username: string | undefined;
+  password: string | undefined;
+  apiKey: string | undefined;
   indexName: string;
 }
 
 const loadSettings = (): ElasticsearchSettings => ({
   node: process.env.ES_NODE ?? 'http://localhost:9200',
-  username: process.env.ES_USERNAME ?? undefined,
-  password: process.env.ES_PASSWORD ?? undefined,
-  apiKey: process.env.ES_API_KEY ?? undefined,
+  username: process.env.ES_USERNAME || undefined,
+  password: process.env.ES_PASSWORD || undefined,
+  apiKey: process.env.ES_API_KEY || undefined,
   indexName: process.env.ES_SUBMISSIONS_INDEX ?? 'dotlearn-submissions',
 });
 
@@ -128,13 +128,20 @@ export class ElasticsearchSearchService implements SearchService, OnModuleInit {
         },
       },
     });
-    const suggestions = (response.suggest?.title_suggest ?? []).flatMap((bucket) =>
-      bucket.options.map((option) => ({
-        id: String((option as { _id?: string })._id ?? ''),
-        title: String((option as { text?: string }).text ?? ''),
-        score: Number((option as { _score?: number })._score ?? 0),
-      })),
-    );
+    const buckets = response.suggest?.title_suggest ?? [];
+    const suggestions: SearchSuggestion[] = [];
+    for (const bucket of buckets) {
+      const options = (bucket as { options?: unknown }).options;
+      const list = Array.isArray(options) ? options : options ? [options] : [];
+      for (const option of list) {
+        const obj = option as { _id?: string; text?: string; _score?: number };
+        suggestions.push({
+          id: String(obj._id ?? ''),
+          title: String(obj.text ?? ''),
+          score: Number(obj._score ?? 0),
+        });
+      }
+    }
     return suggestions;
   }
 
