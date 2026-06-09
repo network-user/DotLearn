@@ -21,6 +21,7 @@ interface AuthContextValue {
   state: AuthState;
   login: (payload: authApi.LoginPayload) => Promise<void>;
   logout: () => Promise<void>;
+  logoutAll: () => Promise<void>;
   stepUp: (action: string, totp: string) => Promise<void>;
   refreshToken: () => Promise<string | null>;
 }
@@ -113,6 +114,17 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     clearTimer();
   }, []);
 
+  const logoutAll = useCallback(async (): Promise<void> => {
+    const access = getAccessToken();
+    if (!access) {
+      throw new Error('Not authenticated');
+    }
+    await authApi.logoutAll(access.token);
+    setAccessToken(null);
+    setState({ status: 'unauthenticated' });
+    clearTimer();
+  }, []);
+
   const stepUp = useCallback(async (action: string, totp: string): Promise<void> => {
     const access = getAccessToken();
     if (!access) {
@@ -122,8 +134,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ state, login, logout, stepUp, refreshToken: doRefresh }),
-    [state, login, logout, stepUp, doRefresh],
+    () => ({ state, login, logout, logoutAll, stepUp, refreshToken: doRefresh }),
+    [state, login, logout, logoutAll, stepUp, doRefresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

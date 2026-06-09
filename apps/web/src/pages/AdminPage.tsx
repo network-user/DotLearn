@@ -53,7 +53,7 @@ interface PendingStepUp {
 
 export const AdminPage = () => {
   const { t } = useTranslation('admin');
-  const { state: authState, logout } = useAuth();
+  const { state: authState, logout, logoutAll } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>('pending');
   const [tabState, setTabState] = useState<Record<SubmissionStatus, SubmissionsTabState>>({
     pending: initialSubmissionsTab(),
@@ -231,6 +231,18 @@ export const AdminPage = () => {
     }
   };
 
+  const handleLogoutAll = async (): Promise<void> => {
+    try {
+      await guardedAction(async () => {
+        await logoutAll();
+        toast.success(t('toast.logoutAll'));
+      });
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : t('networkError');
+      toast.error(t('logoutAllFailed', { message }));
+    }
+  };
+
   if (authState.status === 'unknown') {
     return (
       <div className="rounded-xl border border-border-base p-8 text-center text-sm text-fg-muted">
@@ -269,6 +281,14 @@ export const AdminPage = () => {
             className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
           >
             {t('logout')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleLogoutAll()}
+            className="px-3 py-1.5 rounded-md text-sm border border-rose-700/50 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+            title={t('logoutAllHint')}
+          >
+            {t('logoutAll')}
           </button>
         </div>
       </header>

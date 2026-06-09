@@ -7,6 +7,7 @@ import { AUTH_CONFIG, loadAuthConfig } from './auth.config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { LockoutService } from './domain/lockout.service';
+import { SessionEpochService } from './domain/session-epoch.service';
 import { StepUpService } from './domain/step-up.service';
 import { TokenRevocationService } from './domain/token-revocation.service';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
@@ -32,6 +33,7 @@ import { StepUpGuard } from './guards/step-up.guard';
     },
     AuthService,
     LockoutService,
+    SessionEpochService,
     StepUpService,
     TokenRevocationService,
     AdminAuthGuard,

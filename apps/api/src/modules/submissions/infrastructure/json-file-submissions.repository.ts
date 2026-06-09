@@ -1,6 +1,11 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
-import type { CreateSubmissionInput, SubmissionSource, SubmissionStatus } from '@dotlearn/contracts';
+import type {
+  CreateSubmissionInput,
+  SubmissionSource,
+  SubmissionStatus,
+  TopicLanguage,
+} from '@dotlearn/contracts';
 
 import { dataFile } from '../../../common/config/data-paths';
 import { readJsonFile, writeJsonFile } from '../../../common/storage/json-file-store';
@@ -18,7 +23,36 @@ interface SubmissionSnapshot {
   payload: CreateSubmissionInput;
 }
 
+interface LegacyPayloadShape {
+  suggestedLanguage?: TopicLanguage;
+  suggestedLanguages?: TopicLanguage[];
+  suggestedPrimaryLanguage?: TopicLanguage;
+  [key: string]: unknown;
+}
+
 const FILE_NAME = 'submissions.json';
+
+const migratePayload = (
+  payload: LegacyPayloadShape,
+): { payload: CreateSubmissionInput; migrated: boolean } => {
+  if (Array.isArray(payload.suggestedLanguages) && payload.suggestedPrimaryLanguage) {
+    return { payload: payload as unknown as CreateSubmissionInput, migrated: false };
+  }
+  const language = payload.suggestedLanguage ?? payload.suggestedPrimaryLanguage ?? 'en';
+  const languages = Array.isArray(payload.suggestedLanguages)
+    ? payload.suggestedLanguages
+    : [language];
+  const { suggestedLanguage: _legacy, ...rest } = payload;
+  void _legacy;
+  return {
+    payload: {
+      ...(rest as Omit<CreateSubmissionInput, 'suggestedLanguages' | 'suggestedPrimaryLanguage'>),
+      suggestedLanguages: languages,
+      suggestedPrimaryLanguage: language,
+    } as CreateSubmissionInput,
+    migrated: true,
+  };
+};
 
 @Injectable()
 export class JsonFileSubmissionsRepository implements SubmissionsRepository, OnModuleInit {
@@ -29,7 +63,12 @@ export class JsonFileSubmissionsRepository implements SubmissionsRepository, OnM
   async onModuleInit(): Promise<void> {
     const path = dataFile(FILE_NAME);
     const snapshots = await readJsonFile<SubmissionSnapshot[]>(path, []);
+    let migratedCount = 0;
     for (const snapshot of snapshots) {
+      const { payload, migrated } = migratePayload(
+        snapshot.payload as unknown as LegacyPayloadShape,
+      );
+      if (migrated) migratedCount += 1;
       const entity = SubmissionEntity.restore({
         id: snapshot.id,
         status: snapshot.status,
@@ -38,14 +77,21 @@ export class JsonFileSubmissionsRepository implements SubmissionsRepository, OnM
         reviewedAt: snapshot.reviewedAt ? new Date(snapshot.reviewedAt) : null,
         reviewerNote: snapshot.reviewerNote ?? null,
         materializedSlug: snapshot.materializedSlug ?? null,
-        payload: snapshot.payload,
+        payload,
       });
       this.store.set(entity.id, entity);
     }
     this.logger.log(
-      { count: this.store.size, path },
+      { count: this.store.size, migrated: migratedCount, path },
       'submissions_repository_loaded',
     );
+    if (migratedCount > 0) {
+      await this.persist();
+      this.logger.warn(
+        { migrated: migratedCount },
+        'submissions_payload_migrated_to_multilingual_shape',
+      );
+    }
   }
 
   async save(submission: SubmissionEntity): Promise<void> {
