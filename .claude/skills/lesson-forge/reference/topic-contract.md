@@ -8,18 +8,20 @@ Every topic under `topics/<slug>/` must satisfy this contract. The Zod schema in
 topics/<slug>/
 ├── manifest.json                  required
 ├── README.md                      required, one-paragraph elevator pitch
-├── theory/                        required, at least one file
-│   ├── 01-<concept-id>.mdx
-│   ├── 02-<concept-id>.mdx
+├── theory/                        required, at least one file per available language
+│   ├── 01-<concept-id>.<lang>.mdx
+│   ├── 02-<concept-id>.<lang>.mdx
 │   └── ...
-├── exercises/                     required, at least one file
-│   ├── 01-<concept-id>.yaml
+├── exercises/                     required, at least one file per available language
+│   ├── 01-<concept-id>.<lang>.yaml
 │   └── ...
 ├── flashcards/                    optional
 │   └── deck.yaml
 └── sandbox/                       optional, only when topic needs custom UI
     └── index.tsx
 ```
+
+`<lang>` is `en` or `ru`. Every theory and exercise file declares its language in the filename suffix. A multilingual topic provides parallel sets (e.g., both `01-select.en.mdx` and `01-select.ru.mdx`).
 
 ## manifest.json
 
@@ -28,7 +30,8 @@ topics/<slug>/
   "slug": "sql-fundamentals",
   "title": "SQL Fundamentals",
   "version": "1.0.0",
-  "language": "en",
+  "availableLanguages": ["en", "ru"],
+  "primaryLanguage": "en",
   "difficulty": "beginner",
   "estimatedHours": 6,
   "runtime": "sql.js",
@@ -44,8 +47,8 @@ topics/<slug>/
       "id": "select",
       "title": "SELECT and filtering",
       "estimatedMinutes": 45,
-      "theoryFiles": ["theory/01-select.mdx"],
-      "exerciseFiles": ["exercises/01-select.yaml"]
+      "theoryFiles": ["theory/01-select.en.mdx", "theory/01-select.ru.mdx"],
+      "exerciseFiles": ["exercises/01-select.en.yaml", "exercises/01-select.ru.yaml"]
     }
   ],
   "license": "MIT"
@@ -57,20 +60,21 @@ topics/<slug>/
 - **slug** — globally unique. Lowercase, ASCII, hyphenated, must match the folder name. No leading numbers.
 - **title** — human-readable; appears in catalog and topic page header.
 - **version** — semver. Bumped on any change to topic structure or exercise IDs.
-- **language** — ISO 639-1; current player supports `en` and `ru`.
+- **availableLanguages** — non-empty, deduplicated array of languages this topic ships with. Supported values: `en`, `ru`. Every language listed here must have matching `.<lang>.mdx` and `.<lang>.yaml` files in every concept.
+- **primaryLanguage** — the original language of the content. Used as fallback when the learner's UI language isn't in `availableLanguages`. Must appear in `availableLanguages`.
 - **difficulty** — one of `beginner`, `intermediate`, `advanced`.
 - **estimatedHours** — total wall-clock learner time. Sum of `concepts[].estimatedMinutes` should be within ±15% of this number × 60.
 - **runtime** — one of the runtimes registered in `packages/sandbox/src/index.ts`. As of foundation: `sql.js`, `pyodide`, `javascript`, `none` (theory-only). Adding a runtime requires a coordinated change.
 - **prerequisites** — array of other topic slugs whose mastery is required. Validated at load time: prereqs must exist.
 - **tags** — short, lowercase, used for catalog filtering. Reuse existing tags when possible.
 - **author** — `{ kind: "agent" | "human", name: string, model?: string }`. Required for traceability.
-- **concepts** — ordered. Each concept binds a set of theory files to a set of exercise files. The `id` is referenced from exercise YAMLs via `concept` field.
+- **concepts** — ordered. Each concept binds a set of theory files to a set of exercise files. The `id` is referenced from exercise YAMLs via `concept` field. For every language in `availableLanguages` there must be at least one matching theory file and at least one matching exercise file inside each concept.
 - **license** — must be MIT or compatible OSS license. No proprietary content.
 
 ## Theory files
 
-- MDX (`.mdx`), one file per concept (or split across multiple files for long concepts).
-- Filename pattern: `<NN>-<concept-id>.mdx`.
+- MDX (`.mdx`), one file per concept per language (or split across multiple files for long concepts).
+- Filename pattern: `<NN>-<concept-id>.<lang>.mdx` where `<lang>` is `en` or `ru`.
 - Must start with frontmatter:
   ```mdx
   ---
@@ -85,7 +89,8 @@ topics/<slug>/
 ## Exercise files
 
 - YAML, validated against `packages/contracts/src/exercise.schema.ts`.
-- Filename pattern: `<NN>-<concept-id>.yaml`. Multiple exercises per concept share one file with a top-level `exercises:` list.
+- Filename pattern: `<NN>-<concept-id>.<lang>.yaml`. Multiple exercises per concept share one file with a top-level `exercises:` list.
+- Exercise `id` values must be unique across all language variants of a concept; reuse the same id for the same exercise translated.
 
 See [exercise-types.md](./exercise-types.md) for the catalog of allowed `type` values and their per-type fields.
 

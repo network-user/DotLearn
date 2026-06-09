@@ -7,8 +7,10 @@ import {
   type ProviderCredentials,
   type ProviderId,
 } from '@dotlearn/ai-providers';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { loadCredentials, saveCredentials } from '@/lib/provider-credentials';
 
 interface ProviderRowState {
@@ -26,6 +28,7 @@ const emptyState = (): ProviderRowState => ({
 });
 
 export const SettingsPage = () => {
+  const { t } = useTranslation('settings');
   const [byProvider, setByProvider] = useState<Map<ProviderId, ProviderRowState>>(() => {
     const initial = new Map<ProviderId, ProviderRowState>();
     for (const provider of providerList) {
@@ -74,7 +77,7 @@ export const SettingsPage = () => {
     const state = byProvider.get(provider.id);
     if (!state) return;
     await saveCredentials(provider.id, state.credentials);
-    toast.success(`${provider.displayName}: credentials saved`);
+    toast.success(t('providers.savedToast', { provider: provider.displayName }));
   };
 
   const handleTest = async (provider: AiProvider) => {
@@ -84,20 +87,26 @@ export const SettingsPage = () => {
     const status = await provider.testConnection(state.credentials);
     updateState(provider.id, (current) => ({ ...current, testing: false, lastStatus: status }));
     if (status.ok) {
-      toast.success(`${provider.displayName}: connection ok`);
+      toast.success(t('providers.okToast', { provider: provider.displayName }));
     } else {
-      toast.error(`${provider.displayName}: ${status.message}`);
+      toast.error(
+        t('providers.errorToast', { provider: provider.displayName, message: status.message }),
+      );
     }
   };
 
   return (
     <div className="space-y-8 max-w-3xl">
       <header>
-        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-2 text-sm text-zinc-400">
-          API keys live in your browser's IndexedDB only. They are never sent to a DotLearn server.
-        </p>
+        <h1 className="text-3xl font-semibold tracking-tight">{t('title')}</h1>
+        <p className="mt-2 text-sm text-fg-muted">{t('subtitle')}</p>
       </header>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-fg">{t('language.title')}</h2>
+        <p className="text-sm text-fg-muted">{t('language.description')}</p>
+        <LanguageSwitcher variant="full" />
+      </section>
 
       <section className="space-y-6">
         {providerList.map((provider) => {
@@ -129,36 +138,37 @@ interface ProviderCardProps {
 }
 
 const ProviderCard = ({ provider, state, onChange, onSave, onTest }: ProviderCardProps) => {
+  const { t } = useTranslation('settings');
   const requiresKey = provider.id !== 'ollama';
   const update = (patch: Partial<ProviderCredentials>): void => {
     onChange({ ...state.credentials, ...patch });
   };
   return (
-    <article className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5 space-y-4">
+    <article className="rounded-xl border border-border-base bg-surface/40 p-5 space-y-4">
       <header className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-zinc-100">{provider.displayName}</h2>
+        <h2 className="text-base font-semibold text-fg">{provider.displayName}</h2>
         <StatusBadge state={state} />
       </header>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {requiresKey && (
           <Field
-            label="API key"
-            placeholder="sk-…"
+            label={t('providers.apiKey')}
+            placeholder={t('providers.apiKeyPlaceholder')}
             type="password"
             value={state.credentials.apiKey ?? ''}
             onChange={(value) => update({ apiKey: value })}
           />
         )}
         <Field
-          label="Base URL"
-          placeholder="optional override"
+          label={t('providers.baseUrl')}
+          placeholder={t('providers.baseUrlPlaceholder')}
           value={state.credentials.baseUrl ?? ''}
           onChange={(value) => update({ baseUrl: value })}
         />
         <Field
-          label="Default model"
-          placeholder="optional"
+          label={t('providers.defaultModel')}
+          placeholder={t('providers.defaultModelPlaceholder')}
           value={state.credentials.defaultModel ?? ''}
           onChange={(value) => update({ defaultModel: value })}
         />
@@ -170,15 +180,15 @@ const ProviderCard = ({ provider, state, onChange, onSave, onTest }: ProviderCar
           onClick={onSave}
           className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-400"
         >
-          Save
+          {t('providers.save')}
         </button>
         <button
           type="button"
           onClick={onTest}
           disabled={state.testing}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-900 disabled:opacity-50"
+          className="rounded-md border border-border-strong px-3 py-1.5 text-sm text-fg hover:bg-surface disabled:opacity-50"
         >
-          {state.testing ? 'Testing…' : 'Test connection'}
+          {state.testing ? t('providers.testing') : t('providers.test')}
         </button>
       </div>
     </article>
@@ -195,28 +205,29 @@ interface FieldProps {
 
 const Field = ({ label, value, placeholder, type = 'text', onChange }: FieldProps) => (
   <label className="block">
-    <span className="block text-xs uppercase tracking-wide text-zinc-500 mb-1">{label}</span>
+    <span className="block text-xs uppercase tracking-wide text-fg-subtle mb-1">{label}</span>
     <input
       type={type}
       value={value}
       placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500/60"
+      className="w-full rounded-md border border-border-base bg-canvas/60 px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60"
     />
   </label>
 );
 
 const StatusBadge = ({ state }: { state: ProviderRowState }) => {
+  const { t } = useTranslation('common');
   if (state.testing) {
-    return <span className="text-xs text-zinc-400">testing…</span>;
+    return <span className="text-xs text-fg-muted">{t('testing')}</span>;
   }
   if (!state.lastStatus) {
-    return <span className="text-xs text-zinc-500">untested</span>;
+    return <span className="text-xs text-fg-subtle">{t('untested')}</span>;
   }
   if (state.lastStatus.ok) {
     return (
       <span className="text-xs text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
-        connected
+        {t('connected')}
       </span>
     );
   }
@@ -225,7 +236,7 @@ const StatusBadge = ({ state }: { state: ProviderRowState }) => {
       className="text-xs text-rose-300 border border-rose-500/30 bg-rose-500/10 rounded px-1.5 py-0.5 truncate max-w-[60%]"
       title={state.lastStatus.message}
     >
-      error
+      {t('error')}
     </span>
   );
 };

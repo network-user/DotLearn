@@ -22,4 +22,8 @@ export class InMemorySubmissionsRepository implements SubmissionsRepository {
     if (!filter.status) return all;
     return all.filter((entity) => entity.status === filter.status);
   }
+
+  async findAll(): Promise<SubmissionEntity[]> {
+    return this.findMany({});
+  }
 }

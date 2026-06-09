@@ -40,7 +40,7 @@ Extract:
 - **Depth** ("introduction", "deep dive", "beginner to intermediate")
 - **Estimated hours** the learner should spend
 - **Runtime** required (sql, python, javascript, theory-only)
-- **Language** of the content (en or ru)
+- **Languages** the topic must ship in (subset of `en`, `ru`) and which one is the **primary** (original). DotLearn defaults primary to `ru` when the user is Russian-speaking; otherwise to `en`.
 
 If anything critical is missing, ask the user **once** with a structured question. Do not proceed without these five fields.
 
@@ -93,16 +93,17 @@ Required fields and their semantics are in [reference/topic-contract.md](./refer
 
 ### 6. Generate theory then exercises, concept by concept
 
-For each concept in the plan, in order:
+For each concept in the plan, in order, and **for each language** listed in `availableLanguages`:
 
-1. Write `theory/<NN>-<concept-id>.mdx` following [reference/content-style-guide.md](./reference/content-style-guide.md).
-2. Write `exercises/<NN>-<concept-id>.yaml`. Every exercise must:
+1. Write `theory/<NN>-<concept-id>.<lang>.mdx` following [reference/content-style-guide.md](./reference/content-style-guide.md). Filenames always carry the explicit language suffix; there is no untagged variant.
+2. Write `exercises/<NN>-<concept-id>.<lang>.yaml`. Every exercise must:
    - validate against `exercise.schema.json`
    - have a `solution` field
    - have an `expected` field that the `solution` actually produces when executed
+   - share its `id` with the corresponding exercise in other language variants of the same concept
 3. Mentally trace the solution against the fixture. If it would not match `expected`, fix the exercise before moving on.
 
-Always finish one concept fully before starting the next. Do not interleave.
+Always finish one concept fully (every language) before starting the next. Do not interleave concepts.
 
 ### 7. Validate
 

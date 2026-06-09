@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { useNavigate } from '@tanstack/react-router';
+import { useTranslation } from 'react-i18next';
 
 import { CreateSubmissionInput } from '@dotlearn/contracts';
 
@@ -33,6 +34,8 @@ const initialState: FormState = {
 };
 
 export const SubmitTopicPage = () => {
+  const { t } = useTranslation('submit');
+  const { t: tCommon } = useTranslation('common');
   const navigate = useNavigate();
   const [form, setForm] = useState<FormState>(initialState);
   const [errors, setErrors] = useState<string[]>([]);
@@ -84,9 +87,9 @@ export const SubmitTopicPage = () => {
       setSubmitted(true);
     } catch (error) {
       if (error instanceof ApiError) {
-        setErrors([`Submission failed: ${error.message}`]);
+        setErrors([t('errorPrefix', { message: error.message })]);
       } else {
-        setErrors(['Submission failed: network error']);
+        setErrors([t('networkError')]);
       }
     } finally {
       setSubmitting(false);
@@ -96,17 +99,14 @@ export const SubmitTopicPage = () => {
   if (submitted) {
     return (
       <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/30 p-8 text-center">
-        <h2 className="font-semibold text-emerald-200">Thanks — your proposal is in the queue</h2>
-        <p className="mt-2 text-sm text-emerald-300/80">
-          The maintainer reviews submissions in the /admin queue. If approved, the topic is
-          materialized via the lesson-forge skill and merged.
-        </p>
+        <h2 className="font-semibold text-emerald-200">{t('successTitle')}</h2>
+        <p className="mt-2 text-sm text-emerald-300/80">{t('successMessage')}</p>
         <button
           type="button"
           onClick={() => navigate({ to: '/' })}
           className="mt-5 px-4 py-2 rounded-md bg-emerald-500 text-emerald-950 font-medium hover:bg-emerald-400"
         >
-          Back to topics
+          {tCommon('backToTopics')}
         </button>
       </div>
     );
@@ -114,14 +114,11 @@ export const SubmitTopicPage = () => {
 
   return (
     <div className="max-w-2xl">
-      <h1 className="text-2xl font-semibold tracking-tight">Suggest a topic</h1>
-      <p className="mt-2 text-sm text-zinc-400">
-        Sketch out what you want to learn. The maintainer will review and, if approved, the
-        lesson-forge skill will materialize the topic.
-      </p>
+      <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>
+      <p className="mt-2 text-sm text-fg-muted">{t('subtitle')}</p>
 
       <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-        <Field label="Title">
+        <Field label={t('fields.titleLabel')}>
           <input
             type="text"
             required
@@ -129,11 +126,11 @@ export const SubmitTopicPage = () => {
             value={form.title}
             onChange={handleChange('title')}
             className="form-input"
-            placeholder="SQL window functions"
+            placeholder={t('fields.titlePlaceholder')}
           />
         </Field>
 
-        <Field label="Outline">
+        <Field label={t('fields.outline')}>
           <textarea
             required
             minLength={20}
@@ -141,35 +138,35 @@ export const SubmitTopicPage = () => {
             onChange={handleChange('outline')}
             rows={6}
             className="form-input"
-            placeholder="What should the topic cover? Which concepts, in what order, with what depth?"
+            placeholder={t('fields.outlinePlaceholder')}
           />
         </Field>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Runtime">
+          <Field label={t('fields.runtime')}>
             <select
               value={form.suggestedRuntime}
               onChange={handleChange('suggestedRuntime')}
               className="form-input"
             >
-              <option value="none">none (theory)</option>
-              <option value="sql.js">sql.js (SQL)</option>
-              <option value="pyodide">pyodide (Python)</option>
-              <option value="javascript">javascript</option>
+              <option value="none">{t('runtimeOptions.none')}</option>
+              <option value="sql.js">{t('runtimeOptions.sqljs')}</option>
+              <option value="pyodide">{t('runtimeOptions.pyodide')}</option>
+              <option value="javascript">{t('runtimeOptions.javascript')}</option>
             </select>
           </Field>
-          <Field label="Difficulty">
+          <Field label={t('fields.difficulty')}>
             <select
               value={form.suggestedDifficulty}
               onChange={handleChange('suggestedDifficulty')}
               className="form-input"
             >
-              <option value="beginner">beginner</option>
-              <option value="intermediate">intermediate</option>
-              <option value="advanced">advanced</option>
+              <option value="beginner">{t('difficultyOptions.beginner')}</option>
+              <option value="intermediate">{t('difficultyOptions.intermediate')}</option>
+              <option value="advanced">{t('difficultyOptions.advanced')}</option>
             </select>
           </Field>
-          <Field label="Language">
+          <Field label={t('fields.language')}>
             <select
               value={form.suggestedLanguage}
               onChange={handleChange('suggestedLanguage')}
@@ -182,7 +179,7 @@ export const SubmitTopicPage = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Estimated hours">
+          <Field label={t('fields.estimatedHours')}>
             <input
               type="number"
               min={0.25}
@@ -193,29 +190,29 @@ export const SubmitTopicPage = () => {
               className="form-input"
             />
           </Field>
-          <Field label="Tags (comma-separated)">
+          <Field label={t('fields.tags')}>
             <input
               type="text"
               value={form.tags}
               onChange={handleChange('tags')}
               className="form-input"
-              placeholder="sql, databases"
+              placeholder={t('fields.tagsPlaceholder')}
             />
           </Field>
         </div>
 
-        <Field label="Sources (one URL per line)">
+        <Field label={t('fields.sources')}>
           <textarea
             value={form.sources}
             onChange={handleChange('sources')}
             rows={3}
             className="form-input"
-            placeholder="https://..."
+            placeholder={t('fields.sourcesPlaceholder')}
           />
         </Field>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Contact email (optional)">
+          <Field label={t('fields.contactEmail')}>
             <input
               type="email"
               value={form.contactEmail}
@@ -223,13 +220,13 @@ export const SubmitTopicPage = () => {
               className="form-input"
             />
           </Field>
-          <Field label="Notes (optional)">
+          <Field label={t('fields.notes')}>
             <input
               type="text"
               value={form.notes}
               onChange={handleChange('notes')}
               className="form-input"
-              placeholder="Anything else"
+              placeholder={t('fields.notesPlaceholder')}
             />
           </Field>
         </div>
@@ -247,7 +244,7 @@ export const SubmitTopicPage = () => {
           disabled={submitting}
           className="px-4 py-2 rounded-md bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-medium"
         >
-          {submitting ? 'Submitting...' : 'Submit proposal'}
+          {submitting ? t('submitting') : t('submit')}
         </button>
       </form>
 
@@ -274,7 +271,7 @@ type FieldProps = { label: string; children: React.ReactNode };
 
 const Field = ({ label, children }: FieldProps) => (
   <label className="block">
-    <span className="block text-xs uppercase tracking-wide text-zinc-400 mb-1">{label}</span>
+    <span className="block text-xs uppercase tracking-wide text-fg-muted mb-1">{label}</span>
     {children}
   </label>
 );

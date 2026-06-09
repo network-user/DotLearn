@@ -3,8 +3,8 @@ import { z } from 'zod';
 export const SLUG_PATTERN = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 export const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 export const TAG_PATTERN = /^[a-z][a-z0-9-]*$/;
-export const THEORY_FILE_PATTERN = /^theory\/\d{2}-[a-z0-9-]+\.mdx$/;
-export const EXERCISE_FILE_PATTERN = /^exercises\/\d{2}-[a-z0-9-]+\.yaml$/;
+export const THEORY_FILE_PATTERN = /^theory\/\d{2}-[a-z0-9-]+\.(en|ru)\.mdx$/;
+export const EXERCISE_FILE_PATTERN = /^exercises\/\d{2}-[a-z0-9-]+\.(en|ru)\.yaml$/;
 
 export const TopicLanguage = z.enum(['en', 'ru']);
 export type TopicLanguage = z.infer<typeof TopicLanguage>;
@@ -34,12 +34,19 @@ export const TopicConcept = z.object({
 });
 export type TopicConcept = z.infer<typeof TopicConcept>;
 
+const fileLanguage = (filename: string): TopicLanguage | undefined => {
+  if (filename.endsWith('.en.mdx') || filename.endsWith('.en.yaml')) return 'en';
+  if (filename.endsWith('.ru.mdx') || filename.endsWith('.ru.yaml')) return 'ru';
+  return undefined;
+};
+
 export const TopicManifest = z
   .object({
     slug: z.string().regex(SLUG_PATTERN).min(3).max(60),
     title: z.string().min(3).max(80),
     version: z.string().regex(SEMVER_PATTERN),
-    language: TopicLanguage,
+    availableLanguages: z.array(TopicLanguage).min(1),
+    primaryLanguage: TopicLanguage,
     difficulty: TopicDifficulty,
     estimatedHours: z.number().min(0.25).max(200),
     runtime: TopicRuntime,
@@ -62,17 +69,52 @@ export const TopicManifest = z
         message: `estimatedHours (${manifest.estimatedHours}h = ${expectedTotalMinutes}min) drifts more than 25% from sum of concepts (${actualMinutes}min)`,
       });
     }
+    const uniqueAvailable = new Set(manifest.availableLanguages);
+    if (uniqueAvailable.size !== manifest.availableLanguages.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['availableLanguages'],
+        message: 'availableLanguages must not contain duplicates',
+      });
+    }
+    if (!uniqueAvailable.has(manifest.primaryLanguage)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['primaryLanguage'],
+        message: 'primaryLanguage must be listed in availableLanguages',
+      });
+    }
     const conceptIds = new Set<string>();
-    for (const concept of manifest.concepts) {
+    for (const [index, concept] of manifest.concepts.entries()) {
       if (conceptIds.has(concept.id)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['concepts'],
+          path: ['concepts', index, 'id'],
           message: `Duplicate concept id "${concept.id}" within topic "${folderInferredFromSlug}"`,
         });
       }
       conceptIds.add(concept.id);
+      for (const lang of manifest.availableLanguages) {
+        const hasTheory = concept.theoryFiles.some((file) => fileLanguage(file) === lang);
+        const hasExercise = concept.exerciseFiles.some((file) => fileLanguage(file) === lang);
+        if (!hasTheory) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['concepts', index, 'theoryFiles'],
+            message: `Concept "${concept.id}" has no theory file for language "${lang}"`,
+          });
+        }
+        if (!hasExercise) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['concepts', index, 'exerciseFiles'],
+            message: `Concept "${concept.id}" has no exercise file for language "${lang}"`,
+          });
+        }
+      }
     }
   });
 
 export type TopicManifest = z.infer<typeof TopicManifest>;
+
+export const languageOfTopicFile = fileLanguage;

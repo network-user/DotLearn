@@ -1,8 +1,10 @@
 import { useState } from 'react';
 
 import { Link, useNavigate } from '@tanstack/react-router';
+import { useTranslation } from 'react-i18next';
 
 export const AddTopicButton = () => {
+  const { t } = useTranslation('addTopic');
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -20,27 +22,25 @@ export const AddTopicButton = () => {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        + Add topic
+        {t('button')}
       </button>
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 mt-2 w-80 rounded-lg border border-zinc-800 bg-zinc-900 shadow-xl p-2"
+          className="absolute right-0 mt-2 w-80 rounded-lg border border-border-base bg-surface shadow-xl p-2"
           onMouseLeave={() => setOpen(false)}
         >
           <button
             type="button"
             onClick={goSubmit}
-            className="w-full text-left px-3 py-2 rounded-md hover:bg-zinc-800"
+            className="w-full text-left px-3 py-2 rounded-md hover:bg-surface-2"
           >
-            <div className="text-sm font-medium text-zinc-100">Suggest a topic</div>
-            <div className="text-xs text-zinc-400 mt-0.5">
-              Fill a short form. Goes to the maintainer queue for review.
-            </div>
+            <div className="text-sm font-medium text-fg">{t('suggest')}</div>
+            <div className="text-xs text-fg-muted mt-0.5">{t('suggestHint')}</div>
           </button>
           <Link
             to="/"
-            className="block px-3 py-2 rounded-md hover:bg-zinc-800"
+            className="block px-3 py-2 rounded-md hover:bg-surface-2"
             onClick={() => setOpen(false)}
           >
             <a
@@ -50,10 +50,8 @@ export const AddTopicButton = () => {
               className="block"
               onClick={(event) => event.stopPropagation()}
             >
-              <div className="text-sm font-medium text-zinc-100">Open a Pull Request</div>
-              <div className="text-xs text-zinc-400 mt-0.5">
-                Use the lesson-forge skill locally, then push and open a PR.
-              </div>
+              <div className="text-sm font-medium text-fg">{t('pr')}</div>
+              <div className="text-xs text-fg-muted mt-0.5">{t('prHint')}</div>
             </a>
           </Link>
         </div>

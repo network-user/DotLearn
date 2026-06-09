@@ -12,4 +12,5 @@ export interface SubmissionsRepository {
   save(submission: SubmissionEntity): Promise<void>;
   findById(id: string): Promise<SubmissionEntity | null>;
   findMany(filter: FindManyFilter): Promise<SubmissionEntity[]>;
+  findAll(): Promise<SubmissionEntity[]>;
 }

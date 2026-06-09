@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AdminSubmissionsController } from './admin-submissions.controller';
-import { InMemorySubmissionsRepository } from './infrastructure/in-memory-submissions.repository';
+import { JsonFileSubmissionsRepository } from './infrastructure/json-file-submissions.repository';
 import { SUBMISSIONS_REPOSITORY } from './infrastructure/submissions.repository';
 import { SubmissionsController } from './submissions.controller';
 import { SubmissionsService } from './submissions.service';
@@ -12,9 +12,9 @@ import { SubmissionsService } from './submissions.service';
     SubmissionsService,
     {
       provide: SUBMISSIONS_REPOSITORY,
-      useClass: InMemorySubmissionsRepository,
+      useClass: JsonFileSubmissionsRepository,
     },
   ],
-  exports: [SubmissionsService],
+  exports: [SubmissionsService, SUBMISSIONS_REPOSITORY],
 })
 export class SubmissionsModule {}
