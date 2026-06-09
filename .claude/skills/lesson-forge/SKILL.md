@@ -40,9 +40,17 @@ Extract:
 - **Depth** ("introduction", "deep dive", "beginner to intermediate")
 - **Estimated hours** the learner should spend
 - **Runtime** required (sql, python, javascript, theory-only)
-- **Languages** the topic must ship in (subset of `en`, `ru`) and which one is the **primary** (original). DotLearn defaults primary to `ru` when the user is Russian-speaking; otherwise to `en`.
+- **Languages** the topic must ship in (subset of `en`, `ru`) and which one is the **primary** (original).
 
-If anything critical is missing, ask the user **once** with a structured question. Do not proceed without these five fields.
+**Language defaults — do not ask if the request itself reveals the answer.** Detect the user's working language from the current message and any preceding turns:
+
+- Request in Russian (or user has been writing in Russian) → default `availableLanguages: ["ru"]`, `primaryLanguage: "ru"`.
+- Request in English → default `availableLanguages: ["en"]`, `primaryLanguage: "en"`.
+- User explicitly says "bilingual"/"оба языка"/"both" → `availableLanguages: ["ru", "en"]` and ask which is primary if not obvious.
+
+Russian is DotLearn's primary user-facing language; when in doubt for a Russian-speaking user, prefer Russian.
+
+If anything else critical is missing (subject, depth, hours, runtime), ask the user **once** with a structured question. Do not proceed without those four fields plus the resolved language defaults.
 
 ### 2. Discover existing topics
 

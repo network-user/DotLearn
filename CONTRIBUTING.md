@@ -25,11 +25,13 @@ Every topic lives under `topics/<slug>/` and must contain:
 
 ```
 topics/<slug>/
-├── manifest.json          # validated by packages/contracts Zod schema
+├── manifest.json                # validated by packages/contracts Zod schema
 ├── README.md
-├── theory/<NN>-*.mdx      # ordered lesson files
-└── exercises/<NN>-*.yaml  # YAML matching exercise.schema
+├── theory/<NN>-*.<lang>.mdx     # ordered lesson files, one per available language
+└── exercises/<NN>-*.<lang>.yaml # YAML matching exercise.schema
 ```
+
+`<lang>` is `en` or `ru`. Every language the manifest declares in `availableLanguages` must have matching `.<lang>.mdx` and `.<lang>.yaml` files for every concept. The manifest also declares a `primaryLanguage` (used as fallback when the learner's UI locale isn't available).
 
 Optional:
 
