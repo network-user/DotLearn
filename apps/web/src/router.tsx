@@ -6,8 +6,10 @@ import {
   Route,
   Router,
   createBrowserHistory,
+  useRouterState,
 } from '@tanstack/react-router';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { PageTransition } from './components/ui/PageTransition';
 import { Skeleton } from './components/ui/Skeleton';
@@ -39,16 +41,23 @@ const PageFallback = () => (
   </div>
 );
 
-const rootRoute = new RootRoute({
-  component: () => (
+const RootComponent = () => {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  return (
     <Layout>
       <PageTransition>
-        <Suspense fallback={<PageFallback />}>
-          <Outlet />
-        </Suspense>
+        <ErrorBoundary variant="section" resetKey={pathname}>
+          <Suspense fallback={<PageFallback />}>
+            <Outlet />
+          </Suspense>
+        </ErrorBoundary>
       </PageTransition>
     </Layout>
-  ),
+  );
+};
+
+const rootRoute = new RootRoute({
+  component: RootComponent,
 });
 
 const homeRoute = new Route({

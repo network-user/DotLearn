@@ -17,6 +17,7 @@ import { GlassSurface } from '@/components/ui/GlassSurface';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
+import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
 import { effectiveLanguage, loadTopic } from '@/lib/topics';
 import { useStreak, useTopicProgress } from '@/lib/use-progress';
@@ -243,7 +244,7 @@ interface ConceptRailProps {
   bundle: TopicBundle;
   activeConceptId: string | undefined;
   onSelect: (conceptId: string) => void;
-  progress: Map<string, import('@/lib/progress-db').ProgressRecord>;
+  progress: Map<string, ProgressRecord>;
 }
 
 interface ConceptStat {
