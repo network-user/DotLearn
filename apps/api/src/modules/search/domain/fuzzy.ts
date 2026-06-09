@@ -10,23 +10,21 @@ export const levenshtein = (a: string, b: string): number => {
   if (a === b) return 0;
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
-  const previous: number[] = new Array(b.length + 1);
-  const current: number[] = new Array(b.length + 1);
-  for (let j = 0; j <= b.length; j += 1) previous[j] = j;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  const current = new Array<number>(b.length + 1).fill(0);
   for (let i = 1; i <= a.length; i += 1) {
     current[0] = i;
     const ai = a.charCodeAt(i - 1);
     for (let j = 1; j <= b.length; j += 1) {
       const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
-      current[j] = Math.min(
-        current[j - 1] + 1,
-        previous[j] + 1,
-        previous[j - 1] + cost,
-      );
+      const insertion = (current[j - 1] ?? 0) + 1;
+      const deletion = (previous[j] ?? 0) + 1;
+      const substitution = (previous[j - 1] ?? 0) + cost;
+      current[j] = Math.min(insertion, deletion, substitution);
     }
-    for (let j = 0; j <= b.length; j += 1) previous[j] = current[j];
+    previous = current.slice();
   }
-  return previous[b.length];
+  return previous[b.length] ?? 0;
 };
 
 const fuzzinessThreshold = (token: string): number => {

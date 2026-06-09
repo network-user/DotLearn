@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { GlassSurface } from '@/components/ui/GlassSurface';
 import { ProgressRing } from '@/components/ui/ProgressRing';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
 import { listManifests, loadTopic } from '@/lib/topics';
@@ -343,10 +344,9 @@ const Stat3 = ({
 const SkeletonGrid = () => (
   <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" aria-hidden>
     {[0, 1, 2].map((index) => (
-      <li
-        key={index}
-        className="h-48 rounded-2xl border border-border-base bg-surface/40 animate-pulse"
-      />
+      <li key={index}>
+        <Skeleton rounded="2xl" className="h-48" />
+      </li>
     ))}
   </ul>
 );

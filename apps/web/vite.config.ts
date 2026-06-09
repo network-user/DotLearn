@@ -18,8 +18,9 @@ export default defineConfig({
           [
             rehypeShiki,
             {
-              themes: { light: 'github-light', dark: 'github-dark' },
-              defaultColor: 'dark',
+              themes: { light: 'vitesse-light', dark: 'vesper' },
+              defaultColor: false,
+              cssVariablePrefix: '--shiki-',
             },
           ],
         ],
@@ -40,6 +41,23 @@ export default defineConfig({
     port: 5173,
     fs: {
       allow: [resolve(__dirname, '../..')],
+    },
+  },
+  build: {
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('monaco-editor')) return 'monaco';
+          if (id.includes('@monaco-editor/react')) return 'monaco';
+          if (id.includes('sql.js')) return 'sqljs';
+          if (id.includes('pyodide')) return 'pyodide';
+          if (id.includes('shiki') || id.includes('@shikijs')) return 'shiki';
+          if (id.includes('framer-motion')) return 'motion';
+          if (id.includes('@radix-ui')) return 'radix';
+          return undefined;
+        },
+      },
     },
   },
 });

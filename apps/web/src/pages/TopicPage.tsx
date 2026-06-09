@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { GlassSurface } from '@/components/ui/GlassSurface';
 import { ProgressRing } from '@/components/ui/ProgressRing';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { getTheory } from '@/lib/theory';
 import { effectiveLanguage, loadTopic } from '@/lib/topics';
@@ -528,11 +529,11 @@ const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio
 
 const TopicSkeleton = () => (
   <div className="space-y-6" aria-hidden>
-    <div className="h-32 rounded-2xl bg-surface/40 animate-pulse" />
+    <Skeleton rounded="2xl" className="h-32" />
     <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
-      <div className="h-72 rounded-2xl bg-surface/40 animate-pulse" />
-      <div className="h-96 rounded-2xl bg-surface/40 animate-pulse" />
-      <div className="hidden xl:block h-72 rounded-2xl bg-surface/40 animate-pulse" />
+      <Skeleton rounded="2xl" className="h-72" />
+      <Skeleton rounded="2xl" className="h-96" />
+      <Skeleton rounded="2xl" className="hidden xl:block h-72" />
     </div>
   </div>
 );

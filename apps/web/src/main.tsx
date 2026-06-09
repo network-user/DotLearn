@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { CommandPalette } from './components/ui/CommandPalette';
 import './lib/i18n';
 import { applyTheme, readStoredTheme } from './lib/theme';
 import { router } from './router';
@@ -22,6 +23,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <ErrorBoundary>
       <RouterProvider router={router} />
+      <CommandPalette />
       <Toaster
         theme="system"
         position="bottom-right"

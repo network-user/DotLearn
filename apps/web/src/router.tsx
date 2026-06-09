@@ -7,9 +7,11 @@ import {
 } from '@tanstack/react-router';
 
 import { Layout } from './components/Layout';
+import { PageTransition } from './components/ui/PageTransition';
 import { AdminPage } from './pages/AdminPage';
 import { HomePage } from './pages/HomePage';
 import { ProgressPage } from './pages/ProgressPage';
+import { ProposalsPage } from './pages/ProposalsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SubmitTopicPage } from './pages/SubmitTopicPage';
 import { TopicPage } from './pages/TopicPage';
@@ -17,7 +19,9 @@ import { TopicPage } from './pages/TopicPage';
 const rootRoute = new RootRoute({
   component: () => (
     <Layout>
-      <Outlet />
+      <PageTransition>
+        <Outlet />
+      </PageTransition>
     </Layout>
   ),
 });
@@ -38,6 +42,12 @@ const submitRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/submit',
   component: SubmitTopicPage,
+});
+
+const proposalsRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/proposals',
+  component: ProposalsPage,
 });
 
 const adminRoute = new Route({
@@ -62,6 +72,7 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
   submitRoute,
+  proposalsRoute,
   adminRoute,
   progressRoute,
   settingsRoute,

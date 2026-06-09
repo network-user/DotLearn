@@ -1,15 +1,35 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, UsePipes } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UsePipes,
+} from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 
-import { ReviewSubmissionInput, type Submission, SubmissionStatus } from '@dotlearn/contracts';
+import {
+  MarkMaterializedInput,
+  ReviewSubmissionInput,
+  type Submission,
+  SubmissionStatus,
+} from '@dotlearn/contracts';
 
 import { ZodBodyPipe } from '../../common/zod/zod-body.pipe';
+import { SubmissionsSearchIndexer } from '../search/submissions-search.indexer';
 import { SubmissionsService } from './submissions.service';
 
 @ApiTags('admin')
 @Controller('admin/submissions')
 export class AdminSubmissionsController {
-  constructor(private readonly submissions: SubmissionsService) {}
+  constructor(
+    private readonly submissions: SubmissionsService,
+    private readonly indexer: SubmissionsSearchIndexer,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List submissions, optionally filtered by status.' })
@@ -31,6 +51,21 @@ export class AdminSubmissionsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: ReviewSubmissionInput,
   ): Promise<Submission> {
-    return this.submissions.review(id, body);
+    const result = await this.submissions.review(id, body);
+    await this.indexer.indexOne(id);
+    return result;
+  }
+
+  @Post(':id/materialize')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark an approved submission as materialized (topic added to repo).' })
+  @UsePipes(new ZodBodyPipe(MarkMaterializedInput))
+  async materialize(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() body: MarkMaterializedInput,
+  ): Promise<Submission> {
+    const result = await this.submissions.markMaterialized(id, body);
+    await this.indexer.indexOne(id);
+    return result;
   }
 }

@@ -16,7 +16,7 @@ Every `prerequisites[]` entry is a slug of an existing topic.
 
 ## G4 — Files referenced exist
 
-Every `theoryFiles[]` and `exerciseFiles[]` entry points to a file that exists on disk and has the right extension.
+Every `theoryFiles[]` and `exerciseFiles[]` entry points to a file that exists on disk and matches the language-suffixed pattern (`theory/<NN>-*.<lang>.mdx`, `exercises/<NN>-*.<lang>.yaml`). For every concept, each language listed in the manifest's `availableLanguages` must be represented by at least one theory file and one exercise file.
 
 ## G5 — Exercise schemas valid
 

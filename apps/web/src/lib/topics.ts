@@ -10,6 +10,8 @@ import {
   type TopicSource,
 } from '@dotlearn/lesson-engine';
 
+import { listHiddenTopics } from './api-client';
+
 const manifestModules = import.meta.glob<{ default: unknown }>(
   '../../../../topics/*/manifest.json',
   { eager: true },
@@ -101,15 +103,39 @@ export const loadTopic = async (
 };
 
 let manifestList: TopicManifest[] | undefined;
+let hiddenSlugsPromise: Promise<Set<string>> | undefined;
+
+const loadHiddenSlugs = async (): Promise<Set<string>> => {
+  if (!hiddenSlugsPromise) {
+    hiddenSlugsPromise = listHiddenTopics()
+      .then((items) => new Set(items.map((item) => item.slug)))
+      .catch(() => new Set<string>());
+  }
+  return hiddenSlugsPromise;
+};
+
+export const invalidateHiddenTopicsCache = (): void => {
+  hiddenSlugsPromise = undefined;
+  manifestList = undefined;
+};
 
 export const listManifests = async (): Promise<TopicManifest[]> => {
   if (manifestList) {
     return manifestList;
   }
-  const slugs = await listTopicSlugs();
+  const [slugs, hidden] = await Promise.all([listTopicSlugs(), loadHiddenSlugs()]);
   const bundles = await Promise.all(slugs.map((slug) => loadRawBundle(slug)));
   manifestList = bundles
     .map((bundle) => bundle.manifest)
+    .filter((manifest) => !hidden.has(manifest.slug))
     .sort((a, b) => a.title.localeCompare(b.title));
   return manifestList;
+};
+
+export const listAllManifestsIgnoringHidden = async (): Promise<TopicManifest[]> => {
+  const slugs = await listTopicSlugs();
+  const bundles = await Promise.all(slugs.map((slug) => loadRawBundle(slug)));
+  return bundles
+    .map((bundle) => bundle.manifest)
+    .sort((a, b) => a.title.localeCompare(b.title));
 };

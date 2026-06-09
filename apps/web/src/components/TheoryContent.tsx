@@ -3,6 +3,9 @@ import { useState, type ComponentType, type ReactNode } from 'react';
 import { MDXProvider } from '@mdx-js/react';
 import { ChevronRight, Info, Lightbulb, Sparkles, TriangleAlert } from 'lucide-react';
 
+import { PyDemo } from '@/components/sandbox/PyDemo';
+import { PyStepper } from '@/components/sandbox/PyStepper';
+import { SideSql } from '@/components/sandbox/SideSql';
 import { cx } from '@/components/ui/cx';
 
 interface TheoryContentProps {
@@ -262,6 +265,9 @@ const mdxComponents = {
   Steps,
   KeyTakeaways,
   SideViz,
+  SideSql,
+  PyDemo,
+  PyStepper,
 };
 
 export const TheoryContent = ({ Component }: TheoryContentProps) => (

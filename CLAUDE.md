@@ -41,6 +41,36 @@ NestJS with Layered DDD:
 - Sandbox in `packages/sandbox`, executed in Web Workers
 - AI calls via `packages/ai-providers` (BYOK)
 
+## Internationalization (i18n)
+
+DotLearn is bilingual: **Russian is primary and the fallback language; English is secondary**. The runtime locale is detected from `localStorage` → `navigator.language`, defaulting to `ru` when neither yields `ru`/`en`. Users can override it via the switcher in the header or on `/settings`.
+
+### Adding UI strings
+
+- Strings live in `apps/web/src/locales/{ru,en}.json`, organized by namespace (`common`, `nav`, `home`, `topic`, `progress`, `settings`, `admin`, `submit`, `runners`, `errors`, `heatmap`, `theme`, `addTopic`). Add a key to **both** files; never ship a key in one and not the other.
+- In components, use `const { t } = useTranslation('<namespace>')` and `t('key.path')`. For embedded markup, use `<Trans i18nKey="ns:key" components={...} />`.
+- For values that need a fallback chain on a dynamic key, pass `defaultValue` to `t()`.
+- Never hardcode a user-facing string. Toasts, ARIA labels, placeholders, and error messages all go through `t()`.
+
+### Multilingual topics
+
+- `TopicManifest` declares `availableLanguages: ("en" | "ru")[]` (deduplicated, non-empty) and `primaryLanguage` (must be in `availableLanguages`). The primary is the original-language content and serves as the per-topic fallback.
+- File naming: `theory/<NN>-<concept-id>.<lang>.mdx` and `exercises/<NN>-<concept-id>.<lang>.yaml`. Each concept must have one file per language listed in `availableLanguages`.
+- Exercise `id` values are shared across language variants of the same exercise — translation, not duplication.
+- The topic loader (`apps/web/src/lib/topics.ts`) is locale-aware: it filters concept files by the current locale and falls back to `primaryLanguage` when the requested locale is unavailable. `TopicPage` shows an amber banner when the fallback kicks in.
+- `HomePage` renders one badge per available language on each topic card.
+
+### Editing the contract
+
+Any change to language fields or file-suffix conventions is a **breaking change**. Required steps, in one PR:
+
+1. Update `packages/contracts/src/topic.schema.ts` (Zod) and `submission.schema.ts` if proposal shape changes.
+2. Update `apps/web/src/lib/topics.ts` resolver.
+3. Update both `.claude/skills/lesson-forge/schemas/manifest.schema.json` and `.cursor/skills/lesson-forge/schemas/manifest.schema.json`.
+4. Update `reference/topic-contract.md` and `reference/quality-gates.md` in both skill locations.
+5. Migrate every existing topic under `topics/` so `pnpm validate` stays green.
+6. Run `pnpm sync:skills` (and `pnpm typecheck` + `pnpm validate`).
+
 ## Code style
 
 - **No comments in code.** Express intent through names and types. Comments allowed in MDX prose only, not in fenced code blocks.

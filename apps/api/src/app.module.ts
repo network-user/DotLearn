@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 
+import { HiddenTopicsModule } from './modules/hidden-topics/hidden-topics.module';
 import { SubmissionsModule } from './modules/submissions/submissions.module';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -22,6 +23,7 @@ const isProduction = process.env.NODE_ENV === 'production';
       },
     }),
     SubmissionsModule,
+    HiddenTopicsModule,
   ],
 })
 export class AppModule {}
