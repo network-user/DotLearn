@@ -35,6 +35,7 @@ export type {
   ExerciseFileBundle,
   TheoryFile,
   TopicBundle,
+  TopicLoadOptions,
   TopicSource,
 } from './loader/source';
 export { TopicLoadError, TopicNotFoundError } from './loader/source';

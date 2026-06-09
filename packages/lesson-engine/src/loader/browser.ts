@@ -1,4 +1,4 @@
-import type { TopicManifest } from '@dotlearn/contracts';
+import { languageOfTopicFile, type TopicManifest } from '@dotlearn/contracts';
 
 import { parseExerciseFile, parseManifest } from './parse';
 import {
@@ -8,6 +8,7 @@ import {
   type ExerciseFileBundle,
   type TheoryFile,
   type TopicBundle,
+  type TopicLoadOptions,
   type TopicSource,
 } from './source';
 
@@ -70,18 +71,23 @@ const indexGlobs = (input: TopicGlobInput): ParsedGlobs => {
   return { manifests, theories, exercises };
 };
 
+const includeAll = (): boolean => true;
+
 const buildConcepts = (
   slug: string,
   manifest: TopicManifest,
   theoryBucket: Map<string, string>,
   exerciseBucket: Map<string, string>,
+  includeFile: (filename: string) => boolean = includeAll,
 ): ConceptBundle[] =>
   manifest.concepts.map((concept) => {
-    const theory: TheoryFile[] = concept.theoryFiles.map((filename) => {
+    const theory: TheoryFile[] = concept.theoryFiles.filter(includeFile).map((filename) => {
       const source = theoryBucket.get(filename) ?? '';
       return { filename, source };
     });
-    const exercises: ExerciseFileBundle[] = concept.exerciseFiles.map((filename) => {
+    const exercises: ExerciseFileBundle[] = concept.exerciseFiles
+      .filter(includeFile)
+      .map((filename) => {
       const raw = exerciseBucket.get(filename);
       if (raw === undefined) {
         throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
@@ -143,7 +149,7 @@ export const createLazyTopicSource = (input: LazyTopicGlobInput): TopicSource =>
 
   const list = async (): Promise<string[]> => [...manifests.keys()].sort();
 
-  const load = async (slug: string): Promise<TopicBundle> => {
+  const load = async (slug: string, options?: TopicLoadOptions): Promise<TopicBundle> => {
     const rawManifest = manifests.get(slug);
     if (rawManifest === undefined) {
       throw new TopicNotFoundError(slug);
@@ -152,10 +158,19 @@ export const createLazyTopicSource = (input: LazyTopicGlobInput): TopicSource =>
     const importerBucket =
       exerciseImporters.get(slug) ?? new Map<string, () => Promise<string>>();
 
+    const languages = options?.languages;
+    const includeFile = (filename: string): boolean => {
+      if (!languages) {
+        return true;
+      }
+      const language = languageOfTopicFile(filename);
+      return language !== undefined && languages.includes(language);
+    };
+
     const exerciseBucket = new Map<string, string>();
     await Promise.all(
       manifest.concepts.flatMap((concept) =>
-        concept.exerciseFiles.map(async (filename) => {
+        concept.exerciseFiles.filter(includeFile).map(async (filename) => {
           const importer = importerBucket.get(filename);
           if (!importer) {
             throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
@@ -167,7 +182,7 @@ export const createLazyTopicSource = (input: LazyTopicGlobInput): TopicSource =>
 
     return {
       manifest,
-      concepts: buildConcepts(slug, manifest, new Map<string, string>(), exerciseBucket),
+      concepts: buildConcepts(slug, manifest, new Map<string, string>(), exerciseBucket, includeFile),
     };
   };
 

@@ -43,7 +43,7 @@ const useRelativeFormatter = () => {
 };
 
 export const ProgressPage = () => {
-  const { t, i18n } = useTranslation('progress');
+  const { t } = useTranslation('progress');
   const formatRelative = useRelativeFormatter();
   const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
   const activity = useActivity();
@@ -62,9 +62,10 @@ export const ProgressPage = () => {
     };
   }, []);
 
+  const language = getCurrentLanguage();
+
   const rows = useMemo<TopicRow[]>(() => {
     if (!manifests) return [];
-    const language = getCurrentLanguage();
     const byTopic = new Map<string, { passed: number; failed: number; lastAttemptAt?: string }>();
     for (const record of progressRecords ?? []) {
       const entry = byTopic.get(record.topicSlug) ?? { passed: 0, failed: 0 };
@@ -89,7 +90,7 @@ export const ProgressPage = () => {
         lastAttemptAt: stats.lastAttemptAt,
       };
     });
-  }, [manifests, progressRecords, i18n.resolvedLanguage]);
+  }, [manifests, progressRecords, language]);
 
   const totalAttempted = useMemo(
     () => activity.reduce((sum, entry) => sum + entry.exercisesAttempted, 0),

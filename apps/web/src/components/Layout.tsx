@@ -28,7 +28,7 @@ const NavLink = ({ to, active, label }: NavLinkProps) => (
   <Link
     to={to}
     className={cx(
-      'relative px-3 h-9 inline-flex items-center rounded-md text-[13px] tracking-snug transition-colors duration-fast',
+      'relative px-2 lg:px-3 h-9 inline-flex items-center rounded-md text-[13px] tracking-snug transition-colors duration-fast',
       active ? 'text-fg' : 'text-fg-muted hover:text-fg',
     )}
   >
@@ -58,7 +58,7 @@ export const Layout = ({ children }: LayoutProps) => {
           <div className="glass glass--medium glass--bordered rounded-2xl">
             <span aria-hidden className="glass__highlight" />
             <span aria-hidden className="glass__shine" />
-            <div className="glass__content flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-5 h-14">
+            <div className="glass__content flex items-center justify-between gap-2 lg:gap-4 px-4 sm:px-5 h-14">
               <Link to="/" className="group flex items-center gap-2.5 shrink-0">
                 <span className="relative grid place-items-center size-7 rounded-md bg-gradient-to-br from-accent via-accent-2 to-accent-3 shadow-glow">
                   <span className="size-1.5 rounded-full bg-white/95" />
@@ -85,7 +85,7 @@ export const Layout = ({ children }: LayoutProps) => {
               <div className="flex items-center gap-1.5 shrink-0">
                 <LanguageSwitcher />
                 <ThemeToggle />
-                <span className="hidden sm:block h-5 w-px bg-border-base mx-1" aria-hidden />
+                <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
                 <AddTopicButton />
               </div>
             </div>

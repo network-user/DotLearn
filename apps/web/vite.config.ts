@@ -7,6 +7,7 @@ import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
 import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 import { topicStatsPlugin } from './vite-plugin-topic-stats';
 
@@ -31,6 +32,49 @@ export default defineConfig({
       }),
     },
     react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.svg'],
+      manifest: {
+        name: '.learn',
+        short_name: '.learn',
+        description: 'Local-first learning workbench',
+        lang: 'ru',
+        start_url: '/',
+        display: 'standalone',
+        background_color: '#0b0d14',
+        theme_color: '#0b0d14',
+        icons: [
+          {
+            src: '/favicon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any',
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,woff2,wasm}'],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        navigateFallback: '/index.html',
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/pyodide\//,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'pyodide-runtime',
+              expiration: {
+                maxEntries: 60,
+                maxAgeSeconds: 60 * 60 * 24 * 90,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+        ],
+      },
+    }),
   ],
   resolve: {
     alias: {

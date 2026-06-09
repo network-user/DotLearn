@@ -12,6 +12,7 @@ import {
 } from '@dotlearn/lesson-engine';
 
 import { listHiddenTopics } from './api-client';
+import { getCurrentLanguage } from './i18n';
 
 const manifestModules = import.meta.glob<{ default: unknown }>(
   '../../../../topics/*/manifest.json',
@@ -97,30 +98,42 @@ const filterBundleByLanguage = (
   concepts: bundle.concepts.map((concept) => filterConceptByLanguage(concept, language)),
 });
 
-const loadRawBundle = (slug: string): Promise<TopicBundle> => {
-  const cached = rawCache.get(slug);
+const loadRawBundle = (slug: string, language?: TopicLanguage): Promise<TopicBundle> => {
+  const cacheKey = language ? `${slug}::${language}` : slug;
+  const cached = rawCache.get(cacheKey);
   if (cached) return cached;
-  const pending = source.load(slug);
-  rawCache.set(slug, pending);
+  const pending = source.load(slug, language ? { languages: [language] } : undefined);
+  rawCache.set(cacheKey, pending);
   pending.catch(() => {
-    rawCache.delete(slug);
+    rawCache.delete(cacheKey);
   });
   return pending;
 };
 
 export const prefetchTopic = (slug: string): void => {
-  void loadRawBundle(slug).catch(() => undefined);
+  let language: TopicLanguage | undefined;
+  try {
+    const manifest = manifestOf(slug);
+    language = manifest ? effectiveLanguage(manifest, getCurrentLanguage()) : undefined;
+  } catch {
+    language = undefined;
+  }
+  void loadRawBundle(slug, language).catch(() => undefined);
 };
 
 export const loadTopic = async (
   slug: string,
   language: TopicLanguage,
 ): Promise<TopicBundle> => {
-  const raw = await loadRawBundle(slug);
-  const lang = effectiveLanguage(raw.manifest, language);
+  const manifest = manifestOf(slug);
+  if (!manifest) {
+    return loadRawBundle(slug);
+  }
+  const lang = effectiveLanguage(manifest, language);
   const cacheKey = `${slug}::${lang}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
+  const raw = await loadRawBundle(slug, lang);
   const filtered = filterBundleByLanguage(raw, lang);
   cache.set(cacheKey, filtered);
   return filtered;

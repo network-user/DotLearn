@@ -18,11 +18,15 @@ export const AddTopicButton = () => {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-400 text-white shadow-sm"
+        className="px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap bg-indigo-500 hover:bg-indigo-400 text-white shadow-sm"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={t('button')}
       >
-        {t('button')}
+        <span className="md:hidden lg:inline">{t('button')}</span>
+        <span className="hidden md:inline lg:hidden" aria-hidden>
+          +
+        </span>
       </button>
       {open ? (
         <div

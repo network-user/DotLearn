@@ -49,7 +49,7 @@ const runtimeIcon = (runtime: string) => {
 };
 
 export const HomePage = () => {
-  const { t, i18n } = useTranslation('home');
+  const { t } = useTranslation('home');
   const { t: tCommon } = useTranslation('common');
   const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
@@ -67,9 +67,10 @@ export const HomePage = () => {
     };
   }, []);
 
+  const language = getCurrentLanguage();
+
   const rows = useMemo<TopicRow[]>(() => {
     if (!manifests) return [];
-    const language = getCurrentLanguage();
     const passedByTopic = new Map<string, number>();
     for (const record of progressRecords ?? []) {
       if (record.status === 'pass') {
@@ -81,7 +82,7 @@ export const HomePage = () => {
       total: topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0,
       passed: passedByTopic.get(manifest.slug) ?? 0,
     }));
-  }, [manifests, progressRecords, i18n.resolvedLanguage]);
+  }, [manifests, progressRecords, language]);
 
   const filteredRows = useMemo(() => {
     if (filter === 'all') return rows;

@@ -1,4 +1,4 @@
-import type { Exercise, TopicManifest } from '@dotlearn/contracts';
+import type { Exercise, TopicLanguage, TopicManifest } from '@dotlearn/contracts';
 
 export interface TheoryFile {
   filename: string;
@@ -21,9 +21,13 @@ export interface TopicBundle {
   concepts: ConceptBundle[];
 }
 
+export interface TopicLoadOptions {
+  languages?: TopicLanguage[];
+}
+
 export interface TopicSource {
   list(): Promise<string[]>;
-  load(slug: string): Promise<TopicBundle>;
+  load(slug: string, options?: TopicLoadOptions): Promise<TopicBundle>;
 }
 
 export class TopicNotFoundError extends Error {
