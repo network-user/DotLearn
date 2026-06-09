@@ -4,6 +4,7 @@ import type { TopicManifest } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
 
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
@@ -137,8 +139,18 @@ interface HeroStats {
   runtimes: number;
 }
 
+const heroRise = (reduceMotion: boolean, delay: number) =>
+  reduceMotion
+    ? {}
+    : {
+        initial: { opacity: 0, y: 18, filter: 'blur(6px)' },
+        animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+        transition: { delay, duration: 0.55, ease: [0.22, 1, 0.36, 1] as const },
+      };
+
 const Hero = ({ stats }: { stats: HeroStats }) => {
   const { t } = useTranslation('home');
+  const reduceMotion = useReducedMotion() ?? false;
   const scrollToTopics = (): void => {
     const el = document.querySelector('#topics');
     el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -147,20 +159,34 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
     <section className="relative pt-2">
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-6 items-stretch">
         <div className="space-y-6">
-          <div className="inline-flex items-center gap-2 rounded-pill border border-border-base bg-surface/40 px-3 py-1 text-[11px] uppercase tracking-widest text-fg-subtle">
+          <motion.div
+            {...heroRise(reduceMotion, 0)}
+            className="inline-flex items-center gap-2 rounded-pill border border-border-base bg-surface/40 px-3 py-1 text-[11px] uppercase tracking-widest text-fg-subtle"
+          >
             <Sparkles size={12} className="text-accent" />
             <span>{t('eyebrow')}</span>
-          </div>
+          </motion.div>
           <h1 className="font-display text-[clamp(40px,7vw,72px)] leading-[1.02] tracking-display text-balance">
-            <span className="block">{t('heroLineA')}</span>
-            <span className="block bg-gradient-to-r from-accent via-accent-2 to-accent-3 bg-clip-text text-transparent italic">
+            <motion.span {...heroRise(reduceMotion, 0.08)} className="block">
+              {t('heroLineA')}
+            </motion.span>
+            <motion.span
+              {...heroRise(reduceMotion, 0.18)}
+              className="block bg-gradient-to-r from-accent via-accent-2 to-accent-3 bg-clip-text text-transparent italic"
+            >
               {t('heroLineB')}
-            </span>
+            </motion.span>
           </h1>
-          <p className="max-w-prose text-[15px] leading-relaxed text-fg-muted text-balance">
+          <motion.p
+            {...heroRise(reduceMotion, 0.28)}
+            className="max-w-prose text-[15px] leading-relaxed text-fg-muted text-balance"
+          >
             {t('heroSub')}
-          </p>
-          <div className="flex flex-wrap items-center gap-2 pt-1">
+          </motion.p>
+          <motion.div
+            {...heroRise(reduceMotion, 0.36)}
+            className="flex flex-wrap items-center gap-2 pt-1"
+          >
             <Button
               variant="primary"
               size="lg"
@@ -174,10 +200,12 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
                 {t('cta.submit')}
               </Button>
             </Link>
-          </div>
+          </motion.div>
         </div>
 
-        <HeroSidePanel stats={stats} />
+        <motion.div {...heroRise(reduceMotion, 0.22)} className="h-full">
+          <HeroSidePanel stats={stats} />
+        </motion.div>
       </div>
     </section>
   );
@@ -190,7 +218,7 @@ const HeroSidePanel = ({ stats }: { stats: HeroStats }) => {
       intensity="strong"
       tint="accent"
       noiseOverlay
-      className="relative overflow-hidden rounded-3xl"
+      className="relative overflow-hidden rounded-3xl h-full"
     >
       <div className="p-6 flex flex-col h-full justify-between gap-6 min-h-[260px]">
         <p className="text-[13px] leading-relaxed text-fg-muted">
@@ -211,7 +239,9 @@ const HeroSidePanel = ({ stats }: { stats: HeroStats }) => {
 
 const Stat = ({ value, label }: { value: number; label: string }) => (
   <div>
-    <div className="font-display text-3xl leading-none text-fg tabular-nums">{value}</div>
+    <div className="font-display text-3xl leading-none text-fg tabular-nums">
+      <AnimatedNumber value={value} />
+    </div>
     <div className="mt-1 text-[10px] uppercase tracking-widest text-fg-subtle">{label}</div>
   </div>
 );

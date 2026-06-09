@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { Link, useParams } from '@tanstack/react-router';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, BookOpen, Check, Flame, ListTree } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -137,14 +138,16 @@ export const TopicPage = () => {
         />
         <section className="min-w-0 space-y-6">
           {activeConcept && activeManifestConcept ? (
-            <ConceptPanel
-              slug={slug}
-              concept={activeManifestConcept}
-              theoryFiles={theoryFilenames}
-              exercises={conceptExercises}
-              passed={conceptPassed}
-              ratio={conceptRatio}
-            />
+            <ConceptTransition conceptId={activeConcept.conceptId}>
+              <ConceptPanel
+                slug={slug}
+                concept={activeManifestConcept}
+                theoryFiles={theoryFilenames}
+                exercises={conceptExercises}
+                passed={conceptPassed}
+                ratio={conceptRatio}
+              />
+            </ConceptTransition>
           ) : (
             <p className="text-fg-subtle">{t('noConcepts')}</p>
           )}
@@ -307,6 +310,30 @@ const ConceptRail = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
     </GlassSurface>
   </aside>
 );
+
+const ConceptTransition = ({
+  conceptId,
+  children,
+}: {
+  conceptId: string;
+  children: React.ReactNode;
+}) => {
+  const reduceMotion = useReducedMotion();
+  if (reduceMotion) return <>{children}</>;
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={conceptId}
+        initial={{ opacity: 0, y: 10, filter: 'blur(5px)' }}
+        animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+        exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }}
+        transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
+};
 
 interface ConceptPanelProps {
   slug: string;

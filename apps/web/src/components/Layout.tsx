@@ -67,7 +67,7 @@ export const Layout = ({ children }: LayoutProps) => {
                   <span className="size-1.5 rounded-full bg-white/95" />
                 </span>
                 <span className="font-display text-[20px] leading-none text-fg tracking-tightish">
-                  .dot<span className="text-fg-subtle">learn</span>
+                  .<span className="text-fg-subtle">learn</span>
                 </span>
               </Link>
 
