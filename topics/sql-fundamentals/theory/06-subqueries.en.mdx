@@ -1,0 +1,135 @@
+---
+title: Subqueries and CTEs
+summary: Pass a query's result into another query — inline as a subquery or named as a CTE.
+---
+
+# Subqueries and CTEs
+
+A **subquery** is a query nested inside another query. A **CTE** (Common
+Table Expression) is the same idea with a name, written above the main
+query so you can reference it like a temporary table.
+
+## Scalar subquery — one value
+
+A scalar subquery returns a single row, single column. Use it where a
+value would go.
+
+<SideSql
+  title="Books at or above average length"
+  fixture={`
+    CREATE TABLE book (
+      id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      pages INTEGER NOT NULL
+    );
+    INSERT INTO book VALUES
+      (1, 'A',  120),
+      (2, 'B',  300),
+      (3, 'C',  450),
+      (4, 'D',  900);
+  `}
+  query={`
+    SELECT title, pages
+    FROM book
+    WHERE pages >= (SELECT AVG(pages) FROM book)
+    ORDER BY pages;
+  `}
+/>
+
+The inner query is computed once and substituted in.
+
+## IN subquery — many values
+
+Use a subquery with `IN` when the right-hand side is a set of values
+coming from another query.
+
+<SideSql
+  title="Authors with at least one bestseller"
+  fixture={`
+    CREATE TABLE author (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+    CREATE TABLE sale (
+      book_id INTEGER NOT NULL,
+      author_id INTEGER NOT NULL,
+      copies INTEGER NOT NULL
+    );
+    INSERT INTO sale VALUES
+      (1, 1, 12000),
+      (2, 1, 800),
+      (3, 2, 9500),
+      (4, 3, 400);
+  `}
+  query={`
+    SELECT name
+    FROM author
+    WHERE id IN (SELECT author_id FROM sale WHERE copies >= 5000)
+    ORDER BY name;
+  `}
+/>
+
+## CTE — name the intermediate result
+
+When a subquery gets long or you need to reference the same result
+twice, lift it into a `WITH` clause.
+
+<SideSql
+  title="Same idea as a CTE"
+  fixture={`
+    CREATE TABLE author (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+    CREATE TABLE sale (
+      book_id INTEGER NOT NULL,
+      author_id INTEGER NOT NULL,
+      copies INTEGER NOT NULL
+    );
+    INSERT INTO sale VALUES
+      (1, 1, 12000),
+      (2, 1, 800),
+      (3, 2, 9500),
+      (4, 3, 400);
+  `}
+  query={`
+    WITH bestselling AS (
+      SELECT author_id
+      FROM sale
+      WHERE copies >= 5000
+    )
+    SELECT a.name
+    FROM author a
+    JOIN bestselling b ON b.author_id = a.id
+    ORDER BY a.name;
+  `}
+/>
+
+The query reads top to bottom now — first define the intermediate, then
+use it. Same plan, friendlier shape.
+
+<Callout type="tip" title="Reach for a CTE when…">
+- The subquery has its own joins or filters and is hard to scan inline.
+- You need the same intermediate result twice.
+- A reviewer would benefit from a name on the intermediate concept.
+</Callout>
+
+## EXISTS — "is there any match?"
+
+For pure presence checks, `EXISTS` is often clearer (and sometimes faster)
+than `IN`:
+
+```sql
+SELECT name
+FROM author a
+WHERE EXISTS (
+  SELECT 1 FROM sale s WHERE s.author_id = a.id AND s.copies >= 5000
+);
+```
+
+The subquery doesn't need to return a column — just whether it returns a
+row at all.

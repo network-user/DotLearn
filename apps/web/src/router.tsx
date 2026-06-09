@@ -50,9 +50,20 @@ const proposalsRoute = new Route({
   component: ProposalsPage,
 });
 
+const normalizeAdminPath = (raw: string | undefined): string => {
+  const fallback = '/admin';
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  const prefixed = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return prefixed.replace(/\/+$/, '') || fallback;
+};
+
+export const adminPath: string = normalizeAdminPath(import.meta.env.VITE_ADMIN_PATH);
+
 const adminRoute = new Route({
   getParentRoute: () => rootRoute,
-  path: '/admin',
+  path: adminPath,
   component: AdminPage,
 });
 

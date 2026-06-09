@@ -7,6 +7,7 @@ import { Toaster } from 'sonner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { CommandPalette } from './components/ui/CommandPalette';
 import './lib/i18n';
+import { AuthProvider } from './lib/auth/AuthContext';
 import { applyTheme, readStoredTheme } from './lib/theme';
 import { router } from './router';
 
@@ -22,17 +23,19 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <ErrorBoundary>
-      <RouterProvider router={router} />
-      <CommandPalette />
-      <Toaster
-        theme="system"
-        position="bottom-right"
-        toastOptions={{
-          classNames: {
-            toast: 'border border-border-base bg-surface/95 text-fg',
-          },
-        }}
-      />
+      <AuthProvider>
+        <RouterProvider router={router} />
+        <CommandPalette />
+        <Toaster
+          theme="system"
+          position="bottom-right"
+          toastOptions={{
+            classNames: {
+              toast: 'border border-border-base bg-surface/95 text-fg',
+            },
+          }}
+        />
+      </AuthProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

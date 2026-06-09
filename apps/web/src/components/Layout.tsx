@@ -4,6 +4,8 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { adminPath } from '@/router';
 
 import { AddTopicButton } from './AddTopicButton';
 import { Breadcrumbs } from './Breadcrumbs';
@@ -42,6 +44,8 @@ export const Layout = ({ children }: LayoutProps) => {
   const { t } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const { state: authState } = useAuth();
+  const showAdminLink = authState.status === 'authenticated' || pathname.startsWith(adminPath);
 
   const isActive = (path: string): boolean => {
     if (path === '/') {
@@ -75,7 +79,9 @@ export const Layout = ({ children }: LayoutProps) => {
                   label={t('proposals')}
                 />
                 <NavLink to="/progress" active={isActive('/progress')} label={t('progress')} />
-                <NavLink to="/admin" active={isActive('/admin')} label={t('admin')} />
+                {showAdminLink && (
+                  <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
+                )}
                 <NavLink to="/settings" active={isActive('/settings')} label={t('settings')} />
               </nav>
 

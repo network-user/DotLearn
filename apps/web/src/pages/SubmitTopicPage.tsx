@@ -7,12 +7,15 @@ import { CreateSubmissionInput } from '@dotlearn/contracts';
 
 import { ApiError, submitTopicProposal } from '@/lib/api-client';
 
+type SubmissionLanguage = 'en' | 'ru';
+
 type FormState = {
   title: string;
   outline: string;
   suggestedRuntime: 'sql.js' | 'pyodide' | 'javascript' | 'none';
   suggestedDifficulty: 'beginner' | 'intermediate' | 'advanced';
-  suggestedLanguage: 'en' | 'ru';
+  suggestedLanguages: SubmissionLanguage[];
+  suggestedPrimaryLanguage: SubmissionLanguage;
   estimatedHours: number;
   tags: string;
   sources: string;
@@ -25,7 +28,8 @@ const initialState: FormState = {
   outline: '',
   suggestedRuntime: 'none',
   suggestedDifficulty: 'beginner',
-  suggestedLanguage: 'en',
+  suggestedLanguages: ['ru'],
+  suggestedPrimaryLanguage: 'ru',
   estimatedHours: 3,
   tags: '',
   sources: '',
@@ -61,7 +65,8 @@ export const SubmitTopicPage = () => {
       outline: form.outline.trim(),
       suggestedRuntime: form.suggestedRuntime,
       suggestedDifficulty: form.suggestedDifficulty,
-      suggestedLanguage: form.suggestedLanguage,
+      suggestedLanguages: form.suggestedLanguages,
+      suggestedPrimaryLanguage: form.suggestedPrimaryLanguage,
       estimatedHours: form.estimatedHours,
       tags: form.tags
         .split(',')
@@ -166,15 +171,19 @@ export const SubmitTopicPage = () => {
               <option value="advanced">{t('difficultyOptions.advanced')}</option>
             </select>
           </Field>
-          <Field label={t('fields.language')}>
-            <select
-              value={form.suggestedLanguage}
-              onChange={handleChange('suggestedLanguage')}
-              className="form-input"
-            >
-              <option value="en">en</option>
-              <option value="ru">ru</option>
-            </select>
+          <Field label={t('fields.languages')}>
+            <LanguagesPicker
+              languages={form.suggestedLanguages}
+              primary={form.suggestedPrimaryLanguage}
+              onChange={(next, primary) =>
+                setForm((prev) => ({
+                  ...prev,
+                  suggestedLanguages: next,
+                  suggestedPrimaryLanguage: primary,
+                }))
+              }
+              primaryLabel={t('fields.primaryLanguage')}
+            />
           </Field>
         </div>
 
@@ -275,3 +284,83 @@ const Field = ({ label, children }: FieldProps) => (
     {children}
   </label>
 );
+
+interface LanguagesPickerProps {
+  languages: SubmissionLanguage[];
+  primary: SubmissionLanguage;
+  primaryLabel: string;
+  onChange: (languages: SubmissionLanguage[], primary: SubmissionLanguage) => void;
+}
+
+const ALL_LANGUAGES: readonly SubmissionLanguage[] = ['ru', 'en'];
+
+const LanguagesPicker = ({
+  languages,
+  primary,
+  primaryLabel,
+  onChange,
+}: LanguagesPickerProps) => {
+  const toggle = (lang: SubmissionLanguage): void => {
+    const has = languages.includes(lang);
+    if (has) {
+      if (languages.length === 1) return;
+      const next = languages.filter((entry) => entry !== lang);
+      const nextPrimary = primary === lang ? (next[0] as SubmissionLanguage) : primary;
+      onChange(next, nextPrimary);
+    } else {
+      const next = [...languages, lang].sort((a, b) =>
+        ALL_LANGUAGES.indexOf(a) - ALL_LANGUAGES.indexOf(b),
+      );
+      onChange(next, primary);
+    }
+  };
+  const setPrimary = (lang: SubmissionLanguage): void => {
+    if (!languages.includes(lang)) return;
+    onChange(languages, lang);
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        {ALL_LANGUAGES.map((lang) => {
+          const active = languages.includes(lang);
+          return (
+            <label
+              key={lang}
+              className={
+                'flex items-center gap-2 rounded-md border px-3 py-1.5 cursor-pointer text-sm ' +
+                (active
+                  ? 'border-indigo-500/60 bg-indigo-500/10 text-fg'
+                  : 'border-border-base bg-canvas/40 text-fg-muted hover:border-border-strong')
+              }
+            >
+              <input
+                type="checkbox"
+                checked={active}
+                onChange={() => toggle(lang)}
+                className="accent-indigo-500"
+              />
+              <span className="uppercase tracking-wide">{lang}</span>
+            </label>
+          );
+        })}
+      </div>
+      {languages.length > 1 && (
+        <div className="flex items-center gap-2 text-xs text-fg-muted">
+          <span>{primaryLabel}:</span>
+          {languages.map((lang) => (
+            <label key={lang} className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="radio"
+                name="primary-language"
+                checked={primary === lang}
+                onChange={() => setPrimary(lang)}
+                className="accent-indigo-500"
+              />
+              <span className="uppercase tracking-wide text-fg">{lang}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};

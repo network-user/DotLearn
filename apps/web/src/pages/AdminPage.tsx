@@ -9,10 +9,12 @@ import type {
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { StepUpDialog } from '@/components/StepUpDialog';
 import { SubmissionStatusBadge } from '@/components/SubmissionStatusBadge';
 import { cx } from '@/components/ui/cx';
 import {
   ApiError,
+  StepUpRequiredError,
   hideTopic,
   listAdminSubmissions,
   listHiddenTopics,
@@ -20,7 +22,9 @@ import {
   reviewSubmission,
   unhideTopic,
 } from '@/lib/api-client';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { invalidateHiddenTopicsCache, listAllManifestsIgnoringHidden } from '@/lib/topics';
+import { AdminLoginPage } from './AdminLoginPage';
 
 type TabKey = SubmissionStatus | 'hidden';
 
@@ -42,8 +46,14 @@ const initialSubmissionsTab = (): SubmissionsTabState => ({
   pending: null,
 });
 
+interface PendingStepUp {
+  action: string;
+  retry: () => Promise<void>;
+}
+
 export const AdminPage = () => {
   const { t } = useTranslation('admin');
+  const { state: authState, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>('pending');
   const [tabState, setTabState] = useState<Record<SubmissionStatus, SubmissionsTabState>>({
     pending: initialSubmissionsTab(),
@@ -57,6 +67,27 @@ export const AdminPage = () => {
   const [hiddenTopics, setHiddenTopics] = useState<HiddenTopic[]>([]);
   const [allTopics, setAllTopics] = useState<TopicManifest[]>([]);
   const [hidingSlug, setHidingSlug] = useState<string | null>(null);
+  const [pendingStepUp, setPendingStepUp] = useState<PendingStepUp | null>(null);
+
+  const guardedAction = useCallback(
+    async (run: () => Promise<void>): Promise<void> => {
+      try {
+        await run();
+      } catch (error) {
+        if (error instanceof StepUpRequiredError) {
+          setPendingStepUp({
+            action: error.action,
+            retry: async () => {
+              await run();
+            },
+          });
+          return;
+        }
+        throw error;
+      }
+    },
+    [],
+  );
 
   const updateSubmissionsTab = useCallback(
     (status: SubmissionStatus, updater: (prev: SubmissionsTabState) => SubmissionsTabState) => {
@@ -129,15 +160,16 @@ export const AdminPage = () => {
     const note = tabState.pending.notes[submission.id]?.trim();
     updateSubmissionsTab('pending', (prev) => ({ ...prev, pending: submission.id }));
     try {
-      await reviewSubmission(submission.id, {
-        decision,
-        ...(note ? { reviewerNote: note } : {}),
+      await guardedAction(async () => {
+        await reviewSubmission(submission.id, {
+          decision,
+          ...(note ? { reviewerNote: note } : {}),
+        });
+        toast.success(t(`toast.${decision}d`, { title: submission.payload.title }));
+        await loadSubmissions('pending');
       });
-      toast.success(t(`toast.${decision}d`, { title: submission.payload.title }));
-      await loadSubmissions('pending');
     } catch (error) {
-      const message =
-        error instanceof ApiError ? error.message : t('networkError');
+      const message = error instanceof ApiError ? error.message : t('networkError');
       toast.error(t('reviewFailed', { message }));
     } finally {
       updateSubmissionsTab('pending', (prev) => ({ ...prev, pending: null }));
@@ -149,15 +181,16 @@ export const AdminPage = () => {
     const note = tabState.approved.notes[submission.id]?.trim();
     updateSubmissionsTab('approved', (prev) => ({ ...prev, pending: submission.id }));
     try {
-      await markSubmissionMaterialized(submission.id, {
-        ...(slug ? { materializedSlug: slug } : {}),
-        ...(note ? { reviewerNote: note } : {}),
+      await guardedAction(async () => {
+        await markSubmissionMaterialized(submission.id, {
+          ...(slug ? { materializedSlug: slug } : {}),
+          ...(note ? { reviewerNote: note } : {}),
+        });
+        toast.success(t('toast.materialized', { title: submission.payload.title }));
+        await loadSubmissions('approved');
       });
-      toast.success(t('toast.materialized', { title: submission.payload.title }));
-      await loadSubmissions('approved');
     } catch (error) {
-      const message =
-        error instanceof ApiError ? error.message : t('networkError');
+      const message = error instanceof ApiError ? error.message : t('networkError');
       toast.error(t('materializeFailed', { message }));
     } finally {
       updateSubmissionsTab('approved', (prev) => ({ ...prev, pending: null }));
@@ -167,13 +200,14 @@ export const AdminPage = () => {
   const handleHide = async (slug: string): Promise<void> => {
     setHidingSlug(slug);
     try {
-      await hideTopic(slug, {});
-      invalidateHiddenTopicsCache();
-      toast.success(t('toast.hidden', { slug }));
-      await loadHidden();
+      await guardedAction(async () => {
+        await hideTopic(slug, {});
+        invalidateHiddenTopicsCache();
+        toast.success(t('toast.hidden', { slug }));
+        await loadHidden();
+      });
     } catch (error) {
-      const message =
-        error instanceof ApiError ? error.message : t('networkError');
+      const message = error instanceof ApiError ? error.message : t('networkError');
       toast.error(t('hideFailed', { message }));
     } finally {
       setHidingSlug(null);
@@ -183,18 +217,31 @@ export const AdminPage = () => {
   const handleUnhide = async (slug: string): Promise<void> => {
     setHidingSlug(slug);
     try {
-      await unhideTopic(slug);
-      invalidateHiddenTopicsCache();
-      toast.success(t('toast.unhidden', { slug }));
-      await loadHidden();
+      await guardedAction(async () => {
+        await unhideTopic(slug);
+        invalidateHiddenTopicsCache();
+        toast.success(t('toast.unhidden', { slug }));
+        await loadHidden();
+      });
     } catch (error) {
-      const message =
-        error instanceof ApiError ? error.message : t('networkError');
+      const message = error instanceof ApiError ? error.message : t('networkError');
       toast.error(t('unhideFailed', { message }));
     } finally {
       setHidingSlug(null);
     }
   };
+
+  if (authState.status === 'unknown') {
+    return (
+      <div className="rounded-xl border border-border-base p-8 text-center text-sm text-fg-muted">
+        {t('loading')}
+      </div>
+    );
+  }
+
+  if (authState.status === 'unauthenticated') {
+    return <AdminLoginPage />;
+  }
 
   return (
     <div className="space-y-6">
@@ -202,16 +249,28 @@ export const AdminPage = () => {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>
           <p className="mt-1 text-sm text-fg-muted max-w-2xl">{t('subtitle')}</p>
+          <p className="mt-1 text-xs text-fg-subtle">
+            {t('session', { login: authState.login })}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() =>
-            activeTab === 'hidden' ? void loadHidden() : void loadSubmissions(activeTab)
-          }
-          className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
-        >
-          {t('refresh')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              activeTab === 'hidden' ? void loadHidden() : void loadSubmissions(activeTab)
+            }
+            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
+          >
+            {t('refresh')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
+          >
+            {t('logout')}
+          </button>
+        </div>
       </header>
 
       <nav role="tablist" className="flex flex-wrap gap-1 border-b border-border-base">
@@ -268,6 +327,22 @@ export const AdminPage = () => {
           onUnhide={handleUnhide}
         />
       )}
+
+      <StepUpDialog
+        action={pendingStepUp?.action ?? null}
+        onCancel={() => setPendingStepUp(null)}
+        onVerified={() => {
+          const pending = pendingStepUp;
+          setPendingStepUp(null);
+          if (pending) {
+            void pending.retry().catch((error) => {
+              const message =
+                error instanceof ApiError ? error.message : t('networkError');
+              toast.error(t('reviewFailed', { message }));
+            });
+          }
+        }}
+      />
     </div>
   );
 };
@@ -441,7 +516,7 @@ const SubmissionRow = ({
 
       {submission.payload.tags.length > 0 && (
         <ul className="flex flex-wrap gap-1">
-          {submission.payload.tags.map((tag) => (
+          {submission.payload.tags.map((tag: string) => (
             <li
               key={tag}
               className="text-[10px] uppercase tracking-wide text-fg-muted bg-surface-2/80 px-1.5 py-0.5 rounded"
