@@ -1,25 +1,73 @@
-import { TopicManifest } from '@dotlearn/contracts';
+import type { TopicManifest } from '@dotlearn/contracts';
+import {
+  createBrowserTopicSource,
+  type TopicBundle,
+  type TopicSource,
+} from '@dotlearn/lesson-engine';
 
-type TopicManifestType = ReturnType<typeof TopicManifest.parse>;
+const manifestModules = import.meta.glob<{ default: unknown }>(
+  '../../../../topics/*/manifest.json',
+  { eager: true },
+);
 
-type ManifestModule = { default: unknown };
+const exerciseModules = import.meta.glob<string>(
+  '../../../../topics/*/exercises/*.yaml',
+  { eager: true, query: '?raw', import: 'default' },
+);
 
-const manifestModules = import.meta.glob<ManifestModule>('/topics/*/manifest.json', {
-  eager: true,
-});
+const RELATIVE_PREFIX = '../../../../';
 
-const cache = new Map<string, TopicManifestType>();
+const normalize = (path: string): string =>
+  path.startsWith(RELATIVE_PREFIX) ? `/${path.slice(RELATIVE_PREFIX.length)}` : path;
 
-for (const [path, mod] of Object.entries(manifestModules)) {
-  const parsed = TopicManifest.safeParse(mod.default);
-  if (!parsed.success) {
-    console.warn(`[topics] invalid manifest at ${path}`, parsed.error.flatten());
-    continue;
+const reKey = <T>(record: Record<string, T>): Record<string, T> => {
+  const out: Record<string, T> = {};
+  for (const [path, value] of Object.entries(record)) {
+    out[normalize(path)] = value;
   }
-  cache.set(parsed.data.slug, parsed.data);
-}
+  return out;
+};
 
-export const listTopics = (): TopicManifestType[] =>
-  [...cache.values()].sort((a, b) => a.title.localeCompare(b.title));
+const manifests = reKey(
+  Object.fromEntries(
+    Object.entries(manifestModules).map(([path, mod]) => [path, mod.default]),
+  ),
+);
+const exercises = reKey(exerciseModules);
 
-export const getTopic = (slug: string): TopicManifestType | undefined => cache.get(slug);
+const source: TopicSource = createBrowserTopicSource({ manifests, exercises });
+
+const cache = new Map<string, TopicBundle>();
+let cachedSlugs: string[] | undefined;
+
+export const listTopicSlugs = async (): Promise<string[]> => {
+  if (!cachedSlugs) {
+    cachedSlugs = await source.list();
+  }
+  return cachedSlugs;
+};
+
+export const loadTopic = async (slug: string): Promise<TopicBundle> => {
+  const cached = cache.get(slug);
+  if (cached) {
+    return cached;
+  }
+  const bundle = await source.load(slug);
+  cache.set(slug, bundle);
+  return bundle;
+};
+
+let manifestList: TopicManifest[] | undefined;
+
+export const listManifests = async (): Promise<TopicManifest[]> => {
+  if (manifestList) {
+    return manifestList;
+  }
+  const slugs = await listTopicSlugs();
+  const bundles = await Promise.all(slugs.map((slug) => loadTopic(slug)));
+  manifestList = bundles
+    .map((bundle) => bundle.manifest)
+    .sort((a, b) => a.title.localeCompare(b.title));
+  return manifestList;
+};
+

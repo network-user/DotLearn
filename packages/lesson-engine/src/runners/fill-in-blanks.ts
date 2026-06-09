@@ -1,0 +1,41 @@
+import type { FillInBlanksExercise } from '@dotlearn/contracts';
+
+import { fail, pass, type RunResult } from './result';
+
+interface BlankFailure {
+  blank: string;
+  got: string | undefined;
+  reason: 'missing' | 'no-match';
+}
+
+export const runFillInBlanks = (
+  exercise: FillInBlanksExercise,
+  answers: Record<string, string>,
+): RunResult => {
+  const failures: BlankFailure[] = [];
+  for (const [blankId, spec] of Object.entries(exercise.blanks)) {
+    const got = answers[blankId];
+    if (got === undefined) {
+      failures.push({ blank: blankId, got: undefined, reason: 'missing' });
+      continue;
+    }
+    let matched = false;
+    if (spec.accept && spec.accept.length > 0) {
+      matched = spec.accept.includes(got);
+    }
+    if (!matched && spec.accept_regex) {
+      try {
+        matched = new RegExp(spec.accept_regex).test(got);
+      } catch {
+        matched = false;
+      }
+    }
+    if (!matched) {
+      failures.push({ blank: blankId, got, reason: 'no-match' });
+    }
+  }
+  if (failures.length === 0) {
+    return pass();
+  }
+  return fail(`${failures.length} blank(s) incorrect`, { failures });
+};

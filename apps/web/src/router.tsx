@@ -9,6 +9,8 @@ import {
 import { Layout } from './components/Layout';
 import { AdminPage } from './pages/AdminPage';
 import { HomePage } from './pages/HomePage';
+import { ProgressPage } from './pages/ProgressPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { SubmitTopicPage } from './pages/SubmitTopicPage';
 import { TopicPage } from './pages/TopicPage';
 
@@ -44,7 +46,26 @@ const adminRoute = new Route({
   component: AdminPage,
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, topicRoute, submitRoute, adminRoute]);
+const progressRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/progress',
+  component: ProgressPage,
+});
+
+const settingsRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+});
+
+const routeTree = rootRoute.addChildren([
+  homeRoute,
+  topicRoute,
+  submitRoute,
+  adminRoute,
+  progressRoute,
+  settingsRoute,
+]);
 
 export const router = new Router({
   routeTree,
