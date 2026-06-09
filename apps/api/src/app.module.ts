@@ -3,17 +3,20 @@ import { LoggerModule } from 'nestjs-pino';
 
 import { SubmissionsModule } from './modules/submissions/submissions.module';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 @Module({
   imports: [
     LoggerModule.forRoot({
       pinoHttp: {
-        transport:
-          process.env.NODE_ENV === 'production'
-            ? undefined
-            : {
+        ...(isProduction
+          ? {}
+          : {
+              transport: {
                 target: 'pino-pretty',
                 options: { singleLine: true, translateTime: 'SYS:HH:MM:ss' },
               },
+            }),
         autoLogging: true,
         redact: ['req.headers.authorization', 'req.headers.cookie'],
       },

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 
 import { AddTopicButton } from './AddTopicButton';
+import { Breadcrumbs } from './Breadcrumbs';
 
 type LayoutProps = {
   children: ReactNode;
@@ -26,16 +27,31 @@ export const Layout = ({ children }: LayoutProps) => (
             Topics
           </Link>
           <Link
+            to="/progress"
+            className="px-3 py-1.5 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-900"
+          >
+            Progress
+          </Link>
+          <Link
             to="/admin"
             className="px-3 py-1.5 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-900"
           >
             Admin
           </Link>
+          <Link
+            to="/settings"
+            className="px-3 py-1.5 rounded-md text-sm text-zinc-300 hover:text-white hover:bg-zinc-900"
+          >
+            Settings
+          </Link>
           <AddTopicButton />
         </nav>
       </div>
     </header>
-    <main className="flex-1 mx-auto w-full max-w-6xl px-6 py-10">{children}</main>
+    <main className="flex-1 mx-auto w-full max-w-6xl px-6 py-8 space-y-6">
+      <Breadcrumbs />
+      {children}
+    </main>
     <footer className="border-t border-zinc-800">
       <div className="mx-auto max-w-6xl px-6 py-6 text-xs text-zinc-500 flex items-center justify-between">
         <span>DotLearn · local-first learning workbench</span>
