@@ -7,6 +7,12 @@ import { PyDemo } from '@/components/sandbox/PyDemo';
 import { PyStepper } from '@/components/sandbox/PyStepper';
 import { SideSql } from '@/components/sandbox/SideSql';
 import { cx } from '@/components/ui/cx';
+import { AccessScope } from '@/components/viz/AccessScope';
+import { ClassFactory } from '@/components/viz/ClassFactory';
+import { CompositionViz } from '@/components/viz/CompositionViz';
+import { GroupByViz } from '@/components/viz/GroupByViz';
+import { InheritanceTree } from '@/components/viz/InheritanceTree';
+import { JoinViz } from '@/components/viz/JoinViz';
 
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
@@ -268,6 +274,12 @@ const mdxComponents = {
   SideSql,
   PyDemo,
   PyStepper,
+  AccessScope,
+  ClassFactory,
+  CompositionViz,
+  GroupByViz,
+  InheritanceTree,
+  JoinViz,
 };
 
 export const TheoryContent = ({ Component }: TheoryContentProps) => (

@@ -7,6 +7,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useTranslation } from 'react-i18next';
 
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
 import { listManifests, loadTopic } from '@/lib/topics';
@@ -198,7 +199,9 @@ const StatTile = ({ label, value, hint, emphasis }: StatTileProps) => (
     }
   >
     <p className="text-xs uppercase tracking-wide text-fg-subtle">{label}</p>
-    <p className="mt-1 text-3xl font-semibold text-fg tabular-nums">{value}</p>
+    <p className="mt-1 text-3xl font-semibold text-fg tabular-nums">
+      <AnimatedNumber value={value} />
+    </p>
     <p className="mt-1 text-[11px] text-fg-subtle">{hint}</p>
   </div>
 );

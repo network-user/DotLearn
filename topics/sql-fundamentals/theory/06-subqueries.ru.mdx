@@ -1,0 +1,135 @@
+---
+title: Подзапросы и CTE
+summary: Передаём результат одного запроса в другой - инлайном как подзапрос или с именем как CTE.
+---
+
+# Подзапросы и CTE
+
+**Подзапрос** - это запрос, вложенный в другой запрос. **CTE** (Common
+Table Expression) - та же идея, но с именем: он записывается над основным
+запросом, и на него можно ссылаться как на временную таблицу.
+
+## Скалярный подзапрос - одно значение
+
+Скалярный подзапрос возвращает одну строку и одну колонку. Используйте его
+там, где ожидается одиночное значение.
+
+<SideSql
+  title="Книги не короче средней длины"
+  fixture={`
+    CREATE TABLE book (
+      id INTEGER PRIMARY KEY,
+      title TEXT NOT NULL,
+      pages INTEGER NOT NULL
+    );
+    INSERT INTO book VALUES
+      (1, 'A',  120),
+      (2, 'B',  300),
+      (3, 'C',  450),
+      (4, 'D',  900);
+  `}
+  query={`
+    SELECT title, pages
+    FROM book
+    WHERE pages >= (SELECT AVG(pages) FROM book)
+    ORDER BY pages;
+  `}
+/>
+
+Внутренний запрос вычисляется один раз, и его результат подставляется в условие.
+
+## Подзапрос с IN - множество значений
+
+Используйте подзапрос с `IN`, когда правая часть условия - набор значений,
+который приходит из другого запроса.
+
+<SideSql
+  title="Авторы хотя бы с одним бестселлером"
+  fixture={`
+    CREATE TABLE author (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+    CREATE TABLE sale (
+      book_id INTEGER NOT NULL,
+      author_id INTEGER NOT NULL,
+      copies INTEGER NOT NULL
+    );
+    INSERT INTO sale VALUES
+      (1, 1, 12000),
+      (2, 1, 800),
+      (3, 2, 9500),
+      (4, 3, 400);
+  `}
+  query={`
+    SELECT name
+    FROM author
+    WHERE id IN (SELECT author_id FROM sale WHERE copies >= 5000)
+    ORDER BY name;
+  `}
+/>
+
+## CTE - имя для промежуточного результата
+
+Когда подзапрос разрастается или один и тот же результат нужен дважды,
+выносите его в `WITH`.
+
+<SideSql
+  title="Та же идея в виде CTE"
+  fixture={`
+    CREATE TABLE author (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+    CREATE TABLE sale (
+      book_id INTEGER NOT NULL,
+      author_id INTEGER NOT NULL,
+      copies INTEGER NOT NULL
+    );
+    INSERT INTO sale VALUES
+      (1, 1, 12000),
+      (2, 1, 800),
+      (3, 2, 9500),
+      (4, 3, 400);
+  `}
+  query={`
+    WITH bestselling AS (
+      SELECT author_id
+      FROM sale
+      WHERE copies >= 5000
+    )
+    SELECT a.name
+    FROM author a
+    JOIN bestselling b ON b.author_id = a.id
+    ORDER BY a.name;
+  `}
+/>
+
+Теперь запрос читается сверху вниз: сначала определяем промежуточный
+результат, затем используем его. Тот же план выполнения, но форма дружелюбнее.
+
+<Callout type="tip" title="Берите CTE, когда…">
+- У подзапроса свои JOIN-ы или фильтры, и инлайном он плохо читается.
+- Один и тот же промежуточный результат нужен дважды.
+- Ревьюеру поможет имя у промежуточного понятия.
+</Callout>
+
+## EXISTS - «есть ли хоть одно совпадение?»
+
+Для чистой проверки наличия `EXISTS` часто понятнее (а иногда и быстрее),
+чем `IN`:
+
+```sql
+SELECT name
+FROM author a
+WHERE EXISTS (
+  SELECT 1 FROM sale s WHERE s.author_id = a.id AND s.copies >= 5000
+);
+```
+
+Подзапросу не нужно возвращать колонку - важно лишь, возвращает ли он
+хоть одну строку.
