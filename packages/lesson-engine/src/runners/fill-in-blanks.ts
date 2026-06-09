@@ -1,6 +1,6 @@
 import type { FillInBlanksExercise } from '@dotlearn/contracts';
 
-import { fail, pass, type RunResult } from './result';
+import { failCoded, pass, type RunResult } from './result';
 
 interface BlankFailure {
   blank: string;
@@ -37,5 +37,10 @@ export const runFillInBlanks = (
   if (failures.length === 0) {
     return pass();
   }
-  return fail(`${failures.length} blank(s) incorrect`, { failures });
+  return failCoded(
+    'blanks-incorrect',
+    `${failures.length} blank(s) incorrect`,
+    { failed: failures.length },
+    { failures },
+  );
 };

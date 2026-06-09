@@ -2,18 +2,21 @@ import { useCallback, useMemo, useState } from 'react';
 
 import type { SqlQueryExercise } from '@dotlearn/contracts';
 import { runSqlQuery } from '@dotlearn/lesson-engine';
-import Editor from '@monaco-editor/react';
 import { Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
+import { LazyCodeEditor } from '@/components/sandbox/LazyCodeEditor';
 import { ResultGrid } from '@/components/sandbox/ResultGrid';
 import { SqlVisualizer } from '@/components/sandbox/SqlVisualizer';
 import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
 import { cx } from '@/components/ui/cx';
+import { coarsePointerQuery, useMediaQuery } from '@/hooks/useMediaQuery';
+import { buildEditorHeight, buildEditorOptions } from '@/lib/editor-options';
+import { extractFailureReason, useFailureMessage, type FailureReason } from '@/lib/failure-reason';
 import { recordAttempt } from '@/lib/progress-db';
 import { getSqlRuntime } from '@/lib/sql-runtime';
 
@@ -30,7 +33,7 @@ type RunState =
   | { kind: 'pass'; columns: string[]; rows: Record<string, unknown>[] }
   | {
       kind: 'fail';
-      reason: string;
+      failure: FailureReason;
       columns?: string[];
       rows?: Record<string, unknown>[];
       missing?: Record<string, unknown>[];
@@ -42,10 +45,12 @@ type RunState =
 export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
+  const failureMessage = useFailureMessage();
   const initialAnswer = useMemo(() => t('sql.initial'), [t]);
   const [answer, setAnswer] = useState<string>(initialAnswer);
   const [state, setState] = useState<RunState>({ kind: 'idle' });
   const [pulse, setPulse] = useState(0);
+  const isCoarsePointer = useMediaQuery(coarsePointerQuery);
 
   const status: ExerciseCardStatus =
     state.kind === 'pass' ? 'pass' : state.kind === 'fail' || state.kind === 'error' ? 'fail' : 'idle';
@@ -71,7 +76,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
         };
         setState({
           kind: 'fail',
-          reason: result.reason,
+          failure: extractFailureReason(result),
           columns: execution.columns,
           rows: execution.rows,
           ...(details.missing !== undefined ? { missing: details.missing } : {}),
@@ -116,24 +121,17 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
               <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle font-mono">
                 sql
               </span>
-              <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
+              {!isCoarsePointer && (
+                <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
+              )}
             </div>
-            <Editor
+            <LazyCodeEditor
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="sql"
               theme="vs-dark"
-              height="200px"
-              options={{
-                fontSize: 13,
-                minimap: { enabled: false },
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                automaticLayout: true,
-                tabSize: 2,
-                padding: { top: 12, bottom: 12 },
-              }}
+              height={buildEditorHeight(isCoarsePointer, '200px', 'min(40dvh, 280px)')}
+              options={buildEditorOptions(isCoarsePointer, 2)}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {
                   if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
@@ -145,13 +143,14 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
               }}
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="primary"
               size="sm"
               leadingIcon={<Play size={14} />}
               loading={state.kind === 'running'}
               onClick={handleRun}
+              className="h-11 flex-1 sm:flex-initial sm:h-8"
             >
               {state.kind === 'running' ? t('sql.running') : t('sql.run')}
             </Button>
@@ -164,8 +163,8 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
           )}
           {state.kind === 'fail' && (
             <div className="space-y-2">
-              <p className="text-[13px] text-rose-300">
-                {t('sql.fail', { reason: state.reason })}
+              <p className="text-[13px] text-rose-700 dark:text-rose-300">
+                {t('sql.fail', { reason: failureMessage(state.failure) })}
               </p>
               {state.missing && state.missing.length > 0 && (
                 <div className="space-y-1">

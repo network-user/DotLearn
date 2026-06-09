@@ -1,5 +1,5 @@
-export type { RunResult } from './runners/result';
-export { fail, pass } from './runners/result';
+export type { RunFailureCode, RunFailureParams, RunResult } from './runners/result';
+export { fail, failCoded, pass } from './runners/result';
 
 export { runExercise, type RunContext } from './runners/dispatch';
 export { runTheoryQuiz } from './runners/theory-quiz';
@@ -26,6 +26,8 @@ export { approximatelyEqual, compareValues, type ValueComparison } from './compa
 
 export {
   createBrowserTopicSource,
+  createLazyTopicSource,
+  type LazyTopicGlobInput,
   type TopicGlobInput,
 } from './loader/browser';
 export type {

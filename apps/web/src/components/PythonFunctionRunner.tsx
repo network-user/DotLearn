@@ -2,13 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 
 import type { PythonFunctionExercise } from '@dotlearn/contracts';
 import { runPythonFunction } from '@dotlearn/lesson-engine';
-import Editor from '@monaco-editor/react';
 import { Play, RotateCcw, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
+import { LazyCodeEditor } from '@/components/sandbox/LazyCodeEditor';
 import {
   PythonConsole,
   TestList,
@@ -21,6 +21,8 @@ import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
 import { cx } from '@/components/ui/cx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { coarsePointerQuery, useMediaQuery } from '@/hooks/useMediaQuery';
+import { buildEditorHeight, buildEditorOptions } from '@/lib/editor-options';
 import { recordAttempt } from '@/lib/progress-db';
 import { getPythonRuntime } from '@/lib/python-runtime';
 
@@ -56,6 +58,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
     buildIdleLines(`# ${exercise.cases.length} test case(s) ready`),
   );
   const [tab, setTab] = useState<'console' | 'tests' | 'starter'>('console');
+  const isCoarsePointer = useMediaQuery(coarsePointerQuery);
 
   const cardStatus: ExerciseCardStatus =
     state.kind === 'pass' ? 'pass' : state.kind === 'fail' || state.kind === 'error' ? 'fail' : 'idle';
@@ -214,24 +217,17 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
               <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle font-mono">
                 python
               </span>
-              <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
+              {!isCoarsePointer && (
+                <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
+              )}
             </div>
-            <Editor
+            <LazyCodeEditor
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="python"
               theme="vs-dark"
-              height="260px"
-              options={{
-                fontSize: 13,
-                minimap: { enabled: false },
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                automaticLayout: true,
-                tabSize: 4,
-                padding: { top: 12, bottom: 12 },
-              }}
+              height={buildEditorHeight(isCoarsePointer, '260px', 'min(45dvh, 320px)')}
+              options={buildEditorOptions(isCoarsePointer, 4)}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {
                   if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
@@ -244,13 +240,14 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
             />
           </div>
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-1 sm:flex-initial">
               <Button
                 variant="primary"
                 size="sm"
                 leadingIcon={<Play size={14} />}
                 loading={running}
                 onClick={handleRun}
+                className="h-11 flex-1 sm:flex-initial sm:h-8"
               >
                 {state.kind === 'loading'
                   ? t('python.loading')
@@ -263,6 +260,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
                 size="sm"
                 leadingIcon={<RotateCcw size={13} />}
                 onClick={handleReset}
+                className="h-11 sm:h-8"
               >
                 reset
               </Button>

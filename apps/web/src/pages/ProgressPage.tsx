@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
-import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useTranslation } from 'react-i18next';
@@ -10,8 +9,9 @@ import { ActivityHeatmap } from '@/components/ActivityHeatmap';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
-import { listManifests, loadTopic } from '@/lib/topics';
+import { effectiveLanguage, listManifests } from '@/lib/topics';
 import { useActivity, useStreak } from '@/lib/use-progress';
+import topicStats from 'virtual:topic-stats';
 
 interface TopicRow {
   manifest: TopicManifest;
@@ -45,29 +45,26 @@ const useRelativeFormatter = () => {
 export const ProgressPage = () => {
   const { t, i18n } = useTranslation('progress');
   const formatRelative = useRelativeFormatter();
-  const [bundles, setBundles] = useState<TopicBundle[] | undefined>(undefined);
+  const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
   const activity = useActivity();
   const streak = useStreak();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
 
   useEffect(() => {
     let cancelled = false;
-    const language = getCurrentLanguage();
-    listManifests().then(async (manifests) => {
-      const loaded = await Promise.all(
-        manifests.map((manifest) => loadTopic(manifest.slug, language)),
-      );
+    listManifests().then((loaded) => {
       if (!cancelled) {
-        setBundles(loaded);
+        setManifests(loaded);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [i18n.resolvedLanguage]);
+  }, []);
 
   const rows = useMemo<TopicRow[]>(() => {
-    if (!bundles) return [];
+    if (!manifests) return [];
+    const language = getCurrentLanguage();
     const byTopic = new Map<string, { passed: number; failed: number; lastAttemptAt?: string }>();
     for (const record of progressRecords ?? []) {
       const entry = byTopic.get(record.topicSlug) ?? { passed: 0, failed: 0 };
@@ -81,21 +78,18 @@ export const ProgressPage = () => {
       }
       byTopic.set(record.topicSlug, entry);
     }
-    return bundles.map((bundle) => {
-      const total = bundle.concepts.reduce(
-        (sum, concept) => sum + concept.exercises.reduce((s, file) => s + file.exercises.length, 0),
-        0,
-      );
-      const stats = byTopic.get(bundle.manifest.slug) ?? { passed: 0, failed: 0 };
+    return manifests.map((manifest) => {
+      const total = topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0;
+      const stats = byTopic.get(manifest.slug) ?? { passed: 0, failed: 0 };
       return {
-        manifest: bundle.manifest,
+        manifest,
         total,
         passed: stats.passed,
         failed: stats.failed,
         lastAttemptAt: stats.lastAttemptAt,
       };
     });
-  }, [bundles, progressRecords]);
+  }, [manifests, progressRecords, i18n.resolvedLanguage]);
 
   const totalAttempted = useMemo(
     () => activity.reduce((sum, entry) => sum + entry.exercisesAttempted, 0),
@@ -131,14 +125,16 @@ export const ProgressPage = () => {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">{t('activity')}</h2>
-        <div className="rounded-xl border border-border-base bg-surface/40 p-5">
-          <ActivityHeatmap activity={activity} weeks={14} />
+        <div className="rounded-xl border border-border-base bg-surface/40 p-5 overflow-x-auto">
+          <div className="min-w-[360px]">
+            <ActivityHeatmap activity={activity} weeks={14} />
+          </div>
         </div>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">{t('topics')}</h2>
-        {bundles === undefined ? (
+        {manifests === undefined ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[0, 1].map((index) => (
               <div

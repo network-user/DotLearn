@@ -1,3 +1,5 @@
+import { Suspense, lazy } from 'react';
+
 import {
   Outlet,
   RootRoute,
@@ -8,19 +10,42 @@ import {
 
 import { Layout } from './components/Layout';
 import { PageTransition } from './components/ui/PageTransition';
-import { AdminPage } from './pages/AdminPage';
+import { Skeleton } from './components/ui/Skeleton';
 import { HomePage } from './pages/HomePage';
-import { ProgressPage } from './pages/ProgressPage';
-import { ProposalsPage } from './pages/ProposalsPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { SubmitTopicPage } from './pages/SubmitTopicPage';
-import { TopicPage } from './pages/TopicPage';
+
+const TopicPage = lazy(() =>
+  import('./pages/TopicPage').then((module) => ({ default: module.TopicPage })),
+);
+const AdminPage = lazy(() =>
+  import('./pages/AdminPage').then((module) => ({ default: module.AdminPage })),
+);
+const ProgressPage = lazy(() =>
+  import('./pages/ProgressPage').then((module) => ({ default: module.ProgressPage })),
+);
+const ProposalsPage = lazy(() =>
+  import('./pages/ProposalsPage').then((module) => ({ default: module.ProposalsPage })),
+);
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
+);
+const SubmitTopicPage = lazy(() =>
+  import('./pages/SubmitTopicPage').then((module) => ({ default: module.SubmitTopicPage })),
+);
+
+const PageFallback = () => (
+  <div className="space-y-6" aria-hidden>
+    <Skeleton rounded="2xl" className="h-32" />
+    <Skeleton rounded="2xl" className="h-72" />
+  </div>
+);
 
 const rootRoute = new RootRoute({
   component: () => (
     <Layout>
       <PageTransition>
-        <Outlet />
+        <Suspense fallback={<PageFallback />}>
+          <Outlet />
+        </Suspense>
       </PageTransition>
     </Layout>
   ),

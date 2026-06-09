@@ -4,7 +4,8 @@ import {
   type TopicManifest,
 } from '@dotlearn/contracts';
 import {
-  createBrowserTopicSource,
+  createLazyTopicSource,
+  parseManifest,
   type ConceptBundle,
   type TopicBundle,
   type TopicSource,
@@ -19,7 +20,7 @@ const manifestModules = import.meta.glob<{ default: unknown }>(
 
 const exerciseModules = import.meta.glob<string>(
   '../../../../topics/*/exercises/*.yaml',
-  { eager: true, query: '?raw', import: 'default' },
+  { query: '?raw', import: 'default' },
 );
 
 const RELATIVE_PREFIX = '../../../../';
@@ -42,11 +43,27 @@ const manifests = reKey(
 );
 const exercises = reKey(exerciseModules);
 
-const source: TopicSource = createBrowserTopicSource({ manifests, exercises });
+const source: TopicSource = createLazyTopicSource({ manifests, exercises });
 
 const rawCache = new Map<string, Promise<TopicBundle>>();
 const cache = new Map<string, TopicBundle>();
+const parsedManifests = new Map<string, TopicManifest>();
 let cachedSlugs: string[] | undefined;
+
+const manifestOf = (slug: string): TopicManifest | undefined => {
+  const cached = parsedManifests.get(slug);
+  if (cached) return cached;
+  const raw = manifests[`/topics/${slug}/manifest.json`];
+  if (raw === undefined) return undefined;
+  const parsed = parseManifest(slug, raw);
+  parsedManifests.set(slug, parsed);
+  return parsed;
+};
+
+export const topicTitleOf = (slug: string): string | undefined => {
+  const manifest = manifests[`/topics/${slug}/manifest.json`] as { title?: unknown } | undefined;
+  return typeof manifest?.title === 'string' ? manifest.title : undefined;
+};
 
 export const listTopicSlugs = async (): Promise<string[]> => {
   if (!cachedSlugs) {
@@ -85,7 +102,14 @@ const loadRawBundle = (slug: string): Promise<TopicBundle> => {
   if (cached) return cached;
   const pending = source.load(slug);
   rawCache.set(slug, pending);
+  pending.catch(() => {
+    rawCache.delete(slug);
+  });
   return pending;
+};
+
+export const prefetchTopic = (slug: string): void => {
+  void loadRawBundle(slug).catch(() => undefined);
 };
 
 export const loadTopic = async (
@@ -124,9 +148,9 @@ export const listManifests = async (): Promise<TopicManifest[]> => {
     return manifestList;
   }
   const [slugs, hidden] = await Promise.all([listTopicSlugs(), loadHiddenSlugs()]);
-  const bundles = await Promise.all(slugs.map((slug) => loadRawBundle(slug)));
-  manifestList = bundles
-    .map((bundle) => bundle.manifest)
+  manifestList = slugs
+    .map((slug) => manifestOf(slug))
+    .filter((manifest): manifest is TopicManifest => manifest !== undefined)
     .filter((manifest) => !hidden.has(manifest.slug))
     .sort((a, b) => a.title.localeCompare(b.title));
   return manifestList;
@@ -134,8 +158,8 @@ export const listManifests = async (): Promise<TopicManifest[]> => {
 
 export const listAllManifestsIgnoringHidden = async (): Promise<TopicManifest[]> => {
   const slugs = await listTopicSlugs();
-  const bundles = await Promise.all(slugs.map((slug) => loadRawBundle(slug)));
-  return bundles
-    .map((bundle) => bundle.manifest)
+  return slugs
+    .map((slug) => manifestOf(slug))
+    .filter((manifest): manifest is TopicManifest => manifest !== undefined)
     .sort((a, b) => a.title.localeCompare(b.title));
 };

@@ -8,8 +8,11 @@ import remarkGfm from 'remark-gfm';
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
 import { defineConfig } from 'vite';
 
+import { topicStatsPlugin } from './vite-plugin-topic-stats';
+
 export default defineConfig({
   plugins: [
+    topicStatsPlugin(),
     {
       enforce: 'pre',
       ...mdx({
@@ -55,6 +58,17 @@ export default defineConfig({
           if (id.includes('shiki') || id.includes('@shikijs')) return 'shiki';
           if (id.includes('framer-motion')) return 'motion';
           if (id.includes('@radix-ui')) return 'radix';
+          if (
+            id.includes('node_modules/react/') ||
+            id.includes('node_modules/react-dom/') ||
+            id.includes('node_modules/scheduler/')
+          ) {
+            return 'react';
+          }
+          if (id.includes('@tanstack')) return 'router';
+          if (id.includes('i18next')) return 'i18n';
+          if (id.includes('node_modules/dexie')) return 'dexie';
+          if (id.includes('lucide-react')) return 'icons';
           return undefined;
         },
       },

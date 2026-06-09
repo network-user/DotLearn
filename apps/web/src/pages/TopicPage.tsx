@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
@@ -12,6 +12,7 @@ import { TheoryContent } from '@/components/TheoryContent';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
+import { Dialog } from '@/components/ui/Dialog';
 import { GlassSurface } from '@/components/ui/GlassSurface';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -33,6 +34,7 @@ export const TopicPage = () => {
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
   const progress = useTopicProgress(slug);
   const streak = useStreak();
+  const reduceMotion = useReducedMotion() ?? false;
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +111,7 @@ export const TopicPage = () => {
     const nextConcept = bundle.manifest.concepts[next];
     if (nextConcept) {
       setActiveConceptId(nextConcept.id);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
     }
   };
 
@@ -129,6 +131,12 @@ export const TopicPage = () => {
           </div>
         </GlassSurface>
       )}
+      <ConceptStrip
+        bundle={bundle}
+        activeConceptId={activeConcept?.conceptId}
+        onSelect={setActiveConceptId}
+        progress={progress.byExercise}
+      />
       <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
         <ConceptRail
           bundle={bundle}
@@ -238,20 +246,36 @@ interface ConceptRailProps {
   progress: Map<string, import('@/lib/progress-db').ProgressRecord>;
 }
 
-const ConceptRail = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => (
-  <aside className="lg:sticky lg:top-24 self-start">
-    <GlassSurface intensity="medium" bordered className="rounded-2xl overflow-hidden">
-      <ol>
-        {bundle.manifest.concepts.map((concept, index) => {
-          const active = concept.id === activeConceptId;
-          const conceptBundle = bundle.concepts.find((entry) => entry.conceptId === concept.id);
-          const exercises = conceptBundle?.exercises.flatMap((file) => file.exercises) ?? [];
-          const passed = exercises.filter(
-            (exercise) => progress.get(exercise.id)?.status === 'pass',
-          ).length;
-          const ratio = exercises.length === 0 ? 0 : passed / exercises.length;
-          const done = exercises.length > 0 && passed === exercises.length;
-          return (
+interface ConceptStat {
+  passed: number;
+  total: number;
+  ratio: number;
+  done: boolean;
+}
+
+const conceptStatOf = (
+  bundle: TopicBundle,
+  progress: ConceptRailProps['progress'],
+  conceptId: string,
+): ConceptStat => {
+  const conceptBundle = bundle.concepts.find((entry) => entry.conceptId === conceptId);
+  const exercises = conceptBundle?.exercises.flatMap((file) => file.exercises) ?? [];
+  const passed = exercises.filter((exercise) => progress.get(exercise.id)?.status === 'pass').length;
+  const ratio = exercises.length === 0 ? 0 : passed / exercises.length;
+  return {
+    passed,
+    total: exercises.length,
+    ratio,
+    done: exercises.length > 0 && passed === exercises.length,
+  };
+};
+
+const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => (
+  <ol>
+    {bundle.manifest.concepts.map((concept, index) => {
+      const active = concept.id === activeConceptId;
+      const { passed, total, ratio, done } = conceptStatOf(bundle, progress, concept.id);
+      return (
             <li key={concept.id}>
               <button
                 type="button"
@@ -299,17 +323,125 @@ const ConceptRail = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
                     />
                   </div>
                   <span className="text-[10px] text-fg-subtle tabular-nums">
-                    {passed}/{exercises.length}
+                    {passed}/{total}
                   </span>
                 </div>
               </button>
             </li>
           );
         })}
-      </ol>
+  </ol>
+);
+
+const ConceptRail = (props: ConceptRailProps) => (
+  <aside className="hidden lg:block lg:sticky lg:top-24 self-start">
+    <GlassSurface intensity="medium" bordered className="rounded-2xl overflow-hidden">
+      <ConceptList {...props} />
     </GlassSurface>
   </aside>
 );
+
+const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => {
+  const { t } = useTranslation('topic');
+  const reduceMotion = useReducedMotion() ?? false;
+  const [listOpen, setListOpen] = useState(false);
+  const activeChipRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeChipRef.current?.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      inline: 'center',
+      block: 'nearest',
+    });
+  }, [activeConceptId, reduceMotion]);
+
+  return (
+    <div className="lg:hidden sticky top-[calc(var(--layout-nav-h)+12px)] z-[var(--z-aside)]">
+      <div className="glass glass--medium glass--bordered rounded-2xl">
+        <span aria-hidden className="glass__highlight" />
+        <span aria-hidden className="glass__shine" />
+        <div className="glass__content flex items-center gap-2 px-2 py-2">
+          <button
+            type="button"
+            onClick={() => setListOpen(true)}
+            aria-label={t('openConceptList')}
+            className="shrink-0 grid place-items-center size-11 rounded-xl border border-border-base text-fg-muted hover:text-fg hover:bg-surface-2/40 transition-colors"
+          >
+            <ListTree size={18} />
+          </button>
+          <ol className="flex items-center gap-2 overflow-x-auto snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {bundle.manifest.concepts.map((concept, index) => {
+              const active = concept.id === activeConceptId;
+              const { ratio, done } = conceptStatOf(bundle, progress, concept.id);
+              return (
+                <li key={concept.id} className="shrink-0 snap-start">
+                  <button
+                    type="button"
+                    ref={active ? activeChipRef : undefined}
+                    onClick={() => onSelect(concept.id)}
+                    aria-current={active ? 'true' : undefined}
+                    className={cx(
+                      'relative h-11 pl-2 pr-3 rounded-xl border flex items-center gap-2 transition-colors',
+                      active
+                        ? 'border-accent/40 bg-accent/10 text-fg'
+                        : 'border-border-base text-fg-muted hover:bg-surface-2/40',
+                    )}
+                  >
+                    <span
+                      className={cx(
+                        'grid place-items-center size-6 rounded-md font-mono text-[11px] tabular-nums shrink-0',
+                        done
+                          ? 'bg-emerald-500/15 text-emerald-300'
+                          : active
+                            ? 'bg-accent/15 text-accent'
+                            : 'bg-surface-2/80 text-fg-subtle',
+                      )}
+                    >
+                      {done ? <Check size={12} /> : index + 1}
+                    </span>
+                    <span className="text-[13px] font-medium truncate max-w-[40vw]">
+                      {concept.title}
+                    </span>
+                    <span
+                      aria-hidden
+                      className="absolute inset-x-2 bottom-[3px] h-0.5 rounded-full bg-surface-2/60 overflow-hidden"
+                    >
+                      <span
+                        className={cx(
+                          'block h-full',
+                          done ? 'bg-emerald-400' : 'bg-gradient-to-r from-accent to-accent-2',
+                        )}
+                        style={{ width: `${Math.round(ratio * 100)}%` }}
+                      />
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      </div>
+      <Dialog
+        open={listOpen}
+        onOpenChange={setListOpen}
+        title={t('allConcepts')}
+        placement="sheet"
+      >
+        <div className="rounded-xl border border-border-base overflow-hidden">
+          <ConceptList
+            bundle={bundle}
+            activeConceptId={activeConceptId}
+            onSelect={(conceptId) => {
+              onSelect(conceptId);
+              setListOpen(false);
+            }}
+            progress={progress}
+          />
+        </div>
+      </Dialog>
+    </div>
+  );
+};
 
 const ConceptTransition = ({
   conceptId,
@@ -368,7 +500,9 @@ const ConceptPanel = ({ slug, concept, theoryFiles, exercises, passed, ratio }: 
         {theories.map(({ filename, resolved }) => (
           <section key={filename}>
             {resolved ? (
-              <TheoryContent Component={resolved.Component} />
+              <Suspense fallback={<Skeleton rounded="xl" className="h-40" />}>
+                <TheoryContent Component={resolved.Component} />
+              </Suspense>
             ) : (
               <p className="text-rose-300 text-sm">{t('theoryMissing', { filename })}</p>
             )}
@@ -416,7 +550,7 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
         onClick={onPrev}
         disabled={!prevTitle}
         className={cx(
-          'flex-1 max-w-[280px] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-left transition',
+          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-left transition',
           'hover:border-accent/40 hover:bg-surface-2/40 disabled:opacity-30 disabled:cursor-not-allowed',
           'flex items-center gap-3',
         )}
@@ -434,7 +568,7 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
         onClick={onNext}
         disabled={!nextTitle}
         className={cx(
-          'flex-1 max-w-[280px] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-right transition',
+          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-right transition',
           'hover:border-accent/40 hover:bg-surface-2/40 disabled:opacity-30 disabled:cursor-not-allowed',
           'flex items-center justify-end gap-3',
         )}
@@ -557,8 +691,9 @@ const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio
 const TopicSkeleton = () => (
   <div className="space-y-6" aria-hidden>
     <Skeleton rounded="2xl" className="h-32" />
+    <Skeleton rounded="2xl" className="lg:hidden h-[60px]" />
     <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
-      <Skeleton rounded="2xl" className="h-72" />
+      <Skeleton rounded="2xl" className="hidden lg:block h-72" />
       <Skeleton rounded="2xl" className="h-96" />
       <Skeleton rounded="2xl" className="hidden xl:block h-72" />
     </div>

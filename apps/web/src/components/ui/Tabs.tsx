@@ -41,7 +41,7 @@ export const TabsTrigger = ({ value, className, children }: TabsTriggerProps) =>
   <RadixTabs.Trigger
     value={value}
     className={cx(
-      'relative inline-flex items-center gap-1.5 rounded-pill px-3 py-1 text-[13px] font-medium tracking-snug text-fg-muted',
+      'relative inline-flex items-center gap-1.5 rounded-pill px-3 py-2.5 sm:py-1 text-[13px] font-medium tracking-snug text-fg-muted',
       'transition-colors duration-fast hover:text-fg',
       'data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-card',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',

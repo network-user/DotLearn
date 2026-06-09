@@ -2,7 +2,7 @@ import type { PredictOutputExercise } from '@dotlearn/contracts';
 
 import { compareRows } from '../compare/rows';
 import { compareValues } from '../compare/value';
-import { fail, pass, type RunResult } from './result';
+import { fail, failCoded, pass, type RunResult } from './result';
 
 export const runPredictOutput = (
   exercise: PredictOutputExercise,
@@ -11,11 +11,13 @@ export const runPredictOutput = (
   const expected = exercise.expected;
   if (expected.kind === 'scalar') {
     const cmp = compareValues(answer, expected.value);
-    return cmp.ok ? pass({ value: answer }) : fail('predicted value differs', {
-      expected: expected.value,
-      actual: answer,
-      path: cmp.path,
-    });
+    return cmp.ok
+      ? pass({ value: answer })
+      : failCoded('predict-value-differs', 'predicted value differs', undefined, {
+          expected: expected.value,
+          actual: answer,
+          path: cmp.path,
+        });
   }
   if (expected.kind === 'stdout') {
     if (typeof answer !== 'string') {
@@ -23,7 +25,10 @@ export const runPredictOutput = (
     }
     return answer === expected.value
       ? pass({ stdout: answer })
-      : fail('predicted stdout differs', { expected: expected.value, actual: answer });
+      : failCoded('predict-stdout-differs', 'predicted stdout differs', undefined, {
+          expected: expected.value,
+          actual: answer,
+        });
   }
   if (!Array.isArray(answer)) {
     return fail('expected predicted output to be an array of rows', { actual: answer });
@@ -33,7 +38,7 @@ export const runPredictOutput = (
   });
   return diff.ok
     ? pass({ rows: answer })
-    : fail('predicted rows do not match expected', {
+    : failCoded('predict-rows-mismatch', 'predicted rows do not match expected', undefined, {
         missing: diff.missing,
         extra: diff.extra,
         misordered: diff.misordered,

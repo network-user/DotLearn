@@ -6,6 +6,9 @@ const withAlpha = (variable: string) => `rgb(var(${variable}) / <alpha-value>)`;
 const config: Config = {
   content: ['./index.html', './src/**/*.{ts,tsx,mdx}', '../../topics/**/*.mdx'],
   darkMode: 'class',
+  future: {
+    hoverOnlyWhenSupported: true,
+  },
   theme: {
     extend: {
       colors: {

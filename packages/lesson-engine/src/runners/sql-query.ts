@@ -3,7 +3,7 @@ import type { SqlQueryExercise } from '@dotlearn/contracts';
 import { compareRows } from '../compare/rows';
 import { compareValues } from '../compare/value';
 import { SqlExecutionError, type SqlRuntime } from '../runtime/sql';
-import { fail, pass, type RunResult } from './result';
+import { failCoded, pass, type RunResult } from './result';
 
 export const runSqlQuery = async (
   exercise: SqlQueryExercise,
@@ -15,9 +15,10 @@ export const runSqlQuery = async (
     execution = await runtime.execute(answer, exercise.fixture);
   } catch (error) {
     if (error instanceof SqlExecutionError) {
-      return fail(error.message, { sql: error.sql });
+      return failCoded('sql-error', error.message, { message: error.message }, { sql: error.sql });
     }
-    return fail('sql runtime threw', { message: error instanceof Error ? error.message : String(error) });
+    const message = error instanceof Error ? error.message : String(error);
+    return failCoded('sql-runtime-error', 'sql runtime threw', { message }, { message });
   }
 
   const expected = exercise.expected;
@@ -26,7 +27,7 @@ export const runSqlQuery = async (
     if (diff.ok) {
       return pass({ rows: execution.rows, columns: execution.columns });
     }
-    return fail('result rows do not match expected', {
+    return failCoded('sql-rows-mismatch', 'result rows do not match expected', undefined, {
       missing: diff.missing,
       extra: diff.extra,
       misordered: diff.misordered,
@@ -42,5 +43,8 @@ export const runSqlQuery = async (
   if (cmp.ok) {
     return pass({ value: actualValue });
   }
-  return fail('scalar mismatch', { expected: expected.value, actual: actualValue });
+  return failCoded('sql-scalar-mismatch', 'scalar mismatch', undefined, {
+    expected: expected.value,
+    actual: actualValue,
+  });
 };

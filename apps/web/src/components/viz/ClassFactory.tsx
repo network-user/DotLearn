@@ -73,7 +73,7 @@ export const ClassFactory = ({
       footer={atLimit ? t('factory.limit') : instances.length === 0 ? t('factory.empty') : null}
     >
       <div className="grid grid-cols-1 sm:grid-cols-[max-content_1fr] gap-4 items-start">
-        <div className="rounded-xl border-2 border-dashed border-accent/40 bg-accent/5 px-4 py-3 min-w-[180px]">
+        <div className="rounded-xl border-2 border-dashed border-accent/40 bg-accent/5 px-4 py-3 sm:min-w-[180px]">
           <div className="text-[10px] uppercase tracking-widest text-accent/80 mb-1.5">
             class · {t('factory.blueprint')}
           </div>

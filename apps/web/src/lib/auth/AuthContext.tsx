@@ -10,7 +10,13 @@ import {
 } from 'react';
 
 import * as authApi from './auth-api';
-import { getAccessToken, setAccessToken, subscribe } from './auth-storage';
+import {
+  getAccessToken,
+  hasSessionHint,
+  setAccessToken,
+  setSessionHint,
+  subscribe,
+} from './auth-storage';
 
 export type AuthState =
   | { status: 'unknown' }
@@ -61,10 +67,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const login = previous?.login ?? '';
       setAccessToken({ token: result.accessToken, expiresAt: expiresAtMs, login });
       setState({ status: 'authenticated', login, expiresAt: expiresAtMs });
+      setSessionHint(true);
       scheduleRefresh(expiresAtMs);
       return result.accessToken;
     } catch {
       setAccessToken(null);
+      setSessionHint(false);
       setState({ status: 'unauthenticated' });
       clearTimer();
       return null;
@@ -72,7 +80,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, [scheduleRefresh]);
 
   useEffect(() => {
-    void doRefresh();
+    if (hasSessionHint()) {
+      void doRefresh();
+    } else {
+      setState({ status: 'unauthenticated' });
+    }
     return () => {
       clearTimer();
     };
@@ -97,6 +109,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         login: result.login,
       });
       setState({ status: 'authenticated', login: result.login, expiresAt: expiresAtMs });
+      setSessionHint(true);
       scheduleRefresh(expiresAtMs);
     },
     [scheduleRefresh],
@@ -110,6 +123,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       /* ignore */
     }
     setAccessToken(null);
+    setSessionHint(false);
     setState({ status: 'unauthenticated' });
     clearTimer();
   }, []);
@@ -121,6 +135,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
     await authApi.logoutAll(access.token);
     setAccessToken(null);
+    setSessionHint(false);
     setState({ status: 'unauthenticated' });
     clearTimer();
   }, []);

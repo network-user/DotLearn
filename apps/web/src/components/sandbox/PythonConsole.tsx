@@ -70,7 +70,7 @@ export const PythonConsole = ({ lines, status = 'idle', emptyMessage }: PythonCo
       </header>
       <div
         ref={scrollRef}
-        className="px-3 py-3 max-h-[260px] overflow-y-auto whitespace-pre-wrap text-zinc-200 [scrollbar-width:thin]"
+        className="px-3 py-3 max-h-[40dvh] sm:max-h-[260px] overflow-y-auto whitespace-pre-wrap text-zinc-200 [scrollbar-width:thin]"
       >
         {lines.length === 0 ? (
           <p className="text-zinc-500 italic text-[12px]">{emptyMessage}</p>

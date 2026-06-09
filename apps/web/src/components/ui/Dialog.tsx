@@ -12,6 +12,7 @@ interface DialogProps {
   children: ReactNode;
   footer?: ReactNode;
   size?: 'sm' | 'md' | 'lg';
+  placement?: 'center' | 'sheet';
   className?: string;
 }
 
@@ -19,6 +20,12 @@ const sizes: Record<NonNullable<DialogProps['size']>, string> = {
   sm: 'max-w-sm',
   md: 'max-w-md',
   lg: 'max-w-2xl',
+};
+
+const sheetSizes: Record<NonNullable<DialogProps['size']>, string> = {
+  sm: 'md:max-w-sm',
+  md: 'md:max-w-md',
+  lg: 'md:max-w-2xl',
 };
 
 export const Dialog = ({
@@ -29,6 +36,7 @@ export const Dialog = ({
   children,
   footer,
   size = 'md',
+  placement = 'center',
   className,
 }: DialogProps) => (
   <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -41,11 +49,22 @@ export const Dialog = ({
       />
       <RadixDialog.Content
         className={cx(
-          'fixed left-1/2 top-1/2 z-[var(--z-modal)] -translate-x-1/2 -translate-y-1/2 w-[92vw]',
+          'fixed z-[var(--z-modal)]',
           'glass glass--strong glass--bordered',
-          'rounded-2xl shadow-float p-6 outline-none',
+          'p-6 outline-none',
           'data-[state=open]:animate-rise',
-          sizes[size],
+          placement === 'center'
+            ? cx(
+                'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] rounded-2xl shadow-float',
+                sizes[size],
+              )
+            : cx(
+                'inset-x-0 bottom-0 w-full max-h-[85dvh] overflow-y-auto',
+                'rounded-t-2xl rounded-b-none shadow-sheet pb-[calc(24px+var(--safe-bottom))]',
+                'md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
+                'md:w-[92vw] md:max-h-none md:overflow-y-visible md:rounded-2xl md:shadow-float md:pb-6',
+                sheetSizes[size],
+              ),
           className,
         )}
       >

@@ -1,6 +1,8 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
+import { topicTitleOf } from '@/lib/topics';
+
 interface Crumb {
   label: string;
   to: string;
@@ -29,13 +31,16 @@ export const Breadcrumbs = () => {
   const segments = pathname.split('/').filter(Boolean);
   const crumbs: Crumb[] = [{ label: t('home'), to: '/' }];
   let accumulated = '';
+  let previousSegment: string | undefined;
   for (const segment of segments) {
     accumulated += `/${segment}`;
     const navKey = KNOWN_SEGMENT_KEYS[segment];
+    const topicTitle = previousSegment === 'topics' ? topicTitleOf(segment) : undefined;
     crumbs.push({
-      label: navKey ? t(navKey) : titleizeSlug(segment),
+      label: navKey ? t(navKey) : topicTitle ?? titleizeSlug(segment),
       to: accumulated,
     });
+    previousSegment = segment;
   }
 
   return (
