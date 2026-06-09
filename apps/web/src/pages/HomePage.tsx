@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
-import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -25,7 +24,8 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
-import { listManifests, loadTopic } from '@/lib/topics';
+import { effectiveLanguage, listManifests, prefetchTopic } from '@/lib/topics';
+import topicStats from 'virtual:topic-stats';
 
 interface TopicRow {
   manifest: TopicManifest;
@@ -51,44 +51,37 @@ const runtimeIcon = (runtime: string) => {
 export const HomePage = () => {
   const { t, i18n } = useTranslation('home');
   const { t: tCommon } = useTranslation('common');
-  const [bundles, setBundles] = useState<TopicBundle[] | undefined>(undefined);
+  const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const [filter, setFilter] = useState<DifficultyFilter>('all');
 
   useEffect(() => {
     let cancelled = false;
-    const language = getCurrentLanguage();
-    listManifests()
-      .then((manifests) =>
-        Promise.all(manifests.map((manifest) => loadTopic(manifest.slug, language))),
-      )
-      .then((loaded) => {
-        if (!cancelled) {
-          setBundles(loaded);
-        }
-      });
+    listManifests().then((loaded) => {
+      if (!cancelled) {
+        setManifests(loaded);
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [i18n.resolvedLanguage]);
+  }, []);
 
   const rows = useMemo<TopicRow[]>(() => {
-    if (!bundles) return [];
+    if (!manifests) return [];
+    const language = getCurrentLanguage();
     const passedByTopic = new Map<string, number>();
     for (const record of progressRecords ?? []) {
       if (record.status === 'pass') {
         passedByTopic.set(record.topicSlug, (passedByTopic.get(record.topicSlug) ?? 0) + 1);
       }
     }
-    return bundles.map((bundle) => ({
-      manifest: bundle.manifest,
-      total: bundle.concepts.reduce(
-        (sum, concept) => sum + concept.exercises.reduce((s, file) => s + file.exercises.length, 0),
-        0,
-      ),
-      passed: passedByTopic.get(bundle.manifest.slug) ?? 0,
+    return manifests.map((manifest) => ({
+      manifest,
+      total: topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0,
+      passed: passedByTopic.get(manifest.slug) ?? 0,
     }));
-  }, [bundles, progressRecords]);
+  }, [manifests, progressRecords, i18n.resolvedLanguage]);
 
   const filteredRows = useMemo(() => {
     if (filter === 'all') return rows;
@@ -107,7 +100,7 @@ export const HomePage = () => {
           <div>
             <h2 className="text-2xl font-semibold tracking-tightish">{t('topicsHeading')}</h2>
             <p className="mt-1 text-sm text-fg-muted">
-              {bundles === undefined
+              {manifests === undefined
                 ? tCommon('loading')
                 : t('available', { count: filteredRows.length })}
             </p>
@@ -115,7 +108,7 @@ export const HomePage = () => {
           <FilterBar value={filter} onChange={setFilter} />
         </div>
 
-        {bundles === undefined ? (
+        {manifests === undefined ? (
           <SkeletonGrid />
         ) : rows.length === 0 ? (
           <EmptyState />
@@ -288,7 +281,14 @@ const TopicCard = ({ row }: TopicCardProps) => {
   const availableLanguages = getAvailableLanguages(manifest);
   const taglineKey = `card.tagline.${manifest.runtime}` as const;
   return (
-    <Link to="/topics/$slug" params={{ slug: manifest.slug }} className="block group h-full">
+    <Link
+      to="/topics/$slug"
+      params={{ slug: manifest.slug }}
+      className="block group h-full"
+      onMouseEnter={() => prefetchTopic(manifest.slug)}
+      onFocus={() => prefetchTopic(manifest.slug)}
+      onTouchStart={() => prefetchTopic(manifest.slug)}
+    >
       <GlassSurface
         intensity="medium"
         interactive
@@ -363,7 +363,7 @@ const Stat3 = ({
   value: number;
   formatter?: (v: number) => string;
 }) => (
-  <div className="rounded-md bg-surface-2/40 px-2 py-1.5">
+  <div className="rounded-md bg-surface-2/40 px-2 py-1.5 min-w-0">
     <div className="text-[10px] uppercase tracking-widest text-fg-subtle">{label}</div>
     <div className="text-[13px] font-medium tabular-nums text-fg">
       {formatter ? formatter(value) : value}

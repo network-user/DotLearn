@@ -2,7 +2,7 @@ import type { JavascriptFunctionExercise } from '@dotlearn/contracts';
 
 import { approximatelyEqual, compareValues } from '../compare/value';
 import type { JavascriptRuntime } from '../runtime/javascript';
-import { fail, pass, type RunResult } from './result';
+import { failCoded, pass, type RunResult } from './result';
 
 interface CaseFailure {
   call: string;
@@ -43,5 +43,10 @@ export const runJavascriptFunction = async (
   if (failures.length === 0) {
     return pass({ casesPassed: exercise.cases.length });
   }
-  return fail(`${failures.length}/${exercise.cases.length} case(s) failed`, { failures });
+  return failCoded(
+    'cases-failed',
+    `${failures.length}/${exercise.cases.length} case(s) failed`,
+    { failed: failures.length, total: exercise.cases.length },
+    { failures },
+  );
 };

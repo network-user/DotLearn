@@ -13,7 +13,7 @@ export const VizShell = ({ label, actions, children, footer }: VizShellProps) =>
       <span className="text-[11px] uppercase tracking-widest text-fg-subtle">{label}</span>
       {actions && <div className="flex items-center gap-1.5">{actions}</div>}
     </header>
-    <div className="p-4">{children}</div>
+    <div className="p-4 overflow-x-auto">{children}</div>
     {footer !== undefined && (
       <footer className="px-4 py-2.5 border-t border-border-base/60 bg-surface/30 text-[12.5px] leading-relaxed text-fg-muted min-h-[40px] flex items-center">
         {footer}

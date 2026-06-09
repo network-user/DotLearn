@@ -48,7 +48,7 @@ export const ResultGrid = ({
   const truncated = rows.length > visible.length;
   return (
     <div className="rounded-lg border border-border-base overflow-hidden">
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto max-h-[45dvh] overflow-y-auto">
         <table className={cx('min-w-full font-mono', compact ? 'text-[12px]' : 'text-[12.5px]')}>
           <thead>
             <tr>

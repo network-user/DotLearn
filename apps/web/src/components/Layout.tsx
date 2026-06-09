@@ -5,9 +5,11 @@ import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { isNavPathActive } from '@/lib/navigation';
 import { adminPath } from '@/router';
 
 import { AddTopicButton } from './AddTopicButton';
+import { BottomTabBar } from './BottomTabBar';
 import { Breadcrumbs } from './Breadcrumbs';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
@@ -47,21 +49,16 @@ export const Layout = ({ children }: LayoutProps) => {
   const { state: authState } = useAuth();
   const showAdminLink = authState.status === 'authenticated' || pathname.startsWith(adminPath);
 
-  const isActive = (path: string): boolean => {
-    if (path === '/') {
-      return pathname === '/' || pathname.startsWith('/topics');
-    }
-    return pathname.startsWith(path);
-  };
+  const isActive = (path: string): boolean => isNavPathActive(pathname, path);
 
   return (
-    <div className="min-h-full flex flex-col">
+    <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
       <header className="sticky top-0 z-[var(--z-nav)] px-3 pt-3">
         <div className="mx-auto max-w-layout">
           <div className="glass glass--medium glass--bordered rounded-2xl">
             <span aria-hidden className="glass__highlight" />
             <span aria-hidden className="glass__shine" />
-            <div className="glass__content flex items-center justify-between gap-4 px-4 sm:px-5 h-14">
+            <div className="glass__content flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-5 h-14">
               <Link to="/" className="group flex items-center gap-2.5 shrink-0">
                 <span className="relative grid place-items-center size-7 rounded-md bg-gradient-to-br from-accent via-accent-2 to-accent-3 shadow-glow">
                   <span className="size-1.5 rounded-full bg-white/95" />
@@ -114,6 +111,8 @@ export const Layout = ({ children }: LayoutProps) => {
           </a>
         </div>
       </footer>
+
+      <BottomTabBar />
     </div>
   );
 };

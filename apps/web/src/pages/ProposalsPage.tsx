@@ -141,7 +141,7 @@ export const ProposalsPage = () => {
             }}
             onFocus={() => setSuggestOpen(true)}
             placeholder={t('searchPlaceholder')}
-            className="w-full rounded-xl border border-border-base bg-surface/70 px-4 py-3 text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/20 transition"
+            className="w-full rounded-xl border border-border-base bg-surface/70 px-4 py-3 text-[16px] sm:text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/20 transition"
             aria-autocomplete="list"
             aria-controls="proposal-suggestions"
           />

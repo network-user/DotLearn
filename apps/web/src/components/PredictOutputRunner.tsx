@@ -9,6 +9,7 @@ import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/Exer
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
+import { extractFailureReason, useFailureMessage, type FailureReason } from '@/lib/failure-reason';
 import { recordAttempt } from '@/lib/progress-db';
 
 import { useDifficultyLabel } from './ExerciseRunner';
@@ -21,7 +22,7 @@ interface PredictOutputRunnerProps {
 type CheckState =
   | { kind: 'idle' }
   | { kind: 'pass' }
-  | { kind: 'fail'; reason: string; expected?: unknown; actual?: unknown };
+  | { kind: 'fail'; failure: FailureReason; expected?: unknown; actual?: unknown };
 
 const parseScalar = (raw: string): unknown => {
   const trimmed = raw.trim();
@@ -43,6 +44,7 @@ const parseScalar = (raw: string): unknown => {
 export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
+  const failureMessage = useFailureMessage();
   const [draft, setDraft] = useState('');
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
   const [pulse, setPulse] = useState(0);
@@ -64,7 +66,7 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
       const details = (result.details ?? {}) as { expected?: unknown; actual?: unknown };
       setState({
         kind: 'fail',
-        reason: result.reason,
+        failure: extractFailureReason(result),
         ...(details.expected !== undefined ? { expected: details.expected } : {}),
         ...(details.actual !== undefined ? { actual: details.actual } : {}),
       });
@@ -101,23 +103,24 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
             onChange={(event) => setDraft(event.target.value)}
             placeholder={inputHint}
             rows={3}
-            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
           />
         ) : (
           <input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder={inputHint}
-            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 min-h-[var(--tap)] sm:min-h-0 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
           />
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="primary"
             size="sm"
             disabled={draft.trim().length === 0}
             onClick={handleCheck}
+            className="h-11 flex-1 sm:flex-initial sm:h-8"
           >
             {t('predict.check')}
           </Button>
@@ -125,24 +128,24 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
         </div>
 
         {state.kind === 'pass' && (
-          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-200">
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-700 dark:text-emerald-200">
             {t('predict.correct')}
           </div>
         )}
 
         {state.kind === 'fail' && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-200 space-y-1">
-            <p className="font-medium">{t('predict.wrong', { reason: state.reason })}</p>
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-700 dark:text-rose-200 space-y-1">
+            <p className="font-medium">{t('predict.wrong', { reason: failureMessage(state.failure) })}</p>
             {state.expected !== undefined && (
-              <p className="text-[12px] text-rose-100/80 font-mono">
+              <p className="text-[12px] text-rose-700/80 dark:text-rose-100/80 font-mono">
                 {t('predict.expected')}:{' '}
-                <code className="text-emerald-300">{JSON.stringify(state.expected)}</code>
+                <code className="text-emerald-700 dark:text-emerald-300">{JSON.stringify(state.expected)}</code>
               </p>
             )}
             {state.actual !== undefined && (
-              <p className="text-[12px] text-rose-100/80 font-mono">
+              <p className="text-[12px] text-rose-700/80 dark:text-rose-100/80 font-mono">
                 {t('predict.got')}:{' '}
-                <code className="text-rose-300">{JSON.stringify(state.actual)}</code>
+                <code className="text-rose-700 dark:text-rose-300">{JSON.stringify(state.actual)}</code>
               </p>
             )}
           </div>

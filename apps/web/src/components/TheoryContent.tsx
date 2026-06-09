@@ -8,6 +8,7 @@ import { PyStepper } from '@/components/sandbox/PyStepper';
 import { SideSql } from '@/components/sandbox/SideSql';
 import { cx } from '@/components/ui/cx';
 import { AccessScope } from '@/components/viz/AccessScope';
+import { AggregateViz } from '@/components/viz/AggregateViz';
 import { ClassFactory } from '@/components/viz/ClassFactory';
 import { CompositionViz } from '@/components/viz/CompositionViz';
 import { GroupByViz } from '@/components/viz/GroupByViz';
@@ -180,7 +181,7 @@ const mdxComponents = {
     <h1
       id={slugify(props.children)}
       {...props}
-      className="font-display text-3xl md:text-[36px] leading-tight tracking-tightish text-fg mt-10 mb-4"
+      className="font-display font-medium text-3xl md:text-[36px] leading-snug tracking-snug text-fg mt-10 mb-5"
     />
   ),
   h2: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
@@ -188,7 +189,7 @@ const mdxComponents = {
       id={slugify(props.children)}
       data-toc="h2"
       {...props}
-      className="font-display text-2xl md:text-[28px] leading-tight tracking-tightish text-fg mt-10 mb-3 scroll-mt-24"
+      className="font-display font-medium text-2xl md:text-[28px] leading-snug tracking-snug text-fg mt-12 mb-4 scroll-mt-36 lg:scroll-mt-24"
     />
   ),
   h3: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
@@ -196,23 +197,23 @@ const mdxComponents = {
       id={slugify(props.children)}
       data-toc="h3"
       {...props}
-      className="text-lg font-semibold tracking-snug text-fg mt-7 mb-2 scroll-mt-24"
+      className="text-[19px] font-semibold tracking-snug text-fg mt-9 mb-3 scroll-mt-36 lg:scroll-mt-24"
     />
   ),
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
-    <p {...props} className="text-fg leading-relaxed my-3 text-[15.5px]" />
+    <p {...props} className="text-fg leading-[1.8] my-4 text-[16.5px]" />
   ),
   ul: (props: React.HTMLAttributes<HTMLUListElement>) => (
-    <ul {...props} className="list-disc pl-6 my-3 text-fg space-y-1.5 marker:text-accent/70" />
+    <ul {...props} className="list-disc pl-6 my-4 text-fg space-y-2 marker:text-accent/70" />
   ),
   ol: (props: React.HTMLAttributes<HTMLOListElement>) => (
     <ol
       {...props}
-      className="list-decimal pl-6 my-3 text-fg space-y-1.5 marker:text-accent/70 marker:font-medium"
+      className="list-decimal pl-6 my-4 text-fg space-y-2 marker:text-accent/70 marker:font-medium"
     />
   ),
   li: (props: React.HTMLAttributes<HTMLLIElement>) => (
-    <li {...props} className="leading-relaxed text-[15.5px]" />
+    <li {...props} className="leading-[1.75] text-[16px]" />
   ),
   code: (props: React.HTMLAttributes<HTMLElement>) => {
     const className = props.className ?? '';
@@ -275,6 +276,7 @@ const mdxComponents = {
   PyDemo,
   PyStepper,
   AccessScope,
+  AggregateViz,
   ClassFactory,
   CompositionViz,
   GroupByViz,

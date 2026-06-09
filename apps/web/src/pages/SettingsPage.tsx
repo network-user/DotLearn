@@ -211,7 +211,7 @@ const Field = ({ label, value, placeholder, type = 'text', onChange }: FieldProp
       value={value}
       placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-md border border-border-base bg-canvas/60 px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60"
+      className="w-full rounded-md border border-border-base bg-canvas/60 px-3 py-1.5 min-h-[var(--tap)] sm:min-h-0 text-[16px] sm:text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60"
     />
   </label>
 );

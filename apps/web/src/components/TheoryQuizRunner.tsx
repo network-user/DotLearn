@@ -11,6 +11,7 @@ import { HintBlock } from '@/components/sandbox/HintBlock';
 import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
 import { cx } from '@/components/ui/cx';
+import { extractFailureReason, useFailureMessage, type FailureReason } from '@/lib/failure-reason';
 import { recordAttempt } from '@/lib/progress-db';
 
 import { useDifficultyLabel } from './ExerciseRunner';
@@ -25,7 +26,7 @@ type CheckState =
   | { kind: 'pass'; explanation?: string }
   | {
       kind: 'fail';
-      reason: string;
+      failure: FailureReason;
       missing?: string[];
       unexpected?: string[];
       explanation?: string;
@@ -34,6 +35,7 @@ type CheckState =
 export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
+  const failureMessage = useFailureMessage();
   const allowMultiple = exercise.correct.length > 1;
   const [selected, setSelected] = useState<string[]>([]);
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
@@ -67,7 +69,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
       };
       setState({
         kind: 'fail',
-        reason: result.reason,
+        failure: extractFailureReason(result),
         ...(details.missing !== undefined ? { missing: details.missing } : {}),
         ...(details.unexpected !== undefined ? { unexpected: details.unexpected } : {}),
         ...(details.explanation !== undefined ? { explanation: details.explanation } : {}),
@@ -103,7 +105,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
               >
                 <label
                   className={cx(
-                    'flex items-start gap-3 rounded-xl border px-3.5 py-2.5 cursor-pointer transition-colors duration-fast',
+                    'flex items-start gap-3 rounded-xl border px-3.5 py-2.5 min-h-[var(--tap)] cursor-pointer transition-colors duration-fast',
                     revealCorrect
                       ? 'border-emerald-500/55 bg-emerald-500/10'
                       : revealWrong
@@ -147,19 +149,20 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
                       <Circle size={12} strokeWidth={1.5} />
                     )}
                   </span>
-                  <span className="text-[14px] text-fg leading-snug">{choice.text}</span>
+                  <span className="text-[15px] text-fg leading-relaxed">{choice.text}</span>
                 </label>
               </motion.li>
             );
           })}
         </ul>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="primary"
             size="sm"
             disabled={selected.length === 0}
             onClick={handleCheck}
+            className="h-11 flex-1 sm:flex-initial sm:h-8"
           >
             {t('quiz.check')}
           </Button>
@@ -194,7 +197,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
               className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-700 dark:text-rose-200 space-y-1"
             >
-              <p className="font-medium">{t('quiz.wrong', { reason: state.reason })}</p>
+              <p className="font-medium">{t('quiz.wrong', { reason: failureMessage(state.failure) })}</p>
               {state.explanation && (
                 <p className="text-rose-700/80 dark:text-rose-100/80 leading-relaxed">
                   {state.explanation}

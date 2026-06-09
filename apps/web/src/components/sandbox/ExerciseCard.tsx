@@ -72,7 +72,7 @@ export const ExerciseCard = ({
                   </Badge>
                 )}
               </div>
-              <p className="text-[14.5px] text-fg whitespace-pre-wrap leading-relaxed">{prompt}</p>
+              <p className="text-[15.5px] text-fg whitespace-pre-wrap leading-[1.7]">{prompt}</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {rightHeader}

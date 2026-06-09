@@ -68,6 +68,9 @@ export const GlassSurface = forwardRef<HTMLDivElement, Props>(function GlassSurf
     if (!el) {
       return;
     }
+    if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      return;
+    }
     const onMove = (e: PointerEvent): void => {
       const rect = el.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 100;

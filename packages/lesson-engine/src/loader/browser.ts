@@ -1,3 +1,5 @@
+import type { TopicManifest } from '@dotlearn/contracts';
+
 import { parseExerciseFile, parseManifest } from './parse';
 import {
   TopicLoadError,
@@ -13,6 +15,11 @@ export interface TopicGlobInput {
   manifests: Record<string, unknown>;
   exercises: Record<string, string>;
   theories?: Record<string, string>;
+}
+
+export interface LazyTopicGlobInput {
+  manifests: Record<string, unknown>;
+  exercises: Record<string, () => Promise<string>>;
 }
 
 interface ParsedGlobs {
@@ -63,6 +70,37 @@ const indexGlobs = (input: TopicGlobInput): ParsedGlobs => {
   return { manifests, theories, exercises };
 };
 
+const buildConcepts = (
+  slug: string,
+  manifest: TopicManifest,
+  theoryBucket: Map<string, string>,
+  exerciseBucket: Map<string, string>,
+): ConceptBundle[] =>
+  manifest.concepts.map((concept) => {
+    const theory: TheoryFile[] = concept.theoryFiles.map((filename) => {
+      const source = theoryBucket.get(filename) ?? '';
+      return { filename, source };
+    });
+    const exercises: ExerciseFileBundle[] = concept.exerciseFiles.map((filename) => {
+      const raw = exerciseBucket.get(filename);
+      if (raw === undefined) {
+        throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
+      }
+      const parsed = parseExerciseFile(slug, filename, raw);
+      for (const exercise of parsed) {
+        if (exercise.concept !== concept.id) {
+          throw new TopicLoadError(
+            slug,
+            filename,
+            `exercise ${exercise.id} declares concept "${exercise.concept}" but lives in concept "${concept.id}"`,
+          );
+        }
+      }
+      return { filename, exercises: parsed };
+    });
+    return { conceptId: concept.id, theory, exercises };
+  });
+
 export const createBrowserTopicSource = (input: TopicGlobInput): TopicSource => {
   const indexed = indexGlobs(input);
 
@@ -77,32 +115,60 @@ export const createBrowserTopicSource = (input: TopicGlobInput): TopicSource => 
     const theoryBucket = indexed.theories.get(slug) ?? new Map<string, string>();
     const exerciseBucket = indexed.exercises.get(slug) ?? new Map<string, string>();
 
-    const concepts: ConceptBundle[] = manifest.concepts.map((concept) => {
-      const theory: TheoryFile[] = concept.theoryFiles.map((filename) => {
-        const source = theoryBucket.get(filename) ?? '';
-        return { filename, source };
-      });
-      const exercises: ExerciseFileBundle[] = concept.exerciseFiles.map((filename) => {
-        const raw = exerciseBucket.get(filename);
-        if (raw === undefined) {
-          throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
-        }
-        const parsed = parseExerciseFile(slug, filename, raw);
-        for (const exercise of parsed) {
-          if (exercise.concept !== concept.id) {
-            throw new TopicLoadError(
-              slug,
-              filename,
-              `exercise ${exercise.id} declares concept "${exercise.concept}" but lives in concept "${concept.id}"`,
-            );
-          }
-        }
-        return { filename, exercises: parsed };
-      });
-      return { conceptId: concept.id, theory, exercises };
-    });
+    return { manifest, concepts: buildConcepts(slug, manifest, theoryBucket, exerciseBucket) };
+  };
 
-    return { manifest, concepts };
+  return { list, load };
+};
+
+export const createLazyTopicSource = (input: LazyTopicGlobInput): TopicSource => {
+  const manifests = new Map<string, unknown>();
+  for (const [path, value] of Object.entries(input.manifests)) {
+    const matched = extractSlugAndTail(path);
+    if (matched && matched.tail === 'manifest.json') {
+      manifests.set(matched.slug, value);
+    }
+  }
+
+  const exerciseImporters = new Map<string, Map<string, () => Promise<string>>>();
+  for (const [path, importer] of Object.entries(input.exercises)) {
+    const matched = extractSlugAndTail(path);
+    if (matched && matched.tail.startsWith('exercises/')) {
+      const bucket =
+        exerciseImporters.get(matched.slug) ?? new Map<string, () => Promise<string>>();
+      bucket.set(matched.tail, importer);
+      exerciseImporters.set(matched.slug, bucket);
+    }
+  }
+
+  const list = async (): Promise<string[]> => [...manifests.keys()].sort();
+
+  const load = async (slug: string): Promise<TopicBundle> => {
+    const rawManifest = manifests.get(slug);
+    if (rawManifest === undefined) {
+      throw new TopicNotFoundError(slug);
+    }
+    const manifest = parseManifest(slug, rawManifest);
+    const importerBucket =
+      exerciseImporters.get(slug) ?? new Map<string, () => Promise<string>>();
+
+    const exerciseBucket = new Map<string, string>();
+    await Promise.all(
+      manifest.concepts.flatMap((concept) =>
+        concept.exerciseFiles.map(async (filename) => {
+          const importer = importerBucket.get(filename);
+          if (!importer) {
+            throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
+          }
+          exerciseBucket.set(filename, await importer());
+        }),
+      ),
+    );
+
+    return {
+      manifest,
+      concepts: buildConcepts(slug, manifest, new Map<string, string>(), exerciseBucket),
+    };
   };
 
   return { list, load };

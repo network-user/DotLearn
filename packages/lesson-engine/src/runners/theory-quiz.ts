@@ -1,6 +1,6 @@
 import type { TheoryQuizExercise } from '@dotlearn/contracts';
 
-import { fail, pass, type RunResult } from './result';
+import { fail, failCoded, pass, type RunResult } from './result';
 
 export const runTheoryQuiz = (exercise: TheoryQuizExercise, answer: string[]): RunResult => {
   if (!Array.isArray(answer)) {
@@ -23,5 +23,9 @@ export const runTheoryQuiz = (exercise: TheoryQuizExercise, answer: string[]): R
   if (missing.length === 0 && unexpected.length === 0) {
     return pass(exercise.explanation ? { explanation: exercise.explanation } : undefined);
   }
-  return fail('incorrect choice set', { missing, unexpected, explanation: exercise.explanation });
+  return failCoded('quiz-incorrect', 'incorrect choice set', undefined, {
+    missing,
+    unexpected,
+    explanation: exercise.explanation,
+  });
 };

@@ -42,6 +42,7 @@ Re-read every theory file and exercise prompt as a learner. Reject any of:
 - Inconsistent terminology within the same topic
 - Off-by-one or boundary errors in fixtures
 - Exercise prompts that are ambiguous about what to return
+- Content that breaks on narrow screens: oversized tables without a scrollable wrapper, code lines that cannot wrap or scroll, viz components with unconditional `min-w-*` (scope min-widths to a breakpoint, e.g. `sm:min-w-[160px]`). Theory must be readable on a 375px-wide phone.
 
 ## G9 — Difficulty calibration
 

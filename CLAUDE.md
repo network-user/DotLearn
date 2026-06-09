@@ -41,6 +41,24 @@ NestJS with Layered DDD:
 - Sandbox in `packages/sandbox`, executed in Web Workers
 - AI calls via `packages/ai-providers` (BYOK)
 
+### Responsive design (mobile + desktop, mandatory)
+
+Every new page or component is designed for **both mobile and desktop in the same change**:
+
+- Mobile-first Tailwind: base classes target narrow screens, `sm:`/`md:`/`lg:`/`xl:` widen the layout.
+- Touch targets >= 44px via the `--tap` / `--tap-comfort` tokens; primary action buttons full-width on mobile (`w-full sm:w-auto` or `flex-1 sm:flex-initial`).
+- Text inputs: 16px font on mobile (`text-[16px] sm:text-sm` or the shared `form-input` class) — prevents iOS Safari focus zoom.
+- Hover must not be load-bearing: Tailwind runs with `future.hoverOnlyWhenSupported`; pointer-tracking effects (GlassSurface) bail out on touch devices.
+- Below `md`, `BottomTabBar` is the primary navigation; do not place fixed UI in its zone (`--mobile-tabbar-h` + `--safe-bottom`).
+- Wide content (tables, grids, viz) scrolls inside `overflow-x-auto`; never force horizontal page scroll. `min-w-*` only behind a breakpoint prefix.
+- Check 375px and 1280px in device emulation before calling UI work done.
+
+### Content-loading budget
+
+- Topic content (MDX theory, YAML exercises) and heavy dependencies (Monaco editor, sql.js, pyodide) load lazily. Never add an eager `import.meta.glob` over `topics/**`; never statically import a heavy editor/runtime into a shared chunk (use `LazyCodeEditor` / the lazy runtimes).
+- Routes are code-split via `React.lazy` in `router.tsx`; only `HomePage` lives in the entry chunk.
+- List pages (home, progress) take per-topic exercise counts from the build-time `virtual:topic-stats` module instead of loading full topic bundles.
+
 ## Internationalization (i18n)
 
 DotLearn is bilingual: **Russian is primary and the fallback language; English is secondary**. The runtime locale is detected from `localStorage` → `navigator.language`, defaulting to `ru` when neither yields `ru`/`en`. Users can override it via the switcher in the header or on `/settings`.
