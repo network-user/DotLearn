@@ -1,6 +1,6 @@
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 
-import { authenticator } from 'otplib';
+import { generateSecret, generateURI } from 'otplib';
 import qrcode from 'qrcode';
 
 const BACKUP_CODE_COUNT = 8;
@@ -21,9 +21,12 @@ const generateBackupCodes = (count: number): { plain: string[]; hashed: string[]
 };
 
 const main = async (): Promise<void> => {
-  void randomBytes(0);
-  const secret = authenticator.generateSecret();
-  const otpauth = authenticator.keyuri(ACCOUNT, ISSUER, secret);
+  const secret = generateSecret();
+  const otpauth = generateURI({
+    issuer: ISSUER,
+    label: ACCOUNT,
+    secret,
+  });
   const qr = await qrcode.toString(otpauth, { type: 'terminal', small: true });
   const { plain, hashed } = generateBackupCodes(BACKUP_CODE_COUNT);
 

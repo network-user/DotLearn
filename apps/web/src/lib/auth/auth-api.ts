@@ -72,15 +72,18 @@ const parseEnvelope = async <T>(response: Response): Promise<T> => {
 };
 
 const post = async <T>(path: string, body: unknown, accessToken?: string): Promise<T> => {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const init: RequestInit = {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+  }
+  const response = await fetch(`${API_BASE}${path}`, init);
   return parseEnvelope<T>(response);
 };
 
