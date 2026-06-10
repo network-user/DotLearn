@@ -41,11 +41,17 @@ export interface FlashcardReviewRecord {
   lastReviewAt?: string;
 }
 
+export interface InterviewStudiedRecord {
+  id: number;
+  studiedAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
   flashcardReviews!: Table<FlashcardReviewRecord, string>;
   providerCredentials!: Table<ProviderCredentialsRecord, string>;
+  interviewStudied!: Table<InterviewStudiedRecord, number>;
 
   constructor() {
     super('dotlearn-progress');
@@ -60,10 +66,28 @@ class ProgressDb extends Dexie {
       flashcardReviews: 'id, topicSlug, due',
       providerCredentials: 'providerId',
     });
+    this.version(3).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+    });
   }
 }
 
 export const db = new ProgressDb();
+
+export const setInterviewStudied = async (
+  id: number,
+  studied: boolean,
+): Promise<void> => {
+  if (studied) {
+    await db.interviewStudied.put({ id, studiedAt: new Date().toISOString() });
+  } else {
+    await db.interviewStudied.delete(id);
+  }
+};
 
 const todayUtc = (): string => new Date().toISOString().slice(0, 10);
 

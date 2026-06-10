@@ -59,7 +59,9 @@ function decodeEntities(s) {
     .replace(/&raquo;/g, '»')
     .replace(/&mdash;/g, '—')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&');
+    .replace(/&amp;/g, '&')
+    .replace(/&#8203;/g, '')
+    .replace(/​/g, '');
 }
 
 function stripTags(s) {
