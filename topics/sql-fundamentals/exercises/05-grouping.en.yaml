@@ -18,6 +18,41 @@ exercises:
     explanation: |
       WHERE filters rows before GROUP BY, HAVING filters groups after.
       HAVING is required only when the predicate references an aggregate.
+    variants:
+      - prompt: |
+          In what order do the parts of a grouping query execute logically?
+        choices:
+          - id: a
+            text: SELECT, FROM, WHERE, GROUP BY, HAVING, ORDER BY
+          - id: b
+            text: FROM, WHERE, GROUP BY, HAVING, SELECT, ORDER BY
+          - id: c
+            text: FROM, GROUP BY, WHERE, HAVING, SELECT, ORDER BY
+          - id: d
+            text: FROM, HAVING, WHERE, GROUP BY, SELECT, ORDER BY
+        correct: [b]
+        explanation: |
+          A query is written starting with SELECT but executes along the
+          pipeline: first FROM and WHERE over rows, then GROUP BY and
+          HAVING over groups, and only then SELECT and ORDER BY.
+      - prompt: |
+          The book table has six rows and three distinct authors. How many
+          rows does SELECT author, COUNT(*) FROM book GROUP BY author
+          return?
+        choices:
+          - id: a
+            text: Six, one per table row.
+          - id: b
+            text: Three, one per author.
+          - id: c
+            text: One, because COUNT folds everything into a single number.
+          - id: d
+            text: It depends on how many aggregates are in SELECT.
+        correct: [b]
+        explanation: |
+          GROUP BY creates one bucket per unique author value, and exactly
+          one row per bucket goes into the result. The number of aggregates
+          in SELECT does not change the row count.
 
   - id: grouping-books-per-author
     concept: grouping
@@ -45,11 +80,125 @@ exercises:
         - { author: "Ada", books: 2 }
         - { author: "Grace", books: 1 }
         - { author: "Linus", books: 1 }
+    hints:
+      - >-
+        "One row per author" means the table rows must be folded into
+        buckets by the author value - the result describes buckets, not
+        individual books.
+      - >-
+        Decide step by step: which column deals the rows into buckets,
+        which aggregate counts the contents of each bucket, and what the
+        output order should be.
+      - >-
+        COUNT(*) counts the rows inside a group; the output column name is
+        set with AS.
     solution: |
       SELECT author, COUNT(*) AS books
       FROM book
       GROUP BY author
       ORDER BY author;
+    variants:
+      - prompt: |
+          Return one row per author with columns `author` and `total_pages`
+          (the total page count). Order by author.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { author: "Ada", total_pages: 1100 }
+            - { author: "Grace", total_pages: 220 }
+            - { author: "Linus", total_pages: 700 }
+        solution: |
+          SELECT author, SUM(pages) AS total_pages
+          FROM book
+          GROUP BY author
+          ORDER BY author;
+      - prompt: |
+          Return one row per author with columns `author` and `longest`
+          (the page count of the author's biggest book). Order by author.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { author: "Ada", longest: 620 }
+            - { author: "Grace", longest: 220 }
+            - { author: "Linus", longest: 700 }
+        solution: |
+          SELECT author, MAX(pages) AS longest
+          FROM book
+          GROUP BY author
+          ORDER BY author;
+
+  - id: grouping-null-team
+    concept: grouping
+    type: sql-query
+    difficulty: 2
+    prompt: |
+      Count players in each team, including players without a team (NULL
+      forms its own group). Return `team` and `members`, ordered by team.
+    fixture: |
+      CREATE TABLE player (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        team TEXT
+      );
+      INSERT INTO player VALUES
+        (1, 'Mira', 'red'),
+        (2, 'Oleg', NULL),
+        (3, 'Pavel', 'red'),
+        (4, 'Rita', NULL),
+        (5, 'Sana', 'blue');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { team: null, members: 2 }
+        - { team: "blue", members: 1 }
+        - { team: "red", members: 2 }
+    hints:
+      - >-
+        GROUP BY puts all NULLs into one shared bucket - the only question
+        is how many cards end up in each of the buckets.
+      - >-
+        Grouping by team yields three buckets: red, blue, and the teamless
+        one. What remains is to count rows in each and order the output;
+        in ascending order NULL comes first.
+    solution: |
+      SELECT team, COUNT(*) AS members
+      FROM player
+      GROUP BY team
+      ORDER BY team;
+    variants:
+      - prompt: |
+          Count only players who belong to a team: return `team` and
+          `members` without the NULL group. Order by team.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { team: "blue", members: 1 }
+            - { team: "red", members: 2 }
+        solution: |
+          SELECT team, COUNT(*) AS members
+          FROM player
+          WHERE team IS NOT NULL
+          GROUP BY team
+          ORDER BY team;
+      - prompt: |
+          Return the groups (including the NULL group) that have at least
+          two players. Columns `team` and `members`, ordered by team.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { team: null, members: 2 }
+            - { team: "red", members: 2 }
+        solution: |
+          SELECT team, COUNT(*) AS members
+          FROM player
+          GROUP BY team
+          HAVING COUNT(*) >= 2
+          ORDER BY team;
 
   - id: grouping-prolific-authors
     concept: grouping
@@ -78,9 +227,66 @@ exercises:
       rows:
         - { author: "Ada", books: 3 }
         - { author: "Linus", books: 2 }
+    hints:
+      - >-
+        "More than one book" is a condition on a finished bucket, not on an
+        individual row: first the rows are dealt out by author, and only
+        then the buckets are filtered.
+      - >-
+        Build the summary "author and their book count", then keep only the
+        summary rows where the counter exceeds one - an aggregate filter
+        lives after grouping.
     solution: |
       SELECT author, COUNT(*) AS books
       FROM book
       GROUP BY author
       HAVING COUNT(*) > 1
       ORDER BY author;
+
+  - id: grouping-monthly-revenue
+    concept: grouping
+    type: sql-query
+    difficulty: 4
+    prompt: |
+      Compute revenue per month: `month` is the first seven characters of
+      the `paid_at` date (`YYYY-MM`), `total` is the sum of `amount`. Keep
+      only months with total of at least 500 and order by month.
+    fixture: |
+      CREATE TABLE payment (
+        id INTEGER PRIMARY KEY,
+        paid_at TEXT NOT NULL,
+        amount INTEGER NOT NULL
+      );
+      INSERT INTO payment VALUES
+        (1, '2024-01-05', 200),
+        (2, '2024-01-19', 350),
+        (3, '2024-01-30', 60),
+        (4, '2024-02-02', 90),
+        (5, '2024-02-27', 150),
+        (6, '2024-03-08', 500),
+        (7, '2024-03-21', 120);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { month: "2024-01", total: 610 }
+        - { month: "2024-03", total: 620 }
+    hints:
+      - >-
+        There is no "month" column in the table - the bucket is defined by
+        a value computed from the date, and all payments of one month must
+        land in the same bucket.
+      - >-
+        The plan: turn each date into a month label, group by that label,
+        sum amount inside the bucket, and apply the threshold to the
+        finished groups.
+      - >-
+        substr(paid_at, 1, 7) extracts the first seven characters of a
+        string; in GROUP BY you may repeat the expression or reference the
+        alias.
+    solution: |
+      SELECT substr(paid_at, 1, 7) AS month, SUM(amount) AS total
+      FROM payment
+      GROUP BY substr(paid_at, 1, 7)
+      HAVING SUM(amount) >= 500
+      ORDER BY month;

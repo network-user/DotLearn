@@ -18,7 +18,7 @@ export const AddTopicButton = () => {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap bg-indigo-500 hover:bg-indigo-400 text-white shadow-sm"
+        className="px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap bg-accent hover:bg-accent/90 text-surface dark:text-canvas"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t('button')}

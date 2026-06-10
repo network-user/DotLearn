@@ -43,12 +43,12 @@ const defaultRight: JoinRow[] = [
 ];
 
 const keyPalette = [
-  'bg-indigo-500',
-  'bg-cyan-500',
-  'bg-teal-500',
-  'bg-amber-500',
-  'bg-rose-500',
-  'bg-violet-500',
+  'bg-[rgb(var(--viz-cat-1))]',
+  'bg-[rgb(var(--viz-cat-2))]',
+  'bg-[rgb(var(--viz-cat-3))]',
+  'bg-[rgb(var(--viz-cat-4))]',
+  'bg-[rgb(var(--viz-cat-5))]',
+  'bg-[rgb(var(--viz-cat-6))]',
 ];
 
 const joinModes: JoinMode[] = ['inner', 'left', 'right'];
@@ -108,8 +108,8 @@ export const JoinViz = ({
     keyName: string,
     rows: JoinRow[],
   ): JSX.Element => (
-    <div className="rounded-xl border border-border-base bg-surface-2/30 overflow-hidden">
-      <div className="px-3 py-1.5 border-b border-border-base/60 bg-surface-2/50 font-mono text-[11.5px] text-fg-muted">
+    <div className="rounded-lg border border-border-base bg-surface overflow-hidden">
+      <div className="px-3 py-1.5 border-b border-border-base/60 bg-surface-2 font-mono text-[11.5px] text-fg-muted">
         {title}
       </div>
       <ul>
@@ -136,7 +136,7 @@ export const JoinViz = ({
     <VizShell
       label={label ?? t('join.label')}
       actions={
-        <div className="flex items-center rounded-lg border border-border-base bg-surface/50 p-0.5">
+        <div className="flex items-center rounded-lg border border-border-base bg-surface p-0.5">
           {joinModes.map((joinMode) => (
             <button
               key={joinMode}
@@ -145,7 +145,7 @@ export const JoinViz = ({
               className={cx(
                 'rounded-md px-2 h-6 font-mono text-[11px] transition-colors duration-fast',
                 mode === joinMode
-                  ? 'bg-accent text-white shadow-glow-sm'
+                  ? 'bg-accent text-surface dark:text-canvas'
                   : 'text-fg-muted hover:text-fg',
               )}
             >
@@ -161,7 +161,7 @@ export const JoinViz = ({
         {sourceTable('right', rightTitle, rightKeyName, right)}
       </div>
 
-      <div className="rounded-xl border border-accent/30 bg-accent/4 overflow-hidden">
+      <div className="rounded-lg border border-accent/30 bg-accent/4 overflow-hidden">
         <div className="px-3 py-1.5 border-b border-accent/20 bg-accent/8 font-mono text-[11.5px] text-accent">
           {leftTitle} {modeSql[mode]} {rightTitle} · {t('join.result')}
         </div>

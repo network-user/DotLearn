@@ -19,29 +19,29 @@ const tones: Record<Tone, { soft: string; solid: string; outline: string }> = {
     outline: 'text-fg-muted border-border-strong',
   },
   accent: {
-    soft: 'bg-accent/12 text-accent',
-    solid: 'bg-accent text-white',
+    soft: 'bg-accent/10 text-accent',
+    solid: 'bg-accent text-surface dark:text-canvas',
     outline: 'text-accent border-accent/40',
   },
   success: {
-    soft: 'bg-emerald-500/12 text-emerald-300',
-    solid: 'bg-emerald-500 text-white',
-    outline: 'text-emerald-300 border-emerald-500/40',
+    soft: 'bg-ok/10 text-ok',
+    solid: 'bg-ok text-surface dark:text-canvas',
+    outline: 'text-ok border-ok/40',
   },
   warning: {
-    soft: 'bg-amber-500/12 text-amber-300',
-    solid: 'bg-amber-500 text-white',
-    outline: 'text-amber-300 border-amber-500/40',
+    soft: 'bg-warn/10 text-warn',
+    solid: 'bg-warn text-surface dark:text-canvas',
+    outline: 'text-warn border-warn/40',
   },
   danger: {
-    soft: 'bg-rose-500/12 text-rose-300',
-    solid: 'bg-rose-500 text-white',
-    outline: 'text-rose-300 border-rose-500/40',
+    soft: 'bg-err/10 text-err',
+    solid: 'bg-err text-surface dark:text-canvas',
+    outline: 'text-err border-err/40',
   },
   info: {
-    soft: 'bg-sky-500/12 text-sky-300',
-    solid: 'bg-sky-500 text-white',
-    outline: 'text-sky-300 border-sky-500/40',
+    soft: 'bg-info/10 text-info',
+    solid: 'bg-info text-surface dark:text-canvas',
+    outline: 'text-info border-info/40',
   },
 };
 
@@ -56,7 +56,7 @@ export const Badge = ({
   <span
     {...rest}
     className={cx(
-      'inline-flex items-center gap-1 rounded-pill text-[11px] font-medium tracking-snug px-2 py-0.5',
+      'inline-flex items-center gap-1 rounded-xs text-[11px] font-semibold uppercase tracking-[var(--ls-wide)] px-1.5 py-0.5',
       variant === 'outline' && 'border bg-transparent',
       tones[tone][variant],
       className,

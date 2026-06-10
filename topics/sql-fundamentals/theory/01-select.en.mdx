@@ -1,52 +1,202 @@
 ---
 conceptId: select
-title: SELECT and filtering
-estimatedMinutes: 15
+title: "SELECT: reading exactly what you need from a table"
+estimatedMinutes: 45
 ---
 
-# SELECT and filtering
+# SELECT: reading exactly what you need from a table
 
-By the end of this section you can read specific columns from a table and keep only the rows you care about. This is the read half of CRUD — the operation you'll perform a thousand times a week.
+The `users` table holds five thousand rows, and you need three of them: adult users from Poland who have an email on file. Pulling everything down and filtering in application code is slow and wasteful; the database can hand you exactly the slice you want on its own. That work is done by the pair `SELECT` and `WHERE` - two words you will type more often than any others across an entire career working with data.
 
-## The shape of SELECT
+By the end of this article you will pick out the columns you need, select rows by compound conditions, search by pattern with `LIKE`, drop duplicates with `DISTINCT` - and understand why comparing against `NULL` quietly returns "nothing" and how to get around it.
 
-A `SELECT` always names what to return and where to read from.
+## Two cuts through one table
+
+A table is a rectangle: rows run down, columns run across. A read query slices that rectangle in two directions, and each cut has a name from relational algebra.
+
+<MarginNote label="History">The SEQUEL language appeared at IBM in 1974. The words SELECT, FROM, and WHERE have not changed since.</MarginNote>
+
+The horizontal cut is called selection: the condition in `WHERE` walks the rows and keeps only those for which the predicate is true. The vertical cut is called projection: the list after the word `SELECT` decides which columns make it into the result. The operations are independent: you can filter rows and return every column, you can return one column of every row, and most often you do both at once.
+
+<Figure caption="WHERE discards whole rows: Bob and Ian never reach the projection, and the surviving rows keep all their values.">
+  <RowFilterFigure
+    columns={["name", "age", "country"]}
+    rows={[
+      { cells: ["Anna", "25", "PL"], kept: true },
+      { cells: ["Bob", "17", "US"], kept: false },
+      { cells: ["Eva", "30", "PL"], kept: true },
+      { cells: ["Ian", "14", "LV"], kept: false },
+    ]}
+    condition="age >= 18"
+    title="Filtering rows with a WHERE condition"
+  />
+</Figure>
+
+In the figure the condition `age >= 18` lets Anna and Eva through and stops Bob and Ian. Notice: a row either passes whole or is discarded whole. `WHERE` never lets a row through "partially" - it answers only the question "is this row alive or not".
+
+The second key fact: the order of execution does not match the order of writing. You write `SELECT` as the first word, but the engine runs it last.
+
+<Figure caption="Logical order of execution: source first, then the filter, and only then the projection. SELECT sees rows that are already filtered.">
+  <PipelineFigure
+    title="Logical order of query execution"
+    stages={[
+      { label: "FROM", note: "take the users table" },
+      { label: "WHERE", note: "keep rows that are TRUE", active: true },
+      { label: "SELECT", note: "project the columns" },
+    ]}
+  />
+</Figure>
+
+First `FROM` names the data source, then `WHERE` discards the unwanted rows, and only after that does `SELECT` project the survivors onto the columns you want. A practical consequence follows from this order: you cannot reference column aliases declared in `SELECT` from inside `WHERE` - at the moment of filtering they do not exist yet.
+
+## Building a query step by step
+
+Every example in this article works against one table:
+
+```sql
+CREATE TABLE users (id INTEGER, name TEXT, age INTEGER, country TEXT, email TEXT);
+INSERT INTO users VALUES
+  (1, 'Anna', 25, 'PL', 'anna@example.com'),
+  (2, 'Bob', 17, 'US', NULL),
+  (3, 'Eva', 30, 'PL', 'eva@example.com'),
+  (4, 'Ian', 14, 'LV', 'ian@test.org'),
+  (5, 'Olga', 41, 'LV', NULL);
+```
+
+The minimal query names the columns and the table:
 
 ```sql
 SELECT name, age FROM users;
 ```
 
-This returns two columns for every row in `users`. To return all columns, use `*`.
+The asterisk returns all columns at once:
 
 ```sql
 SELECT * FROM users;
 ```
 
-## Filtering with WHERE
+For quick experiments `*` is convenient, but in application code list the columns explicitly: a table's schema changes over time, and a query with a star will one day drag a column nobody expected into the application.
 
-`WHERE` runs before the projection; it decides which rows survive.
-
-```sql
-SELECT * FROM users WHERE age >= 18;
-```
-
-You can combine conditions with `AND` and `OR`. Group with parentheses when in doubt.
+Filtering is added with a single condition. The usual comparison operators are available: `=`, `<>`, `<`, `<=`, `>`, `>=`.
 
 ```sql
-SELECT * FROM users
-WHERE (age >= 18 AND country = 'PL') OR is_admin = 1;
+SELECT name FROM users WHERE country <> 'PL';
 ```
 
-## When to use this
+The query returns Bob, Ian, and Olga - everyone whose country is not Poland. Conditions are combined with `AND`, `OR`, and `NOT`:
 
-`SELECT ... WHERE` is the building block of every read query. The remaining tools — ordering, aggregation, joins — wrap around this base.
+```sql
+SELECT name, age, country FROM users
+WHERE age >= 18 AND (country = 'PL' OR country = 'LV');
+```
+
+Here the parentheses are not decoration. `AND` binds more tightly than `OR`, so without the parentheses the condition would read as "adult Poles, plus anyone at all from Latvia" - and fourteen-year-old Ian would slip into the result. Parentheses are free: add them at the slightest doubt about precedence.
+
+When the exact value is unknown, you need a pattern search. The `LIKE` operator understands two special characters: `%` matches any sequence of characters (including the empty one), `_` matches exactly one character.
+
+```sql
+SELECT name, email FROM users WHERE email LIKE '%@example.com';
+```
+
+The query finds Anna and Eva: their addresses end in `@example.com`. The pattern `'a%'` would find addresses starting with `a`, and `'____@%'` would find addresses with exactly four characters before the `@`.
+
+The last tool of this section is `DISTINCT`. It removes duplicate rows from the result:
+
+```sql
+SELECT DISTINCT country FROM users;
+```
+
+Instead of five rows you get three: `PL`, `US`, `LV`. Importantly, `DISTINCT` applies to the whole result row, not to a single column: `SELECT DISTINCT country, age` removes only fully matching "country + age" pairs.
+
+## Experiment for yourself
+
+The best way to lock in the "filter, then project" order is to break a couple of queries by hand.
+
+<SideSql
+  title="Sandbox: the same users table"
+  editable
+  live
+  fixture={`CREATE TABLE users (id INTEGER, name TEXT, age INTEGER, country TEXT, email TEXT);
+INSERT INTO users VALUES
+  (1, 'Anna', 25, 'PL', 'anna@example.com'),
+  (2, 'Bob', 17, 'US', NULL),
+  (3, 'Eva', 30, 'PL', 'eva@example.com'),
+  (4, 'Ian', 14, 'LV', 'ian@test.org'),
+  (5, 'Olga', 41, 'LV', NULL);`}
+  query="SELECT name, age FROM users WHERE age >= 18 AND country = 'PL';"
+/>
+
+The query above returns adults from Poland. Now change the condition to `country = 'LV' OR age > 30` - but first predict who lands in the result, and only then look at it. Then try something harder: find the users who have no email. If your first attempt returned an empty table - congratulations, you just ran into the main surprise of this article.
+
+## NULL: logic with three answers
+
+In ordinary boolean logic a comparison returns true or false. In SQL there are three answers: `TRUE`, `FALSE`, and `NULL` - "unknown". Any comparison with `NULL` yields `NULL`: both `email = NULL`, and `email <> NULL`, and even `NULL = NULL`. The logic is honest: `NULL` means "there is no value" or "the value is unknown", and comparing two unknowns is like asking whether two numbers nobody named are equal.
+
+`WHERE` lets a row through only on `TRUE`. `NULL` is not `TRUE`, so a row with `NULL` in the compared column will pass neither the condition nor its negation.
+
+<SideSql
+  title="The NULL trap"
+  editable
+  live
+  fixture={`CREATE TABLE users (id INTEGER, name TEXT, age INTEGER, country TEXT, email TEXT);
+INSERT INTO users VALUES
+  (1, 'Anna', 25, 'PL', 'anna@example.com'),
+  (2, 'Bob', 17, 'US', NULL),
+  (3, 'Eva', 30, 'PL', 'eva@example.com'),
+  (4, 'Ian', 14, 'LV', 'ian@test.org'),
+  (5, 'Olga', 41, 'LV', NULL);`}
+  query="SELECT name FROM users WHERE email = NULL;"
+/>
+
+Zero rows - even though Bob and Olga really do have no email. Replace `= NULL` with `IS NULL` and run again: both rows appear. For the opposite check there is `IS NOT NULL`.
+
+<Callout type="warning" title="NULL equals nothing">
+Not even itself: the expression NULL = NULL returns NULL, not TRUE. The absence of a value is checked only with the IS NULL and IS NOT NULL operators.
+</Callout>
+
+The second surprise is more modest, but it matters for application code: an empty result is not an error. The query `SELECT * FROM users WHERE age > 100` on our table returns zero rows and finishes successfully. "There are no such rows" is a complete answer to the question asked, and the application must be ready for an empty list just as for a non-empty one.
+
+<PullQuote>An empty result is an answer, not an error.</PullQuote>
+
+The third surprise concerns case. In SQLite the `=` operator is case-sensitive: `'anna' = 'Anna'` is false. But `LIKE` ignores case by default for Latin letters: `'Anna' LIKE 'anna'` is true. The same literal in `=` and in `LIKE` can find a different number of rows. In other database systems the behavior differs: in PostgreSQL `LIKE` is case-sensitive, and for a case-insensitive search there is a separate operator `ILIKE`. Before relying on case, check how your engine behaves.
+
+<Detail summary="Truth table for three-valued logic">
+
+| Expression | Result |
+| --- | --- |
+| `TRUE AND NULL` | `NULL` |
+| `FALSE AND NULL` | `FALSE` |
+| `TRUE OR NULL` | `TRUE` |
+| `FALSE OR NULL` | `NULL` |
+| `NOT NULL` | `NULL` |
+
+The pattern: if the result is determined by the known operand (`FALSE AND` anything is false, `TRUE OR` anything is true), the unknown does not get in the way. But if the answer depends on the unknown operand, the result stays unknown.
+
+</Detail>
 
 ## Common mistakes
 
-- Using `=` to compare against `NULL`. `WHERE column = NULL` matches nothing; use `IS NULL` instead.
-- Forgetting that string comparisons are case-sensitive in most engines. `WHERE name = 'anna'` will not match `'Anna'`.
-- Putting `WHERE` after `ORDER BY`. The order is `SELECT ... FROM ... WHERE ... ORDER BY ...`.
+**`==` instead of `=`.** In SQL equality is tested with a single `=` sign: there is no assignment inside a query, so the second sign is not needed. SQLite, being lenient, accepts `==` too, but most database systems answer with a syntax error. It is a reflex from programming languages; retrain yourself to `=` right away.
+
+**Mixed-up quotes.** Single quotes are for string values: `'Anna'`. Double quotes are for table and column names: `"name"`. The query `WHERE name = "Anna"` fails in a strict database system with the error "column Anna does not exist". SQLite is sneakier: when it cannot find such a column, it silently treats `"Anna"` as a string, and the query "works" right up until you move it to another database.
+
+**Comparing against `NULL` with `=`.** The symptom: a condition "does not find" rows that are definitely in the table. The cause is the three-valued logic from the previous section; the cure is to switch to `IS NULL` or `IS NOT NULL`.
+
+**`WHERE` with aggregates.** Sooner or later you will write `WHERE COUNT(*) > 5` and get an error. `WHERE` runs before grouping and sees individual rows, not group totals; to filter groups there is `HAVING`, and it comes up in the section on `GROUP BY`. For now it is enough to remember: `WHERE` is about rows, `HAVING` is about groups.
+
+<KeyTakeaways
+  items={[
+    "The list after SELECT picks columns (projection); WHERE picks rows (selection) - two independent operations.",
+    "Logical order of execution: FROM, then WHERE, then SELECT - the filter fires before the projection.",
+    "A comparison with NULL returns NULL, not TRUE or FALSE; the absence of a value is checked with IS NULL.",
+    "An empty result is a valid answer to a query, not an error.",
+    "In SQLite the = operator is case-sensitive while LIKE is not for Latin letters; in other systems it is the reverse.",
+    "String values go in single quotes; column and table names go in double quotes.",
+  ]}
+/>
 
 ## References
 
-- [SQLite SELECT docs](https://www.sqlite.org/lang_select.html)
+- [SQLite SELECT documentation](https://www.sqlite.org/lang_select.html)
+- [SQLite expressions and LIKE documentation](https://www.sqlite.org/lang_expr.html)
+- [How SQLite handles NULL](https://www.sqlite.org/nulls.html)

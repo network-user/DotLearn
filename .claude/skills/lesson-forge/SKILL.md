@@ -103,13 +103,15 @@ Required fields and their semantics are in [reference/topic-contract.md](./refer
 
 For each concept in the plan, in order, and **for each language** listed in `availableLanguages`:
 
-1. Write `theory/<NN>-<concept-id>.<lang>.mdx` following [reference/content-style-guide.md](./reference/content-style-guide.md). Filenames always carry the explicit language suffix; there is no untagged variant.
+1. Write `theory/<NN>-<concept-id>.<lang>.mdx` as a longread article following [reference/content-style-guide.md](./reference/content-style-guide.md) (required skeleton: hook → mental model with the concept's primary figure → worked examples → live sandbox moment → edge cases → common mistakes → optional deep dives → KeyTakeaways → references). Use components from [reference/mdx-components.md](./reference/mdx-components.md) - every concept needs at least one figure and, where the runtime allows, one live sandbox. Filenames always carry the explicit language suffix; there is no untagged variant.
 2. Write `exercises/<NN>-<concept-id>.<lang>.yaml`. Every exercise must:
    - validate against `exercise.schema.json`
    - have a `solution` field
    - have an `expected` field that the `solution` actually produces when executed
    - share its `id` with the corresponding exercise in other language variants of the same concept
-3. Mentally trace the solution against the fixture. If it would not match `expected`, fix the exercise before moving on.
+   - ship `variants` for difficulty 1-2 tasks where the data can be varied (see [reference/exercise-types.md](./reference/exercise-types.md), Variants) - translations must mirror the variant count and order
+   - carry hints that meet the hints quality bar (mental model first, never the solution)
+3. Mentally trace the solution against the fixture - for every variant. If it would not match `expected`, fix the exercise before moving on.
 
 Always finish one concept fully (every language) before starting the next. Do not interleave concepts.
 
@@ -117,7 +119,7 @@ Always finish one concept fully (every language) before starting the next. Do no
 
 Read [reference/quality-gates.md](./reference/quality-gates.md) and verify each gate. If any gate fails, fix the offending file. Do not rationalize a failure away.
 
-Run `pnpm validate` if available — the validator will execute every gold solution in the sandbox and compare to `expected`. Fix until it passes.
+Run `pnpm validate` if available — the validator checks schemas, file coverage, variant parity, and executes every `sql-query` gold solution (base and variants) in sql.js. Python/JavaScript gold solutions are NOT executed by the CLI — verify them in the web sandbox before claiming G6 passes. Fix until everything is green.
 
 ### 8. Self-review
 
@@ -155,9 +157,10 @@ If the topic introduces a new exercise `type` or a new runtime, that's a **break
 Load these on demand, not upfront. Paths are relative to this SKILL.md:
 
 - [reference/topic-contract.md](./reference/topic-contract.md) — full manifest specification
-- [reference/exercise-types.md](./reference/exercise-types.md) — catalog of allowed exercise `type` values
+- [reference/exercise-types.md](./reference/exercise-types.md) — catalog of allowed exercise `type` values, variants, hints quality bar
 - [reference/quality-gates.md](./reference/quality-gates.md) — what blocks merge
-- [reference/content-style-guide.md](./reference/content-style-guide.md) — voice, depth, structure of theory
+- [reference/content-style-guide.md](./reference/content-style-guide.md) — voice, longread structure, length budget
+- [reference/mdx-components.md](./reference/mdx-components.md) — figures, charts, live sandboxes, prose devices available in theory MDX
 
 ## Templates
 

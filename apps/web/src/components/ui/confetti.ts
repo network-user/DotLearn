@@ -3,7 +3,7 @@ import confetti from 'canvas-confetti';
 export const burstConfetti = (origin?: { x?: number; y?: number }): void => {
   const x = origin?.x ?? 0.5;
   const y = origin?.y ?? 0.55;
-  const accent = ['#6366f1', '#38bdf8', '#14b8a6', '#a78bfa', '#22d3ee'];
+  const accent = ['#bf3c22', '#a97520', '#344f6e', '#2d6a40', '#76406e'];
   void confetti({
     particleCount: 60,
     spread: 70,

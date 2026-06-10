@@ -245,7 +245,7 @@ export const AdminPage = () => {
 
   if (authState.status === 'unknown') {
     return (
-      <div className="rounded-xl border border-border-base p-8 text-center text-sm text-fg-muted">
+      <div className="rounded-lg border border-border-base p-8 text-center text-sm text-fg-muted">
         {t('loading')}
       </div>
     );
@@ -271,21 +271,21 @@ export const AdminPage = () => {
             onClick={() =>
               activeTab === 'hidden' ? void loadHidden() : void loadSubmissions(activeTab)
             }
-            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
+            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface-2"
           >
             {t('refresh')}
           </button>
           <button
             type="button"
             onClick={() => void logout()}
-            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
+            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface-2"
           >
             {t('logout')}
           </button>
           <button
             type="button"
             onClick={() => void handleLogoutAll()}
-            className="px-3 py-1.5 rounded-md text-sm border border-rose-700/50 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+            className="px-3 py-1.5 rounded-md text-sm border border-err/40 bg-err/10 text-err hover:bg-err/20"
             title={t('logoutAllHint')}
           >
             {t('logoutAll')}
@@ -383,13 +383,13 @@ const TabButton = ({ active, onClick, label, badge }: TabButtonProps) => (
     className={cx(
       '-mb-px px-3 py-2 text-sm border-b-2 transition-colors',
       active
-        ? 'border-indigo-500 text-fg'
+        ? 'border-accent text-fg'
         : 'border-transparent text-fg-muted hover:text-fg',
     )}
   >
     {label}
     {typeof badge === 'number' && (
-      <span className="ml-2 text-[10px] uppercase tracking-wide text-fg-subtle bg-surface-2/80 px-1.5 py-0.5 rounded">
+      <span className="ml-2 text-[10px] uppercase tracking-wide text-fg-subtle bg-surface-2 px-1.5 py-0.5 rounded">
         {badge}
       </span>
     )}
@@ -433,7 +433,7 @@ const SubmissionsTab = ({
 
   if (state.submissions.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border-base p-8 text-center text-sm text-fg-muted">
+      <div className="rounded-lg border border-dashed border-border-base p-8 text-center text-sm text-fg-muted">
         {t('empty')}
       </div>
     );
@@ -446,10 +446,10 @@ const SubmissionsTab = ({
         value={state.query}
         onChange={(event) => onQueryChange(event.target.value)}
         placeholder={t('searchPlaceholder')}
-        className="w-full max-w-md rounded-lg border border-border-base bg-surface/60 px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60"
+        className="w-full max-w-md rounded-lg border border-border-base bg-surface px-3 py-2 text-[16px] sm:text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/70"
       />
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border-base p-6 text-center text-sm text-fg-muted">
+        <div className="rounded-lg border border-dashed border-border-base p-6 text-center text-sm text-fg-muted">
           {t('searchEmpty')}
         </div>
       ) : (
@@ -509,7 +509,7 @@ const SubmissionRow = ({
   const { t } = useTranslation('admin');
   const date = new Date(submission.createdAt);
   return (
-    <article className="rounded-xl border border-border-base bg-surface/60 p-5 space-y-3">
+    <article className="rounded-lg border border-border-base bg-surface p-5 space-y-3">
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
           <h3 className="font-semibold text-fg">{submission.payload.title}</h3>
@@ -524,7 +524,7 @@ const SubmissionRow = ({
             {submission.materializedSlug && (
               <>
                 <span aria-hidden>·</span>
-                <span className="text-emerald-300">→ {submission.materializedSlug}</span>
+                <span className="text-ok">→ {submission.materializedSlug}</span>
               </>
             )}
           </div>
@@ -539,7 +539,7 @@ const SubmissionRow = ({
           {submission.payload.tags.map((tag: string) => (
             <li
               key={tag}
-              className="text-[10px] uppercase tracking-wide text-fg-muted bg-surface-2/80 px-1.5 py-0.5 rounded"
+              className="text-[10px] uppercase tracking-wide text-fg-muted bg-surface-2 px-1.5 py-0.5 rounded"
             >
               {tag}
             </li>
@@ -558,7 +558,7 @@ const SubmissionRow = ({
         </div>
       )}
       {submission.reviewerNote && (
-        <div className="rounded-md border border-border-base bg-surface-2/40 p-2 text-xs text-fg-muted">
+        <div className="rounded-md border border-border-base bg-surface-2 p-2 text-xs text-fg-muted">
           <span className="text-fg-subtle uppercase tracking-wide text-[10px]">
             {t('fields.reviewerNote')}
           </span>
@@ -569,7 +569,7 @@ const SubmissionRow = ({
       )}
 
       {(canReview || canMaterialize) && (
-        <div className="space-y-3 pt-3 border-t border-border-base/60">
+        <div className="space-y-3 pt-3 border-t border-border-base">
           {canMaterialize && (
             <label className="block">
               <span className="block text-[11px] uppercase tracking-wide text-fg-subtle mb-1">
@@ -580,7 +580,7 @@ const SubmissionRow = ({
                 value={materializeSlug}
                 onChange={(event) => onMaterializeSlugChange(event.target.value)}
                 placeholder="e.g. sql-window-functions"
-                className="w-full max-w-md rounded-md border border-border-base bg-surface/60 px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-500/60"
+                className="w-full max-w-md rounded-md border border-border-base bg-surface px-3 py-1.5 text-[16px] sm:text-sm focus:outline-none focus:border-accent/70"
               />
             </label>
           )}
@@ -593,7 +593,7 @@ const SubmissionRow = ({
               onChange={(event) => onNoteChange(event.target.value)}
               rows={2}
               placeholder={t('fields.reviewerNotePlaceholder')}
-              className="w-full rounded-md border border-border-base bg-surface/60 px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/60"
+              className="w-full rounded-md border border-border-base bg-surface px-3 py-2 text-[16px] sm:text-sm focus:outline-none focus:border-accent/70"
             />
           </label>
           <div className="flex flex-wrap gap-2">
@@ -603,7 +603,7 @@ const SubmissionRow = ({
                   type="button"
                   disabled={busy}
                   onClick={onApprove}
-                  className="px-3 py-1.5 rounded-md text-sm bg-emerald-500 text-emerald-950 font-medium hover:bg-emerald-400 disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-md text-sm bg-ok text-surface dark:text-canvas font-medium hover:bg-ok/90 disabled:opacity-50"
                 >
                   {t('approve')}
                 </button>
@@ -611,7 +611,7 @@ const SubmissionRow = ({
                   type="button"
                   disabled={busy}
                   onClick={onReject}
-                  className="px-3 py-1.5 rounded-md text-sm bg-rose-500/20 text-rose-200 border border-rose-700/50 hover:bg-rose-500/30 disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-md text-sm bg-err/10 text-err border border-err/40 hover:bg-err/20 disabled:opacity-50"
                 >
                   {t('reject')}
                 </button>
@@ -622,7 +622,7 @@ const SubmissionRow = ({
                 type="button"
                 disabled={busy}
                 onClick={onMaterialize}
-                className="px-3 py-1.5 rounded-md text-sm bg-indigo-500 text-white font-medium hover:bg-indigo-400 disabled:opacity-50"
+                className="px-3 py-1.5 rounded-md text-sm bg-accent text-surface dark:text-canvas font-medium hover:bg-accent/90 disabled:opacity-50"
               >
                 {t('actions.markMaterialized')}
               </button>
@@ -654,7 +654,7 @@ const HiddenTopicsTab = ({
 
   if (allTopics.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border-base p-8 text-center text-sm text-fg-muted">
+      <div className="rounded-lg border border-dashed border-border-base p-8 text-center text-sm text-fg-muted">
         {t('hidden.empty')}
       </div>
     );
@@ -668,7 +668,7 @@ const HiddenTopicsTab = ({
         return (
           <li
             key={manifest.slug}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-base bg-surface/60 px-4 py-3"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-base bg-surface px-4 py-3"
           >
             <div className="min-w-0">
               <div className="font-medium text-fg">{manifest.title}</div>
@@ -681,8 +681,8 @@ const HiddenTopicsTab = ({
                 className={cx(
                   'text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border',
                   isHidden
-                    ? 'text-rose-200 border-rose-500/40 bg-rose-500/10'
-                    : 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10',
+                    ? 'text-err border-err/40 bg-err/10'
+                    : 'text-ok border-ok/40 bg-ok/10',
                 )}
               >
                 {isHidden ? t('hidden.statusHidden') : t('hidden.statusVisible')}
@@ -701,7 +701,7 @@ const HiddenTopicsTab = ({
                   type="button"
                   disabled={busy}
                   onClick={() => onHide(manifest.slug)}
-                  className="px-3 py-1 rounded-md text-xs bg-rose-500/20 text-rose-200 border border-rose-700/50 hover:bg-rose-500/30 disabled:opacity-50"
+                  className="px-3 py-1 rounded-md text-xs bg-err/10 text-err border border-err/40 hover:bg-err/20 disabled:opacity-50"
                 >
                   {t('actions.hide')}
                 </button>
@@ -719,14 +719,14 @@ const SkeletonList = () => (
     {[0, 1, 2].map((index) => (
       <li
         key={index}
-        className="h-28 rounded-xl border border-border-base bg-surface/40 animate-pulse"
+        className="h-28 rounded-lg border border-border-base bg-surface-2 animate-pulse"
       />
     ))}
   </ul>
 );
 
 const ErrorBox = ({ message }: { message: string }) => (
-  <div className="rounded-xl border border-rose-900/40 bg-rose-950/30 p-5 text-sm text-rose-300">
+  <div className="rounded-lg border border-err/30 bg-err/10 p-5 text-sm text-err">
     {message}
   </div>
 );

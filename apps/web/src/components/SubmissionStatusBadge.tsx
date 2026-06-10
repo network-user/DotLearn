@@ -9,10 +9,10 @@ interface SubmissionStatusBadgeProps {
 }
 
 const TONE: Record<SubmissionStatus, string> = {
-  pending: 'text-amber-300 border-amber-500/30 bg-amber-500/10',
-  approved: 'text-indigo-200 border-indigo-500/40 bg-indigo-500/10',
+  pending: 'text-warn border-warn/30 bg-warn/10',
+  approved: 'text-accent border-accent/40 bg-accent/10',
   rejected: 'text-fg-subtle border-border-strong bg-surface-2',
-  materialized: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10',
+  materialized: 'text-ok border-ok/40 bg-ok/10',
 };
 
 export const SubmissionStatusBadge = ({ status, className }: SubmissionStatusBadgeProps) => {

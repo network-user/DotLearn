@@ -26,12 +26,10 @@ export const BottomTabBar = () => {
   return (
     <nav
       aria-label={t('primaryNavigation')}
-      className="fixed bottom-0 inset-x-0 z-[var(--z-nav)] md:hidden px-3 pb-[calc(8px+var(--safe-bottom))]"
+      className="fixed bottom-0 inset-x-0 z-[var(--z-nav)] md:hidden"
     >
-      <div className="glass glass--strong glass--bordered rounded-2xl">
-        <span aria-hidden className="glass__highlight" />
-        <span aria-hidden className="glass__shine" />
-        <ul className="glass__content flex items-stretch">
+      <div className="glass-chrome border-t border-border-base/70 pb-[var(--safe-bottom)]">
+        <ul className="flex items-stretch">
           {tabs.map(({ to, icon: Icon, labelKey }) => {
             const active = isNavPathActive(pathname, to);
             return (
@@ -49,13 +47,13 @@ export const BottomTabBar = () => {
                       (reduceMotion ? (
                         <span
                           aria-hidden
-                          className="absolute -inset-x-3.5 -inset-y-1 rounded-pill bg-accent/12"
+                          className="absolute -inset-x-4 -inset-y-1.5 rounded-full bg-accent/12"
                         />
                       ) : (
                         <motion.span
                           aria-hidden
                           layoutId="bottomTabIndicator"
-                          className="absolute -inset-x-3.5 -inset-y-1 rounded-pill bg-accent/12"
+                          className="absolute -inset-x-4 -inset-y-1.5 rounded-full bg-accent/12"
                           transition={{ type: 'spring', stiffness: 420, damping: 32 }}
                         />
                       ))}

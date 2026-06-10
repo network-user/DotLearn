@@ -21,6 +21,19 @@ interface TheoryQuizRunnerProps {
   exercise: TheoryQuizExercise;
 }
 
+const shuffleArray = <T,>(items: readonly T[]): T[] => {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const held = result[index];
+    const swapped = result[swapIndex];
+    if (held === undefined || swapped === undefined) continue;
+    result[index] = swapped;
+    result[swapIndex] = held;
+  }
+  return result;
+};
+
 type CheckState =
   | { kind: 'idle' }
   | { kind: 'pass'; explanation?: string }
@@ -37,6 +50,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const failureMessage = useFailureMessage();
   const allowMultiple = exercise.correct.length > 1;
+  const [shuffledChoices] = useState(() => shuffleArray(exercise.choices));
   const [selected, setSelected] = useState<string[]>([]);
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
   const [pulse, setPulse] = useState(0);
@@ -92,7 +106,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
     >
       <div className="space-y-4">
         <ul className="space-y-2">
-          {exercise.choices.map((choice) => {
+          {shuffledChoices.map((choice) => {
             const checked = selected.includes(choice.id);
             const isCorrectChoice = exercise.correct.includes(choice.id);
             const revealCorrect = state.kind === 'pass' && isCorrectChoice;
@@ -105,14 +119,14 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
               >
                 <label
                   className={cx(
-                    'flex items-start gap-3 rounded-xl border px-3.5 py-2.5 min-h-[var(--tap)] cursor-pointer transition-colors duration-fast',
+                    'flex items-start gap-3 rounded-lg border px-3.5 py-2.5 min-h-[var(--tap)] cursor-pointer transition-colors duration-fast',
                     revealCorrect
-                      ? 'border-emerald-500/55 bg-emerald-500/10'
+                      ? 'border-ok/55 bg-ok/10'
                       : revealWrong
-                        ? 'border-rose-500/55 bg-rose-500/10'
+                        ? 'border-err/55 bg-err/10'
                         : checked
                           ? 'border-accent/55 bg-accent/10'
-                          : 'border-border-base bg-surface/40 hover:border-border-strong hover:bg-surface-2/40',
+                          : 'border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50',
                   )}
                 >
                   <input
@@ -127,11 +141,11 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
                     className={cx(
                       'mt-0.5 grid place-items-center size-5 rounded-full shrink-0 transition-colors duration-fast',
                       revealCorrect
-                        ? 'bg-emerald-500 text-white'
+                        ? 'bg-ok text-surface dark:text-canvas'
                         : revealWrong
-                          ? 'bg-rose-500 text-white'
+                          ? 'bg-err text-surface dark:text-canvas'
                           : checked
-                            ? 'bg-accent text-white'
+                            ? 'bg-accent text-surface dark:text-canvas'
                             : 'bg-surface-2/80 text-fg-subtle',
                     )}
                   >
@@ -177,11 +191,11 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
-              className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-700 dark:text-emerald-200 space-y-1"
+              className="rounded-lg border border-ok/30 bg-ok/8 px-4 py-3 text-[13.5px] text-ok space-y-1"
             >
               <p className="font-medium">{t('quiz.correct')}</p>
               {state.explanation && (
-                <p className="text-emerald-700/80 dark:text-emerald-100/80 leading-relaxed">
+                <p className="text-ok/80 leading-relaxed">
                   {state.explanation}
                 </p>
               )}
@@ -195,11 +209,11 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
-              className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-700 dark:text-rose-200 space-y-1"
+              className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-1"
             >
               <p className="font-medium">{t('quiz.wrong', { reason: failureMessage(state.failure) })}</p>
               {state.explanation && (
-                <p className="text-rose-700/80 dark:text-rose-100/80 leading-relaxed">
+                <p className="text-err/80 leading-relaxed">
                   {state.explanation}
                 </p>
               )}

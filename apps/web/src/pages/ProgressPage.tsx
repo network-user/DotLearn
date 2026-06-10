@@ -125,8 +125,8 @@ export const ProgressPage = () => {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">{t('activity')}</h2>
-        <div className="rounded-xl border border-border-base bg-surface/40 p-5 overflow-x-auto">
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('activity')}</h2>
+        <div className="rounded-lg border border-border-base bg-surface p-5 overflow-x-auto">
           <div className="min-w-[360px]">
             <ActivityHeatmap activity={activity} weeks={14} />
           </div>
@@ -134,13 +134,13 @@ export const ProgressPage = () => {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">{t('topics')}</h2>
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('topics')}</h2>
         {manifests === undefined ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[0, 1].map((index) => (
               <div
                 key={index}
-                className="h-28 rounded-xl border border-border-base bg-surface/40 animate-pulse"
+                className="h-28 rounded-lg border border-border-base bg-surface-2 animate-pulse"
                 aria-hidden
               />
             ))}
@@ -154,7 +154,7 @@ export const ProgressPage = () => {
                 <Link
                   to="/topics/$slug"
                   params={{ slug: row.manifest.slug }}
-                  className="block rounded-xl border border-border-base bg-surface/60 hover:border-border-strong hover:bg-surface transition p-5"
+                  className="block rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-5"
                 >
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-fg">{row.manifest.title}</h3>
@@ -189,10 +189,10 @@ interface StatTileProps {
 const StatTile = ({ label, value, hint, emphasis }: StatTileProps) => (
   <div
     className={
-      'rounded-xl border p-4 ' +
+      'rounded-lg border p-4 ' +
       (emphasis
-        ? 'border-amber-500/30 bg-amber-500/5'
-        : 'border-border-base bg-surface/40')
+        ? 'border-t-2 border-t-accent border-border-base bg-accent/[0.06]'
+        : 'border-border-base bg-surface')
     }
   >
     <p className="text-xs uppercase tracking-wide text-fg-subtle">{label}</p>
@@ -212,10 +212,7 @@ const ProgressBar = ({ passed, total }: ProgressBarProps) => {
   const percent = total === 0 ? 0 : Math.round((passed / total) * 100);
   return (
     <div className="mt-3 h-1.5 rounded-full bg-surface-2 overflow-hidden">
-      <div
-        className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400"
-        style={{ width: `${percent}%` }}
-      />
+      <div className="h-full bg-accent" style={{ width: `${percent}%` }} />
     </div>
   );
 };

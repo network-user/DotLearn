@@ -87,7 +87,7 @@ export const AdminLoginPage = ({ onSuccess }: AdminLoginPageProps) => {
         </Field>
 
         {error && (
-          <div className="rounded-md border border-rose-900/40 bg-rose-950/30 p-3 text-sm text-rose-300">
+          <div className="rounded-md border border-err/30 bg-err/10 p-3 text-sm text-err">
             {error}
           </div>
         )}
@@ -95,27 +95,11 @@ export const AdminLoginPage = ({ onSuccess }: AdminLoginPageProps) => {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full px-4 py-2 rounded-md bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-medium"
+          className="w-full px-4 py-2 rounded-md bg-accent hover:bg-accent/90 disabled:opacity-50 text-surface dark:text-canvas font-medium"
         >
           {submitting ? t('login.submitting') : t('login.submit')}
         </button>
       </form>
-
-      <style>{`
-        .form-input {
-          width: 100%;
-          background-color: rgb(24 24 27 / 0.6);
-          border: 1px solid rgb(39 39 42);
-          border-radius: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          color: rgb(244 244 245);
-          font-size: 0.875rem;
-        }
-        .form-input:focus {
-          outline: none;
-          border-color: rgb(99 102 241);
-        }
-      `}</style>
     </div>
   );
 };

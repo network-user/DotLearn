@@ -124,14 +124,14 @@ export const InheritanceTree = ({
           }
           transition={{ type: 'spring', stiffness: 400, damping: 20 }}
           className={cx(
-            'inline-flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 my-1.5 transition-shadow duration-fast',
+            'inline-flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 my-1.5 transition-shadow duration-fast',
             foundHere
-              ? 'border-emerald-500/60 bg-emerald-500/10 shadow-glow-sm'
+              ? 'border-ok/60 bg-ok/10'
               : searchingHere
-                ? 'border-accent/60 bg-accent/10 shadow-glow-sm'
+                ? 'border-accent/60 bg-accent/10'
                 : inChain
-                  ? 'border-border-strong bg-surface-2/40'
-                  : 'border-border-base bg-surface/30 opacity-70',
+                  ? 'border-border-strong bg-surface-2'
+                  : 'border-border-base bg-surface opacity-70',
           )}
         >
           <span className="font-mono text-[13px] font-semibold text-fg">{node.label}</span>
@@ -142,8 +142,8 @@ export const InheritanceTree = ({
                 className={cx(
                   'rounded-md px-1.5 py-0.5 font-mono text-[11px] transition-colors duration-fast',
                   foundHere && lookup.kind === 'found' && lookup.method === method
-                    ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300'
-                    : 'bg-surface-2/70 text-fg-muted',
+                    ? 'bg-ok/20 text-ok'
+                    : 'bg-surface-2 text-fg-muted',
                 )}
               >
                 {method}
@@ -165,7 +165,7 @@ export const InheritanceTree = ({
       case 'found':
         return t('mro.found', { method: lookup.method, cls: byId.get(lookup.nodeId)?.label ?? '' });
       case 'missing':
-        return <span className="text-rose-500 dark:text-rose-300">{t('mro.missing', { method: lookup.method })}</span>;
+        return <span className="text-err">{t('mro.missing', { method: lookup.method })}</span>;
     }
   })();
 
@@ -181,7 +181,7 @@ export const InheritanceTree = ({
               onClick={() => startLookup(method)}
               disabled={lookup.kind === 'searching'}
               className={cx(
-                'rounded-md border border-border-base bg-surface/50 px-2.5 py-1.5 font-mono text-[12px] text-left transition-colors duration-fast',
+                'rounded-md border border-border-base bg-surface px-2.5 py-1.5 font-mono text-[12px] text-left transition-colors duration-fast',
                 'hover:border-accent/50 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed',
                 lookup.kind !== 'idle' && lookup.method === method ? 'text-accent border-accent/50' : 'text-fg-muted',
               )}

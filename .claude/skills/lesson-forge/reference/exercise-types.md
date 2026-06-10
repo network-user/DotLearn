@@ -126,6 +126,51 @@ Learner predicts what a snippet outputs.
     value: 0
 ```
 
+## Variants (randomized practice)
+
+Every exercise type accepts an optional `variants` array. Each variant is a **full alternative version of the same task**: same skill being tested, different surface (different data, different prompt, different expected answer). The runner picks a random variant per attempt and offers «другой вариант» after a pass, so learners internalize the principle instead of memorizing the answer.
+
+Rules:
+
+- The base exercise fields are variant 0; `variants` adds more.
+- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output). `prompt`, `fixture`, `starter` are optional overrides - omit them to inherit from the base.
+- A variant that differs only in wording is useless; vary the data or the target so the correct answer actually changes.
+- Translations of an exercise must define the **same number of variants in the same order** (the validator enforces parity).
+- Gold solutions of every sql-query variant are executed by `pnpm validate`; variant solutions for other runtimes follow the same manual verification rule as the base (see G6).
+- Target: **difficulty 1-2 exercises ship >=2 variants (ideally 3)**; higher difficulties ship variants when the task lends itself to parametrization.
+
+```yaml
+- id: count-rows-001
+  concept: aggregation
+  type: sql-query
+  difficulty: 1
+  prompt: "Посчитайте количество заказов."
+  fixture: |
+    CREATE TABLE orders(id INT, amount INT);
+    INSERT INTO orders VALUES (1, 100), (2, 250), (3, 90);
+  expected: { kind: scalar, value: 3 }
+  solution: SELECT COUNT(*) FROM orders;
+  variants:
+    - prompt: "Посчитайте количество заказов дороже 100."
+      expected: { kind: scalar, value: 1 }
+      solution: SELECT COUNT(*) FROM orders WHERE amount > 100;
+    - prompt: "Посчитайте сумму всех заказов."
+      expected: { kind: scalar, value: 440 }
+      solution: SELECT SUM(amount) FROM orders;
+```
+
+For `theory-quiz`, the runner additionally shuffles choice order on every render, so never write prompts that reference choice position («первый вариант ответа»).
+
+## Hints quality bar
+
+Hints teach the mental model, not the syntax. Ladder them:
+
+1. **Hint 1 - reorientation.** Restate what the task is really asking in terms of the concept's mental model. No syntax. Bad: «Используйте WHERE». Good: «WHERE отбрасывает строки до того, как SELECT их увидит - какие строки должны выжить?»
+2. **Hint 2 - strategy.** Decompose: which clauses/methods in which order, what intermediate result to check.
+3. **Hint 3 (optional) - concrete pointer.** A specific function or clause name, still not the answer.
+
+Never paste the solution or a near-solution into a hint. Exercises at difficulty >=3 must ship at least 2 hints.
+
 ## Difficulty calibration
 
 - **1** — trivial, single concept application, one operator
@@ -134,4 +179,4 @@ Learner predicts what a snippet outputs.
 - **4** — non-obvious, requires understanding a less-common feature
 - **5** — challenge problem, may have multiple valid solutions
 
-Each concept should ship at least one exercise at difficulty 1 and one at difficulty ≥3.
+Each concept should ship at least one exercise at difficulty 1 and one at difficulty ≥3; each topic should ship at least one difficulty 4-5 challenge.

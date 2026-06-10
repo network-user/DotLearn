@@ -1,38 +1,54 @@
 ---
-title: Composition vs inheritance
-summary: 'Has-a beats is-a in most real designs. Prefer assembling objects from smaller ones over deep class hierarchies.'
+conceptId: composition
+title: "Composition over inheritance: assemble, don't inherit"
+estimatedMinutes: 45
 ---
 
-# Composition vs inheritance
+# Composition over inheritance: assemble, don't inherit
 
-Inheritance models **is-a**: a `Dog` is an `Animal`. Composition models
-**has-a**: a `Car` has an `Engine`.
+Imagine designing a car in code. It is tempting to build a tower of classes: `Vehicle` → `Car` → `ElectricCar` → `SportElectricCar`. Then a month later a new requirement arrives: put the same motor in a boat. The tower does not help - a boat is not a car. By the end of this lesson you will know how to assemble behavior from small, swappable parts, and why experienced developers reach for composition before inheritance.
 
-The trap with inheritance is that it ties two classes together tightly —
-forever. Subclasses see every method the base adds, and base changes ripple
-into every descendant. Composition gives you a knob: small parts, swappable.
+## Two kinds of relationship: is-a and has-a
 
-## A worn-out hierarchy
+Inheritance expresses an **is-a** relationship: a `Dog` is an `Animal`. Composition expresses **has-a**: a `Car` has an `Engine`. These are not just different words - they are different degrees of coupling.
 
-<Callout type="warning" title="Inheritance fatigue">
-When the parent class has a method that *most* but not all children need,
-that's a sign you're stretching is-a too far.
-</Callout>
+A subclass sees everything in its parent and is bound to it forever. Any method added to the base class instantly appears on every descendant - sometimes where it does not belong. Composition keeps parts at arm's length: the host holds a reference to a part and talks to it through the part's own methods. A part can be swapped without touching the host.
+
+<Figure caption="Change a base class and you touch every subclass at once; swap a part and the rest of the system never notices.">
+  <CompositionViz
+    inheritChain={['Vehicle', 'Car', 'ElectricCar']}
+    hostName="Car"
+    parts={[
+      { name: 'engine', variants: ['CombustionEngine', 'ElectricMotor'] },
+      { name: 'wheels', variants: ['AllSeasonWheels'] },
+      { name: 'audio', variants: ['FmRadio'] },
+    ]}
+  />
+</Figure>
+
+## Where inheritance starts to crack
+
+The classic symptom is a parent method some descendants cannot honor:
 
 ```python
 class Vehicle:
     def drive(self): ...
     def refuel(self): ...
 
-class ElectricVehicle(Vehicle):
+class ElectricCar(Vehicle):
     def refuel(self):
-        raise NotImplementedError("electric vehicles don't refuel")
+        raise NotImplementedError("electric cars don't take fuel")
 ```
 
-The `NotImplementedError` is the bad smell. The base class promised a
-capability that subclasses cannot deliver.
+`NotImplementedError` in a subclass is a smell. The base class promised a capability the subclass has to revoke. That means `refuel` does not belong to every "vehicle", and the hierarchy is wrong: you stretched is-a too far.
 
-## Reframe as composition
+<Callout type="warning" title="Warning sign">
+If a subclass disables or stubs out a parent method, the model is almost certainly wrong. It breaks the substitution principle: a descendant must work everywhere its ancestor works.
+</Callout>
+
+## The same task with composition
+
+Let's assemble a car from a part responsible for motion. The host does not care what is inside, as long as the part has a `start()` method:
 
 <PyDemo
   title="Has-a, not is-a"
@@ -55,37 +71,102 @@ print(Car(CombustionEngine()).drive())
 print(Car(ElectricMotor()).drive())`}
 />
 
-`Car` doesn't care *what* powers it as long as the part has a `start()`
-method. This is **duck typing** plus composition.
+The part is passed into the constructor and stored on `self`. This is **dependency injection** in miniature: the host does not create the part itself, it receives a ready one from outside. That is why a test can hand in any object with a `start()` method - even a stub. Try adding a third motor class and passing it to `Car`: the host needs no changes at all.
 
-Compare both approaches live: change the base class on the left and watch the
-edit ripple through every subclass; then swap a part on the right — the rest of
-the system never notices.
+`Car` relies not on a concrete type but on the presence of a `start()` method. That is **duck typing** combined with composition: "if it quacks like a duck, it will do."
 
-<CompositionViz
-  inheritChain={['Vehicle', 'Car', 'ElectricCar']}
-  hostName="Car"
-  parts={[
-    { name: 'propulsion', variants: ['CombustionEngine', 'ElectricMotor'] },
-    { name: 'wheels', variants: ['AllSeasonWheels'] },
-    { name: 'radio', variants: ['FmRadio'] },
-  ]}
+## Inheritance and composition side by side
+
+<Compare
+  leftTitle="Inheritance (is-a)"
+  rightTitle="Composition (has-a)"
+  left={<>
+
+```python
+class ElectricCar(Vehicle):
+    def refuel(self):
+        raise NotImplementedError
+```
+
+Rigid coupling forever. Changing behavior means editing the hierarchy. Swapping the engine is impossible without a new subclass.
+
+  </>}
+  right={<>
+
+```python
+class Car:
+    def __init__(self, propulsion):
+        self.propulsion = propulsion
+```
+
+A part is swapped with one line at creation time. Each part can be tested on its own. Behavior is assembled, not inherited.
+
+  </>}
+  verdict="Composition wins when behavior varies along axes that do not line up into one hierarchy."
 />
 
-## Mix when it makes sense
+## Delegation: the host forwards calls
 
-Composition and inheritance aren't enemies. A small base class for shared
-behaviour plus composed parts for everything specific is often the right
-call. Watch for the smells:
+When the host simply forwards a call to its part, that is called **delegation**. A `Stack` built on a list is the textbook example: the stack *has* a list but *is not* a list, so only the operations you want are exposed.
 
-- Forcing inheritance to share a couple of methods → prefer a mixin or a helper.
-- `raise NotImplementedError` in a subclass → the hierarchy is wrong.
-- More than two levels deep → audit. Each level multiplies coupling.
+```python
+class Stack:
+    def __init__(self):
+        self._items = []
+
+    def push(self, x):
+        self._items.append(x)
+
+    def pop(self):
+        return self._items.pop()
+
+    def size(self):
+        return len(self._items)
+```
+
+If `Stack` inherited from `list`, `insert`, `sort`, and indexing would all leak out - and the "top only" invariant would break. Composition lets you expose exactly the interface you intend to support.
+
+## Edge cases and traps
+
+Composition is not free. The most common problem is **reaching through a part**: `car.propulsion.tank.level`. Every dot is extra knowledge about another object's internals. The rule is simple (it is called the Law of Demeter): talk to your friends, not to friends of friends. If the host needs the fuel level, let the part expose it via a `remaining()` method and have the host forward the call.
+
+The second case is when inheritance really does fit. If the relationship is a genuine is-a and the parent's interface suits the child fully, inheritance is shorter and clearer. Composition is a default, not a dogma.
+
+## Common mistakes
+
+- **Inheriting to reuse a couple of methods.** If you need one method of another class, extract it into a function or a part - do not drag the whole class into your ancestry.
+- **A god-object host.** If the host knows too much about all its parts and does their work itself, you have only renamed a big class. Delegate, do not duplicate.
+- **`a.b.c.d` chains.** A long chain of accesses signals scattered responsibilities. Add forwarding methods on the intermediate objects.
+
+<Detail summary="Deep dive: `__getattr__` as auto-delegation">
+
+Python lets you forward any unknown attribute to a part via `__getattr__`:
+
+```python
+class Wrapper:
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+```
+
+Now `Wrapper(x).anything` goes to `x`. Tempting, but dangerous: you lose control over which interface is exposed, you break IDE autocomplete, and you may accidentally forward methods that violate an invariant. `__getattr__` is great for transparent proxies (logging, lazy loading), but for ordinary composition explicit forwarding methods are more honest.
+
+</Detail>
 
 <KeyTakeaways
   items={[
-    "Default to composition; reach for inheritance when the is-a really holds.",
-    "Replace deep hierarchies with small, swappable parts.",
-    "If a subclass has to disable a parent method, the model is wrong.",
+    "Default to composition (has-a); reach for inheritance only when is-a genuinely holds.",
+    "A part passed into the constructor is easy to swap and to test in isolation - that is dependency injection.",
+    "The host relies on a part having a method, not on its concrete type (duck typing).",
+    "If a subclass has to disable a parent method via NotImplementedError, the hierarchy is wrong.",
+    "Do not reach through a part (a.b.c.d): add a forwarding method and respect the Law of Demeter.",
   ]}
 />
+
+## References
+
+- [Python docs: the `__getattr__` special method](https://docs.python.org/3/reference/datamodel.html#object.__getattr__)
+- [Wikipedia: object composition](https://en.wikipedia.org/wiki/Object_composition)
+- [Wikipedia: Law of Demeter](https://en.wikipedia.org/wiki/Law_of_Demeter)

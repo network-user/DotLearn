@@ -21,7 +21,7 @@ export const HintBlock = ({ hints }: HintBlockProps) => {
         className="inline-flex items-center gap-1.5 text-[12px] text-fg-muted hover:text-fg transition-colors"
         aria-expanded={open}
       >
-        <Lightbulb size={12} className="text-amber-400" />
+        <Lightbulb size={12} className="text-warn" />
         {open ? t('common.hideHints') : t('common.showHints', { count: hints.length })}
       </button>
       <ul
@@ -31,7 +31,7 @@ export const HintBlock = ({ hints }: HintBlockProps) => {
         )}
       >
         <li className="overflow-hidden">
-          <ol className="rounded-lg border border-amber-500/20 bg-amber-500/8 px-4 py-3 list-decimal pl-6 marker:text-amber-400/70 text-[13px] text-fg space-y-1">
+          <ol className="rounded-lg border border-warn/20 bg-warn/8 px-4 py-3 list-decimal pl-6 marker:text-warn/70 text-[13px] text-fg space-y-1">
             {hints.map((hint, index) => (
               <li key={index}>{hint}</li>
             ))}

@@ -19,6 +19,144 @@ exercises:
       `_attr` is a social convention; `__attr` is rewritten to
       `_ClassName__attr` so subclasses don't accidentally collide.
       Neither makes the attribute truly private.
+    variants:
+      - prompt: |
+          A method of class `Cache` executes `self.__data = {}`. Under what name
+          is the attribute actually stored on the instance?
+        choices:
+          - id: a
+            text: "`__data`"
+          - id: b
+            text: "`_Cache__data`"
+          - id: c
+            text: "`_cache__data`"
+          - id: d
+            text: "`data`"
+        correct: [b]
+        explanation: |
+          Inside the class body `__data` is rewritten to `_Cache__data`:
+          the class name is inserted as is, preserving its case.
+      - prompt: |
+          What does a double leading underscore in an attribute name guarantee?
+        choices:
+          - id: a
+            text: The attribute cannot be read from outside the class.
+          - id: b
+            text: The attribute is encrypted in process memory.
+          - id: c
+            text: The name is rewritten to `_ClassName__attr`, which guards against accidental collisions in subclasses; the attribute stays reachable from outside via the mangled name.
+          - id: d
+            text: The attribute is visible only to methods declared in the same file.
+        correct: [c]
+        explanation: |
+          Mangling is a rename performed when the class body is compiled.
+          It guards against inheritance collisions; it is not access control.
+
+  - id: encapsulation-property-blanks
+    concept: encapsulation
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: |
+      Make `email` a read-only attribute: insert the missing decorator.
+    hints:
+      - Work out what the missing line does - opens the read path, opens the write path, or accesses an attribute by its real name.
+      - A getter is declared with the property decorator, a setter with a decorator named after the property, and mangling prefixes the class name with a single leading underscore.
+    template: |
+      class User:
+          def __init__(self, email):
+              self._email = email
+
+          ${deco}
+          def email(self):
+              return self._email
+    blanks:
+      deco:
+        accept: ["@property"]
+        accept_regex: '^\s*@property\s*$'
+    variants:
+      - prompt: |
+          Add the missing decorator so that the assignment `user.email = ...`
+          goes through the validation.
+        template: |
+          class User:
+              def __init__(self, email):
+                  self._email = email
+
+              @property
+              def email(self):
+                  return self._email
+
+              ${deco}
+              def email(self, value):
+                  if "@" not in value:
+                      raise ValueError("invalid email")
+                  self._email = value
+        blanks:
+          deco:
+            accept: ["@email.setter"]
+            accept_regex: '^\s*@email\.setter\s*$'
+      - prompt: |
+          The code must print the value of `__key` from outside the class.
+          Which name do you have to use?
+        template: |
+          class Vault:
+              def __init__(self):
+                  self.__key = "k1"
+
+          v = Vault()
+          print(v.${attr})
+        blanks:
+          attr:
+            accept: ["_Vault__key"]
+            accept_regex: '^\s*_Vault__key\s*$'
+
+  - id: encapsulation-name-mangling-predict
+    concept: encapsulation
+    type: predict-output
+    difficulty: 2
+    prompt: |
+      What is printed?
+    hints:
+      - Double underscore is a rename performed when the class body is compiled. What will the attribute's real name on the instance be?
+      - Outside the class body the rename does not apply - access via `_Class__name` finds the attribute, access via the original `__name` does not.
+    snippet: |
+      class Box:
+          def __init__(self):
+              self.__token = "alpha"
+
+      b = Box()
+      print(hasattr(b, "__token"), hasattr(b, "_Box__token"))
+    expected:
+      kind: stdout
+      value: |
+        False True
+    variants:
+      - snippet: |
+          class A:
+              def __init__(self):
+                  self.__id = 1
+
+          class B(A):
+              pass
+
+          b = B()
+          print(sorted(vars(b)))
+        expected:
+          kind: stdout
+          value: |
+            ['_A__id']
+      - snippet: |
+          class Safe:
+              def __init__(self):
+                  self.__code = 7
+
+          s = Safe()
+          s._Safe__code += 1
+          print(s._Safe__code)
+        expected:
+          kind: stdout
+          value: |
+            8
 
   - id: encapsulation-property-validation
     concept: encapsulation
@@ -26,36 +164,43 @@ exercises:
     difficulty: 2
     prompt: |
       Implement a `Temperature` class with a `celsius` property whose setter
-      rejects values below absolute zero (-273.15). Expose `to_fahrenheit()`
-      that returns the current temperature in Fahrenheit.
+      raises ValueError for values below absolute zero (-273.15).
+      The `to_fahrenheit()` method returns the current temperature in Fahrenheit.
     hints:
-      - Use @property for the celsius getter and @celsius.setter for write access.
-      - In the setter raise ValueError when value < -273.15.
-      - Fahrenheit = celsius * 9 / 5 + 32.
+      - The setter is the only door for writes, and even `__init__` should pass through it. Where does the check live, then?
+      - Decompose the task - an internal field for storage, a getter that reads it, a setter that validates and writes; the constructor assigns through the public name.
+      - The boundary is exactly -273.15, reject only what is strictly below. Fahrenheit is celsius * 9 / 5 + 32.
     starter: |
       class Temperature:
           def __init__(self, celsius):
               ...
 
-          # @property celsius getter
-
-          # @celsius.setter that rejects values below -273.15
-
           def to_fahrenheit(self):
               ...
     cases:
-      - call: "Temperature(0).celsius"
-        expect: 0
+      - call: "Temperature(25).celsius"
+        expect: 25
       - call: "Temperature(100).to_fahrenheit()"
         expect: 212
-      - call: "Temperature(-40).to_fahrenheit()"
-        expect: -40
-      - call: "Temperature(25).to_fahrenheit()"
-        expect: 77
+      - call: "Temperature(-273.15).celsius"
+        expect: -273.15
+      - call: |-
+          t = Temperature(0)
+          t.celsius = 35
+          t.to_fahrenheit()
+        expect: 95
+      - call: |-
+          t = Temperature(20)
+          try:
+              t.celsius = -300
+              outcome = "accepted"
+          except ValueError:
+              outcome = "rejected"
+          [outcome, t.celsius]
+        expect: ["rejected", 20]
     solution: |
       class Temperature:
           def __init__(self, celsius):
-              self._celsius = 0
               self.celsius = celsius
 
           @property
@@ -69,22 +214,194 @@ exercises:
               self._celsius = value
 
           def to_fahrenheit(self):
-              return self._celsius * 9 / 5 + 32
+              return self.celsius * 9 / 5 + 32
+    variants:
+      - prompt: |
+          Implement a `Distance` class with a `meters` property whose setter
+          raises ValueError for negative values. The `to_km()` method returns
+          the distance in kilometers.
+        starter: |
+          class Distance:
+              def __init__(self, meters):
+                  ...
 
-  - id: encapsulation-name-mangling-predict
+              def to_km(self):
+                  ...
+        cases:
+          - call: "Distance(1500).to_km()"
+            expect: 1.5
+          - call: "Distance(0).meters"
+            expect: 0
+          - call: |-
+              d = Distance(100)
+              d.meters = 2000
+              d.to_km()
+            expect: 2
+          - call: |-
+              d = Distance(500)
+              try:
+                  d.meters = -1
+                  outcome = "accepted"
+              except ValueError:
+                  outcome = "rejected"
+              [outcome, d.meters]
+            expect: ["rejected", 500]
+        solution: |
+          class Distance:
+              def __init__(self, meters):
+                  self.meters = meters
+
+              @property
+              def meters(self):
+                  return self._meters
+
+              @meters.setter
+              def meters(self, value):
+                  if value < 0:
+                      raise ValueError("distance cannot be negative")
+                  self._meters = value
+
+              def to_km(self):
+                  return self.meters / 1000
+      - prompt: |
+          Implement a `Discount` class with a `percent` property whose setter
+          accepts only values from 0 to 100 inclusive (ValueError otherwise).
+          The `apply(price)` method returns the discounted price.
+        starter: |
+          class Discount:
+              def __init__(self, percent):
+                  ...
+
+              def apply(self, price):
+                  ...
+        cases:
+          - call: "Discount(25).apply(200)"
+            expect: 150
+          - call: "Discount(100).percent"
+            expect: 100
+          - call: "Discount(0).apply(80)"
+            expect: 80
+          - call: |-
+              disc = Discount(10)
+              disc.percent = 50
+              disc.apply(80)
+            expect: 40
+          - call: |-
+              disc = Discount(10)
+              try:
+                  disc.percent = 101
+                  outcome = "accepted"
+              except ValueError:
+                  outcome = "rejected"
+              [outcome, disc.percent]
+            expect: ["rejected", 10]
+        solution: |
+          class Discount:
+              def __init__(self, percent):
+                  self.percent = percent
+
+              @property
+              def percent(self):
+                  return self._percent
+
+              @percent.setter
+              def percent(self, value):
+                  if value < 0 or value > 100:
+                      raise ValueError("percent must be between 0 and 100")
+                  self._percent = value
+
+              def apply(self, price):
+                  return price * (100 - self.percent) / 100
+
+  - id: encapsulation-account-invariants
     concept: encapsulation
-    type: predict-output
-    difficulty: 2
+    type: python-function
+    difficulty: 4
     prompt: |
-      What is printed?
-    snippet: |
-      class Box:
-          def __init__(self):
-              self.__token = "alpha"
+      Implement an `Account` class with constructor `(owner, balance=0)`: a
+      `balance` property whose setter raises ValueError on a negative value;
+      `deposit(amount)` and `withdraw(amount)` methods that change the balance
+      through that property and return the new balance; a read-only `is_empty`
+      property (true when the balance is zero). A failed attempt to withdraw
+      more than the account holds must not change the balance.
+    hints:
+      - The invariant "balance is non-negative" lives in one place - the setter. If deposit and withdraw assign through the property, they need no overdraft check of their own.
+      - Decompose - an internal storage field, a setter with the single check, and deposit/withdraw simply increase and decrease the value through the property's public name.
+      - A read-only property is @property without a paired setter, assigning to it raises AttributeError. The setter check fires before the write, so a failed withdraw leaves the state untouched.
+    starter: |
+      class Account:
+          def __init__(self, owner, balance=0):
+              ...
 
-      b = Box()
-      print(hasattr(b, "__token"), hasattr(b, "_Box__token"))
-    expected:
-      kind: stdout
-      value: |
-        False True
+          def deposit(self, amount):
+              ...
+
+          def withdraw(self, amount):
+              ...
+    cases:
+      - call: 'Account("Ada", 100).balance'
+        expect: 100
+      - call: 'Account("Ada").is_empty'
+        expect: true
+      - call: |-
+          a = Account("Ada", 50)
+          a.deposit(25)
+        expect: 75
+      - call: |-
+          a = Account("Ada", 80)
+          [a.withdraw(80), a.is_empty]
+        expect: [0, true]
+      - call: |-
+          a = Account("Ada", 30)
+          try:
+              a.withdraw(31)
+              outcome = "accepted"
+          except ValueError:
+              outcome = "rejected"
+          [outcome, a.balance]
+        expect: ["rejected", 30]
+      - call: |-
+          a = Account("Ada", 10)
+          try:
+              a.balance = -5
+              outcome = "accepted"
+          except ValueError:
+              outcome = "rejected"
+          [outcome, a.balance]
+        expect: ["rejected", 10]
+      - call: |-
+          a = Account("Ada", 1)
+          try:
+              a.is_empty = True
+              outcome = "assigned"
+          except AttributeError:
+              outcome = "read-only"
+          outcome
+        expect: "read-only"
+    solution: |
+      class Account:
+          def __init__(self, owner, balance=0):
+              self.owner = owner
+              self.balance = balance
+
+          @property
+          def balance(self):
+              return self._balance
+
+          @balance.setter
+          def balance(self, value):
+              if value < 0:
+                  raise ValueError("balance cannot be negative")
+              self._balance = value
+
+          @property
+          def is_empty(self):
+              return self._balance == 0
+
+          def deposit(self, amount):
+              self.balance += amount
+              return self.balance
+
+          def withdraw(self, amount):
+              self.balance -= amount
+              return self.balance

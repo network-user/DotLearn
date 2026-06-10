@@ -31,16 +31,16 @@ const defaultRows: AccessRow[] = [
 
 const kindStyle: Record<AccessKind, { ring: string; chip: string }> = {
   public: {
-    ring: 'border-emerald-500/60 bg-emerald-500/10',
-    chip: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
+    ring: 'border-ok/60 bg-ok/10',
+    chip: 'bg-ok/15 text-ok',
   },
   protected: {
-    ring: 'border-amber-500/60 bg-amber-500/10',
-    chip: 'bg-amber-500/15 text-amber-600 dark:text-amber-300',
+    ring: 'border-warn/60 bg-warn/10',
+    chip: 'bg-warn/15 text-warn',
   },
   private: {
-    ring: 'border-rose-500/60 bg-rose-500/10',
-    chip: 'bg-rose-500/15 text-rose-600 dark:text-rose-300',
+    ring: 'border-err/60 bg-err/10',
+    chip: 'bg-err/15 text-err',
   },
 };
 
@@ -58,13 +58,13 @@ export const AccessScope = ({
 
   const footer = probe ? (
     probe.kind === 'private' ? (
-      <span className="text-rose-500 dark:text-rose-300">
+      <span className="text-err">
         {t('access.private', { mangled: mangled(probe.name) })}
       </span>
     ) : probe.kind === 'protected' ? (
-      <span className="text-amber-600 dark:text-amber-300">{t('access.protected')}</span>
+      <span className="text-warn">{t('access.protected')}</span>
     ) : (
-      <span className="text-emerald-600 dark:text-emerald-300">{t('access.public')}</span>
+      <span className="text-ok">{t('access.public')}</span>
     )
   ) : (
     t('access.idle')
@@ -73,7 +73,7 @@ export const AccessScope = ({
   return (
     <VizShell label={label ?? t('access.label')} footer={footer}>
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_max-content] gap-4 items-start">
-        <div className="rounded-xl border border-border-base bg-surface-2/40 px-4 py-3">
+        <div className="rounded-lg border border-border-base bg-surface-2 px-4 py-3">
           <div className="font-mono text-[13px] font-semibold text-fg mb-2">
             class {className}:
           </div>
@@ -102,7 +102,7 @@ export const AccessScope = ({
                   <span className="text-fg-subtle">=</span>
                   <span className="text-fg">{row.value}</span>
                   {active && row.kind === 'private' && (
-                    <span className="ml-auto text-[11px] text-rose-500 dark:text-rose-300">
+                    <span className="ml-auto text-[11px] text-err">
                       → {mangled(row.name)}
                     </span>
                   )}
@@ -122,18 +122,18 @@ export const AccessScope = ({
               type="button"
               onClick={() => setProbe(row)}
               className={cx(
-                'inline-flex items-center gap-1.5 rounded-md border border-border-base bg-surface/50 px-2.5 py-1.5 font-mono text-[12px] transition-colors duration-fast',
+                'inline-flex items-center gap-1.5 rounded-md border border-border-base bg-surface px-2.5 py-1.5 font-mono text-[12px] transition-colors duration-fast',
                 'hover:border-accent/50 hover:text-accent',
                 probe?.name === row.name ? 'text-accent border-accent/50' : 'text-fg-muted',
               )}
             >
               {probe?.name === row.name &&
                 (row.kind === 'public' ? (
-                  <Check size={11} className="text-emerald-500" />
+                  <Check size={11} className="text-ok" />
                 ) : row.kind === 'protected' ? (
-                  <TriangleAlert size={11} className="text-amber-500" />
+                  <TriangleAlert size={11} className="text-warn" />
                 ) : (
-                  <Lock size={11} className="text-rose-500" />
+                  <Lock size={11} className="text-err" />
                 ))}
               {instanceName}.{row.name}
             </button>

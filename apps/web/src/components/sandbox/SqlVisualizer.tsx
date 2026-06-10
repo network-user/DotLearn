@@ -122,9 +122,9 @@ export const SqlVisualizer = ({
               className={cx(
                 'ml-1 inline-block size-1.5 rounded-full',
                 resultStatus === 'pass'
-                  ? 'bg-emerald-400'
+                  ? 'bg-ok'
                   : resultStatus === 'fail'
-                    ? 'bg-rose-400'
+                    ? 'bg-err'
                     : 'bg-fg-subtle',
               )}
             />
@@ -146,9 +146,7 @@ export const SqlVisualizer = ({
         {result ? (
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
-                {t('sql.yourResult')}
-              </span>
+              <span className="eyebrow">{t('sql.yourResult')}</span>
               <span className="text-[11px] text-fg-subtle tabular-nums">
                 {t('sql.rowsCount', { count: result.rows.length })}
               </span>
@@ -168,9 +166,7 @@ export const SqlVisualizer = ({
         <TabsContent value="expected">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
-                {t('sql.expectedResult')}
-              </span>
+              <span className="eyebrow">{t('sql.expectedResult')}</span>
               <span className="text-[11px] text-fg-subtle tabular-nums">
                 {t('sql.rowsCount', { count: expectedRows.length })}
               </span>
@@ -193,7 +189,7 @@ const SchemaView = ({
   const { t } = useTranslation('runners');
   if (tables.length === 0) {
     return (
-      <div className="rounded-lg border border-border-base bg-surface/40 px-3 py-4">
+      <div className="rounded-lg border border-border-base bg-surface px-3 py-4">
         <pre className="whitespace-pre-wrap text-[11.5px] font-mono text-fg-muted overflow-x-auto">
           {t('sql.fixtureLabel')}
         </pre>
@@ -207,9 +203,9 @@ const SchemaView = ({
         return (
           <div
             key={table.name}
-            className="rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft overflow-hidden"
+            className="rounded-lg border border-border-base bg-surface overflow-hidden"
           >
-            <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-base bg-surface-2/40">
+            <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-base bg-surface-2/60">
               <div className="flex items-center gap-2 min-w-0">
                 <Table2 size={13} className="text-accent" />
                 <span className="font-mono text-[12.5px] text-fg truncate">{table.name}</span>
@@ -230,7 +226,7 @@ const SchemaView = ({
                 >
                   <span className="flex items-center gap-1.5 text-fg min-w-0">
                     {col.notes.includes('PK') && (
-                      <Key size={10} className="text-amber-400 shrink-0" />
+                      <Key size={10} className="text-warn shrink-0" />
                     )}
                     <span className="truncate">{col.name}</span>
                   </span>
@@ -253,7 +249,7 @@ const SchemaView = ({
               ))}
             </ul>
             {preview && preview.rows.length > 0 && (
-              <div className="border-t border-border-base bg-canvas/40">
+              <div className="border-t border-border-base">
                 <ResultGrid
                   columns={preview.columns}
                   rows={preview.rows}

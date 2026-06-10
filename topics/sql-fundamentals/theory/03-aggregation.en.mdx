@@ -1,25 +1,20 @@
 ---
 conceptId: aggregation
-title: Aggregation with COUNT, SUM, AVG
-estimatedMinutes: 20
+title: "Aggregation: COUNT, SUM, AVG"
+estimatedMinutes: 45
 ---
 
-# Aggregation with COUNT, SUM, AVG
+# Aggregation: how a thousand rows become one number
 
-Aggregate functions collapse many rows into one number. They answer questions like "how many users", "what's the average order value", "what's the maximum age".
+Your manager asks: "How many orders did we get in May, and what's the average order value?" You open the `orders` table and SQL dutifully returns rows - hundreds of them. Nobody is going to scroll through them adding amounts on a calculator: the question wasn't "show me the orders", it was "give me a number". Everything you have learned so far answers with rows; now you need a different tool.
 
-## The four staples
+That tool is aggregate functions. By the end of this article you will confidently count rows, sum and average values, understand how `NULL` quietly corrupts your counts, and know the big secret of analytics: the arithmetic mean can lie, and it lies more often than you'd expect.
 
-```sql
-SELECT COUNT(*) FROM users;
-SELECT SUM(amount) FROM orders;
-SELECT AVG(amount) FROM orders;
-SELECT MIN(age), MAX(age) FROM users;
-```
+## The fold: a table goes in, a number comes out
 
-`COUNT(*)` counts rows including those with `NULL`. `COUNT(column)` counts only non-null values of that column.
+A regular `SELECT` works like a conveyor belt: for every input row that survives the filter, it emits a result row. Ten rows in - up to ten rows out. An aggregate function breaks that correspondence. It takes **all** the rows at once, runs an accumulator over them - a counter, a sum, a minimum - and emits a single value. Functional languages call this operation a fold: a list collapses into a scalar.
 
-Pick a function and fold the table into a single number — that is exactly what an aggregate does:
+Watch it happen. Pick a function and press the run button - the table literally folds into one number:
 
 <AggregateViz
   tableName="book"
@@ -33,39 +28,177 @@ Pick a function and fold the table into a single number — that is exactly what
   ]}
 />
 
-## GROUP BY
+One important fact follows from this model: a query with an aggregate and no `GROUP BY` returns **exactly one row**. Not "one or more", not "however many" - always one. Even if the table is empty you get one result row; what exactly sits inside it, we will unpack below.
 
-Aggregation gets interesting when you partition rows by a column.
+## Five functions that cover ninety percent of the job
 
-```sql
-SELECT country, COUNT(*) AS users_count
-FROM users
-GROUP BY country;
-```
-
-Every column in `SELECT` that is **not** inside an aggregate must appear in `GROUP BY`.
-
-## HAVING
-
-`WHERE` filters rows before aggregation. `HAVING` filters groups after.
+Every example below works against one orders table:
 
 ```sql
-SELECT country, COUNT(*) AS users_count
-FROM users
-GROUP BY country
-HAVING COUNT(*) >= 10;
+CREATE TABLE orders(id INTEGER PRIMARY KEY, city TEXT, amount INTEGER);
+INSERT INTO orders VALUES
+  (1, 'Berlin', 120),
+  (2, 'Minsk', 80),
+  (3, 'Berlin', 200),
+  (4, 'Minsk', NULL),
+  (5, 'Riga', 51),
+  (6, 'Berlin', 150);
 ```
 
-## When to use this
+Six orders, three cities, and order 4 has an unknown amount - `NULL`. The standard aggregate toolkit looks like this:
 
-Anywhere you need to summarize: dashboards, reports, sanity checks on data quality, alerts.
+```sql
+SELECT COUNT(*) FROM orders;
+SELECT SUM(amount) FROM orders;
+SELECT AVG(amount) FROM orders;
+SELECT MIN(amount), MAX(amount) FROM orders;
+```
+
+`COUNT(*)` returns 6 - there are six rows. `SUM(amount)` adds up the known amounts: 120 + 80 + 200 + 51 + 150 = 601. `MIN` and `MAX` find the extremes: 51 and 200. But `AVG(amount)` returns 120.2 - and here it's worth slowing down, because 601 / 6 is definitely not 120.2. Where that number comes from will become clear in the section on `NULL`.
+
+Aggregates combine freely in one query, and you can name them with `AS` - without an alias the result column is literally called `COUNT(*)`, which is awkward for both code and humans:
+
+```sql
+SELECT COUNT(*) AS orders_count, SUM(amount) AS revenue
+FROM orders;
+```
+
+## The three faces of COUNT
+
+`COUNT` is the only aggregate that exists in three forms, and the difference between them catches beginners again and again:
+
+```sql
+SELECT COUNT(*) FROM orders;
+SELECT COUNT(amount) FROM orders;
+SELECT COUNT(DISTINCT city) FROM orders;
+```
+
+The first query counts **rows** and returns 6. The second counts **non-NULL values** of the `amount` column and returns 5 - the order with the unknown amount dropped out. The third counts **unique** non-NULL values: there are three cities, so the answer is 3.
+
+The selection rule is simple: asking "how many rows" - write `COUNT(*)`; asking "how many rows have this field filled in" - write `COUNT(field)`; asking "how many distinct values" - write `COUNT(DISTINCT field)`. These are three different questions with three different answers, not three spellings of the same thing.
+
+## WHERE plays well with aggregates
+
+Filtering and folding combine naturally, and the order is fixed: first `WHERE` discards the irrelevant rows, then the aggregate folds the survivors. Average order value in Berlin:
+
+```sql
+SELECT AVG(amount) FROM orders WHERE city = 'Berlin';
+```
+
+Three Berlin orders survive to the fold: 120, 200 and 150. The average is roughly 156.67.
+
+Now it's your turn. The query below is editable and runs right on the page. Replace `COUNT(*)` with `AVG(amount)`, then `MIN(amount)`, then `COUNT(DISTINCT city)` - and check every answer against the table from the example. Then append `WHERE city = 'Minsk'` and watch the result change:
+
+<SideSql
+  title="Fold the table yourself"
+  editable
+  live
+  fixture={`CREATE TABLE orders(id INTEGER PRIMARY KEY, city TEXT, amount INTEGER);
+INSERT INTO orders VALUES
+  (1, 'Berlin', 120),
+  (2, 'Minsk', 80),
+  (3, 'Berlin', 200),
+  (4, 'Minsk', NULL),
+  (5, 'Riga', 51),
+  (6, 'Berlin', 150);`}
+  query="SELECT COUNT(*) AS result FROM orders;"
+/>
+
+## NULL: the invisible rows
+
+Time to explain the `AVG` mystery. All aggregate functions except `COUNT(*)` **ignore NULL**. To `SUM(amount)`, order 4 simply does not exist. To `AVG(amount)` it doesn't either - on both sides of the fraction: the average is computed as 601 / 5 = 120.2, not 601 / 6. The denominator is `COUNT(amount)`, not `COUNT(*)`.
+
+Most of the time this behavior is what you want: the average of the known amounts is more honest than an average where the unknown entered as zero. But the same behavior sets a trap: `COUNT(email)` over a table of ten thousand users can return eight thousand, and if you expected the row count, the report silently lies by twenty percent. No error, no warning - just a different number.
+
+<Callout type="warning">
+An aggregate over an empty set of rows is its own surprise: `COUNT` returns 0, but `SUM`, `AVG`, `MIN` and `MAX` return `NULL`. If the table is empty, `SUM(amount)` is not zero, it's "I don't know". SQLite offers `TOTAL(amount)`, which returns 0.0 in the same situation.
+</Callout>
+
+## Integers and dishonest division
+
+The second surprise hides in the types. In SQLite, dividing an integer by an integer is integer division:
+
+```sql
+SELECT 7 / 2;
+```
+
+The result is 3, not 3.5. The fractional part is silently dropped. `AVG` itself is protected: it always returns a floating-point number, which is why `AVG(amount)` honestly yields 120.2. But the moment you assemble an average by hand, the trap snaps shut:
+
+```sql
+SELECT SUM(amount) / COUNT(amount) FROM orders;
+```
+
+That's 601 / 5, both operands integers, and the result is 120 instead of 120.2. The variant `SUM(amount) / COUNT(*)` is wrong twice over: 601 / 6 with the fraction discarded gives exactly 100 - seventeen percent below the truth. The moral: use `AVG` for averages, and when you genuinely need to divide integers, cast explicitly - `SUM(amount) * 1.0 / COUNT(*)`.
+
+## Why the average lies
+
+Even a perfectly computed `AVG` can answer a question you didn't ask. The arithmetic mean is sensitive to outliers: a single extreme value drags it toward itself. The classic example is salaries. Take a team of ten: nine people earn between 55 and 65 thousand, and one - the manager - earns 300.
+
+<Figure caption="Nine values sit in the 55-65 band, one sits at 300. AVG reads 84: a salary that not a single person on the team actually has. The median stays inside the band.">
+  <DistributionChart
+    title="Team salaries, thousands"
+    xLabel="salary"
+    values={[55, 57, 58, 59, 60, 61, 62, 63, 65, 300]}
+    markers={[
+      { value: 84, label: 'AVG' },
+      { value: 60.5, label: 'median' },
+    ]}
+  />
+</Figure>
+
+`AVG` over this data is 84 thousand. The number is mathematically flawless and practically useless: it's a third higher than the salary of any of the nine employees. Look at the histogram above: the `AVG` marker hangs in empty space where no real value lives, while the median - 60.5 - sits in the thick of the data.
+
+<MarginNote label="Median">
+SQLite has no built-in median function; people usually derive it from sorting with `LIMIT` and `OFFSET`, or from window functions.
+</MarginNote>
+
+Hence a practical rule: whenever you see `AVG` in a report, ask yourself how the data is distributed. If the distribution is skewed - and money, server response times and file sizes are skewed almost always - a `MIN`/`MAX` pair next to the average instantly shows how much the average can be trusted.
+
+## What's next: many folds in one query
+
+One aggregate folds the whole table into one number. But an analyst's real question usually sounds different: not "what's the revenue" but "what's the revenue **per city**". For that, SQL can split rows into groups and fold each group separately - that's `GROUP BY`, the subject of the next lesson. Here is a short teaser; change `COUNT(*)` to `SUM(amount)` and watch the chart rebuild:
+
+<SideSql
+  title="Teaser: folding per group"
+  editable
+  live
+  fixture={`CREATE TABLE orders(id INTEGER PRIMARY KEY, city TEXT, amount INTEGER);
+INSERT INTO orders VALUES
+  (1, 'Berlin', 120),
+  (2, 'Minsk', 80),
+  (3, 'Berlin', 200),
+  (4, 'Minsk', NULL),
+  (5, 'Riga', 51),
+  (6, 'Berlin', 150);`}
+  query={`SELECT city, COUNT(*) AS value
+FROM orders
+GROUP BY city;`}
+  chart={{ type: 'bar', x: 'city', y: 'value' }}
+/>
 
 ## Common mistakes
 
-- Adding a non-aggregated column to `SELECT` without putting it in `GROUP BY`. Engines may return arbitrary values for that column.
-- Using `WHERE COUNT(*) > 10`. `WHERE` runs before aggregation; the right place is `HAVING`.
-- Forgetting that `AVG` returns the floating-point average; the result is not the same as `SUM / COUNT` when types differ.
+**`COUNT(column)` where you meant `COUNT(*)`.** The question was "how many rows", but the query answers "how many filled-in values". As long as the column has no `NULL`s, the numbers coincide and the bug sleeps; the first `NULL` arrives - and the report undercounts. Counting rows - write `COUNT(*)`.
+
+**An average assembled from `SUM / COUNT` over integers.** Integer division drops the fractional part, and `COUNT(*)` in the denominator counts `NULL` rows too. Use `AVG`; it exists precisely for this.
+
+**An aggregate and a raw column in one `SELECT` without `GROUP BY`.** The query `SELECT city, COUNT(*) FROM orders` asks for the impossible: `COUNT(*)` is one number for the whole table, while `city` has its own value in every row. Most database engines respond with an error; SQLite silently picks the city from an arbitrary row, and you get plausible-looking garbage. Want an aggregate broken down by a column - you need `GROUP BY`.
+
+<Detail summary="How SQLite computes aggregates under the hood">
+An aggregate doesn't need to hold the table in memory. SQLite walks the rows once and updates a tiny accumulator: a counter for `COUNT`, a running total for `SUM`, a total plus a counter for `AVG`, the best candidate so far for `MIN`/`MAX`. Constant memory, linear time. The exception is `COUNT(DISTINCT col)`: to avoid counting a value twice, the engine has to remember every value it has already seen, which gets noticeably more expensive on large data.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'An aggregate function is a fold: many rows go in, one value comes out, and without GROUP BY the result is always exactly one row.',
+    'COUNT(*) counts rows, COUNT(col) counts non-NULL values, COUNT(DISTINCT col) counts unique values; these are three different questions.',
+    'Every aggregate except COUNT(*) ignores NULL; for AVG that applies to both the numerator and the denominator.',
+    'In SQLite integer division truncates: AVG is protected, but a hand-rolled SUM/COUNT silently drops the fractional part.',
+    'AVG is sensitive to outliers: on skewed data it reports a value that exists in no row - check it against MIN/MAX or the median.',
+  ]}
+/>
 
 ## References
 
 - [SQLite aggregate functions](https://www.sqlite.org/lang_aggfunc.html)
+- [Datatypes in SQLite](https://www.sqlite.org/datatype3.html)

@@ -1,6 +1,6 @@
 # Content style guide
 
-The DotLearn voice is the voice of an experienced peer, not a textbook. Match these conventions across every topic.
+The DotLearn voice is the voice of an experienced peer, not a textbook. Every theory file is a **longread article** in the spirit of Distill.pub: narrative prose, figures embedded in the text flow, and live code the reader can run and edit without leaving the page. Match these conventions across every topic.
 
 ## Tone
 
@@ -8,51 +8,73 @@ The DotLearn voice is the voice of an experienced peer, not a textbook. Match th
 - **Honest about trade-offs.** When a feature has a footgun, name it the first time you teach it.
 - **No hype.** Avoid "amazing", "powerful", "blazing fast". Adjectives should add information.
 - **Second person, present tense.** "You write a WHERE clause", not "the user will then write".
+- **Narrative, not bullet-dump.** A longread carries the reader through a story: a problem appears, a mental model resolves it, examples stress-test the model, edge cases refine it. Bullets are for genuinely enumerable facts only.
 
-## Structure of a theory file
+## Required article skeleton
+
+Every theory file follows this narrative arc. Section headings are yours to write (make them concrete, not generic); the *order and presence* of these beats is mandatory.
 
 ```
 ---
 conceptId: select
 title: SELECT and filtering
-estimatedMinutes: 15
+estimatedMinutes: 45
 ---
 
-# SELECT and filtering
+# Title (concrete, can be a full sentence)
 
-One-paragraph hook: what the learner will be able to do at the end and why it matters.
+1. HOOK - one or two paragraphs: the problem this concept solves, what the reader
+   will be able to do at the end. No definitions yet. The first paragraph gets a
+   drop cap automatically, so open with prose, not a list or code block.
 
-## The shape of SELECT
+2. MENTAL MODEL - the core idea explained once, properly, WITH the concept's
+   primary figure (Figure + illustration, chart, or a domain viz component).
+   The figure is not decoration; the prose must reference it.
 
-Concrete syntax example with annotation. No more than 5 lines of code at a time before prose.
+3. WORKED EXAMPLES - build incrementally. Each new construct introduces at most
+   one new idea. Code blocks of at most ~10 lines between prose. Show the fixture
+   when relevant.
 
-## The shape with a filter
+4. LIVE SANDBOX MOMENT - at least one interactive block the reader is explicitly
+   invited to modify: <SideSql editable live .../> for sql.js topics,
+   <PyDemo .../> for pyodide topics. Pose a small "try changing X" challenge in
+   the surrounding prose.
 
-Build incrementally. Each new construct gets at most one new idea.
+5. EDGE CASES - what happens with NULL / empty input / duplicates / inheritance
+   diamonds / etc. At least one honest "this will surprise you" moment.
 
-## When to use this
+6. COMMON MISTAKES - the 2-4 most frequent beginner errors, each with the fix
+   and ideally a one-line "why it happens".
 
-Real-world use case in 2–3 sentences.
+7. DEEP DIVES (optional but encouraged) - <Detail summary="..."> blocks for
+   material a curious reader wants and a hurried reader can skip (internals,
+   performance, history).
 
-## Common mistakes
+8. <KeyTakeaways items={[...]} /> - 3-6 single-sentence takeaways.
 
-Bullet list of the 2–3 most common errors a beginner makes, with the fix.
-
-## Next
-
-What the next concept builds on top of this. Single sentence.
+9. REFERENCES - links to authoritative docs at the end of the file.
 ```
 
 ## Length budget
 
-- Theory file: **300–800 words**. If you exceed 800, split into two concept files.
-- Exercise prompt: **1–3 sentences**. If you need more, the exercise is doing too much.
+- Theory file: **1200-2000 words** in the primary language. Translations match structure and meaning, not word count.
+- If a concept honestly needs more than 2000 words, split it into two concepts.
+- Exercise prompt: **1-3 sentences**. If you need more, the exercise is doing too much.
+
+## Figures and interactivity (mandatory)
+
+- Every concept ships **at least one figure**: a `Figure`-wrapped illustration, a chart, or one of the domain viz components. See [mdx-components.md](./mdx-components.md) for the full catalog with props and copy-paste examples.
+- Every concept whose topic runtime allows it (`sql.js`, `pyodide`) ships **at least one live sandbox moment** (`SideSql editable live`, `PyDemo`).
+- Prefer the prebuilt parametric illustrations (`PipelineFigure`, `RowFilterFigure`, `SortLimitFigure`, `NestedQueryFigure`, `ObjectMemoryFigure`, `MroFigure`) and charts (`BarChart`, `LineChart`, `AreaChart`, `DistributionChart`); compose new ones from `Sketch` + `SketchBox/SketchArrow/SketchLabel` primitives only when no prebuilt fits.
+- Figures get captions. Write captions that add information («Строки, не прошедшие WHERE, не доходят до SELECT»), not labels («Схема 1»).
+- Use `MarginNote` for asides that would interrupt the narrative, `PullQuote` at most once per article, `Ref`/`Footnotes` for sourced claims woven into prose.
 
 ## Code examples
 
 - Always runnable. Never `// TODO: complete this` in a theory file; that's an exercise.
 - Show the **fixture** when relevant. Learners cannot reason about `SELECT * FROM users` without knowing what's in `users`.
 - Prefer realistic over toy data. `users(id, name, age)` over `t(a, b, c)`.
+- No comments inside fenced code blocks unless the comment itself teaches the point.
 
 ## Citations
 
@@ -66,6 +88,10 @@ When making a non-obvious claim, link to authoritative sources at the **end of t
 
 Do not pretend to cite books or papers you have not read. If the claim is your own synthesis, present it as your own.
 
+## Estimating minutes
+
+`estimatedMinutes` for a concept = `ceil(words / 180)` reading time + ~5 min per live sandbox + ~3 min per figure the reader is expected to study + expected exercise time. Longread concepts typically land at **40-55 minutes**. The manifest's `estimatedHours` must be re-derived from the concept sum in the same change (the validator enforces the ±25% rule).
+
 ## Avoid
 
 - Emojis in content (the project rule is no emojis unless requested)
@@ -73,6 +99,8 @@ Do not pretend to cite books or papers you have not read. If the claim is your o
 - Cultural references that require context
 - "We" instead of "you" — "we will now declare a function" reads as patronizing
 - Inline comments in code blocks unless they teach a specific point ("this filter excludes nulls")
+- Walls of consecutive figures or consecutive code blocks; alternate with prose
+- Opening the article with a definition, a list, or a code block (the hook comes first)
 
 ## When generating in Russian
 

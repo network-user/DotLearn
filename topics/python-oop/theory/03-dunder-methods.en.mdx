@@ -1,87 +1,235 @@
 ---
 conceptId: dunder-methods
-title: Dunder methods
-estimatedMinutes: 10
+title: "Dunder methods"
+estimatedMinutes: 50
 ---
 
-# Dunder methods
+# Dunder methods: how your class learns to understand `+`, `len`, and `==`
 
-Dunder methods (double-underscore methods) are how a class hooks into built-in syntax and functions: `len(x)`, `x == y`, `print(x)`, `x[i]`. They are the integration points between your types and the rest of Python.
+You wrote a `Money` class and you want to add amounts with the `+` operator, print them with `print`, compare them for equality, and test them inside an `if`. But `Money(100) + Money(50)` crashes with `TypeError`, `print(m)` produces `<Money object at 0x7f...>`, and `Money(0) == Money(0)` returns `False`. The built-in syntax knows nothing about your type - and it does not have to. Instead it asks the object itself whether it knows how to be added, printed, and compared.
 
-## Display: `__str__` and `__repr__`
+That conversation happens through dunder methods (from *double underscore*): `__add__`, `__str__`, `__eq__`, and dozens of others. By the end of this section you will read `a + b` as `a.__add__(b)`, tell `__repr__` apart from `__str__` and know which one is the fallback, implement `__eq__` carefully without breaking hashing, and write arithmetic that returns a new object instead of corrupting the old one.
 
-`__str__` powers `str(x)` and `print(x)`. `__repr__` powers the REPL display and `repr(x)`, and should be unambiguous for debugging.
+## The protocol: Python calls methods for you
+
+The main idea is short: **operators and built-in functions are syntactic sugar over method calls**. When you write `a + b`, the interpreter does not perform any "addition" itself. It takes the left operand and calls `a.__add__(b)`. When you write `len(x)`, it calls `x.__len__()`. `str(x)` expands into `x.__str__()`. The method name is fixed by the protocol, the body is yours.
+
+<Figure caption="Each familiar form on the left is a dunder-method call on the right. The protocol dictates the method name; you write the implementation.">
+  <Sketch viewBox="0 0 460 200" title="Syntax expands into dunder-method calls">
+    <SketchBox x={20} y={20} width={150} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={47} mono>a + b</SketchLabel>
+    <SketchArrow from={[175, 42]} to={[285, 42]} accent />
+    <SketchBox x={290} y={20} width={150} height={44} accent />
+    <SketchLabel x={365} y={47} mono accent>a.__add__(b)</SketchLabel>
+
+    <SketchBox x={20} y={80} width={150} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={107} mono>len(x)</SketchLabel>
+    <SketchArrow from={[175, 102]} to={[285, 102]} accent />
+    <SketchBox x={290} y={80} width={150} height={44} accent />
+    <SketchLabel x={365} y={107} mono accent>x.__len__()</SketchLabel>
+
+    <SketchBox x={20} y={140} width={150} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={167} mono>str(x)</SketchLabel>
+    <SketchArrow from={[175, 162]} to={[285, 162]} accent />
+    <SketchBox x={290} y={140} width={150} height={44} accent />
+    <SketchLabel x={365} y={167} mono accent>x.__str__()</SketchLabel>
+  </Sketch>
+</Figure>
+
+This has a practical consequence: to make your type support some operation, you do not need to teach Python new syntax - you just implement the matching method. Want to add - define `__add__`. Want a length - define `__len__`. The type declares for itself what it can do by listing dunder methods.
+
+<MarginNote label="Where the names come from">Dunder-method names are not magic: the interpreter knows them ahead of time. `a + b` always looks for `__add__`, so you cannot rename the method - the protocol is fixed.</MarginNote>
+
+## Display: `__repr__` and `__str__`, and which one is the fallback
+
+First let us understand why `print(m)` produces the unreadable `<Money object at 0x...>`. By default an object inherits `__repr__` from `object`, and that one prints the class name with a memory address. To get meaningful output you need to define your own display method. There are two of them, and their roles differ.
+
+`__repr__` is responsible for the REPL output and for `repr(x)`. Its job is to be unambiguous for the developer: the string should make it clear what kind of object this is, and ideally you could copy it back into code and get an identical object.
+
+`__str__` is responsible for `str(x)` and `print(x)`. Its job is readability for the end user: fewer technical details, more human-readable text.
 
 ```python
-class Point:
-    def __init__(self, x, y):
-        self.x, self.y = x, y
+class Money:
+    def __init__(self, cents):
+        self.cents = cents
 
     def __repr__(self):
-        return f"Point({self.x}, {self.y})"
+        return f"Money({self.cents})"
 
     def __str__(self):
-        return f"({self.x}, {self.y})"
+        return f"{self.cents / 100:.2f}"
 ```
 
-If you define only `__repr__`, `str(x)` falls back to it. Defining only `__str__` leaves the REPL showing `<Point object at 0x...>`.
+Now `repr(Money(1050))` gives `Money(1050)` - a string that reconstructs the object - while `str(Money(1050))` gives `10.50`, the format familiar to the user.
 
-## Equality: `__eq__`
+The key asymmetry: **`__repr__` is the fallback, `__str__` is not**. If you define only `__repr__`, then `str(x)` and `print(x)` pick it up automatically. But if you define only `__str__`, the REPL and `repr(x)` keep showing `<Money object at 0x...>`, because `__str__` is not used as a substitute for `__repr__`. Hence the practical rule: if you write only one display method, write `__repr__` - it covers both cases.
 
-By default `a == b` is identity comparison. Override `__eq__` to make value comparison work.
+<Callout type="tip">The minimum for debugging is always `__repr__`. Logs, tracebacks, the debugger, and `repr()` inside collections (`print([m1, m2])` calls `__repr__` on the elements) - all of it relies on it.</Callout>
+
+## Equality: `__eq__`, and why `is` is not `==`
+
+By default `a == b` for your objects compares identity: `True` only if it is literally the same object in memory. Two different `Money(100)` instances will be unequal, even though they represent the same amount. To make value comparison work, override `__eq__`.
 
 ```python
-class Point:
-    def __init__(self, x, y):
-        self.x, self.y = x, y
+class Money:
+    def __init__(self, cents):
+        self.cents = cents
 
     def __eq__(self, other):
-        if not isinstance(other, Point):
+        if not isinstance(other, Money):
             return NotImplemented
-        return self.x == other.x and self.y == other.y
+        return self.cents == other.cents
 ```
 
-Returning `NotImplemented` lets Python try `other.__eq__(self)` instead of declaring inequality outright.
+Both `is`/`==` nuances matter here. The `==` operator by default does the same as `is` (identity comparison) until you define `__eq__`. `is`, on the other hand, always checks identity and cannot be overridden - it asks "is this the same object?", not "are the values equal?". So `Money(100) is Money(100)` is forever `False` (the objects are different), while `Money(100) == Money(100)` becomes `True` after our `__eq__`.
 
-Step through how `a == b` turns into a `__eq__` call and which values are visible inside:
+Note the `return NotImplemented` when the other side is not a `Money`. This is not the same as `return False`. `NotImplemented` means "I do not know how to compare with this type" - and then Python gives the right side a chance through `other.__eq__(self)`. If you returned `False` directly, you would declare inequality on behalf of both, depriving the right operand of a say.
+
+<Detail summary="NotImplemented versus NotImplementedError - different things">
+
+`NotImplemented` is a **singleton value** that you return from comparison and arithmetic dunder methods to say "try the other side". You `return` it, you do not `raise` it.
+
+`NotImplementedError` is an **exception** that you `raise` in an abstract method of a base class to force a subclass to override it.
+
+```python
+def __add__(self, other):
+    return NotImplemented
+
+def area(self):
+    raise NotImplementedError("subclass must implement area")
+```
+
+They are easy to mix up, and the consequences differ: return `NotImplementedError` (as a value) from `__eq__` and the comparison will "successfully" return the exception object, which is truthy, so everything will be considered equal. Always `return NotImplemented`.
+
+</Detail>
+
+<Detail summary="Defined __eq__ - do not forget about __hash__">
+
+As soon as you write `__eq__`, Python **silently sets `__hash__ = None`**. The object becomes unhashable: you cannot put it in a `set` or use it as a dict key - you will get `TypeError: unhashable type`. The logic is strict: equal objects must have equal hashes, and Python does not guess how to hash your type once you have overridden equality.
+
+Two ways out. If the object is immutable, define `__hash__` consistently with `__eq__` - on the same fields:
+
+```python
+def __hash__(self):
+    return hash(self.cents)
+```
+
+If the object is mutable, leave it unhashable: that is honest, because a hash must not change over the lifetime of a key.
+
+</Detail>
+
+Trace step by step how `a == b` turns into a `__eq__` call and which values are visible inside the method.
 
 <PyStepper
   title="How == calls __eq__"
-  code={`class Point:
-    def __init__(self, x, y):
-        self.x, self.y = x, y
+  code={`class Money:
+    def __init__(self, cents):
+        self.cents = cents
 
     def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
+        if not isinstance(other, Money):
+            return NotImplemented
+        return self.cents == other.cents
 
-a = Point(1, 2)
-b = Point(1, 2)
+a = Money(100)
+b = Money(100)
 print(a == b)
-print(a == Point(3, 4))`}
+print(a == Money(250))`}
 />
 
-## Length and iteration
+## Truthiness: `__len__`, `__bool__`, and the lookup chain
 
-Implement `__len__` to make `len(x)` work, and `__iter__` (or `__getitem__`) to make `for item in x` work.
+When you write `if x:`, Python has to decide whether the object is truthy or falsy. It goes down a chain: first it looks for `__bool__` and takes its result; if there is no `__bool__`, it looks for `__len__` and treats the object as falsy when the length is `0` and truthy for any nonzero length; if neither exists, the object is always truthy.
 
 ```python
-class Bag:
+class Cart:
     def __init__(self, items):
         self._items = list(items)
 
     def __len__(self):
         return len(self._items)
 
-    def __iter__(self):
-        return iter(self._items)
+empty = Cart([])
+full = Cart([1, 2])
+print(bool(empty), bool(full))
 ```
+
+It prints `False True`. We did not write `__bool__`, but `__len__` carried the truthiness: an empty cart is falsy because its length is `0`. This is convenient - one `__len__` implementation gives both `len(cart)` and meaningful behavior in `if cart:`. But if the truthiness logic does not match the length (say, the object always "exists"), define `__bool__` explicitly, and it will override `__len__`.
+
+## Arithmetic: `__add__` returns a new object
+
+Now to the `+` operator. Let us implement adding money - and right away establish the discipline that separates correct arithmetic from dangerous arithmetic.
+
+```python
+class Money:
+    def __init__(self, cents):
+        self.cents = cents
+
+    def __add__(self, other):
+        if not isinstance(other, Money):
+            return NotImplemented
+        return Money(self.cents + other.cents)
+```
+
+The method **creates and returns a new `Money`**, rather than mutating `self`. This is the immutability discipline: `a + b` must not touch either `a` or `b`. Compare it with the broken version, where the temptation to "save effort" leads to trouble:
+
+```python
+def __add__(self, other):
+    self.cents += other.cents
+    return self
+```
+
+Here `a + b` silently corrupts `a`. Worse, `total = a + a` will double `a`, and then `total` and `a` will be the same object. Built-in types do not behave like this: `2 + 3` does not turn `2` into `5`. Your type should be no exception - return a new object.
+
+<PullQuote>`a + b` has no right to change either `a` or `b`. Addition gives birth to a new value, it does not rewrite the old one.</PullQuote>
+
+## Put it together live
+
+Run the code as is and you will get `<Money...>` in the first line, because `__repr__` is not defined yet. Then add to the class a `__repr__` method that returns `f"Money({self.cents})"`, and run again: see how both `print(m)` and the list output `print([a, b])` change. After that try adding `__eq__` and check `a == Money(150)`.
+
+<PyDemo
+  title="Add __repr__ and watch how the output changes"
+  code={`class Money:
+    def __init__(self, cents):
+        self.cents = cents
+
+    def __add__(self, other):
+        return Money(self.cents + other.cents)
+
+a = Money(100)
+b = Money(50)
+print(a)
+print(a + b)
+print([a, b])`}
+/>
+
+## Edge cases and surprises
+
+The trickiest surprise is the forgotten `__hash__` after `__eq__`: code that used to put objects in a `set` suddenly crashes with `TypeError`. It is covered in the detail above; remember it as the pair "defined `__eq__` - thought about `__hash__`".
+
+The second is mixed types in arithmetic. `Money(100) + 5` will work only if you planned for it; otherwise `__add__` returns `NotImplemented`, Python tries `(5).__radd__`... finds no way to add an `int` to a `Money` and raises `TypeError`. That is correct: an explicit refusal is better than silently adding cents to something unclear.
+
+The third is `__eq__` that returns something other than `bool`. If your method returns, say, a list or a number, the expression `a == b` will hand back that strange object, and `if a == b:` will test its truthiness rather than equality. Return `bool` or `NotImplemented`, and nothing else.
 
 ## Common mistakes
 
-- Defining `__eq__` without `__hash__`. Python silently sets `__hash__ = None`, breaking use in sets and dict keys. Either also define `__hash__` or accept the type is unhashable.
-- Returning `False` from `__eq__` for an unrelated type. Return `NotImplemented` so Python can try the other side's `__eq__`.
-- Confusing `__str__` with `__repr__`. `__str__` is for end users; `__repr__` is for debugging and should round-trip back to a constructor call when possible.
+- **`__eq__` returns whatever.** Return a string, a number, or the result of subtracting coordinates from `__eq__` - and `==` stops being boolean. Return only `True`/`False` or `NotImplemented` for an unrelated type.
+- **`__add__` mutates `self`.** The temptation to write `self.cents += other.cents; return self` breaks immutability: `a + b` corrupts `a`, and aliases diverge from intuition. Always return a freshly created object.
+- **An unclear `__repr__`.** A `__repr__` that returns `"a money object"` or any end-user text is useless in logs and the debugger. Make it unambiguous and, where possible, reconstructible into a constructor call: `Money(1050)`, not `10.50 USD`.
+
+<KeyTakeaways
+  items={[
+    "Operators and built-in functions are sugar over dunder calls: a + b is a.__add__(b), len(x) is x.__len__().",
+    "__repr__ is the fallback for str(); if you define one display method, make it __repr__.",
+    "== compares identity by default, like is; override __eq__ for value comparison and return NotImplemented for unrelated types.",
+    "Defined __eq__ - Python clears __hash__; define __hash__ for an immutable type or accept unhashability.",
+    "if x: walks the chain __bool__ → __len__ → always truthy; __len__ gives meaningful truthiness for free.",
+    "__add__ and other arithmetic return a new object and never mutate self.",
+  ]}
+/>
 
 ## References
 
 - [Python data model](https://docs.python.org/3/reference/datamodel.html)
+- [Python docs - object.__hash__](https://docs.python.org/3/reference/datamodel.html#object.__hash__)
+- [Python docs - NotImplemented](https://docs.python.org/3/library/constants.html#NotImplemented)

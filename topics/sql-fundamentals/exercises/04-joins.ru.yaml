@@ -18,6 +18,89 @@ exercises:
     explanation: |
       INNER отбрасывает несовпадения; LEFT сохраняет левую сторону и
       заполняет NULL справа. ON используют оба JOIN-а.
+    variants:
+      - prompt: |
+          У автора нет ни одной книги. Что произойдёт с его строкой при
+          INNER JOIN и при LEFT JOIN, если author - левая таблица?
+        choices:
+          - id: a
+            text: при INNER JOIN строка исчезнет, при LEFT JOIN останется с NULL в колонках книги.
+          - id: b
+            text: строка исчезнет в обоих случаях.
+          - id: c
+            text: строка останется в обоих случаях без изменений.
+          - id: d
+            text: при INNER JOIN строка останется с NULL, при LEFT JOIN исчезнет.
+        correct: [a]
+        explanation: |
+          INNER оставляет только совпавшие пары. LEFT сохраняет каждую строку
+          левой таблицы и дописывает NULL на месте несовпавшей правой стороны.
+      - prompt: |
+          Что делает условие ON в JOIN?
+        choices:
+          - id: a
+            text: отбирает из всех возможных пар строк те, для которых условие истинно.
+          - id: b
+            text: фильтрует строки левой таблицы до соединения.
+          - id: c
+            text: задаёт порядок строк в результате.
+          - id: d
+            text: ограничивает число строк результата сверху.
+        correct: [a]
+        explanation: |
+          JOIN мысленно строит все пары строк двух таблиц, а ON решает,
+          какие пары считать совпадением. Порядком и количеством строк
+          управляют ORDER BY и LIMIT.
+
+  - id: joins-row-count-predict
+    concept: joins
+    type: predict-output
+    difficulty: 2
+    prompt: |
+      Что вернёт этот запрос? Проследите соединение клиент за клиентом.
+    fixture: |
+      CREATE TABLE customer (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      );
+      INSERT INTO customer VALUES (1, 'Mira'), (2, 'Oleg'), (3, 'Sana');
+
+      CREATE TABLE purchase (
+        id INTEGER PRIMARY KEY,
+        customer_id INTEGER,
+        amount INTEGER
+      );
+      INSERT INTO purchase VALUES
+        (1, 1, 120),
+        (2, 1, 80),
+        (3, 3, 45),
+        (4, 4, 200);
+    snippet: |
+      SELECT COUNT(*)
+      FROM customer c
+      INNER JOIN purchase p ON p.customer_id = c.id;
+    expected:
+      kind: scalar
+      value: 3
+    hints:
+      - Результат JOIN - это пары строк, и COUNT(*) считает именно пары, а не клиентов. Сколько пар выживет?
+      - Пройдитесь по клиентам по одному и посчитайте, сколько покупок присоединится к каждому. Не забудьте правило для строк без пары - оно зависит от типа соединения.
+    variants:
+      - snippet: |
+          SELECT COUNT(*)
+          FROM customer c
+          LEFT JOIN purchase p ON p.customer_id = c.id;
+        expected:
+          kind: scalar
+          value: 4
+      - prompt: |
+          В запросе потеряли условие соединения. Что вернёт COUNT?
+        snippet: |
+          SELECT COUNT(*)
+          FROM customer, purchase;
+        expected:
+          kind: scalar
+          value: 12
 
   - id: joins-list-each-authors-book
     concept: joins
@@ -50,19 +133,53 @@ exercises:
         - { name: "Ada", title: "Analytical engine" }
         - { name: "Grace", title: null }
         - { name: "Linus", title: "Kernel notes" }
+    hints:
+      - «Каждый автор, даже без книги» означает, что левая сторона не должна терять строки. Какой JOIN это гарантирует?
+      - Сначала соберите пары автор-книга и убедитесь, что Grace на месте с пустым title, и только потом добавляйте сортировку по двум колонкам.
     solution: |
       SELECT a.name, b.title
       FROM author a
       LEFT JOIN book b ON b.author_id = a.id
       ORDER BY a.name, b.title;
+    variants:
+      - prompt: |
+          Верните только авторов, у которых есть книга, вместе с её
+          названием. Отсортируйте по имени автора.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { name: "Ada", title: "Analytical engine" }
+            - { name: "Linus", title: "Kernel notes" }
+        solution: |
+          SELECT a.name, b.title
+          FROM author a
+          INNER JOIN book b ON b.author_id = a.id
+          ORDER BY a.name;
+      - prompt: |
+          Верните название каждой книги и имя её автора. Включите книги
+          без автора (их `name` будет NULL). Отсортируйте по названию книги.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { title: "Analytical engine", name: "Ada" }
+            - { title: "Kernel notes", name: "Linus" }
+            - { title: "Loose pages", name: null }
+        solution: |
+          SELECT b.title, a.name
+          FROM book b
+          LEFT JOIN author a ON a.id = b.author_id
+          ORDER BY b.title;
 
   - id: joins-orphan-books
     concept: joins
     type: sql-query
     difficulty: 3
     prompt: |
-      Верните названия книг, у которых нет автора (author_id равен NULL).
-      Отсортируйте по названию.
+      Верните названия книг, у которых нет автора в таблице author:
+      ссылка пустая или указывает на несуществующий id. Отсортируйте
+      по названию.
     fixture: |
       CREATE TABLE author (
         id INTEGER PRIMARY KEY,
@@ -73,21 +190,80 @@ exercises:
       CREATE TABLE book (
         id INTEGER PRIMARY KEY,
         title TEXT NOT NULL,
-        author_id INTEGER REFERENCES author(id)
+        author_id INTEGER
       );
       INSERT INTO book VALUES
         (1, 'Analytical engine', 1),
         (2, 'Kernel notes', 2),
         (3, 'Loose pages', NULL),
-        (4, 'Stray draft', NULL);
+        (4, 'Stray draft', 99);
     expected:
       kind: result-set
       ordered: true
       rows:
         - { title: "Loose pages" }
         - { title: "Stray draft" }
+    hints:
+      - «Нет автора» значит «не нашлось пары при соединении». Какой JOIN сохраняет строки без пары и чем он помечает несовпавшую сторону?
+      - Сделайте book левой таблицей и присоедините author. Посмотрите на результат целиком - чем строки-сироты отличаются от остальных?
+      - Несовпавшая сторона после LEFT JOIN заполнена NULL. Её ловит проверка IS NULL по колонке, которая в author не бывает NULL сама по себе.
     solution: |
-      SELECT title
-      FROM book
-      WHERE author_id IS NULL
-      ORDER BY title;
+      SELECT b.title
+      FROM book b
+      LEFT JOIN author a ON a.id = b.author_id
+      WHERE a.id IS NULL
+      ORDER BY b.title;
+
+  - id: joins-sales-report
+    concept: joins
+    type: sql-query
+    difficulty: 4
+    prompt: |
+      Для каждой продажи дороже 30 верните имя автора, название книги и
+      цену. Отсортируйте по цене по убыванию.
+    fixture: |
+      CREATE TABLE author (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      );
+      INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+      CREATE TABLE book (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        author_id INTEGER
+      );
+      INSERT INTO book VALUES
+        (1, 'Analytical engine', 1),
+        (2, 'Kernel notes', 2),
+        (3, 'Loose pages', NULL);
+
+      CREATE TABLE sale (
+        id INTEGER PRIMARY KEY,
+        book_id INTEGER,
+        price INTEGER
+      );
+      INSERT INTO sale VALUES
+        (1, 1, 40),
+        (2, 1, 35),
+        (3, 2, 60),
+        (4, 3, 25),
+        (5, 2, 15);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { name: "Linus", title: "Kernel notes", price: 60 }
+        - { name: "Ada", title: "Analytical engine", price: 40 }
+        - { name: "Ada", title: "Analytical engine", price: 35 }
+    hints:
+      - Продажа знает книгу, книга знает автора. Это цепочка из двух ссылок, и каждой нужно своё соединение со своим ON.
+      - Собирайте запрос по шагам - сначала sale плюс book, проверьте число строк, затем присоедините author. Фильтр по цене и сортировка идут в самом конце.
+      - Во втором ON связываются book и author, sale там не участвует. Каждой таблице дайте короткий алиас.
+    solution: |
+      SELECT a.name, b.title, s.price
+      FROM sale s
+      INNER JOIN book b ON b.id = s.book_id
+      INNER JOIN author a ON a.id = b.author_id
+      WHERE s.price > 30
+      ORDER BY s.price DESC;

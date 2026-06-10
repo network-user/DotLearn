@@ -38,17 +38,38 @@ interface GroupPalette {
 }
 
 const fallbackPalette: GroupPalette = {
-  dot: 'bg-indigo-500',
-  border: 'border-indigo-500/40',
-  tint: 'bg-indigo-500/8',
+  dot: 'bg-[rgb(var(--viz-cat-1))]',
+  border: 'border-[rgb(var(--viz-cat-1)/0.4)]',
+  tint: 'bg-[rgb(var(--viz-cat-1)/0.08)]',
 };
 
 const groupPalette: GroupPalette[] = [
   fallbackPalette,
-  { dot: 'bg-cyan-500', border: 'border-cyan-500/40', tint: 'bg-cyan-500/8' },
-  { dot: 'bg-teal-500', border: 'border-teal-500/40', tint: 'bg-teal-500/8' },
-  { dot: 'bg-amber-500', border: 'border-amber-500/40', tint: 'bg-amber-500/8' },
-  { dot: 'bg-rose-500', border: 'border-rose-500/40', tint: 'bg-rose-500/8' },
+  {
+    dot: 'bg-[rgb(var(--viz-cat-2))]',
+    border: 'border-[rgb(var(--viz-cat-2)/0.4)]',
+    tint: 'bg-[rgb(var(--viz-cat-2)/0.08)]',
+  },
+  {
+    dot: 'bg-[rgb(var(--viz-cat-3))]',
+    border: 'border-[rgb(var(--viz-cat-3)/0.4)]',
+    tint: 'bg-[rgb(var(--viz-cat-3)/0.08)]',
+  },
+  {
+    dot: 'bg-[rgb(var(--viz-cat-4))]',
+    border: 'border-[rgb(var(--viz-cat-4)/0.4)]',
+    tint: 'bg-[rgb(var(--viz-cat-4)/0.08)]',
+  },
+  {
+    dot: 'bg-[rgb(var(--viz-cat-5))]',
+    border: 'border-[rgb(var(--viz-cat-5)/0.4)]',
+    tint: 'bg-[rgb(var(--viz-cat-5)/0.08)]',
+  },
+  {
+    dot: 'bg-[rgb(var(--viz-cat-6))]',
+    border: 'border-[rgb(var(--viz-cat-6)/0.4)]',
+    tint: 'bg-[rgb(var(--viz-cat-6)/0.08)]',
+  },
 ];
 
 export const GroupByViz = ({
@@ -89,7 +110,7 @@ export const GroupByViz = ({
       {...(reduceMotion ? {} : { layoutId: `chip-${row.label}-${index}` })}
       layout={!reduceMotion}
       transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-border-base bg-surface/60 px-2 py-1 font-mono text-[11.5px] shadow-card"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-border-base bg-surface px-2 py-1 font-mono text-[11.5px] shadow-card"
     >
       <span className={cx('size-1.5 rounded-full', paletteOf(row.group).dot)} />
       <span className="text-fg">{row.label}</span>
@@ -129,7 +150,7 @@ export const GroupByViz = ({
               return (
                 <div
                   key={group}
-                  className={cx('rounded-xl border p-2.5', palette.border, palette.tint)}
+                  className={cx('rounded-lg border p-2.5', palette.border, palette.tint)}
                 >
                   <div className="flex items-center justify-between gap-1 mb-2">
                     <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] text-fg">
@@ -140,7 +161,7 @@ export const GroupByViz = ({
                       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.6 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{ delay: reduceMotion ? 0 : 0.35, type: 'spring', stiffness: 400, damping: 22 }}
-                      className="rounded-md bg-surface/80 border border-border-base px-1.5 py-0.5 font-mono text-[11px] text-accent font-semibold"
+                      className="rounded-md bg-surface border border-border-base px-1.5 py-0.5 font-mono text-[11px] text-accent font-semibold"
                       title={t('group.result')}
                     >
                       {aggregate(group)}

@@ -141,7 +141,7 @@ export const ProposalsPage = () => {
             }}
             onFocus={() => setSuggestOpen(true)}
             placeholder={t('searchPlaceholder')}
-            className="w-full rounded-xl border border-border-base bg-surface/70 px-4 py-3 text-[16px] sm:text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60 focus:ring-2 focus:ring-indigo-500/20 transition"
+            className="w-full rounded-lg border border-border-base bg-surface px-4 py-3 text-[16px] sm:text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/70 focus:ring-2 focus:ring-accent/20 transition"
             aria-autocomplete="list"
             aria-controls="proposal-suggestions"
           />
@@ -158,7 +158,7 @@ export const ProposalsPage = () => {
           {showSuggestPanel && (
             <ul
               id="proposal-suggestions"
-              className="absolute z-20 left-0 right-0 mt-2 rounded-xl border border-border-base bg-surface/95 backdrop-blur-soft shadow-card overflow-hidden"
+              className="absolute z-20 left-0 right-0 mt-2 rounded-lg border border-border-base bg-surface shadow-card overflow-hidden"
             >
               {suggestions.map((suggestion) => (
                 <li key={suggestion.id}>
@@ -265,8 +265,8 @@ const FilterChip = ({ label, active, onClick }: FilterChipProps) => (
     className={cx(
       'px-3 py-1 text-xs rounded-full border transition-colors',
       active
-        ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
-        : 'border-border-base bg-surface/60 text-fg-muted hover:text-fg hover:border-border-strong',
+        ? 'border-accent/60 bg-accent/15 text-accent'
+        : 'border-border-base bg-surface text-fg-muted hover:text-fg hover:border-border-strong',
     )}
   >
     {label}
@@ -284,7 +284,7 @@ const ProposalCard = ({ submission }: ProposalCardProps) => {
   const targetSlug = materializedSlug;
 
   const inner = (
-    <article className="h-full rounded-xl border border-border-base bg-surface/60 hover:border-indigo-500/40 hover:bg-surface transition p-5 flex flex-col gap-3">
+    <article className="h-full rounded-lg border border-border-base bg-surface hover:border-accent/40 transition p-5 flex flex-col gap-3">
       <header className="flex items-start justify-between gap-3">
         <h3 className="font-semibold text-fg leading-snug">{payload.title}</h3>
         <SubmissionStatusBadge status={status} />
@@ -304,7 +304,7 @@ const ProposalCard = ({ submission }: ProposalCardProps) => {
           {payload.tags.map((tag: string) => (
             <li
               key={tag}
-              className="text-[10px] uppercase tracking-wide text-fg-muted bg-surface-2/80 px-1.5 py-0.5 rounded"
+              className="text-[10px] uppercase tracking-wide text-fg-muted bg-surface-2 px-1.5 py-0.5 rounded"
             >
               {tag}
             </li>
@@ -312,7 +312,7 @@ const ProposalCard = ({ submission }: ProposalCardProps) => {
         </ul>
       )}
       {status === 'materialized' && targetSlug && (
-        <span className="text-xs text-emerald-300 inline-flex items-center gap-1 mt-1">
+        <span className="text-xs text-ok inline-flex items-center gap-1 mt-1">
           {t('openTopic')} →
         </span>
       )}
@@ -334,7 +334,7 @@ const SkeletonList = () => (
     {[0, 1, 2, 3].map((index) => (
       <li
         key={index}
-        className="h-44 rounded-xl border border-border-base bg-surface/40 animate-pulse"
+        className="h-44 rounded-lg border border-border-base bg-surface-2 animate-pulse"
       />
     ))}
   </ul>
@@ -343,14 +343,14 @@ const SkeletonList = () => (
 const EmptyState = () => {
   const { t } = useTranslation('proposals');
   return (
-    <div className="rounded-xl border border-dashed border-border-base p-8 text-center text-sm text-fg-muted">
+    <div className="rounded-lg border border-dashed border-border-base p-8 text-center text-sm text-fg-muted">
       {t('empty')}
     </div>
   );
 };
 
 const ErrorBox = ({ message }: { message: string }) => (
-  <div className="rounded-xl border border-rose-900/40 bg-rose-950/30 p-5 text-sm text-rose-300">
+  <div className="rounded-lg border border-err/30 bg-err/10 p-5 text-sm text-err">
     {message}
   </div>
 );

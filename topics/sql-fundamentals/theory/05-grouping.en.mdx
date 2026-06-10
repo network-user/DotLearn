@@ -1,31 +1,78 @@
 ---
+conceptId: grouping
 title: GROUP BY and HAVING
-summary: Collapse rows into buckets, summarize each bucket with aggregates, and filter the buckets with HAVING.
+estimatedMinutes: 50
 ---
 
-# GROUP BY and HAVING
+# GROUP BY: one row per group
 
-`GROUP BY` folds many rows into one row per group. `HAVING` filters those
-groups after aggregation — it's `WHERE` for aggregates.
+You already know how to fold a table into a single number: `COUNT(*)` counts rows, `SUM` adds values up. But real questions about data almost never sound like "how many in total". They sound like "how many per each": how many books did each author write, what is the revenue in each month, how many orders did each customer place. The word "each" is a signal that one number is not enough. You need a summary table: one row per author, per month, per customer.
 
-Press "Group rows" and watch each row fly into its author's bucket, with an
-aggregate appearing per bucket:
+Running a separate query per author is a dead end: there may be a thousand authors, and tomorrow the thousand-and-first shows up. `GROUP BY` solves the problem in a single query: it splits rows into groups and computes an aggregate inside each one. By the end of this section you will answer "per each" questions with one statement, filter finished groups with `HAVING`, and understand why not just any column can sit next to an aggregate.
 
-<GroupByViz
-  groupKeyName="author"
-  valueKeyName="pages"
-  agg="sum"
-  rows={[
-    { label: 'Compilers', group: 'Ada', value: 620 },
-    { label: 'Algorithms', group: 'Ada', value: 480 },
-    { label: 'Notes on math', group: 'Ada', value: 90 },
-    { label: 'Operating systems', group: 'Linus', value: 700 },
-    { label: 'Kernel quickstart', group: 'Linus', value: 120 },
-    { label: 'COBOL essentials', group: 'Grace', value: 220 },
-  ]}
-/>
+## Buckets: the mental model
 
-## One row per bucket
+Picture the table rows as cards, each with the value of the grouping column written in the corner. `GROUP BY author` deals the cards into buckets: one bucket per unique value of `author`. From then on the aggregate works not on the whole table but on each bucket separately: `COUNT(*)` counts the cards inside a bucket, `SUM(pages)` adds up their pages. Exactly one row per bucket goes into the result.
+
+Press "Group rows" in the figure below and follow any card: it lands in exactly one bucket, and the bucket gets a total of its own.
+
+<Figure caption="Each row lands in exactly one bucket of its author, and each bucket gets its own aggregate.">
+  <GroupByViz
+    groupKeyName="author"
+    valueKeyName="pages"
+    agg="sum"
+    rows={[
+      { label: 'Compilers', group: 'Ada', value: 620 },
+      { label: 'Algorithms', group: 'Ada', value: 480 },
+      { label: 'Notes on math', group: 'Ada', value: 90 },
+      { label: 'Operating systems', group: 'Linus', value: 700 },
+      { label: 'Kernel quickstart', group: 'Linus', value: 120 },
+      { label: 'COBOL essentials', group: 'Grace', value: 220 },
+    ]}
+  />
+</Figure>
+
+An important consequence: after the fold, the original rows vanish from sight. The result of a `GROUP BY` query is a table about groups, not about rows. The "Ada" group has no title "of its own": there are three titles, and one output row has no room for all of them.
+
+By the way, an aggregate is optional. `SELECT author FROM book GROUP BY author` returns the list of unique authors: one row per bucket, no totals. It is the same as `SELECT DISTINCT author FROM book`, and a useful intuition check: grouping by itself only deals the rows out, it owes you no counting.
+
+## The one-column rule
+
+This leads to the central rule of grouping: every column in `SELECT` must either appear in `GROUP BY` or be wrapped in an aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`). The query `SELECT author, title, COUNT(*) FROM book GROUP BY author` is ill-formed: Ada's group holds three different `title` values, and the engine has no way to know which one you meant.
+
+<MarginNote label="Other engines">PostgreSQL rejects such a query with an error. MySQL behaves like SQLite in compatibility mode and like PostgreSQL under the strict ONLY_FULL_GROUP_BY mode.</MarginNote>
+
+SQLite handles this rule in its own way, and it is an honest footgun worth knowing from day one. It raises no error: a bare column outside `GROUP BY` silently picks its value from an arbitrary row of the group. The query looks like it works, tests on a small table may even pass, and then the physical row order in storage changes and the "working" report starts showing different titles.
+
+<Callout type="warning" title="Bare columns in SQLite">
+A column that is neither grouped nor aggregated returns the value from an arbitrary row of the group in SQLite. The only case you can rely on: if the query contains `MIN()` or `MAX()`, bare columns are taken from the row where the minimum or maximum is reached.
+</Callout>
+
+## The pipeline: where HAVING lives
+
+To understand `HAVING`, you need to see the order in which a query executes logically. You write `SELECT` as the first word, but the engine starts at `FROM` and finishes at `ORDER BY`. Grouping plugs into the middle of this pipeline.
+
+<Figure caption="HAVING runs after GROUP BY: it sees finished groups and their aggregates, but the original rows are no longer reachable.">
+  <PipelineFigure
+    title="Logical query execution order"
+    stages={[
+      { label: 'FROM', note: 'take the table' },
+      { label: 'WHERE', note: 'drop rows' },
+      { label: 'GROUP BY', note: 'deal into buckets' },
+      { label: 'HAVING', note: 'drop buckets', active: true },
+      { label: 'SELECT', note: 'assemble output columns' },
+      { label: 'ORDER BY', note: 'order the result' },
+    ]}
+  />
+</Figure>
+
+This diagram is the key to the whole topic. `WHERE` sits before grouping: it filters individual rows and knows nothing about aggregates, because at its stage neither groups nor `COUNT` exist yet. `HAVING` sits after: it filters finished buckets and freely references `COUNT(*)`, `SUM(pages)` and any other aggregate. One look at the pipeline answers half of all grouping questions.
+
+<PullQuote>Before GROUP BY a query reasons about rows; after it, only about groups.</PullQuote>
+
+## Counting per group
+
+From here on we work with a catalog of six books by three authors. Run the query and watch six rows turn into three:
 
 <SideSql
   title="Books per author"
@@ -52,15 +99,19 @@ aggregate appearing per bucket:
   `}
 />
 
-Every column in `SELECT` must either appear in `GROUP BY` or be wrapped in
-an aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`).
+Ada's three cards folded into one row: 3 books, 1190 pages. Linus has two books totalling 820 pages, Grace one with 220. Both output columns obey the rule: `author` is in `GROUP BY`, everything else is wrapped in aggregates.
 
-## HAVING — filter after the fold
+Note the `ORDER BY` at the end. In the pipeline, sorting runs last, after the fold has already happened, so you can sort by an aggregate too: `ORDER BY total_pages DESC` arranges authors from the most prolific to the most modest. The alias from `SELECT` is visible here, unlike in `WHERE`, which runs long before aliases come into existence.
 
-`WHERE` filters rows **before** grouping. `HAVING` filters **after**.
+## HAVING at work
+
+Now let's keep only the "major" authors: those with at least 500 pages in total. The condition is phrased about a per-bucket sum, so this is a job for `HAVING`. The query below is editable and re-runs as you type, and the chart under the table is built straight from the result.
 
 <SideSql
-  title="Authors with more than one long book"
+  title="Authors with 500+ total pages"
+  editable
+  live
+  chart={{ type: 'bar', x: 'author', y: 'total_pages' }}
   fixture={`
     CREATE TABLE book (
       id INTEGER PRIMARY KEY,
@@ -77,35 +128,125 @@ an aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`).
       (6, 'COBOL essentials',    'Grace', 220);
   `}
   query={`
-    SELECT author, COUNT(*) AS long_books
+    SELECT author, SUM(pages) AS total_pages
     FROM book
-    WHERE pages >= 400
     GROUP BY author
-    HAVING COUNT(*) >= 2
-    ORDER BY author;
+    HAVING SUM(pages) >= 500
+    ORDER BY total_pages DESC;
   `}
 />
 
-Trace the order: filter long books with `WHERE`, fold by author, then keep
-only authors with at least two long ones.
+Experiment with the `HAVING` threshold. Raise it to 1000 and only Ada survives with her 1190 pages. Lower it to 200 and Grace returns to the summary. The bars rebuild together with the result: you can watch `HAVING` literally cut off the buckets that fall short of the threshold.
 
-<Callout type="tip" title="WHERE vs HAVING">
-If the filter can be expressed without an aggregate, prefer `WHERE` — it
-runs earlier and on fewer rows. Reserve `HAVING` for predicates on
-aggregates (`HAVING SUM(x) > 100`).
-</Callout>
+`WHERE` and `HAVING` work well as a pair. Let's find which authors have at least two long books:
 
-## Common COUNT pitfalls
+```sql
+SELECT author, COUNT(*) AS long_books
+FROM book
+WHERE pages >= 400
+GROUP BY author
+HAVING COUNT(*) >= 2;
+```
 
-- `COUNT(*)` counts rows including NULLs.
-- `COUNT(col)` counts non-NULL values of `col` — they differ when `col` has NULLs.
-- `COUNT(DISTINCT col)` counts unique non-NULL values.
+Trace it along the pipeline. `WHERE` keeps three long books: 620 and 480 pages by Ada, 700 by Linus. `GROUP BY` deals them into two buckets: Ada with two cards, Linus with one. `HAVING` keeps only Ada's bucket. The same `COUNT(*)` here counts the already-filtered rows, the long books, not all of them.
+
+<Compare
+  leftTitle="WHERE"
+  rightTitle="HAVING"
+  left="Filters individual rows before grouping. Aggregates are unavailable: groups do not exist yet."
+  right="Filters finished groups after the fold. Sees COUNT, SUM, AVG and the other aggregates."
+  verdict="If a predicate can be written without an aggregate, it is a job for WHERE: it fires earlier and leaves fewer rows for grouping."
+/>
+
+Formally, SQLite will accept a `HAVING` condition without an aggregate, such as `HAVING author <> 'Grace'`. The query runs, but it is poor style: such a condition filters on a value known before the fold, and it belongs in `WHERE`, where it discards rows earlier and cheaper. Stick to the simple rule: `HAVING` is for predicates with aggregates only.
+
+An aggregate in `HAVING` does not have to appear in `SELECT`. Here the average size is computed solely for the filter:
+
+```sql
+SELECT author
+FROM book
+GROUP BY author
+HAVING AVG(pages) > 300;
+```
+
+The answer keeps Ada (about 397 pages per book on average) and Linus (410), while the average itself never reaches the output.
+
+## Multiple columns and expressions
+
+You can group by several columns at once; a bucket is then created for every unique combination of values:
+
+```sql
+SELECT seller, product, SUM(qty) AS sold
+FROM sale
+GROUP BY seller, product;
+```
+
+If Ann sells tea and coffee while Bob sells only coffee, you get three buckets: `(Ann, tea)`, `(Ann, coffee)` and `(Bob, coffee)`. The one-column rule covers both: `seller` and `product` are listed in `GROUP BY`, so both can be output as-is.
+
+The grouping key can also be an expression. The classic example is a monthly summary when the table stores a full date:
+
+```sql
+SELECT substr(paid_at, 1, 7) AS month, SUM(amount) AS total
+FROM payment
+GROUP BY substr(paid_at, 1, 7)
+ORDER BY month;
+```
+
+The group is defined by the computed value such as `2024-01`, not by the raw column content. SQLite also lets you reference the alias `month` in `GROUP BY`, which reads shorter and cleaner.
+
+## NULL gets a bucket of its own
+
+In `WHERE`, NULL keeps its distance: `NULL = NULL` is not true, and a row with NULL passes no comparison filter. You would expect NULL to refuse grouping too. Surprise: `GROUP BY` does the opposite. All NULLs count as "equal" and land in one shared bucket.
+
+<SideSql
+  title="Players without a team form a group"
+  fixture={`
+    CREATE TABLE player (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      team TEXT
+    );
+    INSERT INTO player VALUES
+      (1, 'Mira',  'red'),
+      (2, 'Oleg',  NULL),
+      (3, 'Pavel', 'red'),
+      (4, 'Rita',  NULL),
+      (5, 'Sana',  'blue');
+  `}
+  query={`
+    SELECT team, COUNT(*) AS members
+    FROM player
+    GROUP BY team
+    ORDER BY team;
+  `}
+/>
+
+The output has three rows: the group with an empty `team`, blue, and red. The NULL group comes first because SQLite sorts NULL before any value in ascending order. If teamless players do not belong in the summary, drop them before grouping: `WHERE team IS NOT NULL`.
+
+One more subtlety about empty input: if nothing survives `WHERE`, a `GROUP BY` query returns zero rows. No cards, no buckets. The same aggregate query without `GROUP BY` would return a single row with `COUNT(*) = 0`.
+
+## Common mistakes
+
+- **An aggregate filter in WHERE.** `WHERE COUNT(*) > 1` fails with a `misuse of aggregate` error: at the `WHERE` stage no groups exist yet, there is nothing to count. Move the condition to `HAVING`. The mistake happens because a query reads top-down but executes along the pipeline.
+- **A SELECT column with no place in GROUP BY.** SQLite silently substitutes a value from an arbitrary row of the group, and the bug surfaces late. Either add the column to `GROUP BY` or wrap it in an aggregate.
+- **Counting the wrong thing.** `COUNT(*)` counts the group's rows, `COUNT(col)` counts non-NULL values of the column, `COUNT(DISTINCT col)` counts unique non-NULL values. "How many orders does a customer have" and "how many distinct products did they buy" are different forms of `COUNT`; pick the form to match the question, not at random.
+
+<Detail summary="How the engine builds groups">
+There are two classic ways to group rows: sort them by the grouping key so that members of each group end up adjacent, or build a hash table mapping group key to a running aggregate. SQLite takes the first route: if an index exists on the grouping column, the rows already arrive in the right order; otherwise the engine sorts them in a transient structure. The practical takeaway: `GROUP BY` over an indexed column is noticeably cheaper on large tables.
+</Detail>
 
 <KeyTakeaways
   items={[
-    "GROUP BY collapses rows into one row per group.",
-    "Every SELECT column is either grouped or aggregated.",
-    "WHERE filters rows; HAVING filters groups.",
-    "COUNT(*), COUNT(col), COUNT(DISTINCT col) are three different things.",
+    "GROUP BY deals rows into buckets by key value; one row per bucket goes into the result.",
+    "Every SELECT column is either listed in GROUP BY or wrapped in an aggregate.",
+    "SQLite does not complain about a bare column - it silently picks a value from an arbitrary row of the group.",
+    "WHERE filters rows before the fold and cannot see aggregates; HAVING filters groups after and can.",
+    "You can group by several columns and by expressions; all NULLs land in one shared bucket.",
   ]}
 />
+
+## References
+
+- [SQLite SELECT documentation: GROUP BY and HAVING](https://www.sqlite.org/lang_select.html)
+- [SQLite Quirks: bare columns in aggregate queries](https://www.sqlite.org/quirks.html)
+- [PostgreSQL Tutorial: aggregate functions and grouping](https://www.postgresql.org/docs/current/tutorial-agg.html)

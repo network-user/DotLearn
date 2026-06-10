@@ -13,13 +13,14 @@ const isoDay = (date: Date): string => date.toISOString().slice(0, 10);
 
 const intensityClass = (count: number, max: number): string => {
   if (count === 0) {
-    return 'bg-surface-2/60';
+    return 'bg-surface-2';
   }
   const ratio = max === 0 ? 0 : count / max;
-  if (ratio < 0.25) return 'bg-emerald-900/70';
-  if (ratio < 0.5) return 'bg-emerald-700/80';
-  if (ratio < 0.75) return 'bg-emerald-500/90';
-  return 'bg-emerald-300';
+  if (ratio < 0.2) return 'bg-accent/15';
+  if (ratio < 0.4) return 'bg-accent/35';
+  if (ratio < 0.6) return 'bg-accent/60';
+  if (ratio < 0.8) return 'bg-accent/85';
+  return 'bg-accent';
 };
 
 export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) => {
@@ -87,11 +88,12 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
       </div>
       <div className="flex items-center gap-2 text-[10px] text-fg-subtle">
         <span>{t('less')}</span>
-        <span className="size-3 rounded-sm bg-surface-2/60" />
-        <span className="size-3 rounded-sm bg-emerald-900/70" />
-        <span className="size-3 rounded-sm bg-emerald-700/80" />
-        <span className="size-3 rounded-sm bg-emerald-500/90" />
-        <span className="size-3 rounded-sm bg-emerald-300" />
+        <span className="size-3 rounded-sm bg-surface-2" />
+        <span className="size-3 rounded-sm bg-accent/15" />
+        <span className="size-3 rounded-sm bg-accent/35" />
+        <span className="size-3 rounded-sm bg-accent/60" />
+        <span className="size-3 rounded-sm bg-accent/85" />
+        <span className="size-3 rounded-sm bg-accent" />
         <span>{t('more')}</span>
       </div>
     </div>

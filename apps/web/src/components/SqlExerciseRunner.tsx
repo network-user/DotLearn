@@ -113,14 +113,12 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
         <div className="space-y-3 min-w-0">
           <div
             className={cx(
-              'overflow-hidden rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft',
+              'overflow-hidden rounded-lg border border-border-base bg-surface',
               state.kind === 'running' && 'dl-anim-pulse-glow',
             )}
           >
-            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-base bg-surface/40">
-              <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle font-mono">
-                sql
-              </span>
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-base bg-surface-2/60">
+              <span className="eyebrow font-mono">sql</span>
               {!isCoarsePointer && (
                 <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
               )}
@@ -129,7 +127,6 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="sql"
-              theme="vs-dark"
               height={buildEditorHeight(isCoarsePointer, '200px', 'min(40dvh, 280px)')}
               options={buildEditorOptions(isCoarsePointer, 2)}
               onMount={(editor) => {
@@ -157,20 +154,18 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
             <HintBlock hints={exercise.hints} />
           </div>
           {state.kind === 'error' && (
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-[13px] text-amber-300">
+            <p className="rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-[13px] text-warn">
               {t('sql.runtimeError', { message: state.message })}
             </p>
           )}
           {state.kind === 'fail' && (
             <div className="space-y-2">
-              <p className="text-[13px] text-rose-700 dark:text-rose-300">
+              <p className="text-[13px] text-err">
                 {t('sql.fail', { reason: failureMessage(state.failure) })}
               </p>
               {state.missing && state.missing.length > 0 && (
                 <div className="space-y-1">
-                  <p className="text-[10.5px] uppercase tracking-widest text-fg-subtle">
-                    {t('sql.missingRows')}
-                  </p>
+                  <p className="eyebrow">{t('sql.missingRows')}</p>
                   <ResultGrid
                     columns={Object.keys(state.missing[0] ?? {})}
                     rows={state.missing}
@@ -180,9 +175,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
               )}
               {state.extra && state.extra.length > 0 && (
                 <div className="space-y-1">
-                  <p className="text-[10.5px] uppercase tracking-widest text-fg-subtle">
-                    {t('sql.extraRows')}
-                  </p>
+                  <p className="eyebrow">{t('sql.extraRows')}</p>
                   <ResultGrid
                     columns={Object.keys(state.extra[0] ?? {})}
                     rows={state.extra}
@@ -191,12 +184,12 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
                 </div>
               )}
               {state.misordered && (
-                <p className="text-[12.5px] text-amber-300">{t('sql.misordered')}</p>
+                <p className="text-[12.5px] text-warn">{t('sql.misordered')}</p>
               )}
             </div>
           )}
           {state.kind === 'pass' && (
-            <p className="text-[13px] text-emerald-300 font-medium">{t('sql.pass')}</p>
+            <p className="text-[13px] text-ok font-medium">{t('sql.pass')}</p>
           )}
         </div>
 

@@ -23,8 +23,8 @@ const toneClass: Record<ConsoleLineTone, string> = {
   system: 'text-fg-subtle',
   prompt: 'text-accent-2',
   stdout: 'text-fg',
-  pass: 'text-emerald-300',
-  fail: 'text-rose-300',
+  pass: 'text-ok',
+  fail: 'text-err',
   meta: 'text-fg-muted italic',
 };
 
@@ -39,11 +39,11 @@ const statusLabel: Record<NonNullable<PythonConsoleProps['status']>, string> = {
 
 const statusTint: Record<NonNullable<PythonConsoleProps['status']>, string> = {
   idle: 'text-fg-subtle',
-  loading: 'text-amber-300',
+  loading: 'text-warn',
   running: 'text-accent-2 dl-anim-breathe',
-  pass: 'text-emerald-300',
-  fail: 'text-rose-300',
-  error: 'text-amber-300',
+  pass: 'text-ok',
+  fail: 'text-err',
+  error: 'text-warn',
 };
 
 export const PythonConsole = ({ lines, status = 'idle', emptyMessage }: PythonConsoleProps) => {
@@ -56,24 +56,19 @@ export const PythonConsole = ({ lines, status = 'idle', emptyMessage }: PythonCo
   }, [lines]);
 
   return (
-    <div className="rounded-xl border border-border-base bg-black/85 overflow-hidden text-[13px] font-mono shadow-card">
-      <header className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/8 bg-black/40">
-        <div className="flex items-center gap-1.5">
-          <span className="size-2.5 rounded-full bg-rose-400/80" />
-          <span className="size-2.5 rounded-full bg-amber-400/80" />
-          <span className="size-2.5 rounded-full bg-emerald-400/80" />
-        </div>
-        <span className="text-[10.5px] uppercase tracking-widest text-zinc-400">python · pyodide</span>
+    <div className="rounded-lg border border-border-base bg-surface overflow-hidden text-[13px] font-mono shadow-card">
+      <header className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border-base bg-surface-2/60">
+        <span className="eyebrow">python · pyodide</span>
         <span className={cx('text-[10.5px] uppercase tracking-widest tabular-nums', statusTint[status])}>
           {statusLabel[status]}
         </span>
       </header>
       <div
         ref={scrollRef}
-        className="px-3 py-3 max-h-[40dvh] sm:max-h-[260px] overflow-y-auto whitespace-pre-wrap text-zinc-200 [scrollbar-width:thin]"
+        className="px-3 py-3 max-h-[40dvh] sm:max-h-[260px] overflow-y-auto whitespace-pre-wrap bg-code-bg text-fg [scrollbar-width:thin]"
       >
         {lines.length === 0 ? (
-          <p className="text-zinc-500 italic text-[12px]">{emptyMessage}</p>
+          <p className="text-fg-subtle italic text-[12px]">{emptyMessage}</p>
         ) : (
           lines.map((line) => <ConsoleRow key={line.id} line={line} />)
         )}
@@ -96,7 +91,7 @@ const ConsoleRow = ({ line }: { line: ConsoleLine }) => {
         shown ? 'opacity-100' : 'opacity-0',
       )}
     >
-      {line.tone === 'prompt' && <span className="select-none text-zinc-500">{'>>> '}</span>}
+      {line.tone === 'prompt' && <span className="select-none text-fg-subtle">{'>>> '}</span>}
       {line.text}
     </div>
   );
@@ -130,10 +125,10 @@ export const TestList = ({ cases }: TestListProps) => {
         <li
           key={test.id}
           className={cx(
-            'rounded-xl border px-3 py-2 transition-colors duration-fast text-[12.5px] font-mono',
-            test.status === 'pending' && 'border-border-base bg-surface/40',
-            test.status === 'pass' && 'border-emerald-500/30 bg-emerald-500/8',
-            test.status === 'fail' && 'border-rose-500/30 bg-rose-500/8',
+            'rounded-lg border px-3 py-2 transition-colors duration-fast text-[12.5px] font-mono',
+            test.status === 'pending' && 'border-border-base bg-surface',
+            test.status === 'pass' && 'border-ok/30 bg-ok/8',
+            test.status === 'fail' && 'border-err/30 bg-err/8',
           )}
         >
           <div className="flex items-center gap-2 min-w-0">
@@ -141,8 +136,8 @@ export const TestList = ({ cases }: TestListProps) => {
               className={cx(
                 'grid place-items-center size-5 rounded-md shrink-0',
                 test.status === 'pending' && 'bg-surface-2/80 text-fg-subtle',
-                test.status === 'pass' && 'bg-emerald-500/20 text-emerald-300',
-                test.status === 'fail' && 'bg-rose-500/20 text-rose-300',
+                test.status === 'pass' && 'bg-ok/15 text-ok',
+                test.status === 'fail' && 'bg-err/15 text-err',
               )}
             >
               {test.status === 'pass' ? (
@@ -158,18 +153,18 @@ export const TestList = ({ cases }: TestListProps) => {
           {test.status === 'fail' && (
             <div className="mt-1.5 pl-7 space-y-0.5 text-[11.5px]">
               {test.thrown ? (
-                <p className="text-rose-200">
+                <p className="text-err">
                   {t('python.raised')} <code>{test.thrown.type}: {test.thrown.message}</code>
                 </p>
               ) : (
                 <>
                   <p className="text-fg-muted">
                     {t('python.expected')}{' '}
-                    <code className="text-emerald-300">{formatValue(test.expected)}</code>
+                    <code className="text-ok">{formatValue(test.expected)}</code>
                   </p>
                   <p className="text-fg-muted">
                     {t('python.got')}{' '}
-                    <code className="text-rose-300">{formatValue(test.actual)}</code>
+                    <code className="text-err">{formatValue(test.actual)}</code>
                   </p>
                 </>
               )}

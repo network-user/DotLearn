@@ -20,9 +20,9 @@ export const Skeleton = ({ className, rounded = 'lg', ...rest }: SkeletonProps) 
     aria-hidden
     {...rest}
     className={cx(
-      'relative overflow-hidden border border-border-base/60 bg-surface/40',
+      'relative overflow-hidden border border-border-base/60 bg-surface-2/50',
       'before:absolute before:inset-0 before:-translate-x-full',
-      'before:bg-[linear-gradient(110deg,transparent_30%,rgba(255,255,255,0.06)_46%,rgba(99,102,241,0.10)_50%,rgba(255,255,255,0.06)_54%,transparent_70%)]',
+      'before:bg-[linear-gradient(110deg,transparent_30%,rgb(var(--surface-3)/0.45)_50%,transparent_70%)]',
       'before:animate-[shimmer_1.6s_ease-in-out_infinite]',
       radii[rounded],
       className,
