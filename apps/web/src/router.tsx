@@ -33,6 +33,14 @@ const SettingsPage = lazy(() =>
 const SubmitTopicPage = lazy(() =>
   import('./pages/SubmitTopicPage').then((module) => ({ default: module.SubmitTopicPage })),
 );
+const InterviewListPage = lazy(() =>
+  import('./pages/InterviewListPage').then((module) => ({ default: module.InterviewListPage })),
+);
+const InterviewQuestionPage = lazy(() =>
+  import('./pages/InterviewQuestionPage').then((module) => ({
+    default: module.InterviewQuestionPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -78,6 +86,18 @@ const submitRoute = new Route({
   component: SubmitTopicPage,
 });
 
+const interviewRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/interview',
+  component: InterviewListPage,
+});
+
+const interviewQuestionRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/interview/$id',
+  component: InterviewQuestionPage,
+});
+
 const proposalsRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/proposals',
@@ -117,6 +137,8 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
   submitRoute,
+  interviewRoute,
+  interviewQuestionRoute,
   proposalsRoute,
   adminRoute,
   progressRoute,
