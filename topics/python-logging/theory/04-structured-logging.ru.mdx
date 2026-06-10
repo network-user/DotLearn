@@ -1,0 +1,191 @@
+---
+conceptId: structured-logging
+title: Структурные логи и конфигурация
+estimatedMinutes: 45
+---
+
+# Когда логов миллион, текст перестаёт читаться глазами
+
+Пока приложение крутится на Вашей машине, лог - это строки, которые Вы пробегаете глазами. На проде всё иначе: за день набегают миллионы записей, и читает их не человек, а система сбора логов - она индексирует, фильтрует и строит дашборды. Попросите такую систему «покажи все запросы пользователя 42, которые шли дольше секунды», и обнаружится, что из строки `пользователь 42 ждал 1300мс` нужные числа приходится выколупывать регулярными выражениями. Свободный текст удобен человеку и неудобен машине.
+
+Структурные логи переворачивают приоритет: запись становится не строкой, а набором именованных полей (`user_id=42`, `duration_ms=1300`), которые система сбора кладёт в индекс как есть. К концу раздела Вы научитесь прикреплять к записи произвольные поля через `extra`, отдавать лог в машиночитаемом виде и настраивать всё это одним словарём через `dictConfig` вместо россыпи вызовов. Это финальный шаг от «логирование работает» к «логирование готово к проду».
+
+## Ментальная модель: запись - это поля, текст лишь одно из них
+
+Свободный лог склеивает всё в одну строку, и контекст растворяется в тексте. Структурный лог держит сообщение и контекст **раздельно**: `message` - человекочитаемая фраза, а рядом отдельные поля `user_id`, `request_id`, `duration_ms`. Formatter решает, как это показать: человеку - в строку, системе сбора - в JSON, где каждое поле остаётся самостоятельным ключом.
+
+<Figure caption="Свободный лог прячет контекст внутри текста, поэтому числа приходится выколупывать. Структурный лог держит поля отдельно, и система сбора индексирует каждое как есть.">
+  <Sketch viewBox="0 0 460 220" title="Свободный текст против структурных полей">
+    <SketchBox x={20} y={30} width={200} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={120} y={54} mono>user 42 waited 1300ms</SketchLabel>
+    <SketchLabel x={120} y={90} muted>контекст спрятан в строке</SketchLabel>
+
+    <SketchBox x={250} y={20} width={190} height={26} accent />
+    <SketchLabel x={345} y={38} mono accent>message: request done</SketchLabel>
+    <SketchBox x={250} y={56} width={190} height={26} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={74} mono>user_id: 42</SketchLabel>
+    <SketchBox x={250} y={92} width={190} height={26} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={110} mono>duration_ms: 1300</SketchLabel>
+    <SketchLabel x={345} y={140} muted>каждое поле индексируется</SketchLabel>
+
+    <SketchArrow from={[120, 110]} to={[120, 160]} />
+    <SketchLabel x={120} y={180} muted>нужен regexp</SketchLabel>
+    <SketchArrow from={[345, 140]} to={[345, 175]} accent />
+    <SketchLabel x={345} y={195} muted>фильтр по user_id=42</SketchLabel>
+  </Sketch>
+</Figure>
+
+Картинка показывает главный выигрыш: когда поля отдельны, запрос «найди по `user_id`» становится тривиальным, а из свободной строки то же значение приходится доставать разбором. Структура - это вложенный заранее ответ на будущие вопросы к логам.
+
+## extra: прицепить поля к записи
+
+Произвольные поля добавляют к записи через аргумент `extra` - словарь, ключи которого становятся атрибутами записи и доступны в шаблоне formatter-а.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("api")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("%(message)s user=%(user_id)s"))
+logger.addHandler(handler)
+
+logger.info("запрос обработан", extra={"user_id": 42})
+```
+
+Печатается `запрос обработан user=42`. Ключ `user_id` из `extra` стал полем записи, и formatter подставил его по `%(user_id)s`. Так контекст путешествует с записью отдельно от текста сообщения - и его можно вывести и в строку, и в JSON.
+
+<Callout type="warning">
+Если formatter ссылается на `%(user_id)s`, а в `extra` этого ключа не передали, форматирование упадёт с `KeyError`. Поэтому ключи `extra` либо гарантируют на каждый вызов, либо собирают через фильтр, проставляющий значение по умолчанию.
+</Callout>
+
+## Машиночитаемый вывод: запись в JSON
+
+Свой formatter может вернуть не строку с подстановками, а JSON-объект, где каждое поле - отдельный ключ. Достаточно унаследоваться от `logging.Formatter` и переопределить `format`.
+
+```python
+import logging
+import sys
+import json
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({
+            "level": record.levelname,
+            "msg": record.getMessage(),
+            "user_id": getattr(record, "user_id", None),
+        })
+
+logger = logging.getLogger("api.json")
+logger.setLevel(logging.INFO)
+h = logging.StreamHandler(sys.stdout)
+h.setFormatter(JsonFormatter())
+logger.addHandler(h)
+logger.info("ok", extra={"user_id": 7})
+```
+
+Печатается `{"level": "INFO", "msg": "ok", "user_id": 7}`. Теперь строка - валидный JSON: система сбора разберёт её без регулярных выражений, а поле `user_id` ляжет в индекс. На проде вместо ручного класса обычно берут готовую библиотеку, но механизм ровно этот.
+
+## Конфигурация одним словарём: dictConfig
+
+Когда настроек становится много, россыпь вызовов `addHandler`/`setLevel` превращается в кашу. `logging.config.dictConfig` принимает один словарь, описывающий формат, handler-ы и logger-ы целиком.
+
+```python
+import logging
+import sys
+from logging.config import dictConfig
+
+dictConfig({
+    "version": 1,
+    "formatters": {"plain": {"format": "%(levelname)s %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler",
+                              "formatter": "plain", "stream": sys.stdout}},
+    "root": {"level": "INFO", "handlers": ["console"]},
+})
+logging.getLogger("app").info("настроено словарём")
+```
+
+Печатается `INFO настроено словарём`. Весь конвейер из прошлых разделов - formatter, handler, root с уровнем - собран декларативно за один вызов. Ключ `"version": 1` обязателен: это версия формата схемы, а не Вашего приложения. Такой словарь удобно держать рядом с конфигом и менять под окружение, не трогая код.
+
+## Потрогайте структуру руками
+
+Запустите код: одно событие выводится дважды - человекочитаемой строкой и JSON-объектом с теми же полями. Поменяйте значения в `extra` (скажем, `user_id` на 99 и добавьте `"path": "/pay"`) и допишите `"path"` в `JsonFormatter` - и убедитесь, что новое поле появилось в JSON, не сломав человеческую строку.
+
+<PyDemo
+  title="Одно событие в двух представлениях"
+  code={`import logging
+import sys
+import json
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({
+            "level": record.levelname,
+            "msg": record.getMessage(),
+            "user_id": getattr(record, "user_id", None),
+        })
+
+logger = logging.getLogger("demo.struct")
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+
+human = logging.StreamHandler(sys.stdout)
+human.setFormatter(logging.Formatter("%(levelname)s %(message)s (user=%(user_id)s)"))
+
+machine = logging.StreamHandler(sys.stdout)
+machine.setFormatter(JsonFormatter())
+
+logger.addHandler(human)
+logger.addHandler(machine)
+
+logger.info("платёж принят", extra={"user_id": 42})`}
+/>
+
+Заметьте: оба handler-а получают одну и ту же запись с полем `user_id` из `extra`, но представляют её по-разному. Поле живёт на записи, а форма вывода - на formatter-е, ровно как в разделе про конвейер.
+
+## Краевой случай: зарезервированные имена в extra
+
+Логично положить в `extra` ключ `message` или `args`. Но эти имена уже заняты внутренними атрибутами записи, и при попытке их перезаписать `logging` поднимает `KeyError`.
+
+```python
+import logging
+
+logger = logging.getLogger("reserved")
+logger.addHandler(logging.NullHandler())
+try:
+    logger.info("привет", extra={"message": "перетру штатное поле"})
+except KeyError as error:
+    print("KeyError:", error)
+```
+
+Печатается `KeyError: 'Attempt to overwrite ...'`. Сюрприз в том, что не любой ключ годится: `extra` защищает служебные поля записи (`message`, `asctime`, `levelname`, `args` и другие). Давайте своим полям собственные имена - `user_id`, `request_id`, `duration_ms`, - и коллизии не случится.
+
+## Типичные ошибки
+
+- **Класть переменные в текст сообщения вместо `extra`.** `logger.info(f"user {uid} ok")` снова прячет данные в строку. Пишите `logger.info("ok", extra={"user_id": uid})` - и система сбора получит поле, а не текст для разбора.
+- **Забывать `"version": 1` в `dictConfig`.** Без этого ключа вызов падает - это обязательная версия схемы конфигурации, фиксированная единицей.
+- **Перенастраивать через `basicConfig` после старта и удивляться, что ничего не изменилось.** `basicConfig` срабатывает один раз; повторный вызов без `force=True` игнорируется. Для смены настроек на ходу либо `force=True`, либо `dictConfig`.
+
+<Detail summary="basicConfig против dictConfig: что когда брать">
+
+`basicConfig` - быстрый старт: одна строка, один handler на корне, разумные значения по умолчанию. Его потолок - простые сценарии, где хватает консоли и одного формата. `dictConfig` декларативен и полон: описывает несколько formatter-ов, несколько handler-ов, точечные уровни по подсистемам и propagation - всё одним словарём, который удобно вынести в конфиг и менять под окружение без правки кода. Практическое правило: скрипт и прототип - `basicConfig`; приложение, которое поедет на прод с разными окружениями, - `dictConfig` (или `fileConfig` для тех, кто хранит настройки в INI). Промежуточных «полунастроек» лучше избегать: смешивать ручные `addHandler` с `dictConfig` - верный путь к задвоению и сюрпризам.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Структурный лог держит сообщение и контекст раздельно: message - фраза, а user_id и duration_ms - отдельные индексируемые поля.",
+    "Аргумент extra={...} прикрепляет к записи произвольные поля, доступные в шаблоне formatter-а.",
+    "Свой Formatter может вернуть JSON, чтобы система сбора логов разбирала запись без регулярных выражений.",
+    "dictConfig собирает весь конвейер (форматы, handler-ы, logger-ы) одним словарём; ключ \"version\": 1 обязателен.",
+    "Зарезервированные имена (message, args, levelname) в extra передавать нельзя - будет KeyError; давайте полям свои имена.",
+    "basicConfig - для скриптов и прототипов; dictConfig - для приложений с несколькими окружениями.",
+  ]}
+/>
+
+## Ссылки
+
+- [Документация Python - logging.config.dictConfig](https://docs.python.org/3/library/logging.config.html#logging.config.dictConfig)
+- [Документация Python - схема конфигурации словарём](https://docs.python.org/3/library/logging.config.html#dictionary-schema-details)
+- [Документация Python - Logging Cookbook: добавление контекста](https://docs.python.org/3/howto/logging-cookbook.html#adding-contextual-information-to-your-logging-output)

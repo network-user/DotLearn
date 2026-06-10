@@ -1,0 +1,298 @@
+exercises:
+  - id: fix-method-by-relation-001
+    concept: reading-and-fixing
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Какой метод queryset выбирают для предзагрузки связи «к одному» (ForeignKey, OneToOne), чтобы свернуть N+1 в один запрос?"
+    choices:
+      - id: a
+        text: "select_related - он сворачивает связь «к одному» в JOIN и тащит её тем же запросом."
+      - id: b
+        text: "prefetch_related - он делает отдельный запрос за связью и сшивает результаты в Python."
+      - id: c
+        text: "only - он ограничивает набор загружаемых полей."
+      - id: d
+        text: "annotate - он добавляет вычисляемое поле к каждой строке."
+    correct: [a]
+    explanation: "Для связи «к одному» у каждого объекта ровно один связанный, поэтому JOIN не размножает строки и всё помещается в один запрос. Это и делает select_related."
+    variants:
+      - prompt: "Какой метод queryset выбирают для предзагрузки связи «ко многим» (ManyToMany, обратный ForeignKey)?"
+        choices:
+          - id: a
+            text: "prefetch_related - он делает отдельный запрос за всеми связанными объектами и сшивает их по ключу в Python."
+          - id: b
+            text: "select_related - он сворачивает любую связь в JOIN."
+          - id: c
+            text: "values_list - он возвращает связь плоским списком кортежей."
+          - id: d
+            text: "distinct - он убирает дубликаты строк после JOIN."
+        correct: [a]
+        explanation: "Для связи «ко многим» JOIN размножил бы строки декартовым произведением. Поэтому prefetch_related делает второй запрос за всеми связанными разом и сшивает их в Python."
+      - prompt: "Связь Order.customer - это ForeignKey. Какой метод свернёт её предзагрузку в один запрос?"
+        choices:
+          - id: a
+            text: "select_related(\"customer\") - связь «к одному» подтягивается JOIN-ом в тот же запрос."
+          - id: b
+            text: "prefetch_related(\"customer\") - ForeignKey всегда грузят вторым запросом."
+          - id: c
+            text: "defer(\"customer\") - откладывает загрузку поля до первого обращения."
+          - id: d
+            text: "Никакой: ForeignKey нельзя предзагрузить."
+        correct: [a]
+        explanation: "Order.customer - это ForeignKey, то есть связь «к одному». У каждого заказа один клиент, поэтому JOIN не размножает строки, и select_related сворачивает всё в один запрос."
+
+  - id: fix-read-profile-001
+    concept: reading-and-fixing
+    type: theory-quiz
+    difficulty: 2
+    prompt: "В профиле silk у эндпоинта 1 запрос `SELECT ... FROM customers` и затем 100 одинаковых `SELECT ... FROM orders WHERE customer_id = ?`. Связь идёт по обратному ForeignKey customer.orders. Что применить?"
+    choices:
+      - id: a
+        text: "prefetch_related(\"orders\"): обратный ForeignKey - связь «ко многим», её догружают вторым запросом, и число запросов станет 2 вместо 1+100."
+      - id: b
+        text: "select_related(\"orders\"): свернуть обратную связь в JOIN."
+      - id: c
+        text: "Добавить индекс на customers.id и оставить код как есть."
+      - id: d
+        text: "Ничего: 101 запрос для списка клиентов - это нормально."
+    correct: [a]
+    explanation: "customer.orders - обратная сторона ForeignKey, то есть связь «ко многим». JOIN тут размножил бы строки, поэтому нужен prefetch_related: один запрос за клиентами и один за всеми их заказами через WHERE customer_id IN (...), итого 2."
+    hints:
+      - "Сначала определите форму связи: у одного клиента много заказов или ровно один? От этого зависит выбор метода."
+    variants:
+      - prompt: "В профиле: 1 запрос `SELECT ... FROM orders` и 100 одинаковых `SELECT ... FROM customers WHERE id = ?`. Связь идёт по Order.customer (ForeignKey). Что применить?"
+        choices:
+          - id: a
+            text: "select_related(\"customer\"): связь «к одному» сворачивается в JOIN, и весь список укладывается в один запрос."
+          - id: b
+            text: "prefetch_related(\"customer\"): сделать второй запрос за клиентами."
+          - id: c
+            text: "Кешировать каждого клиента вручную в словаре по id."
+          - id: d
+            text: "Ничего: повторяющиеся SELECT по customers неизбежны."
+        correct: [a]
+        explanation: "Order.customer - ForeignKey, связь «к одному». У каждого заказа один клиент, JOIN не размножает строки, поэтому select_related убирает все 100 дополнительных запросов и оставляет один."
+
+  - id: fix-join-multiplies-001
+    concept: reading-and-fixing
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Почему для связи «ко многим» (обратный ForeignKey, ManyToMany) нельзя обойтись одним JOIN-запросом, как делает select_related?"
+    choices:
+      - id: a
+        text: "JOIN по связи «ко многим» размножает строки: на одного клиента с тремя заказами получится три строки результата - декартово произведение, которое тащит лишние данные и ломает группировку."
+      - id: b
+        text: "JOIN по такой связи синтаксически запрещён в SQL."
+      - id: c
+        text: "select_related умеет работать только с таблицами, где меньше 1000 строк."
+      - id: d
+        text: "Связи «ко многим» хранятся в отдельной базе, недоступной для JOIN."
+    correct: [a]
+    explanation: "У клиента с тремя заказами JOIN даст три строки на одного клиента - декартово произведение. Поэтому связь «ко многим» догружают отдельным запросом через prefetch_related и сшивают по ключу в Python, а не сворачивают в JOIN."
+    hints:
+      - "Представьте JOIN таблицы клиентов с таблицей их заказов. Сколько строк результата даст один клиент, у которого пять заказов?"
+      - "Что произойдёт с числом строк в результате, если у каждой записи слева есть несколько соответствий справа?"
+
+  - id: fix-prefetch-filter-trap-001
+    concept: reading-and-fixing
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Код вызывает `Customer.objects.prefetch_related(\"orders\")`, но в цикле обращается к `customer.orders.filter(total__gt=100)`. Профайлер показывает, что N+1 вернулся. Почему и как чинить?"
+    choices:
+      - id: a
+        text: "filter(...) на предзагруженной связи строит новый queryset и выполняет отдельный запрос мимо кеша prefetch - снова по запросу на клиента. Фильтровать нужно заранее через Prefetch(\"orders\", queryset=...), тогда условие уйдёт во второй запрос."
+      - id: b
+        text: "prefetch_related вообще не кеширует связь, поэтому любой доступ всегда делает запрос."
+      - id: c
+        text: "Проблема в total__gt: числовые фильтры несовместимы с prefetch_related."
+      - id: d
+        text: "Нужно заменить prefetch_related на select_related(\"orders\")."
+    correct: [a]
+    explanation: "prefetch_related кеширует полную связь orders. Но customer.orders.filter(...) - это новый queryset с другим условием, и Django выполняет его отдельным запросом мимо кеша, по разу на клиента. Решение - заложить фильтр заранее через Prefetch(\"orders\", queryset=big_orders), чтобы условие попало во второй предзагрузочный запрос."
+    hints:
+      - "prefetch_related кеширует связь целиком. Что произойдёт, если внутри цикла попросить у связи другой, отфильтрованный набор?"
+      - "Вспомните объект Prefetch: он позволяет задать queryset для предзагрузки заранее, до цикла. Куда тогда уйдёт условие фильтра?"
+
+  - id: fix-select-related-sim-001
+    concept: reading-and-fixing
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она моделирует число запросов после select_related: связь «к одному» сворачивается в JOIN, и весь список укладывается в один запрос независимо от числа заказов."
+    snippet: |
+      def queries_with_select_related(order_count):
+          return 1
+
+      print(queries_with_select_related(3))
+      print(queries_with_select_related(100))
+    expected:
+      kind: stdout
+      value: "1\n1"
+    hints:
+      - "select_related тащит связь тем же запросом через JOIN. Сколько запросов остаётся, и зависит ли это число от количества заказов?"
+    variants:
+      - snippet: |
+          def queries_naive(order_count):
+              return 1 + order_count
+
+          def queries_select_related(order_count):
+              return 1
+
+          print(queries_naive(50))
+          print(queries_select_related(50))
+        expected:
+          kind: stdout
+          value: "51\n1"
+      - snippet: |
+          order_count = 4
+          queries = 1
+          for _ in range(order_count):
+              pass
+          print(queries)
+        expected:
+          kind: stdout
+          value: "1"
+
+  - id: fix-prefetch-related-sim-001
+    concept: reading-and-fixing
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она моделирует число запросов после prefetch_related: один запрос за основным списком и один за всеми связанными объектами разом - два запроса вне зависимости от числа строк."
+    snippet: |
+      def queries_with_prefetch(customer_count):
+          return 2
+
+      print(queries_with_prefetch(3))
+      print(queries_with_prefetch(1000))
+    expected:
+      kind: stdout
+      value: "2\n2"
+    hints:
+      - "prefetch_related делает второй запрос за всеми связанными объектами через WHERE id IN (...). Сколько всего запросов получается и меняется ли это с числом клиентов?"
+    variants:
+      - snippet: |
+          base_query = 1
+          prefetch_query = 1
+          total = base_query + prefetch_query
+          print(total)
+        expected:
+          kind: stdout
+          value: "2"
+      - snippet: |
+          def queries_naive(customer_count):
+              return 1 + customer_count
+
+          def queries_prefetch(customer_count):
+              return 2
+
+          print(queries_naive(10) - queries_prefetch(10))
+        expected:
+          kind: stdout
+          value: "9"
+
+  - id: fix-combined-sim-001
+    concept: reading-and-fixing
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует комбинацию select_related (связь «к одному», +0 запросов через JOIN) и prefetch_related (связь «ко многим», +1 отдельный запрос) поверх одного основного запроса за заказами."
+    snippet: |
+      base_query = 1
+      select_related_extra = 0
+      prefetch_related_extra = 1
+      total = base_query + select_related_extra + prefetch_related_extra
+      print(total)
+    expected:
+      kind: stdout
+      value: "2"
+    hints:
+      - "select_related не добавляет отдельного запроса - связь уходит в JOIN основного. prefetch_related добавляет один. Сложите с основным запросом."
+      - "Один запрос за заказами, клиент свёрнут в тот же JOIN, позиции догружаются вторым запросом. Сколько всего?"
+
+  - id: fix-blanks-methods-001
+    concept: reading-and-fixing
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Заполните пропуски: выберите метод предзагрузки по форме связи."
+    template: |
+      Заказ ссылается на клиента через ForeignKey - это связь «к одному»,
+      поэтому её сворачивают в JOIN методом {{one_method}}.
+      У клиента много заказов (обратный ForeignKey) - это связь «ко многим»,
+      её догружают отдельным запросом методом {{many_method}}.
+    blanks:
+      one_method:
+        accept: ["select_related"]
+      many_method:
+        accept: ["prefetch_related"]
+    hints:
+      - "Связь «к одному» помещается в JOIN, связь «ко многим» требует отдельного запроса. Какой метод отвечает за какую форму?"
+    variants:
+      - template: |
+          Для связи Order.customer (ForeignKey) применяют {{one_method}},
+          который добавляет JOIN customers в тот же запрос.
+          Для связи Customer.orders (обратный ForeignKey) применяют
+          {{many_method}}, который делает запрос WHERE customer_id IN (...).
+        blanks:
+          one_method:
+            accept: ["select_related"]
+          many_method:
+            accept: ["prefetch_related"]
+
+  - id: fix-blanks-verify-001
+    concept: reading-and-fixing
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Заполните пропуски в тесте, который подтверждает, что N+1 устранён и число запросов осталось константой."
+    template: |
+      def test_list_is_constant_queries(self):
+          c = Customer.objects.create(name="Ada")
+          Order.objects.create(customer=c, total=10)
+          Order.objects.create(customer=c, total=20)
+          with self.{{assertion}}({{expected}}):
+              for o in Order.objects.{{preload}}("customer"):
+                  _ = o.customer.name
+    blanks:
+      assertion:
+        accept: ["assertNumQueries"]
+      expected:
+        accept: ["1"]
+      preload:
+        accept: ["select_related"]
+    hints:
+      - "Контекстный менеджер фиксирует точное число запросов. Связь «к одному» сворачивают в JOIN, поэтому запрос остаётся один независимо от числа заказов."
+      - "Два заказа с одним клиентом через JOIN дают ровно один запрос - именно это число и закрепляет тест."
+    variants:
+      - template: |
+          def test_customers_with_orders_constant(self):
+              c1 = Customer.objects.create(name="Ada")
+              c2 = Customer.objects.create(name="Bob")
+              Order.objects.create(customer=c1, total=10)
+              Order.objects.create(customer=c2, total=20)
+              with self.{{assertion}}({{expected}}):
+                  for cust in Customer.objects.{{preload}}("orders"):
+                      _ = list(cust.orders.all())
+        blanks:
+          assertion:
+            accept: ["assertNumQueries"]
+          expected:
+            accept: ["2"]
+          preload:
+            accept: ["prefetch_related"]
+
+  - id: fix-overprefetch-challenge-001
+    concept: reading-and-fixing
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Инженер добавил `prefetch_related(\"items\")` к queryset заказов, чтобы убрать N+1. Число запросов упало, но страница стала медленнее. Шаблон при этом позиции заказа не выводит. В чём ошибка?"
+    choices:
+      - id: a
+        text: "Предзагрузка не бесплатна: prefetch_related(\"items\") добавил второй запрос за данными, которые шаблон не использует. Предзагружать стоит ровно те связи, к которым код реально обращается, и проверять профайлером объём загруженного."
+      - id: b
+        text: "prefetch_related всегда замедляет страницу и применять его не нужно."
+      - id: c
+        text: "Нужно было взять select_related(\"items\") - он быстрее для любых связей."
+      - id: d
+        text: "Замедление случайно и к предзагрузке отношения не имеет."
+    correct: [a]
+    explanation: "prefetch_related выполняет отдельный запрос сразу, даже если связь потом не понадобится. Загрузив items, которые шаблон не читает, инженер добавил запрос и трафик впустую. Предзагружать нужно только то, к чему код обращается; профайлер показывает, упало ли общее число запросов и не вырос ли объём."
+    hints:
+      - "prefetch_related выполняет второй запрос немедленно. Что будет, если загруженные этим запросом данные потом никто не читает?"
+      - "Критерий хорошей предзагрузки - не «как можно больше связей», а соответствие тому, к чему код реально обращается. Как это проверить?"

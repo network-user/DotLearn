@@ -1,0 +1,134 @@
+---
+conceptId: oauth2-oidc-basics
+title: OAuth2 и OIDC: основы
+estimatedMinutes: 45
+---
+
+# OAuth2 и OIDC: кто кого пускает и по какому документу
+
+Представьте, что стороннему сервису нужно прочитать ваши фотографии в облаке. Самый прямолинейный способ - отдать ему логин и пароль от облака. Это плохо по очевидной причине: сервис получает всё, навсегда, и вы уже не можете забрать доступ, не сменив пароль. OAuth2 родился ровно из этой проблемы - как отдать ограниченный доступ к ресурсу, не показывая никому свой пароль. Он отвечает на вопрос «что этому приложению разрешено делать от моего имени», то есть решает задачу **авторизации**.
+
+Но у разработчиков был и второй, не менее частый запрос: «дайте мне просто кнопку *войти через Google*, чтобы я знал, кто этот пользователь». Это уже не про доступ к ресурсу, а про личность - **аутентификацию**. OAuth2 для этого не предназначен, и попытки натянуть его на вход приводили к тонким уязвимостям. Поэтому поверх OAuth2 надстроили OpenID Connect (OIDC) - тонкий слой, который добавляет проверяемое удостоверение личности. К концу раздела вы будете чётко различать эти две задачи, знать четыре роли OAuth2 и понимать, чем `access_token` отличается от `id_token`.
+
+## Ментальная модель: четыре роли вокруг одного согласия
+
+В основе OAuth2 - разговор четырёх участников. **Resource Owner** - это вы, владелец данных. **Client** - приложение, которое хочет действовать от вашего имени (мобильный клиент, SPA, backend-сервис). **Authorization Server** - тот, кто спрашивает ваше согласие и выдаёт token; в нашей теме это Keycloak. **Resource Server** - API, которое хранит данные и пускает только по валидному token.
+
+Ключевая идея: client никогда не получает ваш пароль. Он отправляет вас к authorization server, вы там логинитесь и подтверждаете согласие, а client получает обратно не ваши credentials, а **access_token** - строку с ограниченными правами и сроком жизни. С этим token client идёт к resource server, и тот проверяет права по token, а не по личности пользователя.
+
+<Figure caption="Client никогда не видит пароль: он отправляет владельца к authorization server и получает обратно только access_token с ограниченными правами.">
+  <Sketch viewBox="0 0 460 220" title="Четыре роли OAuth2">
+    <SketchBox x={20} y={20} width={120} height={50} />
+    <SketchLabel x={80} y={50} mono>Resource Owner</SketchLabel>
+    <SketchBox x={20} y={150} width={120} height={50} accent />
+    <SketchLabel x={80} y={180} mono accent>Client</SketchLabel>
+    <SketchBox x={320} y={20} width={120} height={50} />
+    <SketchLabel x={380} y={50} mono>Authorization Server</SketchLabel>
+    <SketchBox x={320} y={150} width={120} height={50} />
+    <SketchLabel x={380} y={180} mono>Resource Server</SketchLabel>
+    <SketchArrow from={[140, 45]} to={[320, 45]} />
+    <SketchLabel x={230} y={36} size={11} muted>логин и согласие</SketchLabel>
+    <SketchArrow from={[140, 175]} to={[320, 45]} accent />
+    <SketchLabel x={230} y={120} size={11} accent>обмен на token</SketchLabel>
+    <SketchArrow from={[140, 185]} to={[320, 185]} accent />
+    <SketchLabel x={230} y={205} size={11} muted>запрос с access_token</SketchLabel>
+  </Sketch>
+</Figure>
+
+Запомните этот треугольник: владелец доверяет authorization server, client получает token, resource server верит token. Пароль остаётся между владельцем и authorization server и больше нигде не появляется.
+
+## Scope: ограниченное согласие, а не «всё или ничего»
+
+Согласие в OAuth2 - не выключатель, а набор галочек. **Scope** - это список запрашиваемых разрешений, который client указывает при обращении к authorization server. Пользователю показывают именно эти пункты: «приложение хочет читать ваши фото» - и он соглашается на конкретный объём, а не на полный доступ.
+
+```text
+GET /authorize?response_type=code
+  &client_id=gallery-app
+  &scope=photos:read profile
+  &redirect_uri=https://gallery.app/callback
+```
+
+Здесь client просит два scope: `photos:read` и `profile`. Выданный access_token будет нести ровно эти права - попытка удалить фото с таким token упрётся в отказ resource server. Scope - это механизм наименьших привилегий: вы выдаёте минимум, нужный для задачи.
+
+<Callout type="info">
+Scope отвечает на вопрос «что приложению можно делать», но ничего не говорит о том, *кто* пользователь. Имя, email и факт входа - это уже территория OIDC, к которой мы переходим.
+</Callout>
+
+## OIDC: удостоверение личности поверх OAuth2
+
+OAuth2 выдаёт access_token - пропуск к ресурсу. Но в самом access_token, по спецификации OAuth2, нет гарантий о личности пользователя: его формат не стандартизован, и client не должен его «читать», он лишь передаёт его resource server. Когда задача - именно вход, нужен документ, который client может проверить и которому может верить. Это и есть **id_token** из OIDC.
+
+OIDC добавляет к OAuth2 один специальный scope - `openid` - и новый артефакт: **id_token** в формате JWT, подписанный authorization server. В нём лежат **claims** о пользователе: `sub` (стабильный идентификатор), `iss` (кто выдал), `aud` (для кого), время выдачи и истечения, опционально email и имя.
+
+```text
+scope=openid profile email
+  →  выдаётся id_token (JWT) + access_token
+```
+
+Разница в назначении принципиальна: **access_token - для доступа к API, id_token - для самого приложения**, чтобы узнать, кто вошёл. Resource server проверяет access_token; id_token до resource server обычно не доходит вовсе.
+
+<Figure caption="OIDC - тонкий слой поверх OAuth2: он не заменяет access_token, а добавляет рядом подписанный id_token с claims о пользователе.">
+  <Sketch viewBox="0 0 440 180" title="OIDC поверх OAuth2">
+    <SketchBox x={40} y={90} width={360} height={70} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={130} muted>OAuth2: access_token, scope, потоки</SketchLabel>
+    <SketchBox x={90} y={20} width={260} height={55} accent />
+    <SketchLabel x={220} y={42} accent>OIDC: id_token (JWT)</SketchLabel>
+    <SketchLabel x={220} y={62} size={11} accent>claims: sub, iss, aud, email</SketchLabel>
+    <SketchArrow from={[220, 75]} to={[220, 88]} accent />
+  </Sketch>
+</Figure>
+
+Хорошая мнемоника: если вы строите «вход через X» и хотите знать личность - вам нужен OIDC и id_token. Если вы строите доступ к API от имени пользователя - вам достаточно OAuth2 и access_token. Чаще всего в одном потоке вы получаете оба.
+
+## Откуда client знает адреса: discovery-документ
+
+Чтобы не зашивать URL руками, OIDC определяет **discovery endpoint** - один JSON по фиксированному пути, где authorization server публикует все свои адреса и параметры.
+
+```text
+GET /.well-known/openid-configuration
+```
+
+Ответ содержит `authorization_endpoint`, `token_endpoint`, `jwks_uri` (откуда брать ключи для проверки подписи), список поддерживаемых scope и алгоритмов. Библиотеки читают этот документ один раз и дальше знают, куда слать запросы. Для Keycloak путь будет вида `/realms/<realm>/.well-known/openid-configuration` - что такое realm, разберём в следующем разделе.
+
+## Краевой случай: access_token, который вы не должны разбирать
+
+Вот что удивляет многих: по спецификации OAuth2 **формат access_token не определён**. Он может быть JWT, а может быть непрозрачной случайной строкой (opaque token), за которой стоит запись в базе authorization server. Client не должен пытаться его декодировать или принимать решения по его содержимому - для client это просто «строка, которую надо передать дальше».
+
+```text
+access_token = "8xLOxBtZp8...opaque..."   допустимо
+access_token = "eyJhbGciOi...JWT..."       тоже допустимо
+```
+
+Keycloak по умолчанию выдаёт access_token в формате JWT, и поэтому его *можно* разобрать на resource server. Но привычка «распарсю access_token на фронте и достану email» - это ошибка дизайна: для личности есть id_token, а access_token завтра может стать opaque, и код сломается.
+
+## Типичные ошибки
+
+- **Использовать OAuth2 для входа без OIDC.** Брать access_token как доказательство «пользователь вошёл» опасно: token могли выдать другому client, и без проверки `aud`/`iss` вы примете чужой пропуск за вход. Для аутентификации существует id_token - используйте его.
+- **Путать access_token и id_token по назначению.** Отправлять id_token в заголовке `Authorization` к API или, наоборот, разбирать access_token ради email - частая путаница. Правило: access_token едет к API, id_token остаётся у client.
+- **Считать scope ролями.** Scope - это согласие на объём доступа в рамках одного запроса, а не постоянные права пользователя в системе. Роли - отдельная модель, и в Keycloak это разные сущности.
+
+<Detail summary="Почему OAuth2 сам по себе не годится для входа">
+
+Исторически разработчики делали «login with X» прямо на OAuth2: получали access_token и считали, что раз токен выдан - пользователь аутентифицирован. Проблема в том, что access_token не привязан к конкретному client на уровне, который client может проверить. Атака «token substitution» выглядела так: вредоносное приложение получало access_token от своего пользователя и подсовывало его честному приложению, выдавая себя за этого пользователя.
+
+OIDC закрывает это тем, что id_token содержит claim `aud` (audience) - идентификатор client, для которого token предназначен, - и подписан так, что client обязан проверить и подпись, и `aud`, и `iss`. Подменить id_token, не зная приватного ключа authorization server, нельзя. Поэтому правильный «вход через X» - всегда OIDC, а не голый OAuth2.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "OAuth2 решает авторизацию (что приложению можно делать), OIDC поверх него решает аутентификацию (кто пользователь).",
+    "Четыре роли: resource owner, client, authorization server, resource server; client никогда не видит пароль владельца.",
+    "access_token - пропуск к API для resource server; id_token - подписанный JWT с личностью пользователя для самого client.",
+    "Scope - это запрошенный объём согласия, механизм наименьших привилегий, а не роли пользователя.",
+    "Формат access_token по спецификации не определён: client не должен его разбирать, даже если Keycloak отдаёт JWT.",
+    "Адреса endpoint'ов берутся из discovery-документа /.well-known/openid-configuration, а не зашиваются вручную.",
+  ]}
+/>
+
+## Ссылки
+
+- [RFC 6749 - The OAuth 2.0 Authorization Framework](https://datatracker.ietf.org/doc/html/rfc6749)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+- [Keycloak - Securing applications and services guide](https://www.keycloak.org/docs/latest/securing_apps/index.html)

@@ -101,7 +101,11 @@ export const ResultGrid = ({
       </div>
       {truncated && (
         <div className="px-3 py-1.5 text-[11px] text-fg-subtle bg-surface-2 border-t border-border-base">
-          showing {visible.length} / {rows.length}
+          {t('results.showing', {
+            shown: visible.length,
+            total: rows.length,
+            defaultValue: 'показано {{shown}} из {{total}}',
+          })}
         </div>
       )}
     </div>

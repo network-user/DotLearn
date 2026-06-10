@@ -10,13 +10,14 @@ import { LockoutService } from './domain/lockout.service';
 import { SessionEpochService } from './domain/session-epoch.service';
 import { StepUpService } from './domain/step-up.service';
 import { TokenRevocationService } from './domain/token-revocation.service';
+import { TotpReplayService } from './domain/totp-replay.service';
 import { AdminAuthGuard } from './guards/admin-auth.guard';
 import { StepUpGuard } from './guards/step-up.guard';
 
 @Global()
 @Module({
   imports: [
-    JwtModule.register({}),
+    JwtModule.register({ signOptions: { algorithm: 'HS256' } }),
     ThrottlerModule.forRoot([
       {
         name: 'default',
@@ -36,6 +37,7 @@ import { StepUpGuard } from './guards/step-up.guard';
     SessionEpochService,
     StepUpService,
     TokenRevocationService,
+    TotpReplayService,
     AdminAuthGuard,
     StepUpGuard,
     {

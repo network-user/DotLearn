@@ -1,8 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnModuleInit } from '@nestjs/common';
+
+import { PersistentMap } from '../../../common/storage/persistent-map';
 
 @Injectable()
-export class SessionEpochService {
-  private readonly epochs = new Map<string, number>();
+export class SessionEpochService implements OnModuleInit {
+  private readonly epochs = new PersistentMap<number>('session-epochs.json');
+
+  async onModuleInit(): Promise<void> {
+    await this.epochs.load();
+  }
 
   current(subject: string): number {
     return this.epochs.get(subject) ?? 0;

@@ -1,0 +1,169 @@
+---
+conceptId: loggers-handlers-formatters
+title: Logger, Handler, Formatter
+estimatedMinutes: 45
+---
+
+# Три детали, через которые проходит каждое сообщение
+
+В первом разделе Вы звали `logging.warning(...)` прямо у модуля - и оно работало как по волшебству. Но `basicConfig` за кулисами собрал из готовых деталей небольшой конвейер, и пока эти детали невидимы, любой нестандартный запрос ставит в тупик: «как писать в файл и в консоль одновременно?», «почему дата печатается в одном месте и не печатается в другом?», «откуда взялось слово `root`?». Ответ всегда один: сообщение проходит через цепочку из трёх объектов, и каждый отвечает за свой шаг.
+
+К концу раздела Вы будете собирать этот конвейер руками: создавать именованный logger, цеплять к нему handler, задавать handler-у formatter - и понимать, кто из них за что отвечает. После этого `logging` перестаёт быть набором заклинаний и становится конструктором, который Вы собираете под свою задачу.
+
+## Ментальная модель: запись едет по конвейеру из трёх станций
+
+Когда Вы зовёте `logger.info("привет")`, рождается объект записи (`LogRecord`) с текстом, уровнем, временем и контекстом. Дальше он едет по конвейеру. **Logger** - точка входа: решает, пускать ли запись дальше по уровню, и передаёт её своим handler-ам. **Handler** - пункт назначения: отвечает за то, *куда* уйдёт запись (в консоль, в файл, по сети). **Formatter** - оформитель: превращает объект записи в готовую строку по шаблону. У одного logger-а может быть несколько handler-ов, и у каждого handler-а - свой formatter.
+
+<Figure caption="Запись проходит конвейер: Logger пускает её по уровню, раздаёт нескольким Handler-ам, каждый Handler своим Formatter-ом превращает запись в строку и пишет в своё место назначения.">
+  <Sketch viewBox="0 0 470 250" title="Logger, Handler, Formatter">
+    <SketchBox x={20} y={100} width={90} height={44} accent />
+    <SketchLabel x={65} y={126} mono accent>Logger</SketchLabel>
+    <SketchArrow from={[110, 122]} to={[180, 70]} accent />
+    <SketchArrow from={[110, 122]} to={[180, 174]} accent />
+
+    <SketchBox x={180} y={48} width={100} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={74} mono>Handler A</SketchLabel>
+    <SketchBox x={180} y={152} width={100} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={178} mono>Handler B</SketchLabel>
+
+    <SketchArrow from={[280, 70]} to={[340, 70]} />
+    <SketchArrow from={[280, 174]} to={[340, 174]} />
+    <SketchBox x={340} y={52} width={70} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={74} mono>консоль</SketchLabel>
+    <SketchBox x={340} y={156} width={70} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={178} mono>файл</SketchLabel>
+
+    <SketchLabel x={230} y={120} muted>у каждого Handler свой Formatter</SketchLabel>
+    <SketchLabel x={65} y={170} muted>точка входа</SketchLabel>
+  </Sketch>
+</Figure>
+
+Из картинки видно главное распределение ролей: logger решает «пускать ли вообще», handler решает «куда», formatter решает «как это выглядит». Эти три вопроса независимы, поэтому их и разнесли по разным объектам.
+
+## Logger: именованная точка входа
+
+Вместо безымянного `root` правильнее завести именованный logger. Имя обычно совпадает с именем модуля, для чего есть идиома `logging.getLogger(__name__)`.
+
+```python
+import logging
+
+logger = logging.getLogger("shop.orders")
+print(logger.name)
+print(logger is logging.getLogger("shop.orders"))
+```
+
+Печатается `shop.orders` и `True`. Второе важно: `getLogger` с одним и тем же именем всегда возвращает **один и тот же** объект. Logger-ы - это глобальный реестр по имени, а не новые объекты на каждый вызов. Поэтому настроить logger в одном месте и получить его настроенным в другом - норма.
+
+## Handler: куда уходит запись
+
+Сам по себе именованный logger ничего не печатает - ему нужен handler. Самый частый - `StreamHandler`, пишущий в поток (по умолчанию `stderr`).
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("shop.orders")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+
+logger.info("заказ 42 оформлен")
+```
+
+Печатается `заказ 42 оформлен`. Мы явно создали handler на `sys.stdout` и прицепили его к logger-у. Без `addHandler` сообщение было бы некуда выводить. Заметьте: пока строка голая, без времени и уровня - оформление ещё не настроено.
+
+<Callout type="tip">
+`logging.FileHandler("app.log")` пишет в файл, `RotatingFileHandler` - в файл с автоматической ротацией по размеру. Интерфейс у всех handler-ов одинаковый, поэтому, освоив `StreamHandler`, Вы умеете цеплять любой.
+</Callout>
+
+## Formatter: как запись превращается в строку
+
+Чтобы строка обрела вид, handler-у задают formatter с шаблоном. Шаблон ссылается на поля записи через `%(имя)s`.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("shop.pay")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+logger.addHandler(handler)
+
+logger.info("платёж принят")
+```
+
+Печатается `INFO [shop.pay] платёж принят`. Formatter подставил уровень и имя logger-а вокруг текста. Доступных полей много: `%(asctime)s` для времени, `%(funcName)s` для имени функции, `%(lineno)d` для номера строки. Formatter живёт на handler-е, а не на logger-е, - поэтому одна и та же запись в консоли и в файле может выглядеть по-разному.
+
+## Один logger - несколько адресатов
+
+Сила конвейера в том, что к одному logger-у можно прицепить несколько handler-ов, и каждый оформит запись по-своему. Эта песочница собирает именно такую связку. Запустите код: одно сообщение `error` придёт в два потока в двух разных форматах. Попробуйте поменять уровень второго handler-а на `logging.ERROR` через `h2.setLevel(...)` и добавить строку `logger.warning("только в подробный")` - и убедитесь, что предупреждение попадёт лишь в подробный handler.
+
+<PyDemo
+  title="Одно сообщение, два формата"
+  code={`import logging
+import sys
+
+logger = logging.getLogger("demo.multi")
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+
+h1 = logging.StreamHandler(sys.stdout)
+h1.setFormatter(logging.Formatter("кратко: %(message)s"))
+
+h2 = logging.StreamHandler(sys.stdout)
+h2.setFormatter(logging.Formatter("подробно: %(levelname)s [%(name)s] %(message)s"))
+
+logger.addHandler(h1)
+logger.addHandler(h2)
+
+logger.error("база недоступна")`}
+/>
+
+Строка `logger.handlers.clear()` в начале нужна песочнице: без неё повторный запуск добавлял бы handler-ы поверх старых и сообщение печаталось бы по нескольку раз. Это подводит к самой частой ошибке новичков, разберём её ниже.
+
+## Краевой случай: дубли из-за повторного addHandler
+
+Logger хранит свои handler-ы списком и не проверяет дубли. Если код, добавляющий handler, выполнится дважды (например, функция настройки вызвана повторно), запись напечатается дважды.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("dup")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.addHandler(logging.StreamHandler(sys.stdout))
+
+logger.info("сколько раз я выведусь")
+```
+
+Печатается **две** строки `сколько раз я выведусь`. Сюрприз в том, что повторное `addHandler` не заменяет, а **накапливает**: два одинаковых handler-а на `stdout` дадут два вывода. Поэтому настройку логирования делают один раз при старте, а не на каждый вызов функции, и при необходимости перед добавлением чистят `logger.handlers`.
+
+## Типичные ошибки
+
+- **Цеплять handler на каждый запрос/функцию.** Настройка handler-ов - стартовая операция. Если делать её внутри обработчика, вызываемого многократно, handler-ы копятся и логи множатся. Настраивайте один раз при инициализации приложения.
+- **Задавать formatter logger-у.** У logger-а нет метода `setFormatter` - оформление живёт на handler-е. Логика простая: logger не знает, в какой именно поток уйдёт запись, а формат зависит от адресата.
+- **Ждать вывод от голого logger-а.** `getLogger("x").info(...)` без единого handler-а у самого logger-а и его предков молчит (кроме аварийного `lastResort` для `WARNING+`). Нет handler-а - некуда писать.
+
+<Detail summary="Зачем разделять три объекта, если можно было сделать один">
+
+Разделение даёт независимые оси настройки. Уровень фильтрации (`logger`) меняют по подсистемам: модуль `shop.pay` шумит на `DEBUG`, остальное молчит на `INFO`. Место назначения (`handler`) меняют по окружению: на проде - файл с ротацией, локально - консоль. Внешний вид (`formatter`) меняют по адресату: в консоль - человекочитаемо, в файл сбора логов - JSON. Если бы всё было одним объектом, эти три решения пришлось бы принимать вместе, и переиспользовать настройку между окружениями стало бы невозможно. Цена гибкости - три объекта вместо одного, и на старте это кажется избыточным, пока не понадобится вторая ось.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Сообщение проходит конвейер из трёх объектов: Logger (пускать ли), Handler (куда), Formatter (как выглядит).",
+    "logging.getLogger(name) возвращает один и тот же объект на одно имя - logger-ы это глобальный реестр.",
+    "Голый logger без handler-а ничего не печатает; handler определяет поток или файл назначения.",
+    "Formatter живёт на handler-е, поэтому один logger может писать в разные места в разных форматах.",
+    "addHandler накапливает, а не заменяет: повторная настройка даёт дубли строк - настраивайте логирование один раз при старте.",
+    "Идиома logging.getLogger(__name__) даёт logger с именем модуля и встраивает его в иерархию.",
+  ]}
+/>
+
+## Ссылки
+
+- [Документация Python - Logger, Handler, Formatter](https://docs.python.org/3/library/logging.html#logger-objects)
+- [Документация Python - logging.Formatter и атрибуты LogRecord](https://docs.python.org/3/library/logging.html#logrecord-attributes)
+- [Документация Python - модуль logging.handlers](https://docs.python.org/3/library/logging.handlers.html)

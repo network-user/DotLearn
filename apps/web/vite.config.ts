@@ -26,7 +26,7 @@ const CONTENT_SECURITY_POLICY = [
   "font-src 'self' data:",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
-  "connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:*",
+  "connect-src 'self' https://api.anthropic.com https://api.openai.com https://openrouter.ai http://localhost:* ws://localhost:* wss://localhost:*",
 ].join('; ');
 
 const PYODIDE_RUNTIME_FILES = [
@@ -185,17 +185,24 @@ export default defineConfig({
     },
   },
   build: {
+    target: 'es2022',
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
         manualChunks: (id) => {
+          const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('/src/lib/interview.ts')) return 'interview-data';
           if (id.includes('monaco-editor')) return 'monaco';
           if (id.includes('@monaco-editor/react')) return 'monaco';
           if (id.includes('sql.js')) return 'sqljs';
           if (id.includes('pyodide')) return 'pyodide';
-          if (id.includes('shiki') || id.includes('@shikijs')) return 'shiki';
           if (id.includes('framer-motion')) return 'motion';
           if (id.includes('@radix-ui')) return 'radix';
+          if (id.includes('cmdk')) return 'cmdk';
+          if (id.includes('sonner')) return 'sonner';
+          if (id.includes('@mdx-js')) return 'mdx';
+          if (id.includes('ts-fsrs')) return 'fsrs';
+          if (id.includes('canvas-confetti')) return 'confetti';
           if (
             id.includes('node_modules/react/') ||
             id.includes('node_modules/react-dom/') ||

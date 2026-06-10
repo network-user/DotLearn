@@ -51,7 +51,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
     resolver.resolve(response);
   };
 
-  const disposeWorker = (error: Error): void => {
+  const disposeWorker = (error: Error, options?: { warmReinit?: boolean }): void => {
     if (worker) {
       worker.removeEventListener('message', onMessage);
       worker.removeEventListener('error', onError);
@@ -66,6 +66,9 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
       resolver.reject(error);
     }
     pending.clear();
+    if (options?.warmReinit !== false) {
+      void init().catch(() => undefined);
+    }
   };
 
   function onError(event: ErrorEvent): void {
@@ -133,7 +136,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
   };
 
   const terminate = (): void => {
-    disposeWorker(new PythonExecutionError('python runtime terminated'));
+    disposeWorker(new PythonExecutionError('python runtime terminated'), { warmReinit: false });
   };
 
   return { init, evaluate, terminate };

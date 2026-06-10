@@ -1,0 +1,184 @@
+---
+conceptId: simple-vs-preflight
+title: "Простые запросы и preflight"
+estimatedMinutes: 45
+---
+
+# Почему один запрос уходит сразу, а другой - двумя
+
+Вы переписали GET-запрос на PUT, добавили заголовок `Content-Type: application/json` - и вдруг в сетевой панели появился лишний запрос с методом `OPTIONS`, которого вы не писали. Откуда он взялся? Это не баг и не ваш код: это браузер сам, перед вашим настоящим запросом, отправил **preflight** - предварительный вопрос серверу: «мне тут собираются прислать PUT с JSON от чужого origin, ты не против?». Если сервер не ответит правильно, ваш PUT даже не уйдёт.
+
+CORS делит все кросс-доменные запросы на две категории: те, что браузер пускает сразу (**simple requests**, простые запросы), и те, что он сначала проверяет отдельным запросом (**preflight**). К концу раздела вы будете точно знать, по каким признакам запрос попадает в первую или вторую категорию, что именно браузер спрашивает в preflight и почему именно эти запросы решили проверять заранее.
+
+## Ментальная модель: два маршрута
+
+Простой запрос идёт по одному маршруту: браузер сразу отправляет его на сервер, получает ответ и решает - отдавать тело скрипту или нет, глядя на заголовок `Access-Control-Allow-Origin` в ответе. Один round-trip.
+
+Preflight идёт по двум маршрутам. Сначала браузер отправляет `OPTIONS`-запрос без тела - спрашивает разрешение. Сервер отвечает, какие методы, заголовки и origin он допускает. Только если ответ устраивает браузер, тот отправляет настоящий запрос. Два round-trip.
+
+<Figure caption="Простой запрос - один round-trip. Preflight добавляет предварительный OPTIONS: сначала вопрос о разрешении, потом сам запрос.">
+  <Sketch viewBox="0 0 470 230" title="Маршрут простого запроса и preflight">
+    <SketchLabel x={110} y={28} weight={600}>Простой запрос</SketchLabel>
+    <SketchBox x={20} y={40} width={90} height={40} accent radius={8} />
+    <SketchLabel x={65} y={65} mono accent size={11}>браузер</SketchLabel>
+    <SketchBox x={360} y={40} width={90} height={40} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={405} y={65} mono size={11}>сервер</SketchLabel>
+    <SketchArrow from={[110, 55]} to={[360, 55]} accent />
+    <SketchLabel x={235} y={48} size={10} muted>GET</SketchLabel>
+    <SketchArrow from={[360, 72]} to={[110, 72]} dashed />
+    <SketchLabel x={235} y={88} size={10} muted>ответ + Allow-Origin</SketchLabel>
+    <SketchLabel x={110} y={128} weight={600}>Preflight</SketchLabel>
+    <SketchBox x={20} y={140} width={90} height={40} accent radius={8} />
+    <SketchLabel x={65} y={165} mono accent size={11}>браузер</SketchLabel>
+    <SketchBox x={360} y={140} width={90} height={40} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={405} y={165} mono size={11}>сервер</SketchLabel>
+    <SketchArrow from={[110, 150]} to={[360, 150]} dashed />
+    <SketchLabel x={235} y={144} size={10} muted>OPTIONS (вопрос)</SketchLabel>
+    <SketchArrow from={[360, 165]} to={[110, 165]} dashed />
+    <SketchLabel x={235} y={178} size={10} muted>разрешение</SketchLabel>
+    <SketchArrow from={[110, 195]} to={[360, 195]} accent />
+    <SketchLabel x={235} y={210} size={10} muted>PUT (настоящий запрос)</SketchLabel>
+  </Sketch>
+</Figure>
+
+Главный вопрос - что отправляет запрос по первому маршруту, а что по второму. Ответ полностью определяется свойствами самого запроса: его методом, заголовками и типом тела. Браузер вычисляет это сам, до отправки, по фиксированным правилам.
+
+## Что делает запрос «простым»
+
+Запрос считается простым (и обходится без preflight), только если выполнены **все** условия сразу:
+
+```text
+метод одного из:        GET, HEAD, POST
+заголовки только из:    Accept, Accept-Language, Content-Language, Content-Type
+Content-Type один из:   text/plain
+                        application/x-www-form-urlencoded
+                        multipart/form-data
+```
+
+Стоит нарушить хотя бы одно условие - и запрос становится «непростым», требующим preflight. Метод `PUT`, `PATCH` или `DELETE` - preflight. Свой заголовок вроде `Authorization` или `X-Api-Key` - preflight. `Content-Type: application/json` - preflight, потому что `application/json` нет в списке трёх разрешённых типов тела.
+
+<Callout type="warning">
+Самая частая причина внезапного preflight - именно `Content-Type: application/json`. Привычный для REST API JSON-тип не входит в тройку простых, поэтому почти любой осмысленный POST с JSON на чужой origin влечёт предварительный OPTIONS.
+</Callout>
+
+Разберём на примерах. Вот простой запрос - GET без особых заголовков:
+
+```js
+fetch("https://api.other.com/items")
+```
+
+Метод GET, своих заголовков нет, тела нет. Все условия выполнены - браузер отправит его сразу, одним запросом, и решит про чтение ответа по заголовку `Access-Control-Allow-Origin`.
+
+А вот тот же по смыслу запрос, но уже непростой:
+
+```js
+fetch("https://api.other.com/items", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ name: "ваза" }),
+})
+```
+
+Метод POST допустим, но `Content-Type: application/json` выбивает запрос из категории простых. Перед этим POST браузер отправит `OPTIONS https://api.other.com/items` и дождётся разрешения.
+
+## Что браузер спрашивает в preflight
+
+Preflight - это `OPTIONS`-запрос без тела, в котором браузер заранее перечисляет, что собирается сделать. Два ключевых заголовка вопроса:
+
+```text
+OPTIONS /items HTTP/1.1
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: content-type
+```
+
+`Access-Control-Request-Method` сообщает метод будущего настоящего запроса, `Access-Control-Request-Headers` - список нестандартных заголовков, которые в нём будут. Сервер смотрит на это и отвечает, что он разрешает:
+
+```text
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Allow-Methods: POST, GET, OPTIONS
+Access-Control-Allow-Headers: Content-Type
+Access-Control-Max-Age: 600
+```
+
+Если запрошенный метод есть в `Allow-Methods`, запрошенные заголовки покрыты `Allow-Headers`, а origin совпадает с `Allow-Origin` - браузер считает разрешение полученным и отправляет настоящий POST. Если хоть что-то не сошлось, настоящий запрос не уходит вовсе, а в консоли появляется ошибка CORS.
+
+<Figure caption="Браузер в preflight перечисляет метод и заголовки будущего запроса; сервер в ответе перечисляет, что допускает. Настоящий запрос уходит, только если множества совпали.">
+  <Compare
+    leftTitle="Браузер спрашивает (OPTIONS)"
+    rightTitle="Сервер разрешает (ответ)"
+    left={
+      <ul>
+        <li>Origin: https://app.example.com</li>
+        <li>Request-Method: POST</li>
+        <li>Request-Headers: content-type</li>
+      </ul>
+    }
+    right={
+      <ul>
+        <li>Allow-Origin: https://app.example.com</li>
+        <li>Allow-Methods: POST, GET</li>
+        <li>Allow-Headers: Content-Type</li>
+      </ul>
+    }
+    verdict="Метод и заголовки покрыты, origin совпал - настоящий POST уходит."
+  />
+</Figure>
+
+## Кэш preflight: заголовок Max-Age
+
+Делать по два запроса на каждый PUT было бы расточительно. Поэтому в ответе на preflight сервер может прислать `Access-Control-Max-Age` - на сколько секунд браузеру разрешено запомнить это разрешение. Пока кэш жив, повторные запросы той же формы (тот же метод, те же заголовки, тот же origin) идут без нового OPTIONS.
+
+```text
+Access-Control-Max-Age: 600
+```
+
+Здесь разрешение кэшируется на 10 минут. Значение `Max-Age` ограничено сверху самим браузером (в Chromium - около 2 часов, в Firefox - около суток), и если сервер пришлёт больше, браузер обрежет до своего потолка. Поэтому в сетевой панели вы видите OPTIONS не перед каждым запросом, а только перед первым в серии и после истечения кэша.
+
+<MarginNote label="OPTIONS не доезжает до вашего кода">Preflight-запрос `OPTIONS` обрабатывает CORS-слой (middleware фреймворка или сам web-сервер). До вашего обработчика маршрута он обычно не доходит - вам не нужно писать ручку для `OPTIONS`, нужно лишь правильно настроить CORS. Если же preflight «падает», ищите проблему в конфигурации CORS, а не в бизнес-логике.</MarginNote>
+
+## Краевой случай, который удивляет
+
+Preflight срабатывает по форме запроса, а не по тому, что реально нужно прочитать. Поэтому даже запрос, ответ которого вам не важен, может потребовать preflight - просто из-за метода или заголовка. И наоборот: добавив, казалось бы, безобидный заголовок к простому GET, вы превращаете его в двухфазный. Один лишний кастомный заголовок в общем `fetch`-клиенте - и каждый GET к чужому API внезапно начинает ходить с предварительным OPTIONS, удваивая задержку.
+
+```js
+fetch("https://api.other.com/items", {
+  headers: { "X-Trace-Id": "abc" },
+})
+```
+
+Это уже не простой запрос: `X-Trace-Id` не входит в список разрешённых заголовков простого запроса, поэтому браузер отправит preflight перед обычным GET. Метод не поменялся - поменялся только заголовок, и этого достаточно.
+
+На практике это значит, что цена «непростоты» - это лишний round-trip, и платится он в первую очередь по задержке, особенно на медленной сети или при обращении к географически далёкому серверу. Поэтому при проектировании кросс-доменного API имеет смысл держать частые операции простыми там, где это возможно, и обязательно настраивать `Access-Control-Max-Age`, чтобы preflight оплачивался один раз на серию, а не перед каждым запросом. Если же кастомный заголовок нужен по делу (трассировка, авторизация), preflight - неизбежная плата за него, и бороться стоит не с самим OPTIONS, а с тем, чтобы он не повторялся без нужды.
+
+## Типичные ошибки
+
+- **Удивляться лишнему OPTIONS в панели сети.** Это нормальное поведение preflight, а не ошибка. Появляется, когда запрос «непростой»: непривычный метод, кастомный заголовок или `Content-Type: application/json`.
+- **Считать любой POST простым.** POST простой только с одним из трёх разрешённых `Content-Type`. С `application/json` он становится непростым и требует preflight.
+- **Писать обработчик OPTIONS в бизнес-логике.** Preflight обслуживает CORS-слой. Если он не работает, чините конфигурацию CORS, а не добавляйте ручку OPTIONS в роутер.
+- **Не использовать `Access-Control-Max-Age`.** Без него браузер шлёт preflight перед каждым непростым запросом, удваивая количество round-trip. Кэш разрешения заметно ускоряет повторные обращения.
+
+<Detail summary="Зачем preflight вообще придумали">
+
+CORS должен был расширить возможности кросс-доменных запросов, не сломав сайты, которые писались в эпоху, когда таких запросов из браузера сделать было нельзя. До CORS из JavaScript можно было кросс-доменно отправить, по сути, только то, что и так умели формы и теги: GET и «формоподобный» POST. Старые серверы исходили из того, что чужой скрипт не пришлёт им `DELETE` или `PUT` с кастомным заголовком. Если бы CORS разрешил такие запросы отправлять без спроса, скрипт с чужого origin мог бы выполнить на старом сервере опасную операцию ещё до того, как сервер скажет «мне нельзя». Preflight - это страховка: для всего, что выходит за рамки исторически возможного, браузер сперва спрашивает разрешение и не отправляет настоящий запрос, пока сервер явно не подтвердит, что он CORS-aware и согласен. Так совместимость со старым web сохраняется: незнакомый с CORS сервер просто не ответит нужными заголовками, и опасный запрос не уйдёт.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "CORS делит кросс-доменные запросы на простые (уходят сразу) и непростые (сначала preflight - предварительный OPTIONS).",
+    "Запрос простой, только если метод GET/HEAD/POST, заголовки из узкого списка, а Content-Type один из трёх формоподобных.",
+    "Content-Type: application/json - самая частая причина preflight: его нет в списке простых типов тела.",
+    "В preflight браузер шлёт Access-Control-Request-Method и Request-Headers; сервер отвечает Allow-Methods и Allow-Headers, и настоящий запрос уходит только при совпадении.",
+    "Access-Control-Max-Age кэширует разрешение preflight на заданное число секунд, убирая лишний OPTIONS у повторных запросов.",
+  ]}
+/>
+
+## Ссылки
+
+- [MDN - Cross-Origin Resource Sharing (CORS)](https://developer.mozilla.org/ru/docs/Web/HTTP/CORS)
+- [MDN - Простые запросы](https://developer.mozilla.org/ru/docs/Web/HTTP/CORS#simple_requests)
+- [MDN - Preflighted requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#preflighted_requests)
+- [MDN - Access-Control-Max-Age](https://developer.mozilla.org/ru/docs/Web/HTTP/Headers/Access-Control-Max-Age)
+- [Fetch Standard - CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol)

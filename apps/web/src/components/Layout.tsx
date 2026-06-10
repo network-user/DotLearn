@@ -47,6 +47,12 @@ export const Layout = ({ children }: LayoutProps) => {
 
   return (
     <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[var(--z-modal)] focus:rounded-md focus:border focus:border-border-base focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-fg focus:shadow-float focus:outline-none focus:ring-2 focus:ring-accent/50"
+      >
+        {t('skipToContent', { defaultValue: 'Перейти к содержимому' })}
+      </a>
       <header className="sticky top-0 z-[var(--z-nav)] glass-chrome border-b border-border-base/70">
         <div className="mx-auto max-w-layout px-[var(--layout-content-gutter)]">
           <div className="flex items-center justify-between gap-2 lg:gap-4 h-14">
@@ -78,7 +84,11 @@ export const Layout = ({ children }: LayoutProps) => {
         </div>
       </header>
 
-      <main className="flex-1 mx-auto w-full max-w-layout px-[var(--layout-content-gutter)] py-8">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex-1 mx-auto w-full max-w-layout px-[var(--layout-content-gutter)] py-8 outline-none"
+      >
         <div className="mb-4"><Breadcrumbs /></div>
         {children}
       </main>

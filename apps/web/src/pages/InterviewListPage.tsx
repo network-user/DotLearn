@@ -1,13 +1,15 @@
-import { useMemo } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle2, GraduationCap, Search, Shuffle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
 import { Surface } from '@/components/ui/Surface';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
   interviewCategories,
@@ -42,6 +44,11 @@ export const InterviewListPage = () => {
   const status: StatusFilter = search.status ?? 'all';
   const sort: SortKey = search.sort ?? 'default';
 
+  // Keep the search box responsive locally and only push the debounced value to the URL,
+  // so a keystroke no longer drives a router navigation + re-filter of every question.
+  const [queryInput, setQueryInput] = useState(query);
+  const debouncedQuery = useDebouncedValue(queryInput, 220);
+
   const patch = (
     next: Record<string, string | undefined>,
     options?: { replace?: boolean },
@@ -53,8 +60,18 @@ export const InterviewListPage = () => {
     });
   };
 
-  const setQuery = (value: string): void =>
-    patch({ q: value || undefined }, { replace: true });
+  useEffect(() => {
+    if ((debouncedQuery || undefined) !== (query || undefined)) {
+      patch({ q: debouncedQuery || undefined }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery]);
+
+  useEffect(() => {
+    setQueryInput(query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
   const setCategory = (value: string): void =>
     patch({ topic: value === 'all' ? undefined : value });
   const setStage = (value: string): void =>
@@ -163,8 +180,8 @@ export const InterviewListPage = () => {
             />
             <input
               type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              value={queryInput}
+              onChange={(event) => setQueryInput(event.target.value)}
               placeholder={t('searchPlaceholder')}
               aria-label={t('searchPlaceholder')}
               className="form-input pl-10"
@@ -237,18 +254,66 @@ export const InterviewListPage = () => {
           <p className="px-4 py-10 text-center text-sm text-fg-subtle italic">{t('empty')}</p>
         </Surface>
       ) : (
-        <ul className="space-y-2.5">
-          {visible.map((question) => (
-            <li key={question.id}>
-              <QuestionCard
-                question={question}
-                title={titleOf(question)}
-                studied={studiedIds.has(question.id)}
-              />
-            </li>
-          ))}
-        </ul>
+        <VirtualQuestionList
+          questions={visible}
+          studiedIds={studiedIds}
+          titleOf={titleOf}
+        />
       )}
+    </div>
+  );
+};
+
+const VirtualQuestionList = ({
+  questions,
+  studiedIds,
+  titleOf,
+}: {
+  questions: InterviewQuestionMeta[];
+  studiedIds: Set<number>;
+  titleOf: (question: InterviewQuestionMeta) => string;
+}) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const offsetRef = useRef(0);
+
+  useLayoutEffect(() => {
+    offsetRef.current = listRef.current?.offsetTop ?? 0;
+  });
+
+  const virtualizer = useWindowVirtualizer({
+    count: questions.length,
+    estimateSize: () => 116,
+    overscan: 8,
+    gap: 10,
+    scrollMargin: offsetRef.current,
+  });
+
+  return (
+    <div ref={listRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
+      {virtualizer.getVirtualItems().map((item) => {
+        const question = questions[item.index];
+        if (!question) return null;
+        return (
+          <div
+            key={question.id}
+            data-index={item.index}
+            ref={virtualizer.measureElement}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${item.start - virtualizer.options.scrollMargin}px)`,
+            }}
+          >
+            <QuestionCard
+              question={question}
+              title={titleOf(question)}
+              studied={studiedIds.has(question.id)}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -260,7 +325,7 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 
-const QuestionCard = ({
+const QuestionCard = memo(function QuestionCard({
   question,
   title,
   studied,
@@ -268,7 +333,8 @@ const QuestionCard = ({
   question: InterviewQuestionMeta;
   title: string;
   studied: boolean;
-}) => (
+}) {
+  return (
   <Link to="/interview/$id" params={{ id: String(question.id) }} className="block">
     <Surface
       interactive
@@ -292,4 +358,5 @@ const QuestionCard = ({
       </div>
     </Surface>
   </Link>
-);
+  );
+});

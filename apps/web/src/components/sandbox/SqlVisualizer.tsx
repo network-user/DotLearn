@@ -10,6 +10,8 @@ import { getSqlRuntime } from '@/lib/sql-runtime';
 import { parseSqlFixture, type ParsedTable } from './parseSqlFixture';
 import { ResultGrid } from './ResultGrid';
 
+const TOTAL_COLUMN = '__dotlearn_total';
+
 export interface SqlRunResult {
   columns: string[];
   rows: Record<string, unknown>[];
@@ -68,18 +70,20 @@ export const SqlVisualizer = ({
       for (const table of tables) {
         try {
           const exec = await runtime.execute(
-            `SELECT * FROM "${table.name}" LIMIT 6;`,
+            `SELECT *, COUNT(*) OVER () AS ${TOTAL_COLUMN} FROM "${table.name}" LIMIT 6;`,
             fixture,
           );
           if (cancelled) return;
-          const total = await runtime
-            .execute(`SELECT COUNT(*) AS c FROM "${table.name}";`, fixture)
-            .then((res) => Number(res.rows[0]?.['c'] ?? 0))
-            .catch(() => undefined);
+          const columns = exec.columns.filter((column) => column !== TOTAL_COLUMN);
+          const rows = exec.rows.map((row) =>
+            Object.fromEntries(Object.entries(row).filter(([key]) => key !== TOTAL_COLUMN)),
+          );
+          const total =
+            exec.rows.length > 0 ? Number(exec.rows[0]?.[TOTAL_COLUMN] ?? 0) : 0;
           out.push({
             name: table.name,
-            columns: exec.columns,
-            rows: exec.rows,
+            columns,
+            rows,
             total,
           });
         } catch (error) {
@@ -212,7 +216,7 @@ const SchemaView = ({
               </div>
               <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle tabular-nums">
                 {preview?.total !== undefined
-                  ? `${preview.total} rows`
+                  ? t('sql.rowsCount', { count: preview.total })
                   : preview === undefined
                     ? '…'
                     : '—'}
@@ -261,7 +265,7 @@ const SchemaView = ({
             {preview === undefined && (
               <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-subtle border-t border-border-base">
                 <Loader2 size={11} className="animate-spin" />
-                loading preview
+                {t('sql.loadingPreview', { defaultValue: 'загрузка предпросмотра' })}
               </div>
             )}
           </div>

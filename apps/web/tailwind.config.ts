@@ -74,19 +74,10 @@ const config: Config = {
         xslow: '520ms',
         hero: '680ms',
       },
-      backdropBlur: {
-        soft: '10px',
-        medium: '14px',
-        strong: '22px',
-        liquid: '32px',
-      },
       letterSpacing: {
         display: 'var(--ls-display)',
         tightish: 'var(--ls-tight)',
         snug: 'var(--ls-snug)',
-      },
-      backdropBlur: {
-        glass: '22px',
       },
       maxWidth: {
         prose: '68ch',

@@ -15,6 +15,7 @@ import { LockoutService } from './domain/lockout.service';
 import { SessionEpochService } from './domain/session-epoch.service';
 import { StepUpService } from './domain/step-up.service';
 import { TokenRevocationService } from './domain/token-revocation.service';
+import { TotpReplayService } from './domain/totp-replay.service';
 
 export interface AuthTokens {
   accessToken: string;
@@ -35,14 +36,24 @@ export interface AuthClaims {
 const sha256 = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
 
-const verifyTotp = (code: string, secret: string, backupHashes: string[]):
-  | { ok: true; usedBackupCodeHash?: string }
+const verifyTotp = (
+  code: string,
+  secret: string,
+  backupHashes: string[],
+  afterTimeStep: number | undefined,
+):
+  | { ok: true; usedBackupCodeHash?: string; timeStep?: number }
   | { ok: false } => {
   const trimmed = code.trim();
   try {
-    const result = verifySync({ token: trimmed, secret, epochTolerance: 30 });
+    const result = verifySync({
+      token: trimmed,
+      secret,
+      epochTolerance: [1, 0],
+      ...(afterTimeStep !== undefined ? { afterTimeStep } : {}),
+    });
     if (result.valid) {
-      return { ok: true };
+      return 'timeStep' in result ? { ok: true, timeStep: result.timeStep } : { ok: true };
     }
   } catch {
     /* fall through to backup codes */
@@ -57,7 +68,6 @@ const verifyTotp = (code: string, secret: string, backupHashes: string[]):
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private mutableBackupCodeHashes: string[];
 
   constructor(
     @Inject(AUTH_CONFIG) private readonly config: AuthConfig,
@@ -66,8 +76,29 @@ export class AuthService {
     private readonly revocation: TokenRevocationService,
     private readonly stepUp: StepUpService,
     private readonly sessionEpoch: SessionEpochService,
-  ) {
-    this.mutableBackupCodeHashes = [...config.backupCodeHashes];
+    private readonly totpReplay: TotpReplayService,
+  ) {}
+
+  private remainingBackupHashes(): string[] {
+    return this.config.backupCodeHashes.filter(
+      (hash) => !this.totpReplay.isBackupCodeConsumed(hash),
+    );
+  }
+
+  private recordTotpUse(
+    subject: string,
+    result: { usedBackupCodeHash?: string; timeStep?: number },
+  ): void {
+    if (result.timeStep !== undefined) {
+      this.totpReplay.recordTimeStep(subject, result.timeStep);
+    }
+    if (result.usedBackupCodeHash) {
+      this.totpReplay.consumeBackupCode(result.usedBackupCodeHash, Date.now());
+      this.logger.warn(
+        { remaining: this.remainingBackupHashes().length },
+        'admin_backup_code_consumed',
+      );
+    }
   }
 
   async login(login: string, password: string, totp: string): Promise<AuthTokens> {
@@ -79,33 +110,30 @@ export class AuthService {
       );
     }
 
+    // Username/password failures are NOT counted toward account lockout: that would let
+    // an unauthenticated attacker lock out the admin by spamming wrong passwords (DoS).
+    // The per-route throttle bounds password guessing; lockout only escalates on TOTP failure.
     if (login !== this.config.login) {
-      this.lockout.registerFailure(lockoutKey);
       throw new UnauthorizedException('Invalid credentials');
     }
 
     const passwordOk = await bcrypt.compare(password, this.config.passwordHash);
     if (!passwordOk) {
-      this.lockout.registerFailure(lockoutKey);
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const totpResult = verifyTotp(totp, this.config.totpSecret, this.mutableBackupCodeHashes);
+    const totpResult = verifyTotp(
+      totp,
+      this.config.totpSecret,
+      this.remainingBackupHashes(),
+      this.totpReplay.lastTimeStep(login),
+    );
     if (!totpResult.ok) {
       this.lockout.registerFailure(lockoutKey);
       throw new UnauthorizedException('Invalid TOTP code');
     }
 
-    if (totpResult.usedBackupCodeHash) {
-      this.mutableBackupCodeHashes = this.mutableBackupCodeHashes.filter(
-        (hash) => hash !== totpResult.usedBackupCodeHash,
-      );
-      this.logger.warn(
-        { remaining: this.mutableBackupCodeHashes.length },
-        'admin_backup_code_consumed',
-      );
-    }
-
+    this.recordTotpUse(login, totpResult);
     this.lockout.clear(lockoutKey);
     return this.issueTokens(login);
   }
@@ -144,11 +172,17 @@ export class AuthService {
         `Too many failed step-up attempts. Retry in ${secondsRemaining}s.`,
       );
     }
-    const totpResult = verifyTotp(totp, this.config.totpSecret, this.mutableBackupCodeHashes);
+    const totpResult = verifyTotp(
+      totp,
+      this.config.totpSecret,
+      this.remainingBackupHashes(),
+      this.totpReplay.lastTimeStep(subject),
+    );
     if (!totpResult.ok) {
       this.lockout.registerFailure(lockoutKey);
       throw new UnauthorizedException('Invalid TOTP code');
     }
+    this.recordTotpUse(subject, totpResult);
     this.lockout.clear(lockoutKey);
     return this.stepUp.grant(subject, action);
   }
@@ -178,6 +212,7 @@ export class AuthService {
         secret: this.config.accessSecret,
         expiresIn: this.config.accessTtlSec,
         jwtid: accessJti,
+        algorithm: 'HS256',
       },
     );
     const refreshToken = this.jwt.sign(
@@ -186,6 +221,7 @@ export class AuthService {
         secret: this.config.refreshSecret,
         expiresIn: this.config.refreshTtlSec,
         jwtid: refreshJti,
+        algorithm: 'HS256',
       },
     );
     return {
@@ -202,7 +238,10 @@ export class AuthService {
     expectedScope: 'access' | 'refresh',
   ): Promise<AuthClaims> {
     try {
-      const payload = await this.jwt.verifyAsync<AuthClaims>(token, { secret });
+      const payload = await this.jwt.verifyAsync<AuthClaims>(token, {
+        secret,
+        algorithms: ['HS256'],
+      });
       if (payload.scope !== expectedScope) {
         throw new UnauthorizedException('Wrong token scope');
       }

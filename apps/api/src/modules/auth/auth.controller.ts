@@ -7,6 +7,7 @@ import {
   Post,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
@@ -60,8 +61,7 @@ export class AuthController {
   ): Promise<{ accessToken: string; accessExpiresAt: string }> {
     const refresh = request.cookies?.[REFRESH_COOKIE];
     if (!refresh || typeof refresh !== 'string') {
-      response.status(HttpStatus.UNAUTHORIZED);
-      throw new Error('Missing refresh cookie');
+      throw new UnauthorizedException('Missing refresh cookie');
     }
     const tokens = await this.auth.refresh(refresh);
     this.setRefreshCookie(response, tokens.refreshToken, tokens.refreshExpiresAt);
@@ -98,7 +98,7 @@ export class AuthController {
     @Body() body: StepUpInput,
   ): Promise<{ action: string; expiresAt: string }> {
     if (!request.admin) {
-      throw new Error('Authentication required');
+      throw new UnauthorizedException('Authentication required');
     }
     const expiresAtMs = await this.auth.stepUpVerify(request.admin.sub, body.action, body.totp);
     return {
@@ -128,7 +128,7 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
     if (!request.admin) {
-      throw new Error('Authentication required');
+      throw new UnauthorizedException('Authentication required');
     }
     this.auth.logoutAll(request.admin.sub);
     response.clearCookie(REFRESH_COOKIE, this.cookieOptions(true));

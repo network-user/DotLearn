@@ -2,6 +2,8 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logge
 import type { Request, Response } from 'express';
 import { ZodError } from 'zod';
 
+import { DomainError } from '../errors/domain-error';
+
 type ErrorEnvelope = {
   ok: false;
   error: {
@@ -38,6 +40,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       return exception.getStatus();
     }
+    if (exception instanceof DomainError) {
+      return exception.status;
+    }
     if (exception instanceof ZodError) {
       return HttpStatus.BAD_REQUEST;
     }
@@ -59,6 +64,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
           code: exception.name,
           message,
           ...(typeof response === 'object' ? { details: response } : {}),
+        },
+        ...base,
+      };
+    }
+
+    if (exception instanceof DomainError) {
+      return {
+        ok: false,
+        error: {
+          code: exception.code,
+          message: exception.message,
         },
         ...base,
       };

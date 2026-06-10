@@ -31,7 +31,7 @@ export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps)
               onClick={() => handleChange(lang)}
               aria-pressed={active}
               className={
-                'px-2 py-1 rounded-sm uppercase tracking-wide transition ' +
+                'inline-flex items-center justify-center min-h-[var(--tap)] min-w-[var(--tap)] sm:min-h-0 sm:min-w-0 px-2 py-1 rounded-sm uppercase tracking-wide transition ' +
                 (active
                   ? 'bg-accent text-surface dark:text-canvas'
                   : 'text-fg-muted hover:text-fg hover:bg-surface-2')
