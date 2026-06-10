@@ -1,0 +1,96 @@
+---
+id: 1153
+title: "Почему сообщение исчезает из очереди только после подтверждения обработки?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему сообщение исчезает из очереди только после подтверждения обработки?
+
+## Суть
+
+В надёжных брокерах сообщение удаляется не в момент чтения, а после явного подтверждения от потребителя: `DeleteMessage` в Amazon SQS, `ack` в RabbitMQ. Так гарантируется, что упавший на полпути обработчик не потеряет сообщение, а вернёт его в работу.
+
+## Что ответить на собесе
+
+Удаление по подтверждению нужно ради семантики at-least-once. Чтение и удаление разнесены: потребитель сначала забирает сообщение, обрабатывает его и только потом подтверждает успех. Если он упадёт до подтверждения, сообщение снова станет доступным и его подхватит другой потребитель. В SQS прочитанное сообщение прячется на время Visibility Timeout, и если за этот срок не пришёл `DeleteMessage`, оно возвращается в очередь. В RabbitMQ при ручном `ack` сообщение держится за потребителем, пока не придёт подтверждение; на разрыв соединения без `ack` брокер вернёт его в очередь. Платой за надёжность становится возможность повторной доставки, поэтому обработчик должен быть идемпотентным.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 170" fontFamily="sans-serif" fontSize="12">
+<rect x="20" y="65" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="75" y="89" textAnchor="middle" fill="currentColor">В очереди</text>
+<rect x="245" y="65" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="300" y="83" textAnchor="middle" fill="currentColor">В обработке</text>
+<text x="300" y="97" textAnchor="middle" fill="currentColor" fillOpacity="0.6">невидимо</text>
+<rect x="470" y="65" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="525" y="89" textAnchor="middle" fill="currentColor">Удалено</text>
+<line x1="130" y1="85" x2="245" y2="85" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="245,85 237,81 237,89" fill="currentColor" />
+<text x="187" y="78" textAnchor="middle" fill="currentColor" fillOpacity="0.7">receive</text>
+<line x1="355" y1="85" x2="470" y2="85" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="470,85 462,81 462,89" fill="currentColor" />
+<text x="412" y="78" textAnchor="middle" fill="currentColor" fillOpacity="0.7">ack / delete</text>
+<path d="M 300 105 C 300 145, 75 145, 75 107" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+<polygon points="75,107 71,115 79,115" fill="currentColor" />
+<text x="187" y="140" textAnchor="middle" fill="currentColor" fillOpacity="0.7">таймаут / обрыв — возврат</text>
+</svg>
+</figure>
+
+**Amazon SQS** строит логику на таймауте видимости:
+
+1. `ReceiveMessage` читает сообщение и прячет его на время Visibility Timeout.
+2. Потребитель выполняет работу, пока сообщение невидимо для остальных.
+3. `DeleteMessage` по `ReceiptHandle` убирает сообщение навсегда. Не успел до конца таймаута — сообщение снова видно другим.
+
+```python
+import boto3
+
+sqs = boto3.client('sqs')
+queue_url = 'https://sqs.region.amazonaws.com/account-id/queue-name'
+
+response = sqs.receive_message(
+    QueueUrl=queue_url,
+    MaxNumberOfMessages=1,
+    WaitTimeSeconds=10,
+)
+
+message = response['Messages'][0]
+receipt_handle = message['ReceiptHandle']
+
+# прикладная обработка сообщения
+
+sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+```
+
+**RabbitMQ** работает на подтверждениях `ack`:
+
+1. Сообщение доставляется потребителю из очереди.
+2. Потребитель выполняет работу.
+3. `basic_ack` подтверждает успех, и брокер удаляет сообщение. Без `ack` при обрыве канала сообщение возвращается в очередь.
+
+```python
+import pika
+
+connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+channel.queue_declare(queue='task_queue', durable=True)
+
+def callback(ch, method, properties, body):
+    # прикладная обработка сообщения
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+channel.basic_consume(queue='task_queue', on_message_callback=callback)
+channel.start_consuming()
+```
+
+## Подводные камни
+
+- Автоподтверждение (`auto_ack=True` в RabbitMQ) удаляет сообщение в момент доставки: упал обработчик — сообщение потеряно. Для надёжности нужен ручной `ack`.
+- Слишком короткий Visibility Timeout в SQS приводит к двойной обработке: таймаут истёк, пока задача ещё считалась.
+- At-least-once допускает дубликаты, поэтому обработчик обязан быть идемпотентным; ровно-однократной доставки эти схемы не дают.
+- Если `ack`/`DeleteMessage` не вызвать никогда (баг в коде), сообщение будет крутиться по кругу и заблокирует прогресс. Здесь спасает dead-letter queue после N попыток.

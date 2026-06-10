@@ -1,0 +1,71 @@
+---
+id: 478
+title: "Почему связь многие-ко-многим требует третьей таблицы?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему связь многие-ко-многим требует третьей таблицы?
+
+## Суть
+
+Реляционная модель не умеет хранить M2M напрямую: связь «многие ко многим» раскладывается в отдельную промежуточную (join) таблицу. В ней лежат внешние ключи на первичные ключи обеих сторон, и каждая строка — это одна пара «слева-справа».
+
+## Что ответить на собесе
+
+В одной строке таблицы нельзя хранить переменное число ссылок, поэтому два «многих» соединить напрямую невозможно. Решение — таблица-связка с двумя внешними ключами. Классический пример: студенты и курсы. Таблица `StudentCourses` хранит пары `(student_id, course_id)`, составной первичный ключ из этих двух колонок гарантирует уникальность пары. Так один студент связывается с многими курсами, а курс — со многими студентами, и любую связь можно добавить или убрать одной строкой.
+
+## Как это работает
+
+Между двумя таблицами заводят join-таблицу с двумя FK. Составной PK `(student_id, course_id)` запрещает дубли пары, а внешние ключи держат ссылочную целостность.
+
+<figure>
+<svg viewBox="0 0 600 200" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="13">
+<rect x="20" y="60" width="140" height="80" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="90" y="50" textAnchor="middle">Students</text>
+<text x="90" y="90" textAnchor="middle" fontSize="12">student_id (PK)</text>
+<text x="90" y="115" textAnchor="middle" fontSize="12">name</text>
+<rect x="230" y="60" width="140" height="80" rx="6" fill="#6366f1" fillOpacity="0.1" stroke="#6366f1" />
+<text x="300" y="50" textAnchor="middle">StudentCourses</text>
+<text x="300" y="90" textAnchor="middle" fontSize="12">student_id (FK)</text>
+<text x="300" y="115" textAnchor="middle" fontSize="12">course_id (FK)</text>
+<rect x="440" y="60" width="140" height="80" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="510" y="50" textAnchor="middle">Courses</text>
+<text x="510" y="90" textAnchor="middle" fontSize="12">course_id (PK)</text>
+<text x="510" y="115" textAnchor="middle" fontSize="12">title</text>
+<line x1="160" y1="100" x2="230" y2="100" strokeWidth="2" />
+<line x1="370" y1="100" x2="440" y2="100" strokeWidth="2" />
+</svg>
+</figure>
+
+```sql
+CREATE TABLE Students (
+    student_id INT PRIMARY KEY,
+    name VARCHAR(100)
+);
+
+CREATE TABLE Courses (
+    course_id INT PRIMARY KEY,
+    title VARCHAR(100)
+);
+
+CREATE TABLE StudentCourses (
+    student_id INT,
+    course_id INT,
+    PRIMARY KEY (student_id, course_id),
+    FOREIGN KEY (student_id) REFERENCES Students(student_id),
+    FOREIGN KEY (course_id) REFERENCES Courses(course_id)
+);
+```
+
+Привязать студента к курсу — вставить строку в `StudentCourses`; разорвать связь — удалить эту строку. Новые связи не требуют менять структуру основных таблиц. В Django это поле `ManyToManyField`, под которым ORM создаёт ровно такую join-таблицу автоматически.
+
+## Подводные камни
+
+- Без составного первичного ключа (или `UNIQUE` на паре) в связку проникнут дубликаты одной и той же пары.
+- Если у связи есть собственные атрибуты (дата записи, оценка), нужна явная модель-связка; в Django это `through`-модель, а не голый `ManyToManyField`.
+- Запросы через M2M почти всегда тянут `JOIN`; для частых выборок индексы на колонках FK обязательны, иначе деградация на больших таблицах.
+- Удаление записи на одной стороне должно корректно подчищать связку: продумайте `ON DELETE` (или `on_delete` в Django), иначе останутся висячие строки или ошибки целостности.

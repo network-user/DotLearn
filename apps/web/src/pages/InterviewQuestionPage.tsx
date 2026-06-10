@@ -1,22 +1,28 @@
-import { Suspense } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 
-import type { InterviewStage } from '@dotlearn/contracts';
+import type { Exercise, InterviewStage } from '@dotlearn/contracts';
 import { Link, useParams } from '@tanstack/react-router';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2 } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Dumbbell } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { ExerciseRunner } from '@/components/ExerciseRunner';
 import { TheoryContent } from '@/components/TheoryContent';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
+import { getCurrentLanguage } from '@/lib/i18n';
 import {
-  getInterviewComponent,
+  getInterviewComponentForLocale,
   getInterviewQuestion,
+  interviewQuestions,
+  loadQuestionExercises,
+  localizedInterviewTitle,
   relatedInterviewQuestions,
 } from '@/lib/interview';
-import { setInterviewStudied } from '@/lib/progress-db';
+import { db, INTERVIEW_TOPIC_SLUG, setInterviewStudied } from '@/lib/progress-db';
 import { useInterviewStudied } from '@/lib/use-interview';
 
 const stageTone: Record<InterviewStage, 'accent' | 'info' | 'success'> = {
@@ -31,6 +37,40 @@ export const InterviewQuestionPage = () => {
   const numericId = Number(id);
   const question = Number.isFinite(numericId) ? getInterviewQuestion(numericId) : undefined;
   const studied = useInterviewStudied(question?.id ?? -1);
+  const [exercises, setExercises] = useState<Exercise[] | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!question) {
+      setExercises([]);
+      return;
+    }
+    setExercises(undefined);
+    void loadQuestionExercises(question).then((list) => {
+      if (!cancelled) setExercises(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [question]);
+
+  const exerciseKeys = useMemo(
+    () => (exercises ?? []).map((exercise) => `${INTERVIEW_TOPIC_SLUG}:${exercise.id}`),
+    [exercises],
+  );
+  const passedRecords = useLiveQuery(
+    () => db.progress.where('id').anyOf(exerciseKeys).toArray(),
+    [exerciseKeys],
+    [],
+  );
+
+  useEffect(() => {
+    if (!question || studied || !exercises || exercises.length === 0) return;
+    const passedCount = (passedRecords ?? []).filter((record) => record.status === 'pass').length;
+    if (passedCount === exercises.length) {
+      void setInterviewStudied(question.id, true);
+    }
+  }, [question, studied, exercises, passedRecords]);
 
   if (!question) {
     return (
@@ -48,8 +88,15 @@ export const InterviewQuestionPage = () => {
     );
   }
 
-  const Component = getInterviewComponent(question.path);
+  const locale = getCurrentLanguage();
+  const Component = getInterviewComponentForLocale(question, locale);
   const related = relatedInterviewQuestions(question);
+  const position = interviewQuestions.findIndex((item) => item.id === question.id);
+  const previous = position > 0 ? interviewQuestions[position - 1] : undefined;
+  const next =
+    position >= 0 && position < interviewQuestions.length - 1
+      ? interviewQuestions[position + 1]
+      : undefined;
 
   const toggleStudied = (): void => {
     void setInterviewStudied(question.id, !studied);
@@ -96,6 +143,27 @@ export const InterviewQuestionPage = () => {
         )}
       </article>
 
+      {exercises && exercises.length > 0 && (
+        <section className="space-y-4 pt-6 border-t-2 border-fg/80">
+          <div className="flex items-center gap-2">
+            <Dumbbell size={18} className="text-accent" />
+            <h2 className="font-display text-xl text-fg tracking-tightish">
+              {t('practiceHeading')}
+            </h2>
+          </div>
+          <p className="text-sm text-fg-muted">{t('practiceSubtitle')}</p>
+          <div className="space-y-4">
+            {exercises.map((exercise) => (
+              <ExerciseRunner
+                key={exercise.id}
+                topicSlug={INTERVIEW_TOPIC_SLUG}
+                exercise={exercise}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       {related.length > 0 && (
         <section className="space-y-3 pt-6 border-t-2 border-fg/80">
           <h2 className="font-display text-xl text-fg tracking-tightish">
@@ -110,7 +178,7 @@ export const InterviewQuestionPage = () => {
                   className="group flex items-center justify-between gap-3 rounded-xl border border-border-base px-4 py-3 transition-colors hover:border-border-strong hover:bg-fg/[0.03]"
                 >
                   <span className="text-[14px] text-fg leading-snug group-hover:underline decoration-accent/50 underline-offset-2">
-                    {item.title}
+                    {localizedInterviewTitle(item, locale)}
                   </span>
                   <ArrowRight
                     size={15}
@@ -121,6 +189,48 @@ export const InterviewQuestionPage = () => {
             ))}
           </ul>
         </section>
+      )}
+
+      {(previous || next) && (
+        <nav className="flex items-stretch justify-between gap-3 pt-6 border-t border-border-base">
+          {previous ? (
+            <Link
+              to="/interview/$id"
+              params={{ id: String(previous.id) }}
+              className="group flex flex-1 max-w-none sm:max-w-[280px] items-center gap-3 min-h-[var(--tap-comfort)] px-2 py-2 text-left"
+            >
+              <ArrowLeft
+                size={16}
+                className="shrink-0 text-fg-subtle group-hover:text-accent transition-colors"
+              />
+              <span className="min-w-0">
+                <span className="eyebrow text-[10px] block">{t('previous')}</span>
+                <span className="block text-[14px] font-serif text-fg truncate group-hover:underline decoration-accent/50 underline-offset-2">
+                  {localizedInterviewTitle(previous, locale)}
+                </span>
+              </span>
+            </Link>
+          ) : (
+            <span className="flex-1" />
+          )}
+          {next ? (
+            <Link
+              to="/interview/$id"
+              params={{ id: String(next.id) }}
+              className="group flex flex-1 max-w-none sm:max-w-[280px] items-center justify-end gap-3 min-h-[var(--tap-comfort)] px-2 py-2 text-right"
+            >
+              <span className="min-w-0">
+                <span className="eyebrow text-[10px] block">{t('next')}</span>
+                <span className="block text-[14px] font-serif text-fg truncate group-hover:underline decoration-accent/50 underline-offset-2">
+                  {localizedInterviewTitle(next, locale)}
+                </span>
+              </span>
+              <ArrowRight size={16} className="shrink-0 text-accent" />
+            </Link>
+          ) : (
+            <span className="flex-1" />
+          )}
+        </nav>
       )}
     </div>
   );

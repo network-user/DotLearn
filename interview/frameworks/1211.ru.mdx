@@ -1,0 +1,71 @@
+---
+id: 1211
+title: "Какую задачу решают свои менеджеры модели и методы QuerySet?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какую задачу решают свои менеджеры модели и методы QuerySet?
+
+## Суть
+
+Кастомный менеджер и собственные методы QuerySet выносят повторяющуюся логику выборки из представлений в один переиспользуемый слой на уровне модели. Менеджер — это точка входа к модели (`Model.objects`), а методы QuerySet добавляют именованные, сцепляемые фильтры.
+
+## Что ответить на собесе
+
+Это способ не размазывать одни и те же `filter(status='published')` по всему проекту. Я инкапсулирую такую логику в модели: либо переопределяю менеджер (например, чтобы по умолчанию отдавать только опубликованное через `get_queryset`), либо завожу класс QuerySet с методами вроде `published()` и подключаю его через `as_manager()`. Главное преимущество второго подхода — методы остаются сцепляемыми: `Article.objects.published().filter(...)`. В итоге представления становятся короче и читаемее, а правила выборки живут в одном месте и тестируются изолированно.
+
+## Как это работает
+
+Менеджер — интерфейс обращения к модели. У каждой модели есть `objects` — экземпляр `models.Manager`. Свой менеджер может переопределить базовый набор:
+
+```python
+from django.db import models
+
+class PublishedManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(status='published')
+
+class Article(models.Model):
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    status = models.CharField(max_length=10)
+
+    objects = models.Manager()          # менеджер по умолчанию
+    published = PublishedManager()      # отдаёт только опубликованное
+```
+
+После этого `Article.published.all()` вернёт только записи со статусом `published`.
+
+Методы QuerySet удобнее, когда фильтры должны сцепляться. Описываем класс QuerySet и превращаем его в менеджер:
+
+```python
+class ArticleQuerySet(models.QuerySet):
+    def published(self):
+        return self.filter(status='published')
+
+    def by_author(self, author):
+        return self.filter(author=author)
+
+class Article(models.Model):
+    title = models.CharField(max_length=200)
+    status = models.CharField(max_length=10)
+
+    objects = ArticleQuerySet.as_manager()
+```
+
+Теперь методы складываются в цепочку, как встроенные:
+
+```python
+recent = Article.objects.published().by_author(some_author)
+```
+
+## Подводные камни
+
+- Метод на менеджере (как `PublishedManager.get_queryset`) не сцепляется: после него нельзя позвать `.published()`. Метод на QuerySet — сцепляется. Поэтому переиспользуемые фильтры пишут в QuerySet, а не в менеджере.
+- Переопределив `objects` своим менеджером, помните: первый объявленный менеджер становится `_default_manager` (его использует, например, related-доступ и админка). Если первый менеджер фильтрующий, часть объектов «исчезнет» из связанных выборок.
+- Логика, спрятанная в менеджер с `get_queryset`, применяется неявно ко всем запросам через него. Это легко забыть и удивиться, почему `count()` меньше ожидаемого.
+- `as_manager()` делает менеджер из QuerySet, но не наоборот: класс менеджера сам по себе цепочку методов QuerySet не отдаёт без `from_queryset`.

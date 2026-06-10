@@ -1,0 +1,74 @@
+---
+id: 958
+title: "Docker daemon: who actually runs the containers?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Docker daemon: who actually runs the containers?
+
+## In short
+
+The Docker daemon (`dockerd`) is a persistent background process on the host that does all the work: it creates, starts, and removes containers, pulls images, and serves the Docker API. Commands from the terminal only ask it to do this.
+
+## How to answer in an interview
+
+Docker is built on a client-server model. When you type `docker run`, the `docker` binary is just a client: it doesn't run the container itself but sends an HTTP request to the `dockerd` daemon over a socket. The daemon is the server that holds the state, talks to image registries, manages networks and volumes, and through the underlying runtime (containerd → runc) actually spins up the container processes. So if the daemon is stopped, no `docker` command will work, even though the client itself is installed and available.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 560 180" fontFamily="sans-serif" fontSize="11" role="img">
+<text x="280" y="16" textAnchor="middle" fill="currentColor">The path of a docker run command</text>
+<rect x="20" y="60" width="110" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="75" y="82" textAnchor="middle" fill="currentColor">docker CLI</text>
+<text x="75" y="98" textAnchor="middle" fill="currentColor" fillOpacity="0.7">client</text>
+<rect x="200" y="60" width="130" height="50" stroke="currentColor" fill="currentColor" fillOpacity="0.05" rx="4" />
+<text x="265" y="82" textAnchor="middle" fill="currentColor">dockerd</text>
+<text x="265" y="98" textAnchor="middle" fill="currentColor" fillOpacity="0.7">daemon / server</text>
+<rect x="400" y="60" width="140" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="470" y="82" textAnchor="middle" fill="currentColor">containerd → runc</text>
+<text x="470" y="98" textAnchor="middle" fill="currentColor" fillOpacity="0.7">runtime</text>
+<line x1="130" y1="85" x2="200" y2="85" stroke="currentColor" strokeWidth="1.2" />
+<line x1="330" y1="85" x2="400" y2="85" stroke="currentColor" strokeWidth="1.2" />
+<text x="165" y="76" textAnchor="middle" fill="currentColor" fillOpacity="0.7">API/socket</text>
+<text x="365" y="76" textAnchor="middle" fill="currentColor" fillOpacity="0.7">launch</text>
+<circle r="5" fill="#6366f1">
+<animateMotion path="M 130 85 L 200 85" dur="2.4s" repeatCount="indefinite" />
+</circle>
+<circle r="5" fill="#6366f1">
+<animateMotion path="M 330 85 L 400 85" dur="2.4s" begin="1.2s" repeatCount="indefinite" />
+</circle>
+<text x="280" y="150" textAnchor="middle" fill="currentColor" fillOpacity="0.7">the client only asks — the daemon does the work</text>
+</svg>
+</figure>
+
+The picture is easier to keep in layers:
+
+- **Docker Client** - the CLI (`docker`). Translates your command into a Docker API call.
+- **Docker Daemon (`dockerd`)** - the server. Listens on a socket (`/var/run/docker.sock` or TCP), executes requests, runs the container lifecycle, caches images.
+- **Images** - read-only templates from which containers are born.
+- **Containers** - running, isolated instances of images.
+
+Let's trace the path of a single command:
+
+```bash
+docker run hello-world
+```
+
+1. The client builds the request "create and run a container from the `hello-world` image" and sends it to the daemon over the socket.
+2. The daemon checks whether the image exists locally. If not, it pulls it from the registry (Docker Hub) and caches it.
+3. Through containerd/runc the daemon creates the container, sets up namespaces, cgroups, and the network, and starts the process.
+4. The daemon returns the container's output to the client, which prints it to the terminal.
+
+The key idea: the client and the daemon are different processes and can live on different machines. By pointing `DOCKER_HOST` at a remote TCP endpoint, the local CLI manages a daemon on another server.
+
+## Pitfalls
+
+- **`docker` ≠ Docker.** The CLI is useless without a running daemon; the error "Cannot connect to the Docker daemon" means that `dockerd` specifically isn't running, not that the client is missing.
+- **The daemon socket means root access.** Whoever can write to `/var/run/docker.sock` effectively has root on the host. Adding a user to the `docker` group should be a deliberate decision.
+- **The daemon holds state.** Images, volumes, and networks live in the daemon. Restarting `dockerd` doesn't wipe them, but it stops all managed containers (unless live-restore is configured).
+- **The daemon is a single point.** A `dockerd` crash affects all containers at once; in production this is mitigated with an orchestrator and restart policies.

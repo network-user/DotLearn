@@ -1,0 +1,79 @@
+---
+id: 1045
+title: "За счёт чего асинхронный код выигрывает по времени"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# За счёт чего асинхронный код выигрывает по времени
+
+## Суть
+
+Выигрыш даёт не более быстрый процессор, а отсутствие простоя: пока одна задача ждёт ответа от сети или диска, цикл событий запускает другие. Складываются не времена операций, а их ожидания перекрываются.
+
+## Что ответить на собесе
+
+Ключевая мысль — ускорение работает только на I/O-bound нагрузке. В синхронном коде вызов «сеть/файл/БД» блокирует поток: процессор простаивает, ожидая ответа. Асинхронная модель строится на двух вещах — неблокирующем вводе-выводе и цикле событий. Операция I/O уходит в фон, корутина на `await` уступает управление, и loop тут же запускает следующую готовую задачу. Если запустить много операций конкурентно (через `gather`), их ожидания накладываются друг на друга, и общее время приближается к самой долгой операции, а не к сумме всех. На CPU-bound задачах выигрыша нет: там процессор и так занят, уступать нечему.
+
+## Как это работает
+
+В Python это `asyncio`. Корутина имитирует медленный ввод-вывод через `await asyncio.sleep(...)`, отдавая управление вместо блокировки потока.
+
+<figure>
+<svg viewBox="0 0 600 250" role="img" aria-label="Сравнение последовательного и конкурентного выполнения трёх задач по 2 секунды" fontFamily="sans-serif" fontSize="12">
+  <text x="10" y="20" fill="currentColor" fontSize="13">Последовательно: 6 секунд</text>
+  <line x1="60" y1="110" x2="540" y2="110" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <rect x="60" y="35" width="150" height="22" rx="3" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="135" y="50" fill="currentColor" textAnchor="middle">A · 2с</text>
+  <rect x="215" y="35" width="150" height="22" rx="3" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="290" y="50" fill="currentColor" textAnchor="middle">B · 2с</text>
+  <rect x="370" y="35" width="150" height="22" rx="3" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="445" y="50" fill="currentColor" textAnchor="middle">C · 2с</text>
+
+  <text x="10" y="90" fill="currentColor" fontSize="13">Конкурентно через gather: ~2 секунды</text>
+  <rect x="60" y="120" width="150" height="22" rx="3" fill="#6366f1" fillOpacity="0.2" stroke="#6366f1" strokeOpacity="0.7" />
+  <text x="135" y="135" fill="currentColor" textAnchor="middle">A · 2с</text>
+  <rect x="60" y="148" width="150" height="22" rx="3" fill="#6366f1" fillOpacity="0.2" stroke="#6366f1" strokeOpacity="0.7" />
+  <text x="135" y="163" fill="currentColor" textAnchor="middle">B · 2с</text>
+  <rect x="60" y="176" width="150" height="22" rx="3" fill="#6366f1" fillOpacity="0.2" stroke="#6366f1" strokeOpacity="0.7" />
+  <text x="135" y="191" fill="currentColor" textAnchor="middle">C · 2с</text>
+
+  <line x1="60" y1="210" x2="540" y2="210" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1" />
+  <text x="60" y="228" fill="currentColor" textAnchor="middle">0с</text>
+  <text x="210" y="228" fill="currentColor" textAnchor="middle">2с</text>
+  <text x="365" y="228" fill="currentColor" textAnchor="middle">4с</text>
+  <text x="520" y="228" fill="currentColor" textAnchor="middle">6с</text>
+</svg>
+</figure>
+
+```python
+import asyncio
+
+async def fetch_data(name, delay):
+    print(f"{name}: старт")
+    await asyncio.sleep(delay)  # неблокирующее ожидание
+    print(f"{name}: готово")
+    return name
+
+async def main():
+    results = await asyncio.gather(
+        fetch_data("A", 2),
+        fetch_data("B", 2),
+        fetch_data("C", 2),
+    )
+    print(results)
+
+asyncio.run(main())
+```
+
+Три задачи по 2 секунды, запущенные через `gather`, завершатся примерно за 2 секунды, а не за 6: все три «спят» одновременно, и их ожидания перекрываются. Если бы их вызвали последовательными `await`, время сложилось бы в 6 секунд. Именно поэтому асинхронность доминирует в веб-серверах (`aiohttp`, `FastAPI`) и сервисах, которые ходят во внешние API и базы данных.
+
+## Подводные камни
+
+- Замена `asyncio.sleep` на `time.sleep` ломает всё: поток блокируется, ожидания не перекрываются, и три задачи снова дают 6 секунд.
+- Последовательные `await fetch(); await fetch()` не дают выигрыша — параллелить надо явно через `gather`/`create_task`.
+- Для CPU-bound вычислений эффекта нет: нужен `multiprocessing` или вынос расчёта в пул потоков.
+- «Быстрее» здесь означает выше пропускную способность и меньше простоя, а не ускорение одной отдельной операции.

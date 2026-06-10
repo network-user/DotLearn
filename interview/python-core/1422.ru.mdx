@@ -1,0 +1,76 @@
+---
+id: 1422
+title: "Перехватить исключение, отреагировать и пробросить его наверх"
+category: python-core
+categoryLabel: "Python: язык и идиомы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Перехватить исключение, отреагировать и пробросить его наверх
+
+## Суть
+
+Ловите исключение в `except`, выполняете локальные действия (лог, очистка), а потом голым `raise` без аргументов отправляете то же исключение дальше с нетронутым трейсбеком.
+
+## Что ответить на собесе
+
+Когда на месте ошибки надо что-то сделать, но не гасить её, я использую `try/except` и внутри `except` пишу голый `raise` — он повторно возбуждает текущее исключение, сохраняя оригинальный traceback. Это не то же самое, что `raise e`: пустой `raise` оставляет трейс как есть, а `raise e` или `raise NewError()` могут затереть исходную точку сбоя. Если нужно подменить тип ошибки, но не потерять причину, применяю `raise NewError(...) from e` — это связывает исключения цепочкой.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 460 230" fontFamily="sans-serif" fontSize="12">
+<rect x="60" y="14" width="200" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1" />
+<text x="160" y="35" textAnchor="middle" fill="currentColor">process_data: 10 / 0</text>
+<text x="290" y="35" fill="currentColor" fillOpacity="0.7">ZeroDivisionError</text>
+<rect x="60" y="74" width="200" height="48" rx="5" fill="currentColor" fillOpacity="0.06" stroke="#6366f1" strokeWidth="1" />
+<text x="160" y="93" textAnchor="middle" fill="currentColor">except: logging.warning</text>
+<text x="160" y="111" textAnchor="middle" fill="#6366f1">raise (тот же трейсбек)</text>
+<rect x="60" y="150" width="200" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1" />
+<text x="160" y="171" textAnchor="middle" fill="currentColor">внешний except: обработка</text>
+<line x1="160" y1="48" x2="160" y2="74" stroke="currentColor" strokeWidth="1" />
+<line x1="160" y1="122" x2="160" y2="150" stroke="currentColor" strokeWidth="1" />
+<polygon points="160,150 155,140 165,140" fill="currentColor" />
+<polygon points="160,74 155,64 165,64" fill="currentColor" />
+<circle r="4" fill="#6366f1">
+<animateMotion dur="2.4s" repeatCount="indefinite" path="M160,48 L160,98 L160,167" />
+</circle>
+<text x="300" y="100" fill="currentColor" fillOpacity="0.7">локальная</text>
+<text x="300" y="116" fill="currentColor" fillOpacity="0.7">реакция</text>
+<text x="300" y="172" fill="currentColor" fillOpacity="0.7">финальная</text>
+</svg>
+</figure>
+
+```python
+import logging
+
+def process_data(value):
+    try:
+        return 10 / value
+    except ZeroDivisionError:
+        logging.warning("Деление на ноль в process_data")
+        raise
+
+try:
+    process_data(0)
+except ZeroDivisionError:
+    print("Ошибка обработана уровнем выше")
+```
+
+Что происходит по шагам:
+
+1. `10 / value` при `value == 0` поднимает `ZeroDivisionError`.
+2. Внутренний `except` ловит его и делает побочное действие — пишет лог.
+3. Голый `raise` повторно возбуждает то самое исключение; traceback указывает на исходную строку деления.
+4. Внешний `try/except` принимает проброшенную ошибку и обрабатывает её на своём уровне.
+
+Так локальная реакция (логирование) и финальная обработка разнесены по разным уровням, а информация об ошибке не теряется.
+
+## Подводные камни
+
+- `raise e` вместо голого `raise` обрезает или искажает оригинальный traceback — труднее искать причину.
+- Чтобы сменить тип исключения и сохранить контекст, используйте `raise NewError("...") from e`; без `from` Python всё равно покажет «During handling of the above exception», но явная цепочка читается лучше.
+- `raise` без активного исключения (вне `except`) бросит `RuntimeError: No active exception to re-raise`.
+- Логику очистки ресурсов, которая должна сработать при любом исходе, лучше выносить в `finally`, а не дублировать в `except`.

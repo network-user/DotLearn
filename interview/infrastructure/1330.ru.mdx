@@ -1,0 +1,92 @@
+---
+id: 1330
+title: "Как вы организуете ветвление в git и зачем нужна эта дисциплина?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как вы организуете ветвление в git и зачем нужна эта дисциплина?
+
+## Суть
+
+Воркфлоу — это договорённость команды о том, какие ветки существуют, откуда они растут и куда вливаются. Цель одна: держать релизную ветку всегда стабильной, а работу над фичами, релизами и срочными фиксами вести параллельно и не мешая друг другу.
+
+## Что ответить на собесе
+
+Выбор воркфлоу я подгоняю под команду и частоту релизов. Классический Git Flow Винсента Дриссена держит долгоживущие ветки `main` и `develop` плюс короткоживущие feature-, release- и hotfix-ветки; он хорош там, где есть версионированные релизы и несколько параллельных потоков работы. Если же мы катим в прод по нескольку раз в день, я предпочитаю trunk-based или GitHub Flow: одна основная ветка, короткие feature-ветки и быстрый merge через pull request с обязательным code review и зелёным CI. Главный принцип общий: основная ветка всегда деплоится, ветки живут недолго, а вся история остаётся читаемой. Сам по себе Git Flow не самоцель — это инструмент под определённый ритм релизов.
+
+## Как это работает
+
+<figure>
+
+<svg width="560" height="220" viewBox="0 0 560 220" role="img" aria-label="Ветки Git Flow: main, develop, feature, release, hotfix и их слияния">
+  <line x1="40" y1="40" x2="520" y2="40" stroke="currentColor" strokeWidth="2" />
+  <line x1="40" y1="110" x2="520" y2="110" stroke="currentColor" strokeWidth="2" />
+  <text x="34" y="44" textAnchor="end" fontSize="11" fill="currentColor">main</text>
+  <text x="34" y="114" textAnchor="end" fontSize="11" fill="currentColor">develop</text>
+  <path d="M150 110 C 175 110, 185 175, 215 175" fill="none" stroke="#6366f1" strokeWidth="2" />
+  <path d="M215 175 C 250 175, 255 110, 285 110" fill="none" stroke="#6366f1" strokeWidth="2" />
+  <line x1="150" y1="175" x2="285" y2="175" stroke="#6366f1" strokeWidth="2" strokeDasharray="4 3" />
+  <text x="200" y="200" textAnchor="middle" fontSize="10" fill="#6366f1">feature</text>
+  <path d="M340 110 C 365 110, 375 40, 405 40" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3" />
+  <path d="M340 110 C 365 110, 375 110, 405 110" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3" />
+  <text x="372" y="76" textAnchor="middle" fontSize="10" fill="currentColor">release</text>
+  <circle cx="405" cy="40" r="4" fill="currentColor" />
+  <text x="415" y="32" textAnchor="start" fontSize="10" fill="currentColor">tag 1.0.0</text>
+  <path d="M460 40 C 480 40, 485 90, 500 90 C 485 90, 480 110, 460 110" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="500" y="68" textAnchor="middle" fontSize="10" fill="currentColor">hotfix</text>
+</svg>
+
+</figure>
+
+В Git Flow две долгоживущие ветки. `main` хранит стабильный, готовый к релизу код, и каждый релиз помечается тегом. `develop` — интеграционная ветка, куда стекаются завершённые фичи перед выпуском.
+
+Feature-ветку заводят от `develop` и вливают обратно в `develop`:
+
+```bash
+git switch develop
+git switch -c feature/awesome-feature
+# работа над функцией, серия коммитов
+git switch develop
+git merge --no-ff feature/awesome-feature
+git branch -d feature/awesome-feature
+```
+
+Release-ветку готовят перед выпуском: в ней допиливают мелочи, бампают версию, после чего вливают и в `main` (с тегом), и обратно в `develop`:
+
+```bash
+git switch -c release/1.0.0 develop
+# финальные правки, обновление версии
+git switch main
+git merge --no-ff release/1.0.0
+git tag -a 1.0.0 -m "Релиз 1.0.0"
+git switch develop
+git merge --no-ff release/1.0.0
+git branch -d release/1.0.0
+```
+
+Hotfix-ветку создают прямо от `main`, чтобы быстро закрыть критический баг в проде, и потом вливают её и в `main`, и в `develop`, иначе фикс потеряется в следующем релизе:
+
+```bash
+git switch -c hotfix/urgent-fix main
+# исправление
+git switch main
+git merge --no-ff hotfix/urgent-fix
+git tag -a 1.0.1 -m "Хотфикс 1.0.1"
+git switch develop
+git merge --no-ff hotfix/urgent-fix
+git branch -d hotfix/urgent-fix
+```
+
+Что это даёт команде: чёткое разделение работы над новым и над исправлениями, постоянно стабильный `main`, удобное управление релизами и тегами и прозрачная история версий.
+
+## Подводные камни
+
+- **Долгоживущие ветки.** Чем дольше feature-ветка живёт в отрыве от `develop`, тем больнее merge — растёт риск конфликтов. Дробите задачи и сливайте часто.
+- **Забытый back-merge хотфикса.** Если фикс влит только в `main`, но не в `develop`, баг вернётся в следующем релизе.
+- **Git Flow для CI/CD-конвейера.** При нескольких деплоях в день модель с `develop` и release-ветками тормозит; trunk-based подходит лучше.
+- **`merge` без `--no-ff` для значимых веток.** Fast-forward стирает факт, что был отдельный поток работы, и история теряет структуру.
+- **Прямые коммиты в `main`.** Защитите ветку правилами: только через pull request с прохождением CI и ревью.

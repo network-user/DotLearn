@@ -1,0 +1,56 @@
+---
+id: 1201
+title: "ModelSerializer или Serializer в DRF: когда автогенерация полей экономит код"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# ModelSerializer или Serializer в DRF: когда автогенерация полей экономит код
+
+## Суть
+
+`ModelSerializer` - подкласс `Serializer`, который сам выводит поля из модели Django и даёт готовые `create()` и `update()`. Обычный `Serializer` требует описывать каждое поле и логику сохранения вручную. Выбор - это компромисс между скоростью разработки и полным контролем.
+
+## Что ответить на собесе
+
+Оба превращают объекты в JSON и обратно, но различаются объёмом ручной работы. У `Serializer` я объявляю каждое поле явно и сам пишу `create()`/`update()` - максимум контроля, но и максимум кода. `ModelSerializer` через `class Meta` с `model` и `fields` генерирует поля по метаданным модели и реализует сохранение автоматически - меньше кода, меньше ошибок. На практике под модель почти всегда беру `ModelSerializer`, а к голому `Serializer` обращаюсь, когда данные не привязаны к одной модели или нужна нестандартная структура. Автополя `ModelSerializer` при этом можно переопределять.
+
+## Как это работает
+
+Голый `Serializer` - всё руками:
+
+```python
+from rest_framework import serializers
+
+class BookSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=100)
+    author = serializers.CharField(max_length=100)
+    published_date = serializers.DateField()
+```
+
+Поля `title`, `author`, `published_date` описаны вручную; чтобы сохранять в БД, пришлось бы ещё определить `create()` и `update()`.
+
+`ModelSerializer` - поля и методы выводятся из модели:
+
+```python
+from rest_framework import serializers
+from .models import Book
+
+class BookModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Book
+        fields = ['title', 'author', 'published_date']
+```
+
+DRF читает метаданные `Book`, сам создаёт поля нужных типов и подставляет рабочие `create()`/`update()`. На широкой модели это десятки строк экономии.
+
+## Подводные камни
+
+- В `Meta` обязателен `model`, и нужен либо `fields`, либо `exclude` - но не оба сразу. `fields = '__all__'` тянет все поля, что опасно: новое чувствительное поле модели автоматически попадёт в API.
+- Автогенерация уважает ограничения модели (`max_length`, `null`, `unique`) и превращает их в валидаторы DRF - дублировать их в сериализаторе не нужно.
+- Любое автополе можно переопределить, объявив его явно в классе; объявленное поле имеет приоритет над сгенерированным.
+- `ModelSerializer` сам пишет `create()`/`update()` только для простых случаев. При вложенных записываемых сериализаторах эти методы придётся переопределить - автоматически вложенная запись не поддерживается.
+- `read_only_fields` в `Meta` - удобный способ пометить поля только для чтения без полного переобъявления.

@@ -1,0 +1,89 @@
+---
+id: 1387
+title: "Как Python сам освобождает память: устройство сборщика мусора"
+category: python-core
+categoryLabel: "Python: язык и идиомы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как Python сам освобождает память: устройство сборщика мусора
+
+## Суть
+
+В Python память освобождается автоматически. Основа - подсчёт ссылок: объект уничтожается, как только на него не остаётся ссылок. Поверх этого работает отдельный сборщик циклов, который ловит объекты, замкнутые друг на друга и оттого недостижимые счётчиком.
+
+## Что ответить на собесе
+
+У CPython два уровня управления памятью. Первый и основной - reference counting: у каждого объекта есть счётчик ссылок, и при достижении нуля объект немедленно освобождается. Этот механизм детерминированный и быстрый, но у него слепое пятно - циклические ссылки: два объекта ссылаются друг на друга, их счётчики никогда не падают до нуля, хотя извне они недостижимы. Поэтому есть второй уровень - циклический сборщик из модуля `gc`, который периодически обходит объекты-контейнеры, находит недостижимые циклы и освобождает их. Им можно управлять вручную: запускать, отключать, менять пороги.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 220" role="img" aria-label="Два объекта ссылаются друг на друга, образуя недостижимый цикл" xmlns="http://www.w3.org/2000/svg">
+  <text x="20" y="30" fontSize="13" fill="currentColor" fillOpacity="0.7">внешние ссылки удалены (del)</text>
+  <line x1="30" y1="50" x2="150" y2="110" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 5" strokeOpacity="0.4" />
+  <text x="36" y="64" fontSize="12" fill="currentColor" fillOpacity="0.4">node1</text>
+  <rect x="150" y="80" width="120" height="60" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="210" y="106" fontSize="13" textAnchor="middle" fill="currentColor">Node A</text>
+  <text x="210" y="126" fontSize="11" textAnchor="middle" fill="currentColor" fillOpacity="0.6">refcount = 1</text>
+  <rect x="370" y="80" width="120" height="60" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="430" y="106" fontSize="13" textAnchor="middle" fill="currentColor">Node B</text>
+  <text x="430" y="126" fontSize="11" textAnchor="middle" fill="currentColor" fillOpacity="0.6">refcount = 1</text>
+  <path d="M270 100 H370" fill="none" stroke="#6366f1" strokeWidth="2" markerEnd="url(#arrowGC)" />
+  <path d="M370 120 H270" fill="none" stroke="#6366f1" strokeWidth="2" markerEnd="url(#arrowGC)" />
+  <defs>
+    <marker id="arrowGC" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#6366f1" />
+    </marker>
+  </defs>
+  <text x="280" y="180" fontSize="12" fill="currentColor" fillOpacity="0.7">счётчики не падают до нуля -&gt; цикл найдёт сборщик gc</text>
+</svg>
+
+</figure>
+
+Подсчёт ссылок: новая ссылка увеличивает счётчик, исчезновение - уменьшает.
+
+```python
+a = []   # счётчик = 1
+b = a    # счётчик = 2
+del a    # счётчик = 1
+del b    # счётчик = 0 -> память освобождается
+```
+
+Циклические ссылки счётчик не разрулит:
+
+```python
+class Node:
+    def __init__(self):
+        self.reference = None
+
+node1 = Node()
+node2 = Node()
+node1.reference = node2
+node2.reference = node1
+
+del node1
+del node2
+# счётчики остались > 0; цикл найдёт и освободит сборщик циклов
+```
+
+Сборщик циклов время от времени обходит объекты, строит граф достижимости, выделяет недостижимые циклы и освобождает их. Запуск привязан к порогам по числу аллокаций. Управлять можно через `gc`:
+
+```python
+import gc
+
+gc.collect()   # принудительный проход сборщика
+gc.disable()   # отключить автоматическую сборку циклов
+gc.enable()    # включить обратно
+```
+
+## Подводные камни
+
+- Reference counting освобождает память сразу, а сборщик циклов - не мгновенно: между созданием мусора и его сбором проходит время.
+- `__del__` на объектах в цикле раньше мешал их собрать; в современных версиях это решено, но финализаторы с побочными эффектами в циклах всё равно рискованны.
+- Отключение `gc.disable()` ускоряет код без циклов, но при наличии циклов приводит к росту памяти - включайте обратно.
+- Сборщик циклов обходит только контейнеры (списки, словари, объекты с `__dict__`); простые типы вроде чисел и строк собираются исключительно счётчиком ссылок.
+- Подсчёт ссылок - деталь CPython. В PyPy или Jython его нет, и порядок освобождения объектов другой, поэтому не полагайтесь на немедленный вызов `__del__`.

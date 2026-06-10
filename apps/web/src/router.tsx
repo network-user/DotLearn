@@ -41,6 +41,11 @@ const InterviewQuestionPage = lazy(() =>
     default: module.InterviewQuestionPage,
   })),
 );
+const InterviewExamPage = lazy(() =>
+  import('./pages/InterviewExamPage').then((module) => ({
+    default: module.InterviewExamPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -86,10 +91,42 @@ const submitRoute = new Route({
   component: SubmitTopicPage,
 });
 
+export interface InterviewSearch {
+  q?: string | undefined;
+  topic?: string | undefined;
+  stage?: string | undefined;
+  status?: 'studied' | 'not-studied' | undefined;
+  sort?: 'title' | 'topic' | 'stage' | undefined;
+}
+
 const interviewRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/interview',
   component: InterviewListPage,
+  validateSearch: (search: Record<string, unknown>): InterviewSearch => {
+    const str = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.length > 0 ? value : undefined;
+    const status = search.status === 'studied' || search.status === 'not-studied'
+      ? search.status
+      : undefined;
+    const sort =
+      search.sort === 'title' || search.sort === 'topic' || search.sort === 'stage'
+        ? search.sort
+        : undefined;
+    return {
+      q: str(search.q),
+      topic: str(search.topic),
+      stage: str(search.stage),
+      status,
+      sort,
+    };
+  },
+});
+
+const interviewExamRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/interview/exam',
+  component: InterviewExamPage,
 });
 
 const interviewQuestionRoute = new Route({
@@ -138,6 +175,7 @@ const routeTree = rootRoute.addChildren([
   topicRoute,
   submitRoute,
   interviewRoute,
+  interviewExamRoute,
   interviewQuestionRoute,
   proposalsRoute,
   adminRoute,

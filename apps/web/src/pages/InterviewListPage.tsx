@@ -1,17 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import type { InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
-import { Link } from '@tanstack/react-router';
-import { CheckCircle2, Search } from 'lucide-react';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
+import { CheckCircle2, GraduationCap, Search, Shuffle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
 import { Surface } from '@/components/ui/Surface';
+import { getCurrentLanguage } from '@/lib/i18n';
 import {
   interviewCategories,
   interviewQuestions,
   interviewStages,
+  localizedInterviewTitle,
 } from '@/lib/interview';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
 
@@ -31,26 +33,56 @@ const normalize = (value: string): string => value.toLowerCase().trim();
 export const InterviewListPage = () => {
   const { t } = useTranslation('interview');
   const studiedIds = useInterviewStudiedIds();
+  const search = useSearch({ from: '/interview' });
+  const navigate = useNavigate();
 
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<string>('all');
-  const [stage, setStage] = useState<string>('all');
-  const [status, setStatus] = useState<StatusFilter>('all');
-  const [sort, setSort] = useState<SortKey>('default');
+  const query = search.q ?? '';
+  const category = search.topic ?? 'all';
+  const stage = search.stage ?? 'all';
+  const status: StatusFilter = search.status ?? 'all';
+  const sort: SortKey = search.sort ?? 'default';
+
+  const patch = (
+    next: Record<string, string | undefined>,
+    options?: { replace?: boolean },
+  ): void => {
+    void navigate({
+      to: '/interview',
+      search: (prev) => ({ ...prev, ...next }),
+      ...(options?.replace ? { replace: true } : {}),
+    });
+  };
+
+  const setQuery = (value: string): void =>
+    patch({ q: value || undefined }, { replace: true });
+  const setCategory = (value: string): void =>
+    patch({ topic: value === 'all' ? undefined : value });
+  const setStage = (value: string): void =>
+    patch({ stage: value === 'all' ? undefined : value });
+  const setStatus = (value: StatusFilter): void =>
+    patch({ status: value === 'all' ? undefined : value });
+  const setSort = (value: SortKey): void =>
+    patch({ sort: value === 'default' ? undefined : value });
+
+  const locale = getCurrentLanguage();
+  const titleOf = (question: InterviewQuestionMeta): string =>
+    localizedInterviewTitle(question, locale);
 
   const visible = useMemo(() => {
+    const title = (question: InterviewQuestionMeta): string =>
+      localizedInterviewTitle(question, locale);
     const needle = normalize(query);
     const filtered = interviewQuestions.filter((question) => {
       if (category !== 'all' && question.category !== category) return false;
       if (stage !== 'all' && question.stage !== stage) return false;
       if (status === 'studied' && !studiedIds.has(question.id)) return false;
       if (status === 'not-studied' && studiedIds.has(question.id)) return false;
-      if (needle && !normalize(question.title).includes(needle)) return false;
+      if (needle && !normalize(title(question)).includes(needle)) return false;
       return true;
     });
 
     const byTitle = (a: InterviewQuestionMeta, b: InterviewQuestionMeta): number =>
-      a.title.localeCompare(b.title, 'ru');
+      title(a).localeCompare(title(b), locale);
 
     const sorted = [...filtered];
     if (sort === 'title') {
@@ -68,9 +100,17 @@ export const InterviewListPage = () => {
       sorted.sort((a, b) => a.id - b.id);
     }
     return sorted;
-  }, [query, category, stage, status, sort, studiedIds]);
+  }, [query, category, stage, status, sort, studiedIds, locale]);
 
   const studiedCount = studiedIds.size;
+
+  const goRandom = (): void => {
+    const pool = visible.length > 0 ? visible : interviewQuestions;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    if (pick) {
+      void navigate({ to: '/interview/$id', params: { id: String(pick.id) } });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -93,6 +133,23 @@ export const InterviewListPage = () => {
               </span>
             </>
           )}
+        </div>
+        <div className="mt-5 flex flex-col sm:flex-row gap-2.5">
+          <button
+            type="button"
+            onClick={goRandom}
+            className="inline-flex items-center gap-2 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] w-full sm:w-auto justify-center"
+          >
+            <Shuffle size={15} />
+            {t('random')}
+          </button>
+          <Link
+            to="/interview/exam"
+            className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/[0.06] px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-accent transition-colors hover:bg-accent/10 w-full sm:w-auto justify-center"
+          >
+            <GraduationCap size={15} />
+            {t('examLink')}
+          </Link>
         </div>
       </header>
 
@@ -183,7 +240,11 @@ export const InterviewListPage = () => {
         <ul className="space-y-2.5">
           {visible.map((question) => (
             <li key={question.id}>
-              <QuestionCard question={question} studied={studiedIds.has(question.id)} />
+              <QuestionCard
+                question={question}
+                title={titleOf(question)}
+                studied={studiedIds.has(question.id)}
+              />
             </li>
           ))}
         </ul>
@@ -201,9 +262,11 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
 
 const QuestionCard = ({
   question,
+  title,
   studied,
 }: {
   question: InterviewQuestionMeta;
+  title: string;
   studied: boolean;
 }) => (
   <Link to="/interview/$id" params={{ id: String(question.id) }} className="block">
@@ -214,7 +277,7 @@ const QuestionCard = ({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-2.5">
           <h2 className="font-display text-[17px] sm:text-[18px] leading-snug tracking-snug text-fg text-balance">
-            {question.title}
+            {title}
           </h2>
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge tone="neutral">{question.categoryLabel}</Badge>

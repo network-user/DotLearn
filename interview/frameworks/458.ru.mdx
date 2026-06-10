@@ -1,0 +1,95 @@
+---
+id: 458
+title: "Кастомизация пользователя в Django: User, AbstractUser или AbstractBaseUser"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Кастомизация пользователя в Django: User, AbstractUser или AbstractBaseUser
+
+## Суть
+
+Django предлагает три точки входа для модели пользователя, и они различаются балансом «контроль против ручной работы». Сверху - готовая `User`, которую достаточно подключить. Ниже - `AbstractUser`, где вы дописываете поля поверх штатной логики. На дне - `AbstractBaseUser`, где структуру и идентификатор входа вы задаёте сами, расплачиваясь за это собственным менеджером и полями прав.
+
+## Что ответить на собесе
+
+Назовите три варианта по нарастанию свободы. `User` из `django.contrib.auth` берут, когда стандартных полей хватает. От `AbstractUser` наследуются, чтобы добавить свои атрибуты, не теряя поведение встроенной модели. `AbstractBaseUser` выбирают, когда нужно переопределить структуру целиком - например, логиниться по email; тогда придётся самому написать `BaseUserManager` и завести поля прав. И ключевой практический тезис: задавайте `AUTH_USER_MODEL` со старта проекта, даже если своя модель пока пустая, потому что подменить пользователя на проекте с данными - дорогая и рискованная операция.
+
+## Как это работает
+
+### Уровень 1. Готовая `User`
+
+Модель из `django.contrib.auth.models` уже несёт `username`, `email`, `password` и всю систему прав.
+
+```python
+from django.contrib.auth.models import User
+
+user = User.objects.create_user(username="john", password="password123")
+```
+
+Берите, когда лишних полей не требуется.
+
+### Уровень 2. Надстройка через `AbstractUser`
+
+Наследование сохраняет все штатные поля и логику, а вы лишь дополняете модель своими атрибутами.
+
+```python
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+
+class CustomUser(AbstractUser):
+    bio = models.TextField(max_length=500, blank=True)
+```
+
+Это рабочий выбор, когда поведение менять не нужно, а полей не хватает.
+
+### Уровень 3. Полный контроль на `AbstractBaseUser`
+
+Здесь вы решаете, какие поля есть и что служит идентификатором входа, но обязаны реализовать менеджер.
+
+```python
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.db import models
+
+
+class CustomUserManager(BaseUserManager):
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError("The Email field must be set")
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+        return self.create_user(email, password, **extra_fields)
+
+
+class CustomUser(AbstractBaseUser):
+    email = models.EmailField(unique=True)
+    first_name = models.CharField(max_length=30)
+    last_name = models.CharField(max_length=30)
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+
+    objects = CustomUserManager()
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["first_name", "last_name"]
+```
+
+Это для случаев, когда структуру пользователя нужно переопределить полностью или входить по email вместо username.
+
+## Подводные камни
+
+- Смена модели пользователя на живом проекте с данными - боль: миграции, внешние ключи, висящие ссылки. Объявляйте `AUTH_USER_MODEL` сразу, пусть даже модель временно пустует.
+- `AbstractBaseUser` не приносит систему прав. Нужны группы и пермишены - подмешивайте `PermissionsMixin`; иначе `is_staff`, `is_superuser` и доступ к админке придётся собирать вручную.
+- Поле из `USERNAME_FIELD` обязано быть `unique=True` и не должно дублироваться в `REQUIRED_FIELDS`, иначе вход станет неоднозначным.
+- Со своей моделью легко упустить `create_superuser`: без корректного менеджера команда `createsuperuser` упадёт.

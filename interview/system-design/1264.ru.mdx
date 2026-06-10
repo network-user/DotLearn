@@ -1,0 +1,80 @@
+---
+id: 1264
+title: "Direct и topic exchange в RabbitMQ: в чём принципиальная разница маршрутизации?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Direct и topic exchange в RabbitMQ: в чём принципиальная разница маршрутизации?
+
+## Суть
+
+Direct exchange кладёт сообщение в очередь только при точном совпадении routing key с binding key. Topic exchange сравнивает routing key с шаблоном, где `*` заменяет ровно одно слово, а `#` - ноль или больше слов, и за счёт этого позволяет гибкую маршрутизацию по иерархическим ключам.
+
+## Что ответить на собесе
+
+В RabbitMQ продюсер шлёт сообщение не в очередь напрямую, а в обменник, и тип обменника определяет правило маршрутизации. Direct - это точное совпадение строки: routing key должен буквально равняться binding key очереди, иначе сообщение туда не попадёт. Topic - это шаблонное совпадение по словам, разделённым точками: `*` стоит за одно слово, `#` - за любое их число. Direct берут для простой маршрутизации по фиксированным категориям, topic - когда ключ кодирует несколько измерений (например `region.service.level`) и подписчики хотят выбирать срезы по любому из них.
+
+## Как это работает
+
+У очереди при привязке к обменнику задаётся binding key. Когда приходит сообщение, обменник сопоставляет его routing key с binding-ами своих очередей по правилу своего типа и копирует сообщение в каждую подходящую очередь.
+
+<figure>
+<svg viewBox="0 0 380 150" width="380" height="150" role="img" aria-label="Обменник маршрутизирует сообщение по ключу в подходящие очереди" fill="none" stroke="currentColor">
+  <rect x="10" y="58" width="72" height="32" rx="4" strokeWidth="1.5" />
+  <text x="46" y="78" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">producer</text>
+  <rect x="150" y="50" width="80" height="48" rx="6" strokeWidth="2" stroke="#6366f1" />
+  <text x="190" y="70" textAnchor="middle" fill="#6366f1" stroke="none" fontSize="11">exchange</text>
+  <text x="190" y="86" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">logs.info</text>
+  <line x1="82" y1="74" x2="150" y2="74" strokeWidth="1.5" />
+  <rect x="300" y="14" width="66" height="28" rx="4" strokeWidth="1.5" />
+  <text x="333" y="32" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">logs.*</text>
+  <rect x="300" y="60" width="66" height="28" rx="4" strokeWidth="1.5" />
+  <text x="333" y="78" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">logs.#</text>
+  <rect x="300" y="106" width="66" height="28" rx="4" strokeWidth="1.5" strokeDasharray="4 4" />
+  <text x="333" y="124" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">error</text>
+  <line x1="230" y1="70" x2="300" y2="28" strokeWidth="1.5" />
+  <line x1="230" y1="74" x2="300" y2="74" strokeWidth="1.5" />
+  <line x1="230" y1="80" x2="300" y2="120" strokeWidth="1" strokeDasharray="3 4" strokeOpacity="0.5" />
+</svg>
+</figure>
+
+Direct, точное совпадение:
+
+- Очередь A привязана по ключу `info`, очередь B - по `error`.
+- Сообщение с `info` → только A; с `error` → только B; с `warning` → никуда.
+
+Topic, совпадение по шаблону:
+
+- Очередь A привязана по `logs.*`, очередь B - по `logs.#`.
+- `logs.info` → и A, и B (одно слово после `logs` подходит обоим).
+- `logs.error.critical` → только B (`#` берёт два слова, а `*` - ровно одно).
+
+```python
+import pika
+
+connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+channel = connection.channel()
+
+channel.exchange_declare(exchange="direct_logs", exchange_type="direct")
+channel.exchange_declare(exchange="topic_logs", exchange_type="topic")
+
+channel.basic_publish(exchange="direct_logs", routing_key="info",
+                      body="точное совпадение по 'info'")
+channel.basic_publish(exchange="topic_logs", routing_key="logs.info",
+                      body="совпадение по шаблону 'logs.*'")
+
+connection.close()
+```
+
+## Подводные камни
+
+- Без привязанных очередей или при отсутствии совпадения сообщение тихо теряется (если не настроены `mandatory` / alternate exchange). Проверяйте, что binding реально создан.
+- В topic `*` - это ровно одно слово, не «любой символ». `logs.*` не поймает `logs` без сегмента и не поймает `logs.a.b`.
+- `#` поглощает и ноль слов: binding `logs.#` совпадёт даже с `logs`. Это часто неожиданно.
+- Точка - разделитель слов, а не часть имени. Ключ `user.created` - два слова, а не одна строка.
+- Direct можно «дотянуть» до похожего на topic поведения несколькими binding-ами одной очереди, но это быстро превращается в неподдерживаемый список ключей - для иерархий сразу берите topic.
+- Сообщение, попавшее в две очереди, доставляется дважды - это копии, а не одно сообщение «на двоих».

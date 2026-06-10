@@ -1,0 +1,130 @@
+---
+id: 1427
+title: "Rate limiting: what it's for and which algorithms implement it?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Rate limiting: what it's for and which algorithms implement it?
+
+## In short
+
+Rate limiting sets an upper bound on the number of accesses to a resource per unit of time. It keeps the load within bounds, blocks abuse, and divides throughput between clients fairly.
+
+## How to answer in an interview
+
+Rate limiting is needed so that the service doesn't choke under a flood of requests and doesn't suffer from overuse by individual clients. I'd name three reasons: protecting infrastructure from overload, deflecting parasitic and attacking traffic, and a fair distribution of quotas. The classic algorithms are Fixed Window (a counter within a fixed interval), Sliding Window (a moving window based on timestamps), and Token Bucket (a bucket of tokens refilled at a constant rate). The choice depends on how smoothly you need to flatten bursts: Token Bucket allows short spikes, while Sliding Window gives a more even flow.
+
+## How it works
+
+The idea behind all the variants is the same — track how many requests have already passed and reject the excess. Only the accounting method differs.
+
+<figure>
+
+<svg viewBox="0 0 480 200" width="100%" role="img" aria-label="Token Bucket: tokens are topped up from above at a constant rate, each request spends one token" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <text x="90" y="24" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">refill at a constant rate</text>
+  <line x1="90" y1="32" x2="90" y2="70" strokeDasharray="4 4" />
+  <circle cx="90" cy="40" r="6" stroke="none" fill="#6366f1">
+    <animate attributeName="cy" values="40;110;110" keyTimes="0;0.6;1" dur="2.4s" repeatCount="indefinite" />
+    <animate attributeName="opacity" values="1;1;0" keyTimes="0;0.55;0.6" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+  <path d="M55 70 L55 150 Q55 165 70 165 L110 165 Q125 165 125 150 L125 70" />
+  <circle cx="75" cy="148" r="6" stroke="none" fill="currentColor" fillOpacity="0.55" />
+  <circle cx="105" cy="148" r="6" stroke="none" fill="currentColor" fillOpacity="0.55" />
+  <circle cx="90" cy="128" r="6" stroke="none" fill="currentColor" fillOpacity="0.55" />
+  <text x="90" y="192" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">token bucket</text>
+  <line x1="125" y1="120" x2="300" y2="120" markerEnd="url(#rl-arr)" />
+  <text x="212" y="112" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">spends 1 token</text>
+  <rect x="305" y="100" width="120" height="40" rx="6" />
+  <text x="365" y="116" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">token available?</text>
+  <text x="365" y="130" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">yes → allow</text>
+  <text x="430" y="124" fontSize="10" stroke="none" fill="currentColor">no → 429</text>
+  <defs>
+    <marker id="rl-arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6" />
+    </marker>
+  </defs>
+</svg>
+
+</figure>
+
+**Fixed Window.** We divide the time axis into equal intervals; within each one its own limit applies. Simple, but at the boundary of two windows a double burst is possible.
+
+```python
+import time
+
+class FixedWindowRateLimiter:
+    def __init__(self, max_requests, window_size):
+        self.max_requests = max_requests
+        self.window_size = window_size
+        self.requests = 0
+        self.window_start = time.time()
+
+    def allow_request(self):
+        now = time.time()
+        if now - self.window_start >= self.window_size:
+            self.window_start = now
+            self.requests = 0
+        if self.requests < self.max_requests:
+            self.requests += 1
+            return True
+        return False
+```
+
+**Sliding Window.** We keep request timestamps in a deque and discard those that fall outside the window boundary. The boundary "moves" along with the current moment, so the distribution is more even.
+
+```python
+from collections import deque
+import time
+
+class SlidingWindowRateLimiter:
+    def __init__(self, max_requests, window_size):
+        self.max_requests = max_requests
+        self.window_size = window_size
+        self.requests = deque()
+
+    def allow_request(self):
+        now = time.time()
+        while self.requests and self.requests[0] <= now - self.window_size:
+            self.requests.popleft()
+        if len(self.requests) < self.max_requests:
+            self.requests.append(now)
+            return True
+        return False
+```
+
+**Token Bucket.** The bucket holds tokens: each allowed request spends one. Tokens are topped up at a constant rate, and the bucket's capacity limits the size of an acceptable burst.
+
+```python
+import time
+
+class TokenBucketRateLimiter:
+    def __init__(self, max_tokens, refill_rate):
+        self.max_tokens = max_tokens
+        self.refill_rate = refill_rate
+        self.tokens = max_tokens
+        self.last_refill = time.time()
+
+    def allow_request(self):
+        now = time.time()
+        self.tokens = min(
+            self.max_tokens,
+            self.tokens + (now - self.last_refill) * self.refill_rate,
+        )
+        self.last_refill = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        return False
+```
+
+## Pitfalls
+
+- **The window boundary in Fixed Window.** At the junction of two adjacent intervals a client can fit almost a double limit: a batch at the end of the first window and immediately a batch at the start of the second.
+- **Sliding Window memory.** The deque stores a timestamp per request, so with large limits the memory cost per client grows linearly.
+- **State under horizontal scaling.** If there are several instances, local in-memory counters drift apart. You need a shared store (usually Redis with atomic operations), otherwise the total limit exceeds what was intended.
+- **Races.** `allow_request` must be atomic; under concurrent access, a check-and-increment without a lock will let extra requests through.
+- **What to return to the client.** A rejected request is a `429 Too Many Requests` code, preferably with a `Retry-After` header and `X-RateLimit-*` counters, otherwise the client won't know when to retry.

@@ -1,0 +1,94 @@
+---
+id: 1232
+title: "Как в DRF разграничить доступ к эндпоинтам через классы permissions?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как в DRF разграничить доступ к эндпоинтам через классы permissions?
+
+## Суть
+
+Permission в DRF — это класс с методом-проверкой, который для каждого запроса возвращает `True` (пропустить) или `False` (отказать). Набор таких классов вешается на представление и решает, кому разрешено выполнять запрашиваемое действие.
+
+## Что ответить на собесе
+
+DRF выносит проверку доступа в отдельные классы-permissions, которые перечисляются в атрибуте `permission_classes` представления. На каждый запрос фреймворк прогоняет их по очереди; если хоть один вернёт `False`, клиент получает 403 (или 401, если он вообще не аутентифицирован). Из коробки есть `AllowAny`, `IsAuthenticated`, `IsAdminUser`, `IsAuthenticatedOrReadOnly`. Для нестандартной логики я наследуюсь от `BasePermission` и переопределяю `has_permission` (доступ к ресурсу в целом) или `has_object_permission` (доступ к конкретному объекту). Так правила доступа лежат отдельно от бизнес-логики вьюхи.
+
+## Как это работает
+
+Permissions объявляются на уровне представления. Перед вызовом обработчика DRF проверяет все классы; каждый возвращает булево значение:
+
+<figure>
+
+<svg viewBox="0 0 560 110" width="560" height="110" role="img" aria-label="Запрос проходит цепочку permission-классов до обработчика" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="8" y="40" width="78" height="30" rx="5" />
+  <text x="47" y="59" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">Запрос</text>
+  <line x1="86" y1="55" x2="118" y2="55" />
+  <polygon points="118,55 110,51 110,59" fill="currentColor" stroke="none" />
+  <rect x="120" y="40" width="100" height="30" rx="5" />
+  <text x="170" y="59" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">permission 1</text>
+  <line x1="220" y1="55" x2="252" y2="55" />
+  <polygon points="252,55 244,51 244,59" fill="currentColor" stroke="none" />
+  <rect x="254" y="40" width="100" height="30" rx="5" />
+  <text x="304" y="59" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">permission N</text>
+  <line x1="354" y1="55" x2="386" y2="55" />
+  <polygon points="386,55 378,51 378,59" fill="currentColor" stroke="none" />
+  <rect x="388" y="40" width="92" height="30" rx="5" stroke="#6366f1" />
+  <text x="434" y="59" textAnchor="middle" fontSize="10" stroke="none" fill="#6366f1">обработчик</text>
+  <line x1="304" y1="70" x2="304" y2="96" strokeDasharray="4 3" />
+  <polygon points="304,96 300,88 308,88" fill="currentColor" stroke="none" />
+  <text x="304" y="106" textAnchor="middle" fontSize="9" stroke="none" fill="currentColor">False → 403 / 401</text>
+</svg>
+
+</figure>
+
+```python
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework.response import Response
+
+class MyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"message": "Доступ только для аутентифицированных"})
+```
+
+Готовые классы покрывают типовые случаи:
+
+- `AllowAny` — открыто всем.
+- `IsAuthenticated` — только аутентифицированным.
+- `IsAdminUser` — только пользователям с `is_staff`.
+- `IsAuthenticatedOrReadOnly` — читать может любой, изменять — только вошедшие.
+
+Своё правило — это наследник `BasePermission`. Метод `has_permission` решает доступ к эндпоинту целиком, `has_object_permission` — к отдельному объекту (его вызывают только после `get_object`):
+
+```python
+from rest_framework.permissions import BasePermission
+
+class IsEmailDomainAllowed(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return user.is_authenticated and user.email.endswith('@example.com')
+```
+
+Подключается так же, через список:
+
+```python
+class MyCustomView(APIView):
+    permission_classes = [IsEmailDomainAllowed]
+
+    def get(self, request):
+        return Response({"message": "Привет, сотрудник example.com"})
+```
+
+## Подводные камни
+
+- Список `permission_classes` объединяется по И: все классы должны вернуть `True`. Логику «или» нужно собирать вручную (в новых версиях DRF — операторами `|`, `&`, `~` над классами).
+- `has_object_permission` срабатывает только при доступе к конкретному объекту через `get_object()`. На уровне списка (`list`/`create`) объектная проверка не вызывается — фильтруйте `QuerySet` отдельно.
+- Permissions проверяют доступ, но не подменяют аутентификацию: неаутентифицированный пользователь у класса `IsAuthenticated` получит 401, а не 403.
+- Пустой `permission_classes = []` снимает все ограничения, включая глобальные из `DEFAULT_PERMISSION_CLASSES`. Это лёгкий способ случайно открыть эндпоинт всем.

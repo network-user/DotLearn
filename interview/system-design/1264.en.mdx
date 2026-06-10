@@ -1,0 +1,80 @@
+---
+id: 1264
+title: "Direct vs topic exchange in RabbitMQ: what is the fundamental routing difference?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Direct vs topic exchange in RabbitMQ: what is the fundamental routing difference?
+
+## In short
+
+A direct exchange places a message in a queue only on an exact match between the routing key and the binding key. A topic exchange matches the routing key against a pattern, where `*` replaces exactly one word and `#` replaces zero or more words, which allows flexible routing by hierarchical keys.
+
+## How to answer in an interview
+
+In RabbitMQ a producer does not send a message to a queue directly but to an exchange, and the exchange type determines the routing rule. Direct is an exact string match: the routing key must literally equal the queue's binding key, otherwise the message won't land there. Topic is a pattern match over words separated by dots: `*` stands for one word, `#` for any number of them. You use direct for simple routing by fixed categories, and topic when the key encodes several dimensions (for example `region.service.level`) and subscribers want to select slices by any of them.
+
+## How it works
+
+When a queue is bound to an exchange, a binding key is specified. When a message arrives, the exchange matches its routing key against the bindings of its queues by its type's rule and copies the message into every matching queue.
+
+<figure>
+<svg viewBox="0 0 380 150" width="380" height="150" role="img" aria-label="Exchange routes a message by key into matching queues" fill="none" stroke="currentColor">
+  <rect x="10" y="58" width="72" height="32" rx="4" strokeWidth="1.5" />
+  <text x="46" y="78" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">producer</text>
+  <rect x="150" y="50" width="80" height="48" rx="6" strokeWidth="2" stroke="#6366f1" />
+  <text x="190" y="70" textAnchor="middle" fill="#6366f1" stroke="none" fontSize="11">exchange</text>
+  <text x="190" y="86" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">logs.info</text>
+  <line x1="82" y1="74" x2="150" y2="74" strokeWidth="1.5" />
+  <rect x="300" y="14" width="66" height="28" rx="4" strokeWidth="1.5" />
+  <text x="333" y="32" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">logs.*</text>
+  <rect x="300" y="60" width="66" height="28" rx="4" strokeWidth="1.5" />
+  <text x="333" y="78" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">logs.#</text>
+  <rect x="300" y="106" width="66" height="28" rx="4" strokeWidth="1.5" strokeDasharray="4 4" />
+  <text x="333" y="124" textAnchor="middle" fill="currentColor" stroke="none" fontSize="9">error</text>
+  <line x1="230" y1="70" x2="300" y2="28" strokeWidth="1.5" />
+  <line x1="230" y1="74" x2="300" y2="74" strokeWidth="1.5" />
+  <line x1="230" y1="80" x2="300" y2="120" strokeWidth="1" strokeDasharray="3 4" strokeOpacity="0.5" />
+</svg>
+</figure>
+
+Direct, exact match:
+
+- Queue A is bound by the key `info`, queue B by `error`.
+- A message with `info` → only A; with `error` → only B; with `warning` → nowhere.
+
+Topic, pattern match:
+
+- Queue A is bound by `logs.*`, queue B by `logs.#`.
+- `logs.info` → both A and B (one word after `logs` fits both).
+- `logs.error.critical` → only B (`#` takes two words, while `*` takes exactly one).
+
+```python
+import pika
+
+connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+channel = connection.channel()
+
+channel.exchange_declare(exchange="direct_logs", exchange_type="direct")
+channel.exchange_declare(exchange="topic_logs", exchange_type="topic")
+
+channel.basic_publish(exchange="direct_logs", routing_key="info",
+                      body="exact match on 'info'")
+channel.basic_publish(exchange="topic_logs", routing_key="logs.info",
+                      body="pattern match on 'logs.*'")
+
+connection.close()
+```
+
+## Pitfalls
+
+- With no bound queues, or when nothing matches, the message is silently lost (unless `mandatory` / an alternate exchange is configured). Verify that the binding was actually created.
+- In topic, `*` is exactly one word, not "any character". `logs.*` won't catch `logs` with no segment, and won't catch `logs.a.b`.
+- `#` also absorbs zero words: the binding `logs.#` will match even `logs`. This is often unexpected.
+- The dot is a word separator, not part of the name. The key `user.created` is two words, not a single string.
+- You can stretch direct toward topic-like behavior with several bindings on one queue, but that quickly turns into an unmaintainable list of keys - for hierarchies, go straight to topic.
+- A message that lands in two queues is delivered twice - these are copies, not one message "shared" between them.

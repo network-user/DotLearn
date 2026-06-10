@@ -1,0 +1,64 @@
+---
+id: 1210
+title: "Чем выборка через get() отличается от filter() и exclude()?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем выборка через get() отличается от filter() и exclude()?
+
+## Суть
+
+`get()` возвращает один-единственный объект и падает с исключением, если подходит ноль записей или больше одной. `filter()` и `exclude()` возвращают QuerySet (набор), причём `filter()` оставляет совпадения с условием, а `exclude()` — наоборот, всё, что условию не подходит.
+
+## Что ответить на собесе
+
+Ключевое различие — что метод возвращает и как реагирует на «не то количество». `get()` рассчитан строго на одну запись: ноль совпадений даёт `DoesNotExist`, два и более — `MultipleObjectsReturned`. Поэтому его берут только по уникальным полям (`pk`, `id`, unique-поле). `filter()` и `exclude()` возвращают ленивый QuerySet и исключений не бросают: при отсутствии совпадений просто отдают пустой набор. `filter` отбирает записи, удовлетворяющие условию, `exclude` — логически противоположный набор. На практике это `WHERE условие` против `WHERE NOT условие`.
+
+## Как это работает
+
+Django ORM транслирует вызовы методов в SQL. `get()` строит `SELECT ... WHERE`, выполняет его сразу и проверяет, что строка ровно одна:
+
+```python
+from myapp.models import Person
+
+try:
+    person = Person.objects.get(id=1)
+    print(person.name)
+except Person.DoesNotExist:
+    print("Не найдено ни одной записи")
+except Person.MultipleObjectsReturned:
+    print("Найдено больше одной записи")
+```
+
+`filter()` возвращает QuerySet и не обращается к базе, пока его не начнут перебирать (ленивость):
+
+```python
+from myapp.models import Person
+
+adults = Person.objects.filter(age__gte=18)  # SQL ещё не выполнен
+for person in adults:                          # вот тут идёт запрос
+    print(person.name)
+```
+
+`exclude()` строит тот же запрос, но с отрицанием условия:
+
+```python
+from myapp.models import Person
+
+minors = Person.objects.exclude(age__gte=18)  # WHERE NOT (age >= 18)
+for person in minors:
+    print(person.name)
+```
+
+`filter()` и `exclude()` можно сцеплять в цепочку: `Person.objects.filter(age__gte=18).exclude(name='Bob')`.
+
+## Подводные камни
+
+- `get()` без обёртки в `try/except` уронит запрос на отсутствующих или дублирующихся данных. Для веба удобнее `get_object_or_404`, для «может не быть» — `filter(...).first()`.
+- `exclude(age__gte=18)` и `filter(age__lt=18)` не всегда эквивалентны: при `NULL` в поле SQL-логика `NOT` ведёт себя неинтуитивно, и `exclude` может не вернуть строки с `NULL`.
+- QuerySet ленив: `qs = filter(...)` сам по себе к базе не ходит. Запрос уходит при итерации, срезе, `len()`, `list()`. Лишние касания QuerySet в цикле плодят дубли запросов.
+- `get()` всегда бьёт в базу немедленно и возвращает объект, а не QuerySet — у результата нет `.filter()` или среза.

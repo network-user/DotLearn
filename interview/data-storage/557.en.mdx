@@ -1,0 +1,62 @@
+---
+id: 557
+title: "QuerySet in Django: what it is and which operations rest on it"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# QuerySet in Django: what it is and which operations rest on it
+
+## In short
+
+A QuerySet is a deferred description of a database query, not the data itself. It assembles SQL as filters are applied and reaches the database only when the result is actually needed. Selection, filtering, sorting, and bulk record changes all rest on it.
+
+## How to answer in an interview
+
+A QuerySet is a query-builder object. Each call to `filter()`, `exclude()`, `order_by()` returns a new QuerySet without touching the original and without going to the database. That's its laziness: the SQL is sent to the database only on iteration, a stepped slice, `len()`, `list()`, `bool()`, or explicit `get()`/`first()`. The basic set of operations: `all()` - everything, `filter()`/`exclude()` - selection, `get()` - exactly one object (otherwise an exception), `order_by()` - sorting, `create()` - create and save, `update()`/`delete()` - bulk change or delete without loading objects into Python. The result is cached inside the QuerySet, so iterating over the same object again doesn't hit the database.
+
+## How it works
+
+Each filter method builds a new query on top of the previous one, so chains read left to right:
+
+```python
+published = Entry.objects.filter(status='published')
+recent = published.exclude(archived=True).order_by('-published_date')
+```
+
+The database hasn't been touched yet: `recent` is just a query recipe. Reading anything from the result fires the SQL:
+
+```python
+for entry in recent:
+    print(entry.title)
+```
+
+Pinpoint selection and handling a missing object:
+
+```python
+try:
+    entry = Entry.objects.get(id=1)
+except Entry.DoesNotExist:
+    entry = None
+```
+
+Creation, bulk update, and deletion without pulling objects into memory:
+
+```python
+Entry.objects.create(title='New', content='...')
+Entry.objects.filter(status='draft').update(status='published')
+Entry.objects.filter(status='draft').delete()
+```
+
+`update()` and `delete()` on a QuerySet run as a single SQL statement at the database level, bypassing a per-object loop in Python, so on large selections they are noticeably faster than manual iteration.
+
+## Pitfalls
+
+- **`get()` throws exceptions in pairs:** `DoesNotExist` if nothing was found, and `MultipleObjectsReturned` if there's more than one match. For "maybe, maybe not", use `filter().first()`.
+- **Laziness cuts both ways:** a QuerySet created once and reused several times in a template caches the result, but a new QuerySet on each loop iteration spawns a new query - hence the N+1 problem.
+- **`update()` doesn't call `save()` or signals:** model hooks and `pre_save`/`post_save` don't fire on a bulk `update()`.
+- **A stepped slice materializes the selection:** `qs[::2]` runs the query, while `qs[:10]` is translated to `LIMIT` and stays lazy.
+- **You can't modify a QuerySet "in place":** methods return a new object, so assigning the result is mandatory, otherwise the filter is lost.

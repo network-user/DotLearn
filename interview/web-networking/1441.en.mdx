@@ -1,0 +1,84 @@
+---
+id: 1441
+title: "Controlling the HTTP cache: which headers decide whether to store a response and how fresh it is"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Controlling the HTTP cache: which headers decide whether to store a response and how fresh it is
+
+## In short
+
+Four headers govern HTTP cache behavior. `Cache-Control` describes the policy (who may store it and for how long), `Expires` gives an absolute moment of staleness, and `ETag` and `Last-Modified` let you check whether a copy is outdated without re-downloading it in full.
+
+## How to answer in an interview
+
+The HTTP cache is controlled through response headers. The main one is `Cache-Control`, with the directives `max-age`, `no-cache`, `no-store`, `public`, `private`. The older `Expires` sets an absolute expiration date and exists for HTTP/1.0 compatibility. To validate a stale copy there are two validators: `ETag` (a fingerprint of the resource version) and `Last-Modified` (the change date). The client re-checks with conditional requests `If-None-Match` and `If-Modified-Since`, and if nothing has changed, the server replies `304 Not Modified` with no body. This saves bandwidth, time, and server load.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 640 210" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="30" y="80" width="120" height="44" rx="8" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <text x="90" y="107" textAnchor="middle" fontSize="13" fill="currentColor">Cache / client</text>
+  <rect x="490" y="80" width="120" height="44" rx="8" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <text x="550" y="107" textAnchor="middle" fontSize="13" fill="currentColor">Server</text>
+  <text x="90" y="40" textAnchor="middle" fontSize="11" fill="currentColor">is the copy fresh?</text>
+  <path d="M90 46 L90 80" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="62" textAnchor="middle" fontSize="11" fill="#6366f1">max-age not expired → serve from cache instantly</text>
+  <line x1="150" y1="96" x2="490" y2="96" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="90" textAnchor="middle" fontSize="11" fill="currentColor">If-None-Match: "abc123" →</text>
+  <line x1="490" y1="120" x2="150" y2="120" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+  <text x="320" y="136" textAnchor="middle" fontSize="11" fill="currentColor">← 304 Not Modified (no body)</text>
+  <text x="320" y="170" textAnchor="middle" fontSize="11" fill="currentColor">no match → 200 OK with new body and ETag</text>
+  <circle r="5" fill="#6366f1">
+    <animateMotion dur="2.6s" repeatCount="indefinite" path="M150,96 L490,96" />
+  </circle>
+</svg>
+
+</figure>
+
+The headers fall into two groups — freshness policy and validators.
+
+**Freshness policy:**
+
+- **`Cache-Control`** — the main mechanism. Directives:
+  - `max-age=N` — how many seconds the copy is considered fresh.
+  - `no-cache` — caching is allowed, but you must check with the server before using it.
+  - `no-store` — do not store the response at all.
+  - `public` — any cache may store it, including proxies.
+  - `private` — store only in a specific client's cache (the browser).
+- **`Expires`** — an absolute expiration date, a legacy of HTTP/1.0. In HTTP/1.1, on conflict, `Cache-Control: max-age` takes precedence.
+
+```http
+Cache-Control: public, max-age=3600
+Expires: Wed, 21 Oct 2026 07:28:00 GMT
+```
+
+**Validators (freshness check):**
+
+- **`ETag`** — a fingerprint of the resource version. The server sends it with the response, the client returns it in `If-None-Match`. A match means `304 Not Modified`.
+
+```http
+ETag: "abc123"
+```
+
+- **`Last-Modified`** — the date of the last change. The client sends `If-Modified-Since`; if the resource has not changed since then — `304` again.
+
+```http
+Last-Modified: Wed, 21 Oct 2026 07:28:00 GMT
+```
+
+A fresh copy is served from the cache instantly; a stale one passes a cheap validation, and on `304` no body is transferred.
+
+## Pitfalls
+
+- **`no-cache` ≠ "do not cache"** — it means "cache, but always revalidate". Forbidding storage is `no-store`.
+- **`ETag` is more precise than `Last-Modified`** — the date has one-second granularity and lies on a "change with no content change"; `ETag` catches any byte-level edit.
+- **Weak vs strong ETags** — `W/"abc"` (weak) allows semantically equivalent versions, a strong one requires a byte-for-byte match.
+- **Conflict between `Expires` and `max-age`** — in HTTP/1.1 `Cache-Control: max-age` wins, so set both at once with care.
+- **`private` on a shared proxy** — marking a response `public` by mistake can serve someone else's personal data from the proxy cache to another user.

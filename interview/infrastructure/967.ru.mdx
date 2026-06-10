@@ -1,0 +1,79 @@
+---
+id: 967
+title: "Volumes в Docker: как пережить удаление контейнера без потери данных"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Volumes в Docker: как пережить удаление контейнера без потери данных
+
+## Суть
+
+Volume — это хранилище данных, которым управляет Docker и которое живёт отдельно от файловой системы контейнера. Поэтому данные переживают перезапуск и удаление контейнера, и один volume можно подключить сразу к нескольким контейнерам.
+
+## Что ответить на собесе
+
+Слой записи контейнера эфемерен: удалили контейнер — всё, что он записал в свою файловую систему, исчезло. Для данных, которые должны жить дольше контейнера (базы, загрузки, логи), используют volume. Это управляемое Docker хранилище: его жизненный цикл не привязан к контейнеру, его можно переподключить к новому контейнеру после пересоздания и расшарить между несколькими. От bind mount volume отличается тем, что Docker сам отвечает за его расположение и управление (`docker volume create/ls/rm`), тогда как bind mount жёстко привязан к конкретному пути на хосте. Для продовых данных volume почти всегда предпочтительнее.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 220" role="img" aria-label="Volume живёт отдельно от контейнера и переживает его пересоздание" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <text x="30" y="24" fill="currentColor" fontSize="13">Контейнеры (эфемерны)</text>
+  <text x="350" y="24" fill="currentColor" fontSize="13">Хост</text>
+
+  <rect x="30" y="40" width="160" height="60" rx="6" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="110" y="66" textAnchor="middle" fill="currentColor">web (старый)</text>
+  <text x="110" y="84" textAnchor="middle" fill="currentColor" fillOpacity="0.6">docker rm web</text>
+
+  <rect x="30" y="130" width="160" height="60" rx="6" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="110" y="156" textAnchor="middle" fill="currentColor">web (новый)</text>
+  <text x="110" y="174" textAnchor="middle" fill="currentColor" fillOpacity="0.6">тот же -v</text>
+
+  <rect x="370" y="80" width="160" height="70" rx="6" stroke="#6366f1" strokeWidth="1.5" fill="#6366f1" fillOpacity="0.12" />
+  <text x="450" y="110" textAnchor="middle" fill="#6366f1">volume app_data</text>
+  <text x="450" y="130" textAnchor="middle" fill="currentColor" fillOpacity="0.7">/var/lib/docker</text>
+
+  <path d="M 190 70 L 370 100" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="4 4" strokeLinecap="round" />
+  <path d="M 190 160 L 370 130" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+  <text x="250" y="84" fill="currentColor" fillOpacity="0.6" fontSize="11">отключён</text>
+
+  <circle r="4" fill="#6366f1">
+    <animateMotion path="M 190 160 L 370 130" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+</svg>
+
+</figure>
+
+При создании volume Docker заводит для него хранилище в своей области на хосте (на Linux — обычно под `/var/lib/docker/volumes/`). Вы монтируете volume в контейнер, указывая путь внутри контейнера, и всё, что туда пишется, попадает в volume.
+
+```bash
+# Создаём именованный volume
+docker volume create app_data
+
+# Монтируем его в контейнер по пути /app/data
+docker run -d \
+  --name web \
+  -v app_data:/app/data \
+  my_image
+```
+
+Записанное контейнером в `/app/data` хранится в `app_data` и остаётся доступным после `docker rm web`. Запустив новый контейнер с тем же `-v app_data:/app/data`, вы получите те же данные.
+
+Три типа монтирования полезно различать:
+
+- **volume** (`-v name:/path`) — управляется Docker, рекомендуемый способ для постоянных данных.
+- **bind mount** (`-v /host/path:/path`) — пробрасывает конкретную директорию хоста; удобно для разработки.
+- **tmpfs** — хранится в памяти, не сохраняется на диск; для временных секретов и кэшей.
+
+## Подводные камни
+
+- **Без volume данные эфемерны.** Запись в обычный слой контейнера теряется при `docker rm`. Базу данных в контейнере без volume легко обнулить случайным пересозданием.
+- **Анонимные volume накапливаются.** `-v /path` без имени создаёт анонимный volume на каждый запуск; они копятся как мусор. Чистят их `docker volume prune`.
+- **Volume не удаляется вместе с контейнером по умолчанию.** Нужен флаг `docker rm -v` или явный `docker volume rm`; иначе данные остаются занимать место.
+- **Bind mount перекрывает содержимое.** Монтирование в непустую директорию контейнера скрывает то, что было в образе по этому пути.
+- **Volume не равно бэкап.** Это хранилище, а не резервная копия; стратегию бэкапа volume нужно настраивать отдельно.

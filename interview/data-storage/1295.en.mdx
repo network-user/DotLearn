@@ -1,0 +1,51 @@
+---
+id: 1295
+title: "How to check how many clients are currently connected to a DBMS"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to check how many clients are currently connected to a DBMS
+
+## In short
+
+The current number of connections is read from the DBMS's own system views or status counters. In PostgreSQL these are rows in `pg_stat_activity`; in MySQL it's the `Threads_connected` status variable.
+
+## How to answer in an interview
+
+Every DBMS exposes its own connection metrics, and I look them up through service views rather than guessing. In PostgreSQL I run `SELECT count(*) FROM pg_stat_activity;` — this view holds one row per active backend. In MySQL I check `SHOW STATUS LIKE 'Threads_connected';`. This matters so you don't hit `max_connections`: once the limit is exhausted, new clients are refused, so monitoring connections is an early warning about the pool, a connection leak, or a sudden traffic spike.
+
+## How it works
+
+In PostgreSQL, live connections are reflected by the `pg_stat_activity` view — one row per server process. A simple row count gives the number of connections:
+
+```sql
+SELECT count(*) FROM pg_stat_activity;
+```
+
+It's often more useful to slice by state or by database, to separate genuinely working sessions from idle ones:
+
+```sql
+SELECT state, count(*)
+FROM pg_stat_activity
+GROUP BY state;
+```
+
+In MySQL, the number of open connections lives in the `Threads_connected` status variable, exposed by `SHOW STATUS`:
+
+```sql
+SHOW STATUS LIKE 'Threads_connected';
+```
+
+`SHOW STATUS` returns many server counters, and the `LIKE` filter keeps only the one you need. Keep `max_connections` in mind alongside it — the ceiling above which new connections are rejected.
+
+## Pitfalls
+
+- **`pg_stat_activity` includes the monitoring session itself.** The query sees its own connection too, so the result is one higher than the count of "other" sessions.
+- **Don't confuse "connected" with "active".** Most rows in `pg_stat_activity` may be in the `idle` state — an open but idle pool. To diagnose load, filter by `state = 'active'`.
+- **`Threads_connected` vs. `Threads_running`.** The first is all open connections; the second is those actually doing work right now. Mixing them up is a common interview slip.
+- **You need privileges.** Without sufficient permissions you'll only see your own sessions, not the full server-wide picture.
+- **A connection leak masquerades as load growth.** A steadily growing number of idle sessions usually means a pool the application never closes, not real load.

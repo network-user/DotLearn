@@ -1,0 +1,71 @@
+---
+id: 1228
+title: "Чем делать асинхронные HTTP-запросы в Python: aiohttp против httpx"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем делать асинхронные HTTP-запросы в Python: aiohttp против httpx
+
+## Суть
+
+Два рабочих варианта для асинхронных HTTP-запросов — `aiohttp` и `httpx`. Первый давно стандарт для async-клиента и сервера, второй ближе по API к `requests` и умеет HTTP/2 плюс синхронный режим.
+
+## Что ответить на собесе
+
+Я назову две библиотеки. `aiohttp` — проверенное решение поверх `asyncio`: умеет и клиент, и веб-сервер, удобно держать одну `ClientSession` на множество запросов. `httpx` — более современная библиотека с API в стиле `requests`, поэтому миграция синхронного кода почти бесшовная; вдобавок есть поддержка HTTP/2 и оба режима — синхронный и асинхронный через `AsyncClient`. Выбор зависит от задачи: для чисто async-сервиса часто берут `aiohttp`, для совместимости с привычным `requests`-стилем и HTTP/2 — `httpx`.
+
+## Как это работает
+
+Обе библиотеки используют контекстный менеджер для сессии/клиента и `await` на самих запросах, чтобы не блокировать цикл событий, пока идёт сетевое ожидание.
+
+GET-запрос через `aiohttp`:
+
+```python
+import aiohttp
+import asyncio
+
+async def fetch(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            return await response.text()
+
+async def main():
+    data = await fetch("https://api.example.com/data")
+    print(len(data))
+
+asyncio.run(main())
+```
+
+Здесь `ClientSession` открывает пул соединений, `session.get` шлёт асинхронный GET, а `await response.text()` дожидается тела ответа.
+
+Тот же запрос через `httpx`:
+
+```python
+import httpx
+import asyncio
+
+async def fetch(url):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.text
+
+async def main():
+    data = await fetch("https://api.example.com/data")
+    print(len(data))
+
+asyncio.run(main())
+```
+
+Клиент создаётся через `httpx.AsyncClient`, запрос отправляет `await client.get(url)`. Заметна близость к синтаксису `requests`: тело доступно как `response.text` без отдельного `await`.
+
+## Подводные камни
+
+- **Сессию/клиент переиспользуют.** Создавать `ClientSession` или `AsyncClient` на каждый запрос дорого: теряется пул соединений. Открывайте один на пачку запросов.
+- **`requests` не подходит.** Синхронный `requests` блокирует цикл событий — в async-коде он сводит на нет весь смысл `asyncio`.
+- **Закрытие ресурсов.** Без `async with` (или явного закрытия клиента) соединения утекают; в `httpx` забытый `aclose()` оставляет открытый клиент.
+- **HTTP/2 только в httpx.** Если нужен HTTP/2, это аргумент за `httpx` (с включённым флагом); `aiohttp` его не поддерживает.
+- **Не путать клиенты и режимы.** В `httpx` синхронный `Client` и асинхронный `AsyncClient` — разные объекты; `await` зовут только на async-версии.

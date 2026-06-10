@@ -1,0 +1,74 @@
+---
+id: 958
+title: "Docker daemon: кто на самом деле запускает контейнеры?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Docker daemon: кто на самом деле запускает контейнеры?
+
+## Суть
+
+Docker daemon (`dockerd`) — это постоянный фоновый процесс на хосте, который и делает всю работу: создаёт, запускает и удаляет контейнеры, тянет образы и обслуживает Docker API. Команды из терминала только просят его об этом.
+
+## Что ответить на собесе
+
+Docker устроен по схеме клиент-сервер. Когда вы набираете `docker run`, бинарь `docker` — это всего лишь клиент: он не запускает контейнер сам, а отправляет HTTP-запрос демону `dockerd` через сокет. Демон — это сервер, который держит состояние, общается с реестрами образов, управляет сетями и томами и через нижележащий рантайм (containerd → runc) реально поднимает процессы контейнеров. Поэтому, если демон остановлен, ни одна команда `docker` не сработает, хотя сам клиент при этом установлен и доступен.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 560 180" fontFamily="sans-serif" fontSize="11" role="img">
+<text x="280" y="16" textAnchor="middle" fill="currentColor">Путь команды docker run</text>
+<rect x="20" y="60" width="110" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="75" y="82" textAnchor="middle" fill="currentColor">docker CLI</text>
+<text x="75" y="98" textAnchor="middle" fill="currentColor" fillOpacity="0.7">клиент</text>
+<rect x="200" y="60" width="130" height="50" stroke="currentColor" fill="currentColor" fillOpacity="0.05" rx="4" />
+<text x="265" y="82" textAnchor="middle" fill="currentColor">dockerd</text>
+<text x="265" y="98" textAnchor="middle" fill="currentColor" fillOpacity="0.7">демон / сервер</text>
+<rect x="400" y="60" width="140" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="470" y="82" textAnchor="middle" fill="currentColor">containerd → runc</text>
+<text x="470" y="98" textAnchor="middle" fill="currentColor" fillOpacity="0.7">рантайм</text>
+<line x1="130" y1="85" x2="200" y2="85" stroke="currentColor" strokeWidth="1.2" />
+<line x1="330" y1="85" x2="400" y2="85" stroke="currentColor" strokeWidth="1.2" />
+<text x="165" y="76" textAnchor="middle" fill="currentColor" fillOpacity="0.7">API/сокет</text>
+<text x="365" y="76" textAnchor="middle" fill="currentColor" fillOpacity="0.7">запуск</text>
+<circle r="5" fill="#6366f1">
+<animateMotion path="M 130 85 L 200 85" dur="2.4s" repeatCount="indefinite" />
+</circle>
+<circle r="5" fill="#6366f1">
+<animateMotion path="M 330 85 L 400 85" dur="2.4s" begin="1.2s" repeatCount="indefinite" />
+</circle>
+<text x="280" y="150" textAnchor="middle" fill="currentColor" fillOpacity="0.7">клиент только просит — работу делает демон</text>
+</svg>
+</figure>
+
+Картинку проще держать по слоям:
+
+- **Docker Client** — CLI (`docker`). Переводит вашу команду в вызов Docker API.
+- **Docker Daemon (`dockerd`)** — сервер. Слушает сокет (`/var/run/docker.sock` или TCP), исполняет запросы, ведёт жизненный цикл контейнеров, кэширует образы.
+- **Образы** — шаблоны только для чтения, из которых рождаются контейнеры.
+- **Контейнеры** — запущенные изолированные экземпляры образов.
+
+Проследим путь одной команды:
+
+```bash
+docker run hello-world
+```
+
+1. Клиент формирует запрос «создать и запустить контейнер из образа `hello-world`» и шлёт его демону через сокет.
+2. Демон проверяет, есть ли образ локально. Нет — тянет его из реестра (Docker Hub) и кэширует.
+3. Демон через containerd/runc создаёт контейнер, настраивает namespaces, cgroups, сеть и запускает процесс.
+4. Вывод контейнера демон возвращает клиенту, а тот печатает его в терминал.
+
+Ключевая мысль: клиент и демон — разные процессы и могут жить на разных машинах. Указав `DOCKER_HOST` на удалённый TCP-эндпоинт, локальный CLI управляет демоном на другом сервере.
+
+## Подводные камни
+
+- **`docker` ≠ Docker.** CLI без работающего демона бесполезен; ошибка «Cannot connect to the Docker daemon» означает, что не запущен именно `dockerd`, а не отсутствует клиент.
+- **Сокет демона — это root-доступ.** Кто может писать в `/var/run/docker.sock`, фактически имеет root на хосте. Добавлять пользователя в группу `docker` нужно осознанно.
+- **Демон держит состояние.** Образы, тома, сети живут в демоне. Перезапуск `dockerd` не стирает их, но останавливает все управляемые контейнеры (если не настроен live-restore).
+- **Демон — единая точка.** Падение `dockerd` затрагивает все контейнеры сразу; в проде это закрывают оркестратором и политиками рестарта.

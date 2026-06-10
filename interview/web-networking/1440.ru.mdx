@@ -1,0 +1,83 @@
+---
+id: 1440
+title: "WebSocket: постоянный двусторонний канал вместо вечного опроса сервера"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# WebSocket: постоянный двусторонний канал вместо вечного опроса сервера
+
+## Суть
+
+WebSocket держит один постоянный полнодуплексный канал поверх TCP, по которому клиент и сервер шлют данные в обе стороны без повторных рукопожатий. Это убирает накладные расходы HTTP-опроса и даёт реальное время: чаты, игры, биржевые котировки.
+
+## Что ответить на собесе
+
+WebSocket — это протокол двунаправленной связи поверх одного TCP-соединения. Соединение начинается как обычный HTTP-запрос с заголовком `Upgrade: websocket`, сервер отвечает `101 Switching Protocols`, после чего канал переключается в дуплексный режим и остаётся открытым. В отличие от модели «запрос — ответ» HTTP, сервер может слать данные клиенту сам, не дожидаясь запроса. Поэтому WebSocket выбирают там, где нужен мгновенный двусторонний обмен, а классический polling неэффективен.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 640 200" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="80" y="28" textAnchor="middle" fontSize="13" fill="currentColor">Клиент</text>
+  <text x="560" y="28" textAnchor="middle" fontSize="13" fill="currentColor">Сервер</text>
+  <line x1="80" y1="36" x2="80" y2="185" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="560" y1="36" x2="560" y2="185" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="80" y1="58" x2="560" y2="58" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="52" textAnchor="middle" fontSize="11" fill="currentColor">HTTP Upgrade: websocket →</text>
+  <line x1="560" y1="84" x2="80" y2="84" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="78" textAnchor="middle" fontSize="11" fill="currentColor">← 101 Switching Protocols</text>
+  <text x="320" y="106" textAnchor="middle" fontSize="11" fill="#6366f1">канал открыт (full-duplex)</text>
+  <line x1="80" y1="130" x2="560" y2="130" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="320" y="124" textAnchor="middle" fontSize="11" fill="currentColor">фрейм →</text>
+  <line x1="560" y1="158" x2="80" y2="158" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="320" y="152" textAnchor="middle" fontSize="11" fill="currentColor">← фрейм (сервер сам)</text>
+  <circle r="5" fill="#6366f1">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M80,130 L560,130" />
+  </circle>
+</svg>
+
+</figure>
+
+Жизненный цикл соединения:
+
+1. **Handshake (рукопожатие)** — клиент шлёт HTTP/1.1-запрос с заголовками `Upgrade: websocket` и `Connection: Upgrade`. Сервер подтверждает переход ответом `101 Switching Protocols`.
+2. **Дуплексный обмен** — после апгрейда обе стороны передают сообщения в виде фреймов в любой момент; сервер не ждёт запроса, чтобы отправить данные.
+3. **Постоянство** — канал живёт, пока одна из сторон его не закроет, поэтому переустанавливать соединение на каждое сообщение не нужно.
+
+Клиентский код на JavaScript:
+
+```javascript
+const socket = new WebSocket('wss://example.com/socket');
+
+socket.onopen = (event) => {
+  console.log('Соединение установлено');
+  socket.send('Привет, сервер!');
+};
+
+socket.onmessage = (event) => {
+  console.log('Сообщение от сервера:', event.data);
+};
+
+socket.onclose = (event) => {
+  console.log('Соединение закрыто, код:', event.code);
+};
+
+socket.onerror = (error) => {
+  console.log('Ошибка WebSocket:', error);
+};
+```
+
+Где это уместно: чаты и мессенджеры, онлайн-игры, биржевые и торговые платформы, IoT — везде, где данные обновляются «сию секунду» и опрос по таймеру был бы расточителен.
+
+## Подводные камни
+
+- **`ws://` против `wss://`** — незашифрованный `ws://` шлёт данные открытым текстом; в продакшене используют `wss://` (TLS), иначе трафик читается посредником.
+- **Нет автопереподключения** — браузерный `WebSocket` не восстанавливает разрыв сам; логику reconnect с backoff пишут руками.
+- **Прокси и балансировщики** — не все промежуточные узлы пропускают долгоживущие соединения; нужны sticky-сессии и корректная настройка таймаутов.
+- **Heartbeat обязателен** — без ping/pong «мёртвое» соединение можно не заметить, пока не попытаешься отправить сообщение.
+- **WebSocket не заменяет HTTP** — для разовых запросов «запрос — ответ» он избыточен; держать тысячи открытых каналов дороже по ресурсам, чем обслужить короткий HTTP-запрос.

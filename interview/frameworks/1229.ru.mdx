@@ -1,0 +1,77 @@
+---
+id: 1229
+title: "select_related или prefetch_related: какой инструмент чинит N+1 и когда?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# select_related или prefetch_related: какой инструмент чинит N+1 и когда?
+
+## Суть
+
+Оба метода Django ORM убирают лишние походы в базу при выборке связанных объектов, но делают это по-разному. `select_related` собирает данные одним SQL-запросом через JOIN и хорош там, где на объект приходится максимум одна связанная запись — связи "многие-к-одному" (`ForeignKey`) и "один-к-одному" (`OneToOneField`). `prefetch_related` выполняет отдельный запрос на каждую связь и сшивает результаты уже в Python — это вариант для "один-ко-многим" (обратный `ForeignKey`) и "многие-ко-многим" (`ManyToManyField`).
+
+## Что ответить на собесе
+
+`select_related` — это жадная загрузка через JOIN: связанные объекты приезжают в том же запросе, что и основные. Применяется к связям, где на строку приходится одна связанная запись. `prefetch_related` делает дополнительный запрос на связанную таблицу и соединяет данные на стороне Python; применяется к множественным связям, где JOIN раздул бы выборку дубликатами. Главная цель обоих — устранить проблему N+1: когда вместо одного запроса ORM делает по запросу на каждую итерацию цикла.
+
+## Как это работает
+
+Возьмём модели `Author` и `Book`, где книга ссылается на автора. Если просто перебрать книги и у каждой обратиться к `book.author`, ORM сходит в базу на каждой итерации цикла. Это и есть N+1: один запрос на список книг плюс по запросу на каждого автора. На сотне книг — сто лишних запросов.
+
+`select_related` решает это через JOIN — связанные строки приходят сразу:
+
+```python
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    author = models.ForeignKey(Author, on_delete=models.CASCADE)
+
+books = Book.objects.select_related('author').all()
+for book in books:
+    print(book.title, book.author.name)
+```
+
+`select_related('author')` соединяет таблицы `Book` и `Author`, и автор каждой книги уже лежит в памяти — обращение `book.author.name` не идёт в базу.
+
+`prefetch_related` устроен иначе: Django делает отдельный запрос на связанную таблицу и связывает записи в Python. Это нужно для множественных связей, где JOIN дал бы дубликаты строк:
+
+```python
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    authors = models.ManyToManyField(Author)
+
+books = Book.objects.prefetch_related('authors').all()
+for book in books:
+    print(book.title, [author.name for author in book.authors.all()])
+```
+
+Здесь `prefetch_related('authors')` отдельным запросом достаёт всех авторов и раскладывает их по книгам в Python, поэтому `book.authors.all()` внутри цикла не делает новых запросов к базе.
+
+<svg viewBox="0 0 320 80" width="320" height="80" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="8" y="28" width="90" height="24" rx="4" />
+  <text x="53" y="44" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">select_related</text>
+  <line x1="98" y1="40" x2="150" y2="40" />
+  <rect x="150" y="28" width="70" height="24" rx="4" />
+  <text x="185" y="44" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">1 SQL JOIN</text>
+  <rect x="8" y="4" width="90" height="0" />
+  <line x1="220" y1="40" x2="270" y2="40" />
+  <rect x="270" y="28" width="42" height="24" rx="4" />
+  <text x="291" y="44" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">DB</text>
+</svg>
+
+## Подводные камни
+
+- `select_related` на множественной связи (`ManyToManyField` или обратном `ForeignKey`) работать не будет — Django его туда не пустит. Для множественных связей только `prefetch_related`.
+- JOIN в `select_related` дублирует данные основной таблицы при глубоких связях, поэтому для множественных связей он раздул бы выборку — это и есть причина существования `prefetch_related`.
+- Аргументы — это имена полей-связей в виде строк, а не сами модели: `select_related('author')`, а не `select_related(Author)`. Можно идти вглубь через `__`: `select_related('author__profile')`.
+- `prefetch_related` всегда добавляет минимум один отдельный запрос на связь; экономия идёт не от числа запросов, а от устранения N+1 внутри цикла.
+- Тонкую настройку префетча (фильтрация, своя сортировка связанных) делают через `Prefetch(...)`, а не голой строкой.

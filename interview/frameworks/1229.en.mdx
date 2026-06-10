@@ -1,0 +1,77 @@
+---
+id: 1229
+title: "select_related or prefetch_related: which tool fixes N+1, and when?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# select_related or prefetch_related: which tool fixes N+1, and when?
+
+## In short
+
+Both Django ORM methods remove extra trips to the database when fetching related objects, but they do it differently. `select_related` gathers the data in a single SQL query via a JOIN and is good where each object has at most one related record — "many-to-one" (`ForeignKey`) and "one-to-one" (`OneToOneField`) relations. `prefetch_related` runs a separate query for each relation and stitches the results together in Python — this is the option for "one-to-many" (reverse `ForeignKey`) and "many-to-many" (`ManyToManyField`).
+
+## How to answer in an interview
+
+`select_related` is eager loading via a JOIN: the related objects arrive in the same query as the main ones. It applies to relations where there's one related record per row. `prefetch_related` runs an additional query against the related table and joins the data on the Python side; it applies to multiple relations, where a JOIN would bloat the result with duplicates. The main goal of both is to eliminate the N+1 problem: when, instead of one query, the ORM makes a query on every iteration of a loop.
+
+## How it works
+
+Take the `Author` and `Book` models, where a book references an author. If you simply iterate over books and access `book.author` for each one, the ORM goes to the database on every iteration. That's N+1: one query for the list of books plus a query per author. For a hundred books that's a hundred extra queries.
+
+`select_related` solves this with a JOIN — the related rows arrive right away:
+
+```python
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    author = models.ForeignKey(Author, on_delete=models.CASCADE)
+
+books = Book.objects.select_related('author').all()
+for book in books:
+    print(book.title, book.author.name)
+```
+
+`select_related('author')` joins the `Book` and `Author` tables, and each book's author is already in memory — accessing `book.author.name` doesn't hit the database.
+
+`prefetch_related` works differently: Django runs a separate query against the related table and links the records in Python. This is needed for multiple relations, where a JOIN would produce duplicate rows:
+
+```python
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    authors = models.ManyToManyField(Author)
+
+books = Book.objects.prefetch_related('authors').all()
+for book in books:
+    print(book.title, [author.name for author in book.authors.all()])
+```
+
+Here `prefetch_related('authors')` fetches all authors in a separate query and distributes them across the books in Python, so `book.authors.all()` inside the loop makes no new queries to the database.
+
+<svg viewBox="0 0 320 80" width="320" height="80" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="8" y="28" width="90" height="24" rx="4" />
+  <text x="53" y="44" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">select_related</text>
+  <line x1="98" y1="40" x2="150" y2="40" />
+  <rect x="150" y="28" width="70" height="24" rx="4" />
+  <text x="185" y="44" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">1 SQL JOIN</text>
+  <rect x="8" y="4" width="90" height="0" />
+  <line x1="220" y1="40" x2="270" y2="40" />
+  <rect x="270" y="28" width="42" height="24" rx="4" />
+  <text x="291" y="44" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">DB</text>
+</svg>
+
+## Pitfalls
+
+- `select_related` won't work on a multiple relation (`ManyToManyField` or reverse `ForeignKey`) — Django won't allow it there. For multiple relations, only `prefetch_related`.
+- A JOIN in `select_related` duplicates main-table data for deep relations, which is why for multiple relations it would bloat the result — and that's exactly why `prefetch_related` exists.
+- The arguments are the names of relation fields as strings, not the models themselves: `select_related('author')`, not `select_related(Author)`. You can go deeper with `__`: `select_related('author__profile')`.
+- `prefetch_related` always adds at least one separate query per relation; the savings come not from the number of queries but from eliminating N+1 inside the loop.
+- Fine-tuning a prefetch (filtering, custom ordering of the related objects) is done through `Prefetch(...)`, not a bare string.

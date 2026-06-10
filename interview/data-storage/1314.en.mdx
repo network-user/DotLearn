@@ -1,0 +1,72 @@
+---
+id: 1314
+title: "How to implement a one-to-one relationship between tables?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to implement a one-to-one relationship between tables?
+
+## In short
+
+A 1:1 relationship rests on the uniqueness of the reference. At the SQL level this is a foreign key with a `UNIQUE` constraint; at the Django ORM level it is the ready-made `OneToOneField`, which applies that uniqueness itself.
+
+## How to answer in an interview
+
+"A one-to-one relationship means that each row in table A corresponds to at most one row in table B. In plain SQL I put a foreign key to the parent in the subordinate table and add `UNIQUE` to it - it is precisely the uniqueness that turns an ordinary foreign key into a 1:1. In Django there is `OneToOneField` for this; under the hood it does exactly the same thing: an FK plus a unique index. I use this approach when I want to move rarely used or bulky fields into a separate table without breaking the logical link to the main record."
+
+## How it works
+
+Take a user and their profile: each user has exactly one profile, and each profile belongs to one user.
+
+```sql
+CREATE TABLE app_user (
+    id INT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE profile (
+    id INT PRIMARY KEY,
+    user_id INT UNIQUE,
+    bio TEXT,
+    FOREIGN KEY (user_id) REFERENCES app_user(id)
+);
+```
+
+The key column here is `user_id`: it references `app_user(id)`, and the `UNIQUE` constraint forbids two different profiles from pointing to the same user. Without `UNIQUE` this would be an ordinary "one-to-many".
+
+In Django the same contract is expressed in a single line:
+
+```python
+from django.db import models
+
+
+class User(models.Model):
+    username = models.CharField(max_length=50)
+
+
+class Profile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    bio = models.TextField()
+```
+
+`OneToOneField` generates a foreign key with a unique index, and `on_delete=models.CASCADE` defines the behavior when the parent is deleted: the profile goes away together with the user.
+
+<svg viewBox="0 0 220 60" width="220" height="60" role="img" aria-label="One-to-one relationship diagram">
+  <rect x="10" y="18" width="70" height="24" rx="4" fill="none" stroke="currentColor" />
+  <rect x="140" y="18" width="70" height="24" rx="4" fill="none" stroke="currentColor" />
+  <line x1="80" y1="30" x2="140" y2="30" stroke="currentColor" />
+  <text x="45" y="34" fontSize="10" textAnchor="middle" fill="currentColor">user</text>
+  <text x="175" y="34" fontSize="10" textAnchor="middle" fill="currentColor">profile</text>
+  <text x="110" y="22" fontSize="9" textAnchor="middle" fill="currentColor">1 — 1</text>
+</svg>
+
+## Pitfalls
+
+- Forget `UNIQUE` on the foreign key and the schema silently turns into "one-to-many": the database will allow several profiles for one user.
+- Decide which side holds the reference. Usually the FK goes on the "dependent" table (the profile references the user), not the other way around.
+- `on_delete` in Django must be chosen deliberately: `CASCADE` deletes the related record, `SET_NULL` requires `null=True`, `PROTECT` forbids deleting the parent while a relationship exists.
+- Not every 1:1 is worth splitting into a separate table: if the fields are needed almost always, the extra JOIN will only slow down queries.

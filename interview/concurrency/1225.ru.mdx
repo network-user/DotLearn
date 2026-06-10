@@ -1,0 +1,60 @@
+---
+id: 1225
+title: "Что на самом деле делает asyncio.run(): три шага под капотом"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что на самом деле делает asyncio.run(): три шага под капотом
+
+## Суть
+
+`asyncio.run(coro)` - точка входа в асинхронную программу. Она создаёт новый цикл событий, прогоняет в нём переданную корутину до конца и гарантированно закрывает цикл, прибирая за собой ресурсы.
+
+## Что ответить на собесе
+
+«`asyncio.run()` появилась в 3.7 как удобная обёртка над ручной работой с циклом. Внутри она примерно делает три веща: поднимает свежий event loop через `new_event_loop()`, выполняет корутину до завершения (`run_until_complete`), а в `finally` отменяет оставшиеся задачи, доводит до конца асинхронные генераторы и закрывает цикл. Важная деталь: она требует, чтобы активного цикла ещё не было, поэтому вызывать её вложенно из уже работающего цикла нельзя.»
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 120" fill="none" stroke="currentColor" fontFamily="sans-serif">
+<rect x="20" y="35" width="150" height="50" rx="8" strokeWidth="2" fill="currentColor" fillOpacity="0.06" />
+<text x="95" y="64" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Создать цикл</text>
+<rect x="225" y="35" width="150" height="50" rx="8" strokeWidth="2" fill="currentColor" fillOpacity="0.06" />
+<text x="300" y="64" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Прогнать корутину</text>
+<rect x="430" y="35" width="150" height="50" rx="8" strokeWidth="2" fill="currentColor" fillOpacity="0.06" />
+<text x="505" y="64" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Закрыть цикл</text>
+<path d="M170 60 L225 60" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+<path d="M375 60 L430 60" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+<path d="M218 55 L225 60 L218 65" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+<path d="M423 55 L430 60 L423 65" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+</svg>
+</figure>
+
+1. **Создание цикла.** Поднимается новый event loop - механизм, который следит, какие задачи готовы исполняться, и переключается между ними на точках `await`.
+2. **Выполнение корутины.** В этом цикле запускается переданная корутина и работает до полного завершения.
+3. **Закрытие и уборка.** После завершения цикл отменяет оставшиеся задачи, завершает асинхронные генераторы и закрывается - чтобы не текли ресурсы.
+
+```python
+import asyncio
+
+async def main():
+    print("Hello")
+    await asyncio.sleep(1)
+    print("World")
+
+asyncio.run(main())
+```
+
+Здесь `asyncio.run(main())` сам поднимает цикл, печатает "Hello", пауза на секунду, затем "World", после чего закрывает цикл.
+
+## Подводные камни
+
+- **Нельзя вызывать вложенно.** Если цикл уже работает (например, внутри другой корутины или в Jupyter), `asyncio.run()` бросит `RuntimeError: asyncio.run() cannot be called from a running event loop`. Внутри корутины используйте `await`, а не повторный `run`.
+- **Каждый вызов - новый цикл.** Два подряд `asyncio.run()` создают и закрывают два разных цикла; состояние между ними не переносится.
+- **Аргумент - именно корутина.** Передавайте `main()` (вызов, дающий объект корутины), а не саму функцию `main`.
+- **Только верхний уровень.** Это точка входа для скрипта/программы, а не способ «запустить корутину откуда угодно». Для подзадач внутри уже работающего цикла - `create_task` или `gather`.

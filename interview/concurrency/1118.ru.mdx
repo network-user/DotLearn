@@ -1,0 +1,99 @@
+---
+id: 1118
+title: "asyncio, потоки и процессы: какой подход под какую нагрузку?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# asyncio, потоки и процессы: какой подход под какую нагрузку?
+
+## Суть
+
+Три способа «делать несколько дел сразу» решают разные задачи: `asyncio` - кооперативная конкурентность на одном потоке для I/O-bound нагрузки; потоки - несколько линий исполнения в общей памяти, полезны на блокирующем I/O; процессы - независимые интерпретаторы по разным ядрам для CPU-bound счёта.
+
+## Что ответить на собесе
+
+Выбор диктует тип нагрузки. Если задача упирается в ожидание сети или диска (I/O-bound) - берём `asyncio`: один поток, минимум накладных расходов, тысячи одновременных соединений. Если нужно совместить блокирующий I/O или работать со старыми синхронными библиотеками - подойдут потоки `threading`, но из-за GIL они не ускорят чистый Python-счёт. Если задача CPU-bound (математика, обработка данных) - нужен `multiprocessing`: отдельные процессы обходят GIL и реально считают на нескольких ядрах ценой более дорогого старта и обмена данными через сериализацию.
+
+## Как это работает
+
+`asyncio` переключает корутины на `await`, не создавая новых потоков:
+
+```python
+import asyncio
+
+async def fetch_data():
+    print("Start fetching")
+    await asyncio.sleep(2)
+    print("Done fetching")
+    return {"data": 123}
+
+async def main():
+    data = await fetch_data()
+    print(data)
+
+asyncio.run(main())
+```
+
+Потоки живут в общей памяти одного процесса и делят его ресурсы - удобно, но требует синхронизации при общем состоянии:
+
+```python
+import threading
+
+def print_numbers():
+    for i in range(5):
+        print(i)
+
+def print_letters():
+    for letter in "abcde":
+        print(letter)
+
+t1 = threading.Thread(target=print_numbers)
+t2 = threading.Thread(target=print_letters)
+t1.start()
+t2.start()
+t1.join()
+t2.join()
+```
+
+Процессы изолированы: своя память, свой интерпретатор, обмен только через явные каналы - зато настоящий параллелизм по ядрам:
+
+```python
+from multiprocessing import Process
+
+def print_numbers():
+    for i in range(5):
+        print(i)
+
+def print_letters():
+    for letter in "abcde":
+        print(letter)
+
+if __name__ == "__main__":
+    p1 = Process(target=print_numbers)
+    p2 = Process(target=print_letters)
+    p1.start()
+    p2.start()
+    p1.join()
+    p2.join()
+```
+
+<svg viewBox="0 0 320 80" width="320" height="80" fill="none" stroke="currentColor" strokeWidth="2" role="img" aria-label="Сравнение asyncio, потоков и процессов">
+  <rect x="10" y="20" width="90" height="40" rx="6" />
+  <text x="55" y="44" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">asyncio: I/O</text>
+  <rect x="115" y="20" width="90" height="40" rx="6" />
+  <text x="160" y="44" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">threads: I/O</text>
+  <rect x="220" y="20" width="90" height="40" rx="6" />
+  <text x="265" y="44" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">procs: CPU</text>
+</svg>
+
+## Подводные камни
+
+- Главная развилка - I/O-bound против CPU-bound: на чистый счёт `asyncio` и `threading` бесполезны, помогает только `multiprocessing`.
+- GIL делает потоки бессмысленными для ускорения Python-вычислений, но они всё ещё полезны для блокирующего I/O и интеграции с синхронным кодом.
+- Общая память потоков - источник гонок: к разделяемому состоянию нужны блокировки.
+- Процессы дороже потоков: запуск, отдельная память и сериализация аргументов/результатов через `pickle` создают накладные расходы.
+- `asyncio` не терпит блокирующих вызовов в корутинах: один синхронный `time.sleep` или тяжёлый счёт останавливает весь loop - такое выносят в executor.

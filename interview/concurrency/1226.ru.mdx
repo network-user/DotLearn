@@ -1,0 +1,70 @@
+---
+id: 1226
+title: "Отмена Task в asyncio: как корректно остановить запущенную корутину"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Отмена Task в asyncio: как корректно остановить запущенную корутину
+
+## Суть
+
+Задачу в asyncio останавливают вызовом `task.cancel()`. Это не убивает её мгновенно: в ближайшей точке ожидания внутри корутины поднимается `asyncio.CancelledError`, который можно перехватить для очистки ресурсов.
+
+## Что ответить на собесе
+
+Чтобы прервать выполнение, я вызываю у объекта `Task` метод `cancel()`. Он лишь помечает задачу как отменяемую: реальная отмена срабатывает, когда корутина в следующий раз дойдёт до `await`. В этой точке внутри неё возбуждается `asyncio.CancelledError`. Его перехватывают через `try/except`, чтобы освободить ресурсы, и обычно пробрасывают дальше через `raise`, иначе отмена не доведётся до конца. После `cancel()` стоит сделать `await task`, чтобы дождаться фактического завершения.
+
+## Как это работает
+
+`Task` — это обёртка над корутиной, которую планирует цикл событий. Метод `cancel()` лишь ставит запрос на отмену; цикл доставит `CancelledError` в момент, когда задача отдаёт управление на очередном `await`. Если корутина застряла в синхронном блокирующем коде без точек ожидания, отмена не произойдёт, пока она не вернётся в цикл.
+
+<svg viewBox="0 0 320 80" width="320" height="80" role="img" aria-label="Поток отмены задачи" fill="none" stroke="currentColor" strokeWidth="2">
+  <rect x="10" y="25" width="80" height="30" rx="4" />
+  <text x="50" y="44" fontSize="11" fill="currentColor" stroke="none" textAnchor="middle">create_task</text>
+  <line x1="90" y1="40" x2="130" y2="40" />
+  <rect x="130" y="25" width="70" height="30" rx="4" />
+  <text x="165" y="44" fontSize="11" fill="currentColor" stroke="none" textAnchor="middle">cancel()</text>
+  <line x1="200" y1="40" x2="240" y2="40" />
+  <rect x="240" y="20" width="70" height="40" rx="4" />
+  <text x="275" y="38" fontSize="10" fill="currentColor" stroke="none" textAnchor="middle">Cancelled</text>
+  <text x="275" y="51" fontSize="10" fill="currentColor" stroke="none" textAnchor="middle">Error</text>
+</svg>
+
+Минимальный пример полного цикла отмены:
+
+```python
+import asyncio
+
+async def worker():
+    print("Task started")
+    try:
+        await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        print("Cleaning up")
+        raise
+    print("Task finished")
+
+async def main():
+    task = asyncio.create_task(worker())
+    await asyncio.sleep(1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("Main: task was cancelled")
+
+asyncio.run(main())
+```
+
+Здесь корутину оборачиваем в задачу, даём ей секунду поработать, затем шлём `cancel()`. Исключение всплывает на `await asyncio.sleep(10)`, обрабатывается внутри `worker`, пробрасывается дальше и долетает до `await task` в `main`.
+
+## Подводные камни
+
+- **`cancel()` не действует мгновенно.** Пока корутина не дойдёт до `await`, отмена откладывается. Долгий синхронный участок проигнорирует запрос.
+- **Проглоченный `CancelledError`.** Если перехватить исключение и не сделать `raise`, задача завершится "нормально", и `task.cancelled()` вернёт `False` — отмена фактически провалится.
+- **Очистка в `finally`.** Освобождение ресурсов лучше класть в `finally` или ловить `CancelledError` явно, иначе незакрытые соединения и файлы утекут.
+- **`await task` обязателен.** Без ожидания после `cancel()` вы не узнаете, успела ли задача завершиться, и можете оставить висящие корутины.

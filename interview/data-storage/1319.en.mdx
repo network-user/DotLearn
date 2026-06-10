@@ -1,0 +1,51 @@
+---
+id: 1319
+title: "How to find and speed up slow SQL queries: profiling in practice"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to find and speed up slow SQL queries: profiling in practice
+
+## In short
+
+Query profiling is the analysis of how the DBMS executes a query and where the time goes. The main tool is `EXPLAIN` (and `EXPLAIN ANALYZE`): it shows the execution plan, which reveals the bottlenecks and makes clear what to optimize.
+
+## How to answer in an interview
+
+Profiling is needed to move from the guess "the query is slow" to facts. I look at the execution plan via `EXPLAIN`, and the real timings and number of processed rows via `EXPLAIN ANALYZE`. The plan shows the main things: whether the database uses an index or does a full table scan (seq scan), how the tables are joined, whether the planner underestimated the data volume. Then I act on the facts: add a missing index, rewrite the query so the condition becomes sargable, or change the join order. After each change I rerun `EXPLAIN ANALYZE` and compare the cost and the actual time.
+
+## How it works
+
+The profiling loop fits into a few steps: gather statistics, read the plan, find the bottleneck, optimize, recheck.
+
+The basic plan is shown by `EXPLAIN`:
+
+```sql
+EXPLAIN SELECT * FROM orders WHERE customer_id = 123;
+```
+
+It outputs the tree of operations and the estimated cost, but does not run the query. To see the real numbers, you add `ANALYZE`:
+
+```sql
+EXPLAIN ANALYZE SELECT * FROM orders WHERE order_date > '2023-01-01';
+```
+
+Now the plan has the actual time and row count for each node. If a `Seq Scan` is used on a large table by `order_date`, that is the bottleneck. We cure it with an index:
+
+```sql
+CREATE INDEX idx_order_date ON orders (order_date);
+```
+
+After creating the index, the same `EXPLAIN ANALYZE` will usually show an `Index Scan` or `Bitmap Index Scan` instead of a full scan, and the actual time will drop noticeably.
+
+## Pitfalls
+
+- `EXPLAIN` without `ANALYZE` gives only the planner's estimates, not real timings. The row estimate can differ greatly from the fact - always compare estimated and actual.
+- An index is not used if the column is wrapped in a function or a type cast: `WHERE date(order_date) = ...` or `WHERE customer_id = '123'` (string against number) kill sargability.
+- `SELECT *` defeats covering indexes and pulls extra data. On hot queries list only the columns you need.
+- Indexes are not free: each one slows down inserts and updates and takes up space. Adding them "just in case" is harmful.
+- The same query plans differently on an empty dev database and on production with millions of rows. Profile on data close to production, and do not forget about up-to-date statistics (`ANALYZE`/autovacuum).

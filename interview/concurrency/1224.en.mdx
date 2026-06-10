@@ -1,0 +1,64 @@
+---
+id: 1224
+title: "Coroutine vs future: who drives execution and who holds the result?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Coroutine vs future: who drives execution and who holds the result?
+
+## In short
+
+A coroutine is the thing that runs and can pause on `await`, describing the flow of asynchronous logic. A future is a container object for a result that will appear later. Roughly: a coroutine "does", a future "holds the outcome".
+
+## How to answer in an interview
+
+"A coroutine is created via `async def`, and its execution can be paused with the `await` operator. A future is a low-level promise object for a result: it has pending/finished/cancelled states, and someone from outside puts a result into it via `set_result()`. The event loop does not schedule a coroutine by itself - it is wrapped in a Task (a subclass of Future), and it is the Task that runs the coroutine step by step. So a Task is the bridge: a future object that manages the coroutine's life."
+
+## How it works
+
+Calling an `async def` function does not start the coroutine; it returns a coroutine object. It is driven forward either by `await` or by the event loop through a Task.
+
+```python
+import asyncio
+
+async def fetch_data():
+    await asyncio.sleep(1)
+    return "Data"
+
+async def main():
+    result = await fetch_data()  # await the coroutine
+    print(result)
+
+asyncio.run(main())
+```
+
+A future is an empty "box" for a result that is placed manually or by an asynchronous operation:
+
+```python
+import asyncio
+
+async def producer(fut):
+    await asyncio.sleep(1)
+    fut.set_result("ready")
+
+async def main():
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    asyncio.create_task(producer(fut))
+    print(await fut)  # wait until a result is put into the future
+
+asyncio.run(main())
+```
+
+The key link: `asyncio.create_task(coro)` wraps a coroutine into a Task, and a Task is a Future. That is why `await` works the same for both coroutines and futures - both are awaitable.
+
+## Pitfalls
+
+- **Calling a coroutine starts nothing.** `fetch_data()` only creates a coroutine object; without `await` or a Task it never runs (and Python will warn "coroutine was never awaited").
+- **Futures are usually not created by hand.** In application code `loop.create_future()` is rarely needed - coroutines and `create_task` are usually enough. A manual future is appropriate when bridging with callbacks or a low-level API.
+- **Task != bare coroutine.** Only wrapping into a Task (or `gather`) hands the coroutine to the loop for concurrent execution; merely having a coroutine object is not enough.
+- **`concurrent.futures.Future` is a different thing.** Do not confuse `asyncio.Future` with the future from `concurrent.futures`: they have different APIs and are not directly interchangeable.

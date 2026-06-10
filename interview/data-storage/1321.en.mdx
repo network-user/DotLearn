@@ -1,0 +1,73 @@
+---
+id: 1321
+title: "Nested transactions and SAVEPOINT: partial rollback inside a single transaction"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Nested transactions and SAVEPOINT: partial rollback inside a single transaction
+
+## In short
+
+A nested transaction is a logical block of operations inside another transaction that can be rolled back on its own without undoing the whole outer one. In relational DBMSs it is implemented not by a separate `BEGIN`, but by save points - `SAVEPOINT`.
+
+## How to answer in an interview
+
+Most relational DBMSs have no true "transactions within a transaction" - they have `SAVEPOINT`. You set a save point inside an open transaction, and if something goes wrong afterward, you run `ROLLBACK TO savepoint`: only the changes made after that point are rolled back, while the work already done in the outer transaction is preserved. This gives modularity and flexible error handling: you break a complex operation into parts, and a failure in one part does not bring down the whole transaction. The final `COMMIT` commits everything at once. Important: until the outer `COMMIT` is done, nothing is committed - a savepoint lives only inside the current transaction.
+
+## How it works
+
+The model is hierarchical: an outer transaction with one or more save points inside it. Each `SAVEPOINT` can be rolled back independently with `ROLLBACK TO`, or released with `RELEASE SAVEPOINT`.
+
+<figure>
+<svg viewBox="0 0 560 160" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+<line x1="40" y1="60" x2="520" y2="60" strokeLinecap="round" />
+<circle cx="60" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="60" y="40" textAnchor="middle" stroke="none" fill="currentColor">BEGIN</text>
+<circle cx="160" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="160" y="40" textAnchor="middle" stroke="none" fill="currentColor">INSERT</text>
+<circle cx="270" cy="60" r="6" fill="#6366f1" stroke="none" />
+<text x="270" y="40" textAnchor="middle" stroke="none" fill="#6366f1">SAVEPOINT</text>
+<circle cx="380" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="380" y="40" textAnchor="middle" stroke="none" fill="currentColor">UPDATE</text>
+<circle cx="500" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="500" y="40" textAnchor="middle" stroke="none" fill="currentColor">COMMIT</text>
+<path d="M380 78 C 350 120, 300 120, 272 78" stroke="#6366f1" strokeDasharray="5 4" markerEnd="url(#a1321)" />
+<text x="326" y="138" textAnchor="middle" stroke="none" fill="#6366f1">ROLLBACK TO</text>
+<defs>
+<marker id="a1321" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+<path d="M1 1 L7 4 L1 7" fill="none" stroke="#6366f1" />
+</marker>
+</defs>
+</svg>
+</figure>
+
+```sql
+BEGIN;
+
+INSERT INTO accounts (user_id, balance) VALUES (1, 100);
+
+SAVEPOINT before_withdraw;
+
+UPDATE accounts SET balance = balance - 50 WHERE user_id = 1;
+
+-- if the withdrawal turned out to be wrong:
+ROLLBACK TO before_withdraw;
+
+COMMIT;
+```
+
+Here `BEGIN` opens the transaction, `INSERT` creates the account, and `SAVEPOINT before_withdraw` sets a point. If the `UPDATE` needs to be undone, `ROLLBACK TO before_withdraw` rolls back only that withdrawal - the inserted row remains. The final `COMMIT` commits whatever survived.
+
+Error handling on top of save points is usually implemented by the application or a stored procedure. For example, in SQLAlchemy `session.begin_nested()` issues a `SAVEPOINT` under the hood, and ORM frameworks wrap it in a convenient context manager.
+
+## Pitfalls
+
+- A `SAVEPOINT` is not a standalone transaction. Without the outer `COMMIT`, no nested operation is committed, and an outer `ROLLBACK` wipes out everything, including what was "committed" inside.
+- The `BEGIN ... EXCEPTION ... END` syntax is PL/pgSQL inside a function/block, not plain SQL in an ordinary session. Confusing the levels (client SQL vs. the procedural language) is a common mistake.
+- `ROLLBACK TO savepoint` does not destroy the point itself: you can roll back to it again until it is released with `RELEASE`.
+- Rolling back to a save point does not restore application variable values and does not undo side effects outside the database (sent emails, external calls).
+- Deep nesting of points complicates logic and readability; at every level you must clearly understand exactly what is being rolled back.

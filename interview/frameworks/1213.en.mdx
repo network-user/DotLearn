@@ -1,0 +1,80 @@
+---
+id: 1213
+title: "Django's CSRF token mechanism: how the framework blocks forged requests"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Django's CSRF token mechanism: how the framework blocks forged requests
+
+## In short
+
+CSRF (Cross-Site Request Forgery) is when a malicious site quietly triggers a request to your resource, taking advantage of the fact that an active session already lives in the victim's browser. The browser dutifully attaches the auth cookies to such a request, and the server can't tell it apart from a genuine user action. Django closes this hole with a paired secret: every state-changing request must carry a CSRF token that the attacking site can't obtain or supply.
+
+## How to answer in an interview
+
+Django requires that any unsafe HTTP request (POST, PUT, PATCH, DELETE) carry a valid CSRF token, otherwise `CsrfViewMiddleware` rejects it with a 403 response. The token is tied to a specific user and checked for a match. Since the attacker's site has no access to the contents of your page and can't read the token value, it physically can't form a valid request — even though the browser supplies the session cookie itself. The key idea: cookies alone aren't enough to confirm an action; you need a secret that a third-party domain can't access.
+
+## How it works
+
+Protection is provided by `CsrfViewMiddleware` plus the `{% csrf_token %}` template tag. The cycle goes like this:
+
+1. **Issuing the token.** When a page with a form is rendered, Django puts a CSRF secret into a cookie (`csrftoken`) and inserts the associated value into a hidden form field via the tag.
+2. **Returning the token.** When the form is submitted, the value goes back to the server: in a regular form via the hidden `csrfmiddlewaretoken` field, in AJAX via the `X-CSRFToken` header.
+3. **Verification.** On an incoming POST, the middleware compares the token from the body or header with the secret from the cookie. No match or empty — the request is cut off before it reaches the view.
+
+A regular form is covered with a single tag:
+
+```html
+<form method="post">
+    {% csrf_token %}
+    <input type="text" name="username" placeholder="Username">
+    <input type="password" name="password" placeholder="Password">
+    <button type="submit">Login</button>
+</form>
+```
+
+The `{% csrf_token %}` tag expands into a hidden `<input>` with the token that automatically travels along with the POST.
+
+For AJAX you have to set the token in the header by hand — the framework won't do it for you:
+
+```javascript
+$.ajax({
+    type: "POST",
+    url: "/your-url/",
+    data: {
+        // your data
+    },
+    beforeSend: function(xhr, settings) {
+        xhr.setRequestHeader("X-CSRFToken", getCookie('csrftoken'));
+    },
+    success: function(response) {
+        // handle a successful response
+    }
+});
+```
+
+Here `getCookie` pulls the token value from the `csrftoken` cookie so it can be placed into the header.
+
+<svg viewBox="0 0 320 90" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CSRF token flow" fill="none" stroke="currentColor" strokeWidth="2">
+  <rect x="8" y="30" width="80" height="30" rx="4" />
+  <text x="48" y="50" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Server</text>
+  <line x1="88" y1="45" x2="128" y2="45" />
+  <text x="108" y="38" fill="currentColor" stroke="none" fontSize="8" textAnchor="middle">token</text>
+  <rect x="128" y="30" width="80" height="30" rx="4" />
+  <text x="168" y="50" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Form</text>
+  <line x1="208" y1="45" x2="248" y2="45" />
+  <text x="228" y="38" fill="currentColor" stroke="none" fontSize="8" textAnchor="middle">POST</text>
+  <rect x="248" y="30" width="64" height="30" rx="4" />
+  <text x="280" y="50" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Check</text>
+</svg>
+
+## Pitfalls
+
+- **AJAX without the header.** The most common mistake: forgetting to add `X-CSRFToken`, and all POST requests fly into a 403. The `{% csrf_token %}` tag only helps regular forms.
+- **Only unsafe methods.** GET/HEAD/OPTIONS aren't checked by design — which is why state-changing actions must never be hung on a GET.
+- **Cookies aren't enough.** Protection rests on the fact that a foreign domain can't read the token from your site's cookie; don't expose the token through CORS and don't disable the middleware "to make it work."
+- **`@csrf_exempt` selectively.** You should remove the check only deliberately (for example, for a webhook with its own authentication), not globally.

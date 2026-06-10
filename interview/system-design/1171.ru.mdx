@@ -1,0 +1,83 @@
+---
+id: 1171
+title: "Producer и consumer: две роли в асинхронном обмене данными"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Producer и consumer: две роли в асинхронном обмене данными
+
+## Суть
+
+Продюсер формирует и отправляет данные, консьюмер их принимает и обрабатывает. Это две стороны асинхронного обмена через брокер сообщений (Kafka, RabbitMQ, SQS), работающие независимо друг от друга.
+
+## Что ответить на собесе
+
+Продюсер и консьюмер — это роли, а не обязательно разные сервисы: один компонент может быть и тем, и другим в разных потоках. Продюсер кладёт сообщение в топик или очередь и не знает, кто и когда его прочитает. Консьюмер подписан на топик и забирает сообщения, обрабатывая их в своём темпе. Смысл такой развязки — в том, что стороны не блокируют друг друга: продюсер не ждёт обработки, консьюмер не ждёт появления данных синхронно. Брокер между ними служит буфером, что даёт масштабируемость, отказоустойчивость и сглаживание пиков нагрузки.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 150" width="560" height="150" fill="none" stroke="currentColor" strokeWidth="1.5" aria-label="Продюсер пишет в брокер, консьюмеры читают независимо">
+  <text x="50" y="24" fill="currentColor" stroke="none" fontSize="12" textAnchor="middle">Producer</text>
+  <rect x="14" y="34" width="72" height="40" rx="6" />
+  <text x="280" y="24" fill="currentColor" stroke="none" fontSize="12" textAnchor="middle">Брокер (топик, партиции)</text>
+  <rect x="170" y="34" width="220" height="40" rx="6" />
+  <line x1="218" y1="34" x2="218" y2="74" strokeOpacity="0.5" />
+  <line x1="266" y1="34" x2="266" y2="74" strokeOpacity="0.5" />
+  <line x1="314" y1="34" x2="314" y2="74" strokeOpacity="0.5" />
+  <line x1="362" y1="34" x2="362" y2="74" strokeOpacity="0.5" />
+  <text x="510" y="20" fill="currentColor" stroke="none" fontSize="12" textAnchor="middle">Consumer A</text>
+  <rect x="474" y="28" width="72" height="32" rx="6" />
+  <text x="510" y="100" fill="currentColor" stroke="none" fontSize="12" textAnchor="middle">Consumer B</text>
+  <rect x="474" y="80" width="72" height="32" rx="6" />
+  <line x1="86" y1="54" x2="170" y2="54" />
+  <line x1="390" y1="48" x2="474" y2="44" />
+  <line x1="390" y1="60" x2="474" y2="96" />
+  <circle cx="86" cy="54" r="5" fill="#6366f1" stroke="none">
+    <animate attributeName="cx" values="86;170" dur="2s" repeatCount="indefinite" />
+  </circle>
+  <text x="128" y="116" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">пишет, не ждёт</text>
+  <text x="432" y="132" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">читают в своём темпе</text>
+</svg>
+
+</figure>
+
+Продюсер отправляет сообщение в топик:
+
+```python
+from kafka import KafkaProducer
+
+producer = KafkaProducer(bootstrap_servers='localhost:9092')
+producer.send('my_topic', b'Hello, World!')
+producer.flush()
+producer.close()
+```
+
+`send` кладёт сообщение в топик, `flush` дожидается фактической отправки буфера, `close` закрывает соединение.
+
+Консьюмер подписывается на топик и читает поток:
+
+```python
+from kafka import KafkaConsumer
+
+consumer = KafkaConsumer('my_topic', bootstrap_servers='localhost:9092')
+for message in consumer:
+    print(f"Received: {message.value}")
+consumer.close()
+```
+
+`KafkaConsumer('my_topic', ...)` подписывает на топик, цикл `for message in consumer` читает поступающие сообщения по мере появления.
+
+Развязка через брокер позволяет масштабировать стороны независимо: добавляешь консьюмеров в группу — и нагрузка делится между ними по партициям.
+
+## Подводные камни
+
+- Продюсер без `flush`/`close` может потерять сообщения из буфера, если процесс завершится: `send` асинхронный и сам по себе не гарантирует отправку.
+- Если консьюмеров в группе больше, чем партиций, лишние простаивают — параллелизм чтения ограничен числом партиций.
+- «Независимость» не отменяет backpressure: если консьюмеры не успевают, в брокере копится лаг, и нужно следить за consumer lag.
+- Порядок гарантирован только в пределах партиции, а не топика целиком — если важен глобальный порядок, это проектное ограничение.

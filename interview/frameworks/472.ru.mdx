@@ -1,0 +1,76 @@
+---
+id: 472
+title: "Сигналы в Django: как реагировать на события без жёстких связей?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сигналы в Django: как реагировать на события без жёстких связей?
+
+## Суть
+
+Сигналы — встроенный механизм «издатель-подписчик»: одни части приложения посылают события, другие на них подписываются и реагируют. Это позволяет навешивать побочную логику (рассылки, аудит, сброс кэша) на события моделей, не вшивая её в основной код.
+
+## Что ответить на собесе
+
+Сигналы дают слабую связанность: отправитель события не знает, кто и как на него отреагирует. Например, на `post_save` модели `Article` я вешаю receiver, который уведомляет подписчиков, и код сохранения статьи остаётся чистым. Плюсы — разделение ответственности и тестируемость. Но злоупотреблять не стоит: сигналы делают поток управления неявным, поэтому для логики, которую видно «по месту», я предпочитаю явный вызов в методе `save()` или сервисном слое.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 560 220" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Сигнал post_save рассылается нескольким получателям</title>
+  <g fontFamily="sans-serif" fontSize="12" textAnchor="middle">
+    <rect x="20" y="85" width="120" height="50" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="80" y="106" fill="currentColor">Article.save()</text>
+    <text x="80" y="122" fill="currentColor" fillOpacity="0.7">отправитель</text>
+    <rect x="210" y="90" width="110" height="40" rx="8" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="265" y="115" fill="currentColor">post_save</text>
+    <rect x="400" y="20" width="140" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="470" y="45" fill="currentColor">уведомления</text>
+    <rect x="400" y="90" width="140" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="470" y="115" fill="currentColor">аудит</text>
+    <rect x="400" y="160" width="140" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="470" y="185" fill="currentColor">сброс кэша</text>
+  </g>
+  <g stroke="currentColor" strokeWidth="1.5">
+    <line x1="140" y1="110" x2="208" y2="110" />
+    <path d="M 320 105 C 360 90 360 50 398 40" />
+    <line x1="320" y1="110" x2="398" y2="110" />
+    <path d="M 320 115 C 360 130 360 170 398 180" />
+  </g>
+  <circle r="4.5" fill="#6366f1">
+    <animateMotion dur="2.4s" repeatCount="indefinite" path="M 140 110 L 208 110" />
+  </circle>
+</svg>
+</figure>
+
+В основе схема publisher-subscriber. **Отправитель** шлёт сигнал (модель при сохранении, удалении, миграции). **Получатель** — функция, подписанная на сигнал, которая выполняет действия в ответ.
+
+Подписку оформляют декоратором `@receiver`: он связывает функцию с конкретным сигналом и, опционально, с конкретным отправителем (`sender`).
+
+```python
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from .models import Article
+
+@receiver(post_save, sender=Article)
+def notify_subscribers(sender, instance, created, **kwargs):
+    if created:
+        print(f"New article created: {instance.title}")
+        # здесь запускается рассылка уведомлений
+```
+
+Аргумент `created` отличает создание от обновления, `instance` — сам сохранённый объект. Чтобы receiver зарегистрировался, его модуль должен импортироваться при старте — обычно это делают в методе `ready()` класса `AppConfig`.
+
+Типичные применения: аудит и логирование изменений, инвалидация кэша при правке данных, уведомления пользователей, дополнительная пост-обработка записей.
+
+## Подводные камни
+
+- **Неявность потока.** Сигнал срабатывает «где-то в стороне» — отладка усложняется. Если логика очевидно принадлежит модели, лучше явный код в `save()`.
+- **Регистрация receiver.** Если модуль с `@receiver` нигде не импортируется, сигнал молча не сработает. Подключайте в `AppConfig.ready()`.
+- **`post_save` и транзакции.** Сигнал стреляет до коммита транзакции; если внутри слать письма или дёргать внешний сервис, при откате получится фантомное действие. Используйте `transaction.on_commit`.
+- **Рекурсия.** Вызов `instance.save()` внутри обработчика `post_save` снова поднимет `post_save` — легко уйти в бесконечный цикл.

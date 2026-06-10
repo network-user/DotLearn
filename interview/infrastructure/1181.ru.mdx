@@ -1,0 +1,85 @@
+---
+id: 1181
+title: "Как ужать Docker-образ: рабочие приёмы против раздувания"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как ужать Docker-образ: рабочие приёмы против раздувания
+
+## Суть
+
+Размер образа сокращают на трёх уровнях: лёгкая база, меньше слоёв и мусора в них, отделение сборочных инструментов от рантайма через multi-stage build. Чем компактнее образ, тем быстрее он качается и разворачивается и тем меньше в нём потенциальных уязвимостей.
+
+## Что ответить на собесе
+
+Начинаю с базового образа: вместо `ubuntu`/`debian` беру `alpine` или slim-вариант. Дальше слежу за слоями - объединяю команды установки и чистки в один `RUN`, чтобы кеш и временные файлы не оседали отдельным слоем. Для компилируемых языков использую multi-stage build: в первом этапе собираю бинарник со всем тулчейном, во второй копирую только готовый артефакт. Плюс ставлю пакеты с `--no-install-recommends` и не тащу dev-зависимости в финальный образ.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 230" fontFamily="sans-serif" fontSize="13">
+  <text x="120" y="24" textAnchor="middle" fill="currentColor">stage 1: builder</text>
+  <rect x="30" y="36" width="180" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="120" y="58" textAnchor="middle" fill="currentColor">тулчейн + исходники</text>
+  <rect x="30" y="74" width="180" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="120" y="96" textAnchor="middle" fill="currentColor">сборка</text>
+  <rect x="30" y="112" width="180" height="34" rx="5" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="120" y="134" textAnchor="middle" fill="currentColor">бинарник</text>
+  <text x="120" y="172" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">тулчейн остаётся здесь</text>
+  <line x1="210" y1="129" x2="380" y2="129" stroke="#6366f1" strokeWidth="2" />
+  <polygon points="380,129 370,124 370,134" fill="#6366f1" />
+  <text x="295" y="120" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">COPY --from</text>
+  <text x="480" y="24" textAnchor="middle" fill="currentColor">stage 2: финал</text>
+  <rect x="390" y="36" width="180" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="480" y="58" textAnchor="middle" fill="currentColor">лёгкая база (alpine)</text>
+  <rect x="390" y="112" width="180" height="34" rx="5" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="480" y="134" textAnchor="middle" fill="currentColor">только бинарник</text>
+  <text x="480" y="172" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">это и есть итоговый образ</text>
+  <rect x="390" y="190" width="180" height="28" rx="5" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeDasharray="5 4" />
+  <text x="480" y="209" textAnchor="middle" fill="currentColor" fontSize="11">маленький, без тулчейна</text>
+</svg>
+</figure>
+
+Каждая инструкция Dockerfile добавляет слой, и удаление файла в следующем слое не уменьшает образ - данные остаются в предыдущем. Поэтому установку и очистку держат в одном `RUN`.
+
+```dockerfile
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+Лёгкая база сразу убирает десятки лишних мегабайт:
+
+```dockerfile
+# было
+FROM ubuntu:latest
+# стало
+FROM alpine:latest
+```
+
+Multi-stage build разделяет «где собираем» и «что отдаём». Тулчейн остаётся в первом этапе и в финальный образ не попадает.
+
+```dockerfile
+FROM golang:alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o myapp
+
+FROM alpine
+WORKDIR /app
+COPY --from=builder /app/myapp .
+CMD ["./myapp"]
+```
+
+## Подводные камни
+
+- `rm -rf` в отдельном `RUN` после установки не помогает: удалённые файлы уже «зашиты» в нижний слой, и общий вес не падает. Чистить надо в том же `RUN`.
+- `apt-get clean` без `rm -rf /var/lib/apt/lists/*` оставляет индексы пакетов - они тоже занимают место.
+- Порядок инструкций влияет на кеш: сначала копируют файл зависимостей и ставят их, потом весь код. Иначе любая правка кода инвалидирует слой установки.
+- `.dockerignore` часто забывают - и в образ улетают `.git`, `node_modules` с хоста, локальные артефакты.
+- Тег `latest` непредсказуем: лучше фиксировать конкретную версию базы.

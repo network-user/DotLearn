@@ -1,0 +1,87 @@
+---
+id: 1142
+title: "Что делают __enter__ и __exit__ и как работает блок with?"
+category: oop-patterns
+categoryLabel: "ООП и паттерны"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делают __enter__ и __exit__ и как работает блок with?
+
+## Суть
+
+`__enter__` и `__exit__` - это протокол контекстного менеджера, который обслуживает конструкцию `with`. `__enter__` вызывается на входе в блок и обычно отдаёт ресурс, `__exit__` - на выходе и гарантированно его освобождает. Главное достоинство: `__exit__` отрабатывает даже если внутри блока вылетело исключение.
+
+## Что ответить на собесе
+
+Объект становится контекстным менеджером, если у него есть `__enter__` и `__exit__`. При входе в `with` Python зовёт `__enter__`, а его результат привязывается к имени после `as`. При выходе - неважно, штатном или из-за исключения - Python вызывает `__exit__(exc_type, exc_value, traceback)`. Если внутри было исключение, эти три аргумента описывают его, иначе они `None`. Так управление ресурсом не зависит от того, как мы покинули блок, поэтому файл или соединение точно закроется.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 180" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif">
+<rect x="20" y="62" width="120" height="40" rx="6" />
+<text x="80" y="80" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">__enter__</text>
+<text x="80" y="95" fontSize="10" textAnchor="middle" fill="currentColor" stroke="none" fillOpacity="0.7">отдаёт ресурс</text>
+<rect x="200" y="62" width="120" height="40" rx="6" />
+<text x="260" y="86" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">тело with</text>
+<rect x="430" y="62" width="120" height="40" rx="6" />
+<text x="490" y="80" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">__exit__</text>
+<text x="490" y="95" fontSize="10" textAnchor="middle" fill="currentColor" stroke="none" fillOpacity="0.7">освобождает</text>
+<line x1="140" y1="82" x2="196" y2="82" markerEnd="url(#a1142)" />
+<line x1="320" y1="82" x2="426" y2="82" markerEnd="url(#a1142)" />
+<defs>
+<marker id="a1142" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0,0 L6,3 L0,6 Z" fill="currentColor" stroke="none" />
+</marker>
+</defs>
+<path d="M260 62 C260 20 490 20 490 60" stroke="#6366f1" strokeDasharray="5 4" markerEnd="url(#a1142b)" />
+<defs>
+<marker id="a1142b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0,0 L6,3 L0,6 Z" fill="#6366f1" stroke="none" />
+</marker>
+</defs>
+<text x="375" y="22" fontSize="11" textAnchor="middle" fill="#6366f1" stroke="none">исключение → всё равно __exit__</text>
+<circle cx="80" cy="135" r="5" fill="#6366f1" stroke="none">
+<animate attributeName="cx" values="80;260;490" dur="3s" repeatCount="indefinite" />
+</circle>
+</svg>
+</figure>
+
+`with` гарантирует освобождение ресурса. Поэтому код думает о логике, а не о закрытии:
+
+```python
+class FileManager:
+    def __init__(self, filename, mode):
+        self.filename = filename
+        self.mode = mode
+        self.file = None
+
+    def __enter__(self):
+        self.file = open(self.filename, self.mode)
+        return self.file
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.file:
+            self.file.close()
+
+with FileManager('example.txt', 'w') as f:
+    f.write('Hello, World!')
+```
+
+По шагам:
+
+1. `__enter__` открывает файл и возвращает его - объект доступен как `f`.
+2. Выполняется тело блока.
+3. `__exit__` закрывает файл, и это происходит при любом выходе из блока, в том числе после ошибки.
+
+Типичные применения протокола: файлы (открыть/закрыть), сетевые соединения, транзакции БД (commit/rollback), блокировки в многопоточности (захват/освобождение лока).
+
+## Подводные камни
+
+- Возвращаемое значение `__exit__` управляет исключением. Если вернуть истинное значение, исключение из блока подавляется. Обычно возвращают `None` (то есть ложь), чтобы ошибка пробрасывалась дальше после очистки.
+- `__enter__` и `with` - не одно и то же. Имя после `as` получает именно результат `__enter__`, а не сам менеджер. В примере выше `f` - это файл, а не объект `FileManager`.
+- Не глушите ошибки молча. Перехватывать исключение в `__exit__` стоит осознанно, иначе баги уходят в тишину.
+- Для простых случаев писать класс необязательно: `contextlib.contextmanager` позволяет сделать менеджер из генератора с одним `yield`, где код до `yield` - это `__enter__`, а после - `__exit__`.

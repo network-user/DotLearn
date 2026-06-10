@@ -1,0 +1,61 @@
+---
+id: 1385
+title: "GIL: what price does Python pay for thread safety?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# GIL: what price does Python pay for thread safety?
+
+## In short
+
+The GIL (Global Interpreter Lock) is a global lock of the CPython interpreter that means only one thread executes bytecode at any moment. This makes writing thread-safe code easier, but deprives Python threads of true parallelism across multiple cores.
+
+## How to answer in an interview
+
+The GIL is a trade-off. The upside is that the interpreter's internal structures and reference counting are protected automatically: a developer doesn't have to manually synchronize access to objects, and C extensions are easier to write safely. The downside is that CPU-bound tasks on threads don't speed up - no matter how many cores there are, Python code runs one piece at a time. For parallel computations you reach for `multiprocessing` or for C extensions that release the GIL, and you leave threads for I/O-bound workloads, where the GIL is released while waiting for input/output.
+
+## How it works
+
+The GIL is needed because many operations in CPython are not atomic, and memory is managed through reference counters, which on their own are not designed for concurrent modification. The lock guarantees that exactly one thread is running at the moment bytecode is executed.
+
+Strengths:
+
+1. The code is simpler - you don't need to manually protect every shared object.
+2. Data races at the level of Python objects don't arise while a single thread runs.
+3. C extensions rely on the GIL and are written more safely.
+
+Weaknesses:
+
+1. On CPU-bound tasks multiple cores aren't used - there is a performance ceiling.
+2. Frequent thread switches add overhead for acquiring and releasing the GIL.
+3. You can't scale computations across cores within a single process.
+
+A classic example - a shared counter from two threads:
+
+```python
+import threading
+
+def increment(counter):
+    for _ in range(1000000):
+        counter[0] += 1
+
+counter = [0]
+t1 = threading.Thread(target=increment, args=(counter,))
+t2 = threading.Thread(target=increment, args=(counter,))
+t1.start(); t2.start()
+t1.join(); t2.join()
+print(counter[0])
+```
+
+Here the operation `counter[0] += 1` is a read, an add, and a write, between which the GIL may switch the thread. That's why the result is often less than the expected 2,000,000.
+
+## Pitfalls
+
+- The GIL does not make compound operations atomic. `+= 1` over a shared object still requires a `Lock`, otherwise updates are lost - as in the example above.
+- The misconception "GIL means safe" is dangerous: only individual bytecode operations are safe, not sequences of them.
+- Threads are genuinely useful for I/O-bound code (network, disk): there the GIL is released for the duration of the blocking call, and threads work almost in parallel.
+- For CPU-bound parallelism threads are useless - you need `multiprocessing`, separate processes, or libraries that release the GIL.

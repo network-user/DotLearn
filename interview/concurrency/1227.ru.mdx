@@ -1,0 +1,84 @@
+---
+id: 1227
+title: "Сколько корутин запустить разом: дросселирование параллелизма через asyncio.Semaphore"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сколько корутин запустить разом: дросселирование параллелизма через asyncio.Semaphore
+
+## Суть
+
+Чтобы не запускать тысячи корутин одновременно, число активных задач ограничивают семафором. `asyncio.Semaphore(n)` пропускает не больше `n` задач за раз, остальные ждут освобождения слота.
+
+## Что ответить на собесе
+
+Я беру `asyncio.Semaphore` и задаю ему лимит одновременных задач. Каждая корутина перед работой захватывает семафор через `async with sem:` — это занимает один из `n` слотов. Когда слоты кончаются, новые корутины асинхронно ждут, пока кто-то выйдет из блока и освободит место. Сами задачи я по-прежнему создаю все сразу и передаю в `asyncio.gather`, но реально выполняться будут максимум `n` штук. Так держат под контролем нагрузку на внешний API и не выходят за лимиты запросов.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 200" fill="none" stroke="currentColor" fontFamily="sans-serif">
+<text x="300" y="22" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Semaphore(3): максимум 3 слота</text>
+<rect x="40" y="120" width="220" height="60" rx="8" strokeWidth="1.5" strokeDasharray="5 4" fill="none" />
+<text x="150" y="172" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor" fillOpacity="0.8">очередь ожидания</text>
+<rect x="60" y="135" width="34" height="28" rx="5" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06" />
+<rect x="104" y="135" width="34" height="28" rx="5" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06" />
+<rect x="148" y="135" width="34" height="28" rx="5" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06" />
+<rect x="350" y="40" width="220" height="120" rx="8" strokeWidth="1.5" fill="currentColor" fillOpacity="0.04" />
+<text x="460" y="152" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor" fillOpacity="0.8">активные слоты</text>
+<rect x="370" y="55" width="50" height="34" rx="6" strokeWidth="2" stroke="#6366f1" fill="#6366f1" fillOpacity="0.1" />
+<rect x="435" y="55" width="50" height="34" rx="6" strokeWidth="2" stroke="#6366f1" fill="#6366f1" fillOpacity="0.1" />
+<rect x="500" y="55" width="50" height="34" rx="6" strokeWidth="2" strokeDasharray="4 4" fill="none" />
+<path d="M270 150 L345 120" strokeWidth="2" strokeLinecap="round" stroke="#6366f1" />
+<path d="M338 116 L345 120 L337 124" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" stroke="#6366f1" />
+<rect x="60" y="135" width="34" height="28" rx="5" strokeWidth="2" stroke="#6366f1" fill="#6366f1" fillOpacity="0.18">
+<animateMotion path="M0 0 L270 -85" dur="3s" repeatCount="indefinite" />
+<animate attributeName="fillOpacity" values="0.18;0.18;0" keyTimes="0;0.85;1" dur="3s" repeatCount="indefinite" />
+</rect>
+</svg>
+
+</figure>
+
+Семафор хранит счётчик свободных слотов. `async with sem` уменьшает его на входе и возвращает обратно на выходе. Пока счётчик больше нуля, корутина проходит сразу; при нуле она засыпает в очереди ожидания и просыпается, когда другая корутина отпустит слот. В отличие от блокирующего потокового семафора, ожидание здесь не блокирует цикл событий — он продолжает крутить другие задачи.
+
+Ограничение числа одновременных HTTP-запросов:
+
+```python
+import asyncio
+import aiohttp
+
+async def fetch_url(sem, session, url):
+    async with sem:
+        async with session.get(url) as response:
+            return await response.text()
+
+async def main(urls):
+    sem = asyncio.Semaphore(3)
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_url(sem, session, url) for url in urls]
+        return await asyncio.gather(*tasks)
+
+urls = [
+    "http://example.com",
+    "http://example.org",
+    "http://example.net",
+]
+
+results = asyncio.run(main(urls))
+print(len(results))
+```
+
+Здесь семафор на 3 слота означает, что даже из сотни URL в полёте окажется не больше трёх запросов одновременно; остальные ждут своей очереди внутри `async with sem`.
+
+## Подводные камни
+
+- **Захват внутри корутины, а не снаружи.** `async with sem` должен оборачивать саму работу. Если захватить семафор до `gather`, лимит не сработает так, как ожидается.
+- **Сессию создают один раз.** Открывать `ClientSession` внутри каждой задачи неэффективно: лучше передать общую сессию, иначе семафор ограничит запросы, но не накладные расходы на соединения.
+- **Семафор не балансирует, а ограничивает.** Он не ускоряет медленные задачи и не распределяет нагрузку — лишь не даёт превысить потолок.
+- **Не путать с числом потоков.** Это конкурентность в одном потоке, а не параллелизм на ядрах: тяжёлый CPU-bound код семафор не разгрузит.
+- **Подбор лимита.** Слишком маленький `n` недогружает сеть, слишком большой упирается в лимиты API или память.

@@ -1,0 +1,154 @@
+---
+conceptId: orm-mental-model
+title: Ментальная модель ORM и модели SQLAlchemy 2.x
+estimatedMinutes: 50
+---
+
+# ORM - это переводчик между строками и объектами
+
+Когда Вы пишете raw SQL, в Вашей программе живут две несовместимые вселенные. В Python - объекты с атрибутами и методами; в базе - строки таблиц, кортежи значений. Каждый запрос Вы вручную переводите туда и обратно: разбираете кортеж `(1, 'Анна', 30)` в поля, собираете `INSERT` из атрибутов. ORM (Object-Relational Mapping) берёт этот перевод на себя. Вы описываете, какой класс соответствует какой таблице, а дальше работаете с объектами - ORM сам генерирует SQL и превращает строки результата в экземпляры.
+
+К концу раздела Вы будете понимать, что именно ORM отображает друг на друга, как объявить модель в современном стиле SQLAlchemy 2.x, и что скрывается за двумя ключевыми механизмами - identity map и unit of work, - без которых поведение ORM кажется магией.
+
+## Что на что отображается
+
+Отображение ORM работает на трёх уровнях, и их полезно держать в голове по отдельности:
+
+- **Класс ↔ таблица.** Класс `User` соответствует таблице `users`.
+- **Экземпляр ↔ строка.** Объект `User(name="Анна")` соответствует одной строке этой таблицы.
+- **Атрибут ↔ столбец.** Поле `user.name` соответствует столбцу `name`.
+
+<Figure caption="ORM отображает класс на таблицу, экземпляр на строку, атрибут на столбец. Перевод в обе стороны берёт на себя библиотека.">
+  <Sketch viewBox="0 0 460 180" title="Отображение класс - таблица">
+    <SketchLabel x={90} y={20} weight="600">Python</SketchLabel>
+    <SketchBox x={20} y={32} width={150} height={120} accent />
+    <SketchLabel x={95} y={52} mono accent>class User</SketchLabel>
+    <SketchLabel x={95} y={78} mono size={11}>id: int</SketchLabel>
+    <SketchLabel x={95} y={98} mono size={11}>name: str</SketchLabel>
+    <SketchLabel x={95} y={118} mono size={11}>age: int</SketchLabel>
+    <SketchArrow from={[170, 92]} to={[280, 92]} accent />
+    <SketchLabel x={225} y={80} size={11} muted>ORM</SketchLabel>
+    <SketchLabel x={360} y={20} weight="600">База</SketchLabel>
+    <SketchBox x={280} y={32} width={160} height={120} />
+    <SketchLabel x={360} y={52} mono>table users</SketchLabel>
+    <SketchLabel x={360} y={78} mono size={11}>id | name | age</SketchLabel>
+    <SketchLabel x={360} y={98} mono size={11}>1 | Анна | 30</SketchLabel>
+    <SketchLabel x={360} y={118} mono size={11}>2 | Борис | 17</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Объявление модели в SQLAlchemy 2.x
+
+Современный SQLAlchemy (версии 2.x) описывает модели через типизированные аннотации. Базовый класс наследуют от `DeclarativeBase`, а столбцы объявляют через `Mapped[...]` и `mapped_column(...)`. Аннотация типа задаёт и тип Python, и (обычно) тип столбца, и обязательность поля.
+
+```python
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    age: Mapped[int]
+```
+
+`__tablename__` задаёт имя таблицы. `Mapped[int]` для `id` плюс `primary_key=True` объявляют первичный ключ. `Mapped[str]` без дополнительных опций - обязательный (NOT NULL) текстовый столбец; `Mapped[str | None]` сделал бы его необязательным. Этой декларации достаточно, чтобы SQLAlchemy умел и создать таблицу, и переводить строки в объекты `User` и обратно.
+
+<Callout type="info">
+Стиль `Mapped[...]` / `mapped_column(...)` - это SQLAlchemy 2.x. В старом коде Вы встретите `Column(Integer, primary_key=True)` без аннотаций типов. Оба работают, но новый стиль даёт проверку типов и читается яснее; новые модели пишите на нём.
+</Callout>
+
+## Identity map: одна строка - один объект в сессии
+
+Первый механизм, который объясняет «магию» ORM, - identity map. Вся работа идёт внутри *сессии* (`Session`). Сессия гарантирует: в пределах одной сессии каждой строке (по первичному ключу) соответствует ровно один объект Python. Если Вы дважды запросите пользователя с `id=1`, Вы получите тот же самый объект, а не две копии.
+
+```python
+u1 = session.get(User, 1)
+u2 = session.get(User, 1)
+print(u1 is u2)
+```
+
+Печатается `True`: второй запрос не создал новый объект, а вернул уже загруженный из identity map. Это важно не только ради экономии: благодаря identity map изменение `u1.name` автоматически видно через `u2` - это один объект. Без identity map две копии разошлись бы, и было бы неясно, чьи изменения попадут в базу.
+
+## Unit of work: изменения копятся и уезжают пачкой
+
+Второй механизм - unit of work. Сессия не шлёт SQL на каждое присваивание атрибута. Вместо этого она *отслеживает* изменения: какие объекты новые (`add`), какие изменены (атрибут поменялся), какие удалены. Накопленные изменения превращаются в SQL разом - при `flush` (который сессия обычно делает автоматически перед запросом) и фиксируются при `commit`.
+
+```python
+user = User(name="Вера", age=29)
+session.add(user)
+user.age = 30
+session.commit()
+```
+
+Здесь до `commit` (точнее, до flush) база ещё не трогалась: `add` лишь пометил объект как новый, присваивание `age = 30` лишь обновило поле в памяти. На `commit` сессия сгенерирует один `INSERT` уже с финальным значением `age=30`. Вы описываете *что* должно стать истинным, а *когда и какими запросами* этого достичь - забота unit of work.
+
+<Figure caption="Unit of work: сессия копит new/dirty/deleted в памяти и переводит их в SQL разом при flush/commit, а не на каждое присваивание.">
+  <PipelineFigure
+    title="Жизненный цикл изменения"
+    stages={[
+      { label: "session.add(obj)", note: "объект помечен как new" },
+      { label: "obj.attr = ...", note: "помечен как dirty" },
+      { label: "flush", note: "изменения → SQL", active: true },
+      { label: "commit", note: "транзакция зафиксирована" },
+    ]}
+  />
+</Figure>
+
+## Потрогайте отображение руками
+
+Идею отображения «строка ↔ объект» можно увидеть и без ORM - на голом `sqlite3`. Здесь мы вручную делаем то, что ORM автоматизирует: превращаем кортеж строки в объект с атрибутами. Запустите и обратите внимание, сколько ручного кода уходит на перевод, который ORM прячет за `session.get`.
+
+<PyDemo
+  title="Ручной перевод строки в объект (то, что делает ORM)"
+  code={`import sqlite3
+
+class User:
+    def __init__(self, id, name, age):
+        self.id = id
+        self.name = name
+        self.age = age
+    def __repr__(self):
+        return f"User({self.id}, {self.name!r}, {self.age})"
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)")
+conn.execute("INSERT INTO users VALUES (1, 'Анна', 30)")
+
+row = conn.execute("SELECT id, name, age FROM users WHERE id = 1").fetchone()
+user = User(*row)
+print(user)
+print(user.name)`}
+/>
+
+## Типичные ошибки
+
+- **Думать, что присваивание атрибута сразу пишет в базу.** Это не так: unit of work копит изменения и шлёт SQL на flush/commit. Если забыть `commit`, изменения не сохранятся - как и с raw SQL.
+- **Создавать модели в старом стиле без нужды.** `Column(...)` без аннотаций работает, но новый код пишут на `Mapped[...]` / `mapped_column(...)` ради типизации и читаемости.
+- **Удивляться, что два запроса вернули один объект.** Это identity map, и это правильно: в пределах сессии строка представлена одним объектом, поэтому `u1 is u2`.
+- **Работать с объектами вне сессии и ждать, что они синхронизируются.** Отслеживание изменений живёт в сессии; объект, оторванный от неё, перестаёт быть «живым» (про это - в разделе о подводных камнях).
+
+<Detail summary="Почему ORM называют «дырявой абстракцией»">
+
+ORM скрывает SQL, но не отменяет его. Любая операция в итоге становится запросом, и непонимание того, какой именно SQL породил Ваш код, - источник самых коварных проблем с производительностью (классический пример - N+1, ему посвящён отдельный раздел). Поэтому опытные разработчики держат ORM включённым в режиме логирования SQL (`echo=True` у `create_engine`) и периодически смотрят, какие запросы он генерирует. Абстракция удобна ровно до тех пор, пока Вы понимаете, что под ней. Знание raw SQL из предыдущего раздела - не пройденный этап, а фундамент, на котором стоит грамотное использование ORM.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "ORM отображает класс на таблицу, экземпляр на строку, атрибут на столбец и берёт перевод в обе стороны на себя.",
+    "В SQLAlchemy 2.x модели объявляют через DeclarativeBase, Mapped[...] и mapped_column(...) - типизированный современный стиль.",
+    "Identity map: в пределах одной сессии каждой строке соответствует один объект, поэтому повторный запрос по тому же ключу даёт тот же объект (u1 is u2).",
+    "Unit of work: сессия копит изменения (new/dirty/deleted) и переводит их в SQL разом на flush/commit, а не на каждое присваивание.",
+    "ORM - дырявая абстракция: за каждым действием стоит SQL, и понимать его (включая echo=True) обязательно для производительности.",
+  ]}
+/>
+
+## Ссылки
+
+- [SQLAlchemy 2.0 - ORM Quick Start](https://docs.sqlalchemy.org/en/20/orm/quickstart.html)
+- [SQLAlchemy - Declarative Mapping (Mapped, mapped_column)](https://docs.sqlalchemy.org/en/20/orm/mapping_styles.html)
+- [Martin Fowler - Unit of Work и Identity Map](https://martinfowler.com/eaaCatalog/unitOfWork.html)

@@ -1,0 +1,96 @@
+---
+id: 1153
+title: "Why does a message leave the queue only after processing is acknowledged?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does a message leave the queue only after processing is acknowledged?
+
+## In short
+
+In reliable brokers a message is removed not at the moment it is read but after an explicit acknowledgment from the consumer: `DeleteMessage` in Amazon SQS, `ack` in RabbitMQ. This guarantees that a handler that fails midway does not lose the message but instead returns it for reprocessing.
+
+## How to answer in an interview
+
+Deletion-on-acknowledgment exists for at-least-once semantics. Reading and deletion are separated: the consumer first takes the message, processes it, and only then confirms success. If it crashes before confirming, the message becomes available again and another consumer picks it up. In SQS a message that has been read is hidden for the duration of the Visibility Timeout, and if no `DeleteMessage` arrives within that window, it returns to the queue. In RabbitMQ, with manual `ack`, the message stays held by the consumer until confirmation arrives; if the connection drops without an `ack`, the broker returns it to the queue. The price of reliability is the possibility of redelivery, so the handler must be idempotent.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 170" fontFamily="sans-serif" fontSize="12">
+<rect x="20" y="65" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="75" y="89" textAnchor="middle" fill="currentColor">In queue</text>
+<rect x="245" y="65" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="300" y="83" textAnchor="middle" fill="currentColor">Processing</text>
+<text x="300" y="97" textAnchor="middle" fill="currentColor" fillOpacity="0.6">invisible</text>
+<rect x="470" y="65" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="525" y="89" textAnchor="middle" fill="currentColor">Deleted</text>
+<line x1="130" y1="85" x2="245" y2="85" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="245,85 237,81 237,89" fill="currentColor" />
+<text x="187" y="78" textAnchor="middle" fill="currentColor" fillOpacity="0.7">receive</text>
+<line x1="355" y1="85" x2="470" y2="85" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="470,85 462,81 462,89" fill="currentColor" />
+<text x="412" y="78" textAnchor="middle" fill="currentColor" fillOpacity="0.7">ack / delete</text>
+<path d="M 300 105 C 300 145, 75 145, 75 107" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+<polygon points="75,107 71,115 79,115" fill="currentColor" />
+<text x="187" y="140" textAnchor="middle" fill="currentColor" fillOpacity="0.7">timeout / disconnect — return</text>
+</svg>
+</figure>
+
+**Amazon SQS** builds its logic on the visibility timeout:
+
+1. `ReceiveMessage` reads a message and hides it for the duration of the Visibility Timeout.
+2. The consumer does its work while the message is invisible to the others.
+3. `DeleteMessage` by `ReceiptHandle` removes the message for good. Miss the timeout window and the message becomes visible to others again.
+
+```python
+import boto3
+
+sqs = boto3.client('sqs')
+queue_url = 'https://sqs.region.amazonaws.com/account-id/queue-name'
+
+response = sqs.receive_message(
+    QueueUrl=queue_url,
+    MaxNumberOfMessages=1,
+    WaitTimeSeconds=10,
+)
+
+message = response['Messages'][0]
+receipt_handle = message['ReceiptHandle']
+
+# application-level message processing
+
+sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+```
+
+**RabbitMQ** runs on `ack` confirmations:
+
+1. The message is delivered to the consumer from the queue.
+2. The consumer does its work.
+3. `basic_ack` confirms success, and the broker deletes the message. Without an `ack`, if the channel drops, the message returns to the queue.
+
+```python
+import pika
+
+connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+channel.queue_declare(queue='task_queue', durable=True)
+
+def callback(ch, method, properties, body):
+    # application-level message processing
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+channel.basic_consume(queue='task_queue', on_message_callback=callback)
+channel.start_consuming()
+```
+
+## Pitfalls
+
+- Auto-acknowledgment (`auto_ack=True` in RabbitMQ) deletes the message at the moment of delivery: if the handler crashes, the message is lost. For reliability you need a manual `ack`.
+- Too short a Visibility Timeout in SQS leads to double processing: the timeout expired while the task was still running.
+- At-least-once allows duplicates, so the handler must be idempotent; these schemes do not provide exactly-once delivery.
+- If `ack`/`DeleteMessage` is never called (a bug in the code), the message keeps cycling forever and blocks progress. A dead-letter queue after N attempts saves you here.

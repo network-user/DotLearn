@@ -1,0 +1,65 @@
+---
+id: 1212
+title: "Когда в DRF брать APIView, а когда ViewSet?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда в DRF брать APIView, а когда ViewSet?
+
+## Суть
+
+`APIView` — низкоуровневый класс, где HTTP-методы (`get`, `post`, ...) вы описываете руками, получая полный контроль. `ViewSet` — высокоуровневая обёртка, которая сама связывает CRUD-действия с HTTP-методами через роутер и убирает бойлерплейт для типовых ресурсов.
+
+## Что ответить на собесе
+
+Я выбираю по тому, укладывается ли эндпоинт в стандартный CRUD. Если API ресурсо-ориентированный — список, создание, чтение, обновление, удаление — беру `ModelViewSet` плюс роутер: пара строк, и маршруты со всеми методами генерируются автоматически. Если же нужна нестандартная логика, кастомные действия, нетипичные методы или эндпоинт не про «ресурс», беру `APIView` и пишу `get()`/`post()` явно. По сути ViewSet — это группировка нескольких представлений с автоматическим роутингом поверх того же механизма, что и APIView.
+
+## Как это работает
+
+`APIView` надстраивает обычный Django `View`, добавляя аутентификацию, права, парсинг и сериализацию. Методы под каждый HTTP-глагол вы пишете сами:
+
+```python
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+class MyAPIView(APIView):
+    def get(self, request, format=None):
+        return Response({"message": "Hello, world!"})
+
+    def post(self, request, format=None):
+        return Response(request.data, status=status.HTTP_201_CREATED)
+```
+
+`ViewSet` (а особенно `ModelViewSet`) сопоставляет действия `list`/`create`/`retrieve`/`update`/`destroy` с HTTP-методами. С `ModelViewSet` достаточно указать queryset и сериализатор:
+
+```python
+from rest_framework import viewsets
+from .models import MyModel
+from .serializers import MyModelSerializer
+
+class MyModelViewSet(viewsets.ModelViewSet):
+    queryset = MyModel.objects.all()
+    serializer_class = MyModelSerializer
+```
+
+Маршруты для ViewSet регистрирует роутер — он раскрывает действия в реальные URL и методы:
+
+```python
+from rest_framework.routers import DefaultRouter
+
+router = DefaultRouter()
+router.register(r'items', MyModelViewSet)
+urlpatterns = router.urls
+```
+
+## Подводные камни
+
+- ViewSet сам по себе не подключается в `urlpatterns` как обычное представление — ему нужен роутер либо ручной `as_view({'get': 'list', ...})`. Это частая ошибка новичков: «зарегистрировал класс, а 404».
+- Кастомное действие в ViewSet добавляется декоратором `@action(detail=True, methods=['post'])`, иначе роутер про него не узнает.
+- `APIView` гибче, но за гибкость платишь объёмом кода: на чистый CRUD это лишний бойлерплейт. И наоборот, тащить `ModelViewSet` ради одного нестандартного эндпоинта — оверкилл.
+- Под капотом у ViewSet тот же конвейер, что у APIView (через дженерики), так что аутентификация, права и пагинация настраиваются одинаково; «магии» меньше, чем кажется.

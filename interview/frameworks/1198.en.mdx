@@ -1,0 +1,58 @@
+---
+id: 1198
+title: "Transactions in Django ORM: how to ensure atomicity of database operations"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Transactions in Django ORM: how to ensure atomicity of database operations
+
+## In short
+
+A transaction glues several database queries into one indivisible operation: either everything is applied, or on error everything is rolled back. In Django the core of this control is `transaction.atomic` - it works both as a decorator and as a context manager.
+
+## How to answer in an interview
+
+A transaction guarantees that a group of changes to the database is either committed in full or fully canceled on error - so the data is never left in a half-applied state. By default Django wraps each HTTP request in a transaction (the `ATOMIC_REQUESTS` mode), but for fine-grained control I use `transaction.atomic`: either as a decorator on a function or as a `with` block. Inside the block, any unhandled exception rolls back all changes. Nested `atomic` blocks create savepoints, which lets you roll back only part of the operations.
+
+## How it works
+
+Atomic guarantees the "all or nothing" property. The classic example is a money transfer: the debit and the credit must happen together, otherwise the balance will diverge.
+
+The decorator wraps the entire function in a transaction:
+
+```python
+from django.db import transaction
+
+@transaction.atomic
+def transfer_funds(from_account, to_account, amount):
+    from_account.balance -= amount
+    from_account.save()
+    to_account.balance += amount
+    to_account.save()
+```
+
+The context manager limits the transaction to a specific block - handy when only a piece of the logic needs to be atomic:
+
+```python
+from django.db import transaction
+
+def complete_order(order, product):
+    with transaction.atomic():
+        order.status = 'completed'
+        order.save()
+        product.stock -= order.quantity
+        product.save()
+```
+
+If `product.save()` fails, the order status is rolled back too. The COMMIT happens only on a clean exit from the block; an exception leads to a ROLLBACK.
+
+## Pitfalls
+
+- A rollback is triggered only by an exception that propagates out of the block. If you catch an error inside `atomic` and swallow it, the transaction will happily commit with corrupted data.
+- After a database error has occurred inside `atomic` (for example, an `IntegrityError`), you cannot keep executing queries in the same block - Django will mark the transaction as "broken" and raise `TransactionManagementError`. Catch the exception outside `atomic` or use a nested block.
+- `transaction.on_commit()` is needed when a side effect (sending an email, queuing a task) should fire only after the real COMMIT, not before a possible rollback.
+- Long transactions hold row locks and inflate contention - do not wrap calls to external APIs and lengthy computations in `atomic`.

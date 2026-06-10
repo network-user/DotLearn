@@ -1,0 +1,143 @@
+---
+id: 1205
+title: "Паттерны устойчивости микросервисов: Circuit Breaker, Retry, Fallback и компания"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: system-design
+stageLabel: "System Design"
+lang: ru
+---
+
+# Паттерны устойчивости микросервисов: Circuit Breaker, Retry, Fallback и компания
+
+## Суть
+
+В микросервисах отказ одного сервиса не должен ронять всю систему. Для этого есть набор паттернов: Timeout не даёт запросу зависнуть, Retry повторяет временный сбой, Circuit Breaker перестаёт долбиться в уже упавший сервис, Fallback подставляет запасной вариант, а Bulkhead изолирует ресурсы, чтобы проблема не растеклась дальше.
+
+## Что ответить на собесе
+
+Назову пять основных паттернов. **Timeout** ограничивает ожидание ответа, иначе зависший вызов держит ресурсы. **Retry** автоматически повторяет запрос при кратковременном сбое, желательно с экспоненциальной задержкой и джиттером. **Circuit Breaker** отслеживает ошибки и, когда их слишком много, «размыкается»: какое-то время вызовы сразу падают, не доходя до больного сервиса, потом он пробует полузакрыться и проверить восстановление. **Fallback** даёт деградированный ответ при отказе - кэш или заглушку. **Bulkhead** изолирует ресурсы (например, отдельные пулы потоков), чтобы перегрузка одного интегрированного сервиса не съела ресурсы для всех остальных. На практике они комбинируются: Timeout + Retry + Circuit Breaker + Fallback - типичная связка для исходящего вызова.
+
+## Как это работает
+
+### Circuit Breaker (предохранитель)
+
+Самый показательный паттерн. У него три состояния: **CLOSED** (вызовы идут), **OPEN** (вызовы сразу падают, сервис не трогаем), **HALF-OPEN** (пробный вызов, чтобы проверить восстановление). Это спасает от каскадного отказа: упавший сервис не добивают повторными запросами.
+
+<figure>
+<svg viewBox="0 0 560 200" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+<circle cx="90" cy="100" r="46" />
+<text x="90" y="104" textAnchor="middle" stroke="none" fill="currentColor">CLOSED</text>
+<circle cx="470" cy="100" r="46" stroke="#6366f1" strokeWidth="2" />
+<text x="470" y="104" textAnchor="middle" stroke="none" fill="#6366f1">OPEN</text>
+<circle cx="280" cy="100" r="46" />
+<text x="280" y="96" textAnchor="middle" stroke="none" fill="currentColor">HALF-</text>
+<text x="280" y="112" textAnchor="middle" stroke="none" fill="currentColor">OPEN</text>
+<line x1="136" y1="92" x2="424" y2="92" strokeOpacity="0.4" />
+<line x1="424" y1="108" x2="326" y2="108" />
+<text x="375" y="128" textAnchor="middle" stroke="none" fill="currentColor">таймаут</text>
+<text x="280" y="40" textAnchor="middle" stroke="none" fill="currentColor">много ошибок</text>
+<line x1="234" y1="100" x2="136" y2="100" />
+<text x="185" y="78" textAnchor="middle" stroke="none" fill="currentColor">успех</text>
+<line x1="326" y1="100" x2="424" y2="100" strokeDasharray="4 4" />
+<text x="375" y="78" textAnchor="middle" stroke="none" fill="currentColor">сбой</text>
+</svg>
+</figure>
+
+
+```python
+import time
+
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold, recovery_timeout):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.state = "CLOSED"
+        self.last_failure_time = None
+
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = "HALF-OPEN"
+            else:
+                raise RuntimeError("Circuit is open")
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = "CLOSED"
+            return result
+        except Exception:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            raise
+```
+
+### Retry (повтор)
+
+Повторяет вызов при временном сбое. Важно: повторять стоит только идемпотентные операции и с задержкой, иначе ретраи добивают и без того нагруженный сервис.
+
+```python
+import time
+
+
+def retry(func, retries=3, delay=2):
+    for attempt in range(retries):
+        try:
+            return func()
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(delay)
+            else:
+                raise
+```
+
+### Fallback (резервный путь)
+
+При отказе основного источника отдаём запасной - кэш, значение по умолчанию, урезанный ответ. Пользователь получает деградированный, но работающий сервис.
+
+```python
+def get_data_with_fallback():
+    try:
+        return get_data_from_service()
+    except Exception:
+        return get_cached_data()
+```
+
+### Bulkhead (переборка)
+
+Делит ресурсы на изолированные секции, как переборки на корабле: затопление одного отсека не топит судно. Например, для каждого внешнего сервиса - свой пул потоков, чтобы его зависание не выело все воркеры.
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+payments_pool = ThreadPoolExecutor(max_workers=5)
+reports_pool = ThreadPoolExecutor(max_workers=5)
+```
+
+### Timeout (тайм-аут)
+
+Ограничивает ожидание ответа. Без таймаута зависший вызов держит соединение и поток, а такие зависания копятся и кладут сервис.
+
+```python
+import requests
+
+
+def fetch_data_with_timeout(url, timeout=5):
+    try:
+        response = requests.get(url, timeout=timeout)
+        return response.json()
+    except requests.Timeout:
+        return None
+```
+
+## Подводные камни
+
+- **Retry без задержки и идемпотентности - вредит.** Повтор неидемпотентной операции может списать деньги дважды, а мгновенные ретраи устраивают «шторм запросов» по падающему сервису. Используйте exponential backoff с джиттером.
+- **Timeout обязателен под каждым сетевым вызовом.** Самая частая причина каскадных отказов - вызов без таймаута: один медленный сервис исчерпывает пул потоков вызывающего.
+- **Circuit Breaker нужно настраивать по метрикам.** Слишком чувствительный порог размыкает предохранитель на случайных всплесках; слишком грубый - не успевает защитить.
+- **Fallback не должен молча скрывать проблему.** Отдавая кэш или заглушку, фиксируйте это в метриках/логах, иначе деградация останется незамеченной.
+- **Паттерны работают в связке, а не поодиночке.** Timeout + Retry + Circuit Breaker + Fallback дополняют друг друга; один паттерн в отрыве закрывает лишь часть сценариев отказа.

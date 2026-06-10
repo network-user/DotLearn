@@ -1,0 +1,81 @@
+---
+id: 1263
+title: "Балансировщик нагрузки: какую задачу решает и какими алгоритмами раскидывает трафик?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Балансировщик нагрузки: какую задачу решает и какими алгоритмами раскидывает трафик?
+
+## Суть
+
+Балансировщик нагрузки - это точка входа, которая разводит входящие запросы по пулу одинаковых серверов, чтобы ни один не перегрузился, а отказ одного из них не уронил сервис. Реализуют его программно (Nginx, HAProxy, Envoy) или на отдельных аппаратных устройствах, а сам выбор сервера делается по алгоритму: round-robin, least connections, IP/consistent hash.
+
+## Что ответить на собесе
+
+Балансировщик решает три задачи разом: доступность, масштабируемость и производительность. Перед пулом серверов ставится единая точка входа, которая распределяет запросы по бэкендам и убирает отказавшие узлы из ротации через health-check. Благодаря этому пул горизонтально масштабируется добавлением узлов, а падение одного сервера не видно пользователю. Алгоритм подбирают под профиль нагрузки: round-robin для однородных коротких запросов, least connections для запросов с разной длительностью, hash по ключу - когда нужна привязка клиента к конкретному серверу (sticky-сессии).
+
+## Как это работает
+
+Программный балансировщик - это процесс на сервере или в контейнере, который принимает соединение и проксирует его на выбранный бэкенд. Nginx и HAProxy работают как обратный прокси: держат пул upstream-серверов, опрашивают их здоровье и применяют выбранный алгоритм. Аппаратные решения (F5, Citrix ADC) делают то же на уровне выделенного устройства и часто берут на себя SSL-терминацию и защиту от DDoS.
+
+<figure>
+<svg viewBox="0 0 360 160" width="360" height="160" role="img" aria-label="Балансировщик раздаёт запросы по пулу серверов" fill="none" stroke="currentColor">
+  <rect x="12" y="64" width="64" height="32" rx="4" strokeWidth="1.5" />
+  <text x="44" y="84" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">клиенты</text>
+  <rect x="138" y="60" width="84" height="40" rx="6" strokeWidth="2" stroke="#6366f1" />
+  <text x="180" y="84" textAnchor="middle" fill="#6366f1" stroke="none" fontSize="11">LB</text>
+  <line x1="76" y1="80" x2="138" y2="80" strokeWidth="1.5" />
+  <rect x="288" y="14" width="60" height="28" rx="4" strokeWidth="1.5" />
+  <text x="318" y="32" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">srv 1</text>
+  <rect x="288" y="66" width="60" height="28" rx="4" strokeWidth="1.5" />
+  <text x="318" y="84" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">srv 2</text>
+  <rect x="288" y="118" width="60" height="28" rx="4" strokeWidth="1.5" />
+  <text x="318" y="136" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">srv 3</text>
+  <line x1="222" y1="76" x2="288" y2="28" strokeWidth="1.5" />
+  <line x1="222" y1="80" x2="288" y2="80" strokeWidth="1.5" />
+  <line x1="222" y1="84" x2="288" y2="132" strokeWidth="1.5" />
+  <circle r="4" fill="#6366f1" stroke="none">
+    <animateMotion dur="2.4s" repeatCount="indefinite" path="M 76 80 L 138 80" />
+  </circle>
+</svg>
+</figure>
+
+```nginx
+http {
+    upstream backend {
+        least_conn;
+        server backend1.example.com max_fails=3 fail_timeout=10s;
+        server backend2.example.com max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://backend;
+        }
+    }
+}
+```
+
+- `upstream backend` - пул бэкендов, между которыми делится трафик.
+- `least_conn` - выбирать сервер с наименьшим числом активных соединений.
+- `max_fails` / `fail_timeout` - после скольких неудач и на какое время сервер исключается из ротации.
+- `proxy_pass http://backend` - направить запрос в пул.
+
+Основные алгоритмы:
+
+1. **Round Robin** - сервера получают запросы по кругу, поровну.
+2. **Least Connections** - запрос уходит туда, где меньше активных соединений.
+3. **IP / consistent hash** - запросы от одного клиента стабильно попадают на один сервер.
+
+## Подводные камни
+
+- Сам балансировщик становится единой точкой отказа. В проде их ставят минимум два с failover (keepalived / VRRP, DNS, anycast).
+- Round-robin не учитывает реальную загрузку: длинный запрос на «своём» сервере перекосит распределение - тут уместнее least connections.
+- Sticky-сессии по IP ломаются за NAT и CGNAT: за одним IP скрываются тысячи клиентов, и они все приклеятся к одному серверу.
+- Без health-check балансировщик продолжит слать трафик на упавший узел. Проверять надо именно работу приложения, а не только открытый порт.
+- Балансировка L4 (TCP) и L7 (HTTP) - разные вещи: маршрутизация по URL, заголовкам и cookie возможна только на L7.

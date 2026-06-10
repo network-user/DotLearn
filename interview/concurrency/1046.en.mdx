@@ -1,0 +1,71 @@
+---
+id: 1046
+title: "Why does CPU-heavy code inside a coroutine choke the whole event loop?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does CPU-heavy code inside a coroutine choke the whole event loop?
+
+## In short
+
+A coroutine runs in the same single thread as the `event loop`. While heavy computation churns inside it, the event loop cannot switch to other tasks, and the entire asynchronous program freezes.
+
+## How to answer in an interview
+
+`asyncio` is designed for I/O-bound workloads: tasks voluntarily yield control at `await`, and during those pauses the event loop advances their neighbors. Pure computation contains no wait points, so a single coroutine monopolizes the thread and blocks the loop entirely. CPU-bound work must be moved out of the loop: easy parallelism across cores comes from `loop.run_in_executor` with `ProcessPoolExecutor`, and if the workload contains calls that release the GIL, sometimes a `ThreadPoolExecutor` is enough.
+
+## How it works
+
+The event loop is cooperative: it switches tasks only at `await` moments. If a coroutine goes into a long loop without a single `await`, it has nowhere to yield control, and all other tasks sit in the queue.
+
+An analogy: the only waiter in the dining room. If he himself stands at the stove cooking a complex dish, the other tables will wait. The right move is to send the order to the kitchen and keep serving the room.
+
+Moving the computation into a process pool engages several cores and does not touch the main process's GIL:
+
+```python
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+
+def heavy_computation(x):
+    total = 0
+    for i in range(x):
+        total += i * i
+    return total
+
+async def main():
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, heavy_computation, 1_000_000)
+        print(f"Result: {result}")
+
+asyncio.run(main())
+```
+
+For a workload that periodically releases the GIL (numpy, compression, parts of the standard library), threads are the cheaper option:
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+def io_bound_cpu(x):
+    return x * x
+
+async def main():
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, io_bound_cpu, 10)
+        print(f"Result: {result}")
+
+asyncio.run(main())
+```
+
+## Pitfalls
+
+- `ThreadPoolExecutor` does not rescue pure Python computation: because of the GIL, threads do not compute in parallel - you only remove the block on the loop itself, but the total time does not drop.
+- `ProcessPoolExecutor` serializes arguments and results through `pickle` - unsuitable objects (open sockets, lambdas) will not be transferred.
+- The overhead of spawning processes is real: on small tasks a process pool can end up slower than a direct call.
+- Even a short synchronous stretch (for example, parsing a large JSON) can noticeably increase the latency of other coroutines - anything that runs between two `await`s counts as blocking.

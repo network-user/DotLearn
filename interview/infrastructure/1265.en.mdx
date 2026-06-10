@@ -1,0 +1,88 @@
+---
+id: 1265
+title: "A process PID: what is this number and what role does it play in the OS?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# A process PID: what is this number and what role does it play in the OS?
+
+## In short
+
+A PID (Process Identifier) is a unique integer that the kernel assigns to a process when it is created. The operating system and the user address a process through its PID: they monitor it, read its parameters, and send it signals.
+
+## How to answer in an interview
+
+A PID is a process identifier issued by the kernel at the moment the process starts. It is unique among live processes and stays bound to the process until it terminates. When a process dies, its PID is released and may eventually be reused by a new process - so a PID can't be treated as a permanent reference. In practice, a PID is needed to address a process: to check its status via `ps` or `/proc/<pid>`, to send a signal via `kill`, or to limit its resources. On Linux the first process (init/systemd) always has PID 1 and is the ancestor of all the others.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 620 170" role="img" aria-label="PID lifecycle: allocation, running, zombie, release" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+  <rect x="20" y="60" width="120" height="50" rx="8" />
+  <text x="80" y="82" textAnchor="middle" stroke="none" fill="currentColor">fork</text>
+  <text x="80" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">kernel assigns PID</text>
+
+  <rect x="190" y="60" width="120" height="50" rx="8" stroke="#6366f1" />
+  <text x="250" y="82" textAnchor="middle" stroke="none" fill="#6366f1">Running</text>
+  <text x="250" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">PID in use</text>
+
+  <rect x="360" y="60" width="120" height="50" rx="8" />
+  <text x="420" y="82" textAnchor="middle" stroke="none" fill="currentColor">Zombie</text>
+  <text x="420" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">awaiting wait()</text>
+
+  <rect x="500" y="60" width="100" height="50" rx="8" strokeDasharray="5 4" />
+  <text x="550" y="82" textAnchor="middle" stroke="none" fill="currentColor">Free</text>
+  <text x="550" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">PID can be reused</text>
+
+  <line x1="140" y1="85" x2="185" y2="85" />
+  <polygon points="185,85 177,81 177,89" fill="currentColor" stroke="none" />
+  <line x1="310" y1="85" x2="355" y2="85" />
+  <polygon points="355,85 347,81 347,89" fill="currentColor" stroke="none" />
+  <line x1="480" y1="85" x2="498" y2="85" />
+  <polygon points="498,85 490,81 490,89" fill="currentColor" stroke="none" />
+
+  <text x="332" y="48" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">exit</text>
+  <text x="489" y="48" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">parent wait()</text>
+  <text x="250" y="140" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.7" fontSize="11">kill sends a signal by PID while the process is alive</text>
+</svg>
+
+</figure>
+
+When a process is created (via `fork`), the kernel allocates it a free PID and sets up a structure holding its state. This number lives until the process terminates; after exit the entry remains as a "zombie" until the parent collects the exit code via `wait`, and only then is the PID finally released.
+
+The list of processes and their PIDs on Linux is shown by `ps`:
+
+```bash
+ps aux
+```
+
+- `ps` - print information about processes.
+- `aux` - show all processes of all users with details.
+
+Example output:
+
+```
+USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root         1  0.0  0.1  22528  4100 ?        Ss   10:00   0:01 /sbin/init
+user      1234  0.1  0.3 123456  7890 pts/0    S+   10:05   0:02 python3 script.py
+```
+
+The `PID` column is exactly that identifier. To act on a process, you send a signal by PID:
+
+```bash
+kill 1234        # send SIGTERM to process 1234 (graceful shutdown)
+kill -9 1234     # SIGKILL: forcibly, with no chance to handle it
+```
+
+## Pitfalls
+
+- PIDs get reused. If a process has exited and you send a signal to its old PID, you might hit someone else's process that has taken over the number. Before `kill`, it's worth confirming it's the right process (by name / start time).
+- `kill` means "send a signal", not necessarily "kill". By default it's SIGTERM, which the process can intercept and ignore; a hard termination is `kill -9` (SIGKILL), but it doesn't let the process clean up its resources properly.
+- PID 1 is special: on a normal system it's init/systemd, while in a container the main process becomes PID 1. If PID 1 doesn't forward signals and doesn't reap zombies, child processes pile up - hence minimal inits like `tini`.
+- A zombie process (`STAT Z`) is already dead and consumes no resources beyond a table entry; you can't `kill` it - the parent has to do a `wait`, or you terminate the parent itself.
+- A process's PID and its thread identifiers are different things: threads have their own TIDs, visible under `/proc/<pid>/task`.

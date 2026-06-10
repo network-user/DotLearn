@@ -1,0 +1,94 @@
+---
+id: 1454
+title: "HTTP-кэширование: какими заголовками браузер решает, когда не качать файл заново"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HTTP-кэширование: какими заголовками браузер решает, когда не качать файл заново
+
+## Суть
+
+Кэширование на уровне HTTP управляется заголовками ответа: `Cache-Control` и `Expires` задают срок свежести, а `ETag` и `Last-Modified` позволяют дёшево проверить, не изменился ли ресурс. Вместе они избавляют клиента от повторной загрузки неизменных файлов и снимают нагрузку с сервера.
+
+## Что ответить на собесе
+
+Есть два механизма. Первый - freshness: `Cache-Control: max-age=N` (или устаревший `Expires`) говорит, сколько секунд копию можно отдавать из кэша без обращения к серверу. Второй - валидация: когда срок свежести истёк, клиент не качает файл вслепую, а делает условный запрос с `If-None-Match` (по `ETag`) или `If-Modified-Since` (по `Last-Modified`). Если ресурс не менялся, сервер отвечает `304 Not Modified` с пустым телом, и берётся старая копия. `Cache-Control` гибче `Expires`, потому что задаёт относительное время и директивы `no-cache`, `no-store`, `public`, `private`.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 620 220" role="img" aria-label="Схема решения браузера: брать из кэша, ревалидировать или скачать заново" fontFamily="sans-serif" fontSize="12">
+  <rect x="16" y="90" width="120" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="76" y="106" textAnchor="middle" fill="currentColor">Нужен ресурс</text>
+  <text x="76" y="121" textAnchor="middle" fill="currentColor" fillOpacity="0.7">логотип.png</text>
+
+  <rect x="200" y="20" width="160" height="44" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="280" y="38" textAnchor="middle" fill="currentColor">Свежесть в силе?</text>
+  <text x="280" y="53" textAnchor="middle" fill="currentColor" fillOpacity="0.7">max-age / Expires</text>
+
+  <rect x="200" y="156" width="160" height="44" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="280" y="174" textAnchor="middle" fill="currentColor">Условный запрос</text>
+  <text x="280" y="189" textAnchor="middle" fill="currentColor" fillOpacity="0.7">If-None-Match / If-Modified-Since</text>
+
+  <rect x="448" y="20" width="156" height="44" rx="6" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="526" y="38" textAnchor="middle" fill="currentColor">Из кэша</text>
+  <text x="526" y="53" textAnchor="middle" fill="currentColor" fillOpacity="0.7">без сети</text>
+
+  <rect x="448" y="120" width="156" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="526" y="145" textAnchor="middle" fill="currentColor">304 → старая копия</text>
+
+  <rect x="448" y="176" width="156" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="526" y="201" textAnchor="middle" fill="currentColor">200 → новое тело</text>
+
+  <path d="M136 104 L200 50" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <path d="M136 116 L200 174" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <path d="M360 42 L448 42" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <text x="404" y="34" textAnchor="middle" fill="currentColor" fillOpacity="0.7">да</text>
+  <path d="M360 60 L420 140 L448 140" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="4 3" />
+  <text x="388" y="92" textAnchor="middle" fill="currentColor" fillOpacity="0.7">истекла</text>
+  <path d="M360 184 L448 142" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <path d="M360 188 L448 196" stroke="currentColor" strokeWidth="1.5" fill="none" />
+</svg>
+</figure>
+
+Главные заголовки и их роль:
+
+- **Cache-Control** - основной механизм. `max-age=3600` - свежесть в секундах; `no-cache` - кэшировать можно, но перед выдачей обязательно сверить с сервером; `no-store` - не хранить вообще; `public` - можно кэшировать и на прокси; `private` - только в браузере конкретного пользователя.
+- **Expires** - абсолютная дата устаревания. Менее гибок и проигрывает `Cache-Control` при конфликте.
+- **ETag** - отпечаток версии ресурса; в следующий раз клиент шлёт его в `If-None-Match`.
+- **Last-Modified** - дата изменения; клиент шлёт её обратно в `If-Modified-Since`.
+
+Ответ сервера с настроенным кэшированием:
+
+```http
+HTTP/1.1 200 OK
+Cache-Control: max-age=3600, public
+ETag: "abc123"
+Last-Modified: Tue, 20 Oct 2026 07:28:00 GMT
+Content-Type: image/png
+Content-Length: 12345
+
+[бинарные данные файла]
+```
+
+Пока не прошёл час, браузер берёт картинку из кэша молча. После - шлёт условный запрос:
+
+```http
+GET /logo.png HTTP/1.1
+Host: www.example.com
+If-None-Match: "abc123"
+```
+
+Если файл прежний, в ответ прилетает `304 Not Modified` без тела, и старая копия признаётся актуальной - трафик почти нулевой.
+
+## Подводные камни
+
+- `no-cache` не запрещает кэширование: он лишь требует ревалидации перед использованием. Запрет хранения - это `no-store`.
+- Агрессивный `max-age` без версионирования имён файлов приводит к тому, что пользователи неделями видят старую версию. Решение - хэш в имени (`app.4f2a.js`) плюс долгий кэш.
+- Слабый и сильный `ETag` ведут себя по-разному, а несовпадение `ETag` между нодами за балансировщиком ломает условные запросы.
+- `Expires` зависит от синхронности часов клиента и сервера; рассинхрон даёт ошибочную свежесть. Поэтому предпочитают относительный `max-age`.
+- `Vary` тоже часть кэширования: без него кэш может отдать сжатый или иноязычный вариант не тому клиенту.

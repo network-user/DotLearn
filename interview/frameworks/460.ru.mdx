@@ -1,0 +1,110 @@
+---
+id: 460
+title: "WebSocket в Django: почему нужен Channels и как собрать ASGI-стек"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# WebSocket в Django: почему нужен Channels и как собрать ASGI-стек
+
+## Суть
+
+Сам Django заточен под HTTP и WebSocket не умеет; двусторонние соединения добавляет библиотека Django Channels, которая переводит проект на ASGI и обрабатывает постоянные соединения через консьюмеры.
+
+## Что ответить на собесе
+
+Голый Django синхронный и работает по модели запрос-ответ, поэтому держать постоянное WebSocket-соединение он не может. Для real-time я подключаю Django Channels: она переводит приложение на ASGI, поднимается асинхронным сервером вроде Daphne или Uvicorn, а сообщения между процессами гоняет через channel layer (обычно Redis). Логику соединения описываю в консьюмере - классе с методами `connect`, `disconnect`, `receive`. Маршруты WebSocket объявляю отдельно от обычных URL и собираю всё в `ProtocolTypeRouter`, который разводит http и websocket по разным веткам.
+
+## Как это работает
+
+Ключевая разница: HTTP - это разовый цикл запрос-ответ, а WebSocket держит канал открытым, и сервер может слать данные сам, без опроса со стороны клиента. Channels достраивает Django до ASGI и вводит абстракцию консьюмера - аналог view, но для длительных соединений.
+
+<svg viewBox="0 0 320 80" width="320" height="80" role="img" aria-label="Схема маршрутизации протоколов">
+  <rect x="4" y="28" width="70" height="24" rx="4" fill="none" stroke="currentColor" />
+  <text x="39" y="44" fontSize="10" textAnchor="middle" fill="currentColor">Daphne</text>
+  <line x1="74" y1="40" x2="120" y2="40" stroke="currentColor" />
+  <rect x="120" y="20" width="90" height="40" rx="4" fill="none" stroke="currentColor" />
+  <text x="165" y="44" fontSize="9" textAnchor="middle" fill="currentColor">ProtocolRouter</text>
+  <line x1="210" y1="32" x2="250" y2="20" stroke="currentColor" />
+  <line x1="210" y1="48" x2="250" y2="60" stroke="currentColor" />
+  <text x="285" y="24" fontSize="9" textAnchor="middle" fill="currentColor">http</text>
+  <text x="285" y="64" fontSize="9" textAnchor="middle" fill="currentColor">websocket</text>
+</svg>
+
+Установка:
+
+```bash
+pip install channels
+```
+
+Регистрация приложения и точки входа ASGI в `settings.py`:
+
+```python
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'channels',
+]
+
+ASGI_APPLICATION = 'myproject.asgi.application'
+```
+
+Сборка ASGI-приложения с разводкой протоколов:
+
+```python
+import os
+from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+import myapp.routing
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
+
+application = ProtocolTypeRouter({
+    "http": get_asgi_application(),
+    "websocket": AuthMiddlewareStack(
+        URLRouter(myapp.routing.websocket_urlpatterns)
+    ),
+})
+```
+
+Маршруты WebSocket в `routing.py`:
+
+```python
+from django.urls import re_path
+from . import consumers
+
+websocket_urlpatterns = [
+    re_path(r'ws/somepath/$', consumers.MyConsumer.as_asgi()),
+]
+```
+
+Консьюмер обрабатывает события соединения:
+
+```python
+import json
+from channels.generic.websocket import AsyncWebsocketConsumer
+
+class MyConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        pass
+
+    async def receive(self, text_data):
+        data = json.loads(text_data)
+        message = data['message']
+        await self.send(text_data=json.dumps({'message': message}))
+```
+
+## Подводные камни
+
+- WSGI-сервер (gunicorn без воркеров ASGI) WebSocket не поднимет. Нужен ASGI-сервер: Daphne или Uvicorn.
+- Чтобы рассылать сообщение нескольким клиентам (групповой чат), одного консьюмера мало - нужен channel layer (`channels_redis` поверх Redis) и группы; в памяти `InMemoryChannelLayer` годится только для разработки.
+- В асинхронном консьюмере нельзя дёргать синхронный Django ORM напрямую - это блокирует event loop. Используйте `database_sync_to_async`.
+- `AuthMiddlewareStack` даёт доступ к пользователю в `scope['user']`, но только если сессия/кука пришли в рукопожатии; токены придётся обрабатывать своим middleware.
+- WebSocket не проходит обычные middleware и декораторы Django (CSRF, login_required) - их аналоги живут в стеке Channels.

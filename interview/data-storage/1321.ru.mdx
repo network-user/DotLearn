@@ -1,0 +1,73 @@
+---
+id: 1321
+title: "Вложенные транзакции и SAVEPOINT: частичный откат внутри одной транзакции"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Вложенные транзакции и SAVEPOINT: частичный откат внутри одной транзакции
+
+## Суть
+
+Вложенная транзакция — это логический блок операций внутри другой транзакции, который можно откатить отдельно, не отменяя всю внешнюю. В реляционных СУБД её реализуют не отдельным `BEGIN`, а точками сохранения — `SAVEPOINT`.
+
+## Что ответить на собесе
+
+В большинстве реляционных СУБД настоящих «транзакций внутри транзакции» нет — есть `SAVEPOINT`. Ставишь точку сохранения внутри открытой транзакции, и если дальше что-то пошло не так, делаешь `ROLLBACK TO savepoint`: откатываются только изменения после этой точки, а уже сделанная во внешней транзакции работа сохраняется. Это даёт модульность и гибкую обработку ошибок: сложную операцию дробишь на части, и сбой одной части не обрушивает всю транзакцию. Финальный `COMMIT` фиксирует всё разом. Важно: пока не сделан внешний `COMMIT`, ничего не зафиксировано — savepoint живёт только внутри текущей транзакции.
+
+## Как это работает
+
+Модель иерархическая: внешняя транзакция, внутри неё одна или несколько точек сохранения. Каждый `SAVEPOINT` можно откатить независимо командой `ROLLBACK TO`, а можно отпустить через `RELEASE SAVEPOINT`.
+
+<figure>
+<svg viewBox="0 0 560 160" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+<line x1="40" y1="60" x2="520" y2="60" strokeLinecap="round" />
+<circle cx="60" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="60" y="40" textAnchor="middle" stroke="none" fill="currentColor">BEGIN</text>
+<circle cx="160" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="160" y="40" textAnchor="middle" stroke="none" fill="currentColor">INSERT</text>
+<circle cx="270" cy="60" r="6" fill="#6366f1" stroke="none" />
+<text x="270" y="40" textAnchor="middle" stroke="none" fill="#6366f1">SAVEPOINT</text>
+<circle cx="380" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="380" y="40" textAnchor="middle" stroke="none" fill="currentColor">UPDATE</text>
+<circle cx="500" cy="60" r="5" fill="currentColor" stroke="none" />
+<text x="500" y="40" textAnchor="middle" stroke="none" fill="currentColor">COMMIT</text>
+<path d="M380 78 C 350 120, 300 120, 272 78" stroke="#6366f1" strokeDasharray="5 4" markerEnd="url(#a1321)" />
+<text x="326" y="138" textAnchor="middle" stroke="none" fill="#6366f1">ROLLBACK TO</text>
+<defs>
+<marker id="a1321" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+<path d="M1 1 L7 4 L1 7" fill="none" stroke="#6366f1" />
+</marker>
+</defs>
+</svg>
+</figure>
+
+```sql
+BEGIN;
+
+INSERT INTO accounts (user_id, balance) VALUES (1, 100);
+
+SAVEPOINT before_withdraw;
+
+UPDATE accounts SET balance = balance - 50 WHERE user_id = 1;
+
+-- если списание оказалось ошибочным:
+ROLLBACK TO before_withdraw;
+
+COMMIT;
+```
+
+Здесь `BEGIN` открывает транзакцию, `INSERT` создаёт счёт, `SAVEPOINT before_withdraw` ставит точку. Если `UPDATE` нужно отменить, `ROLLBACK TO before_withdraw` откатывает только это списание — вставленная строка остаётся. Итоговый `COMMIT` фиксирует то, что уцелело.
+
+Обработку ошибок поверх savepoint обычно реализует приложение или хранимая процедура. Например, в SQLAlchemy `session.begin_nested()` под капотом выпускает именно `SAVEPOINT`, а ORM-фреймворки оборачивают это в удобный контекстный менеджер.
+
+## Подводные камни
+
+- `SAVEPOINT` — не самостоятельная транзакция. Без внешнего `COMMIT` ни одна вложенная операция не зафиксируется, а внешний `ROLLBACK` снесёт всё, включая то, что было «закоммичено» внутри.
+- Синтаксис `BEGIN ... EXCEPTION ... END` — это PL/pgSQL внутри функции/блока, а не голый SQL в обычной сессии. Путать уровни (клиентский SQL и процедурный язык) — частая ошибка.
+- `ROLLBACK TO savepoint` не уничтожает саму точку: к ней можно откатиться повторно, пока её не отпустили через `RELEASE`.
+- Откат к точке сохранения не возвращает значения переменных приложения и не отменяет побочные эффекты вне БД (отправленные письма, внешние вызовы).
+- Глубокая вложенность точек усложняет логику и читаемость; на каждом уровне нужно чётко понимать, что именно откатывается.

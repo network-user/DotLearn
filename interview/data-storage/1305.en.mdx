@@ -1,0 +1,85 @@
+---
+id: 1305
+title: "Database locks: what they are and what role they play"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Database locks: what they are and what role they play
+
+## In short
+
+A lock is a concurrency-control mechanism that prevents multiple transactions from modifying the same data at the same time. This is how a DBMS preserves integrity and guards against anomalies: dirty reads, lost updates, and phantoms.
+
+## How to answer in an interview
+
+I explain it through the problem: when transactions run in parallel, anomalies arise without coordination - dirty reads, non-repeatable reads, lost updates, phantoms. Locks coordinate access. There's a shared (S) lock for reads, which several transactions can hold at once, but nobody can write. And there's an exclusive (X) lock for writes, held by only one transaction while the rest wait. Locks can apply at the row, page, table, or whole-database level: the finer the granularity, the higher the concurrency, but the greater the overhead. The transaction isolation level is precisely what determines which locks are taken and when. The flip side is deadlocks, where two transactions wait on each other's locks.
+
+## How it works
+
+<figure>
+  <svg viewBox="0 0 600 220" role="img" aria-label="Two transactions and an exclusive row lock over time" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+    <text x="20" y="24" fill="currentColor" stroke="none" fontSize="13">Transaction 1</text>
+    <text x="20" y="124" fill="currentColor" stroke="none" fontSize="13">Transaction 2</text>
+    <line x1="20" y1="40" x2="580" y2="40" strokeOpacity="0.3" />
+    <line x1="20" y1="140" x2="580" y2="140" strokeOpacity="0.3" />
+    <text x="540" y="200" fill="currentColor" stroke="none" fontSize="11" textAnchor="end" strokeOpacity="0.7">time →</text>
+    <line x1="20" y1="185" x2="560" y2="185" strokeOpacity="0.4" />
+    <polygon points="560,185 552,181 552,189" fill="currentColor" stroke="none" />
+
+    <rect x="120" y="28" width="200" height="24" rx="4" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" />
+    <text x="220" y="44" fill="currentColor" stroke="none" textAnchor="middle">UPDATE: takes X-lock</text>
+    <line x1="320" y1="40" x2="320" y2="140" strokeDasharray="4 3" strokeOpacity="0.5" />
+    <text x="324" y="58" fill="currentColor" stroke="none" fontSize="11" strokeOpacity="0.8">COMMIT</text>
+
+    <rect x="150" y="128" width="170" height="24" rx="4" fill="currentColor" fillOpacity="0.08" strokeDasharray="5 3" />
+    <text x="235" y="144" fill="currentColor" stroke="none" textAnchor="middle">UPDATE: waits for release</text>
+    <rect x="320" y="128" width="160" height="24" rx="4" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" />
+    <text x="400" y="144" fill="currentColor" stroke="none" textAnchor="middle">acquires X-lock</text>
+
+    <circle r="5" fill="#6366f1" stroke="none">
+      <animateMotion path="M 320 90 L 320 130" dur="2s" repeatCount="indefinite" />
+    </circle>
+  </svg>
+</figure>
+
+The anomalies locks protect against:
+
+- **Dirty Read:** a transaction sees another transaction's uncommitted changes; if they get rolled back, the data turns out to be wrong.
+- **Lost Update:** two transactions edit the same record, and one edit overwrites the other.
+- **Non-repeatable Read:** rereading the same row yields a different result, because it was modified in between.
+- **Phantom Read:** a repeated query with a condition returns new rows that weren't there before.
+
+The main types of locks:
+
+- **Exclusive (X):** only one transaction may modify the data; the rest wait for it to release.
+- **Shared (S):** several transactions read at once, but writing is blocked.
+
+Example with two transactions over one record:
+
+```sql
+-- Transaction 1
+BEGIN TRANSACTION;
+SELECT * FROM accounts WHERE account_id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE account_id = 1;
+COMMIT;
+
+-- Transaction 2
+BEGIN TRANSACTION;
+SELECT * FROM accounts WHERE account_id = 1;
+UPDATE accounts SET balance = balance - 50 WHERE account_id = 1;
+COMMIT;
+```
+
+The `UPDATE` takes an exclusive row lock, and the second transaction waits for the first to `COMMIT` before applying its own change. `COMMIT` releases the locks and hands the data back to the others.
+
+## Pitfalls
+
+- **Deadlock:** two transactions acquire resources in different orders and wait on each other. The DBMS detects the cycle and forcibly rolls one of them back - the code must be able to retry the transaction.
+- Too coarse a granularity (locking a table instead of a row) kills concurrency; too fine raises the overhead of tracking locks.
+- In PostgreSQL, readers generally don't block writers thanks to MVCC, so the locking model there doesn't match the classic "S/X on every read."
+- A long transaction holding a lock builds a queue and tanks throughput - keep transactions short.
+- An explicit `SELECT ... FOR UPDATE` takes a row lock up front and helps against lost updates.

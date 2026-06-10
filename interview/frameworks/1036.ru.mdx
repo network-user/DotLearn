@@ -1,0 +1,75 @@
+---
+id: 1036
+title: "Когда брать @task, а когда @shared_task при объявлении задач Celery?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда брать @task, а когда @shared_task при объявлении задач Celery?
+
+## Суть
+
+`@task` привязывает задачу к конкретному экземпляру приложения Celery, а `@shared_task` создаёт задачу без жёсткой привязки, поэтому её безопасно объявлять в переиспользуемых модулях и подключаемых приложениях.
+
+## Что ответить на собесе
+
+Оба декоратора регистрируют функцию как асинхронную задачу. Разница в привязке к экземпляру `Celery`. `@task` берётся прямо у конкретного app-объекта и регистрирует задачу именно в нём, поэтому подходит, когда задача живёт внутри одного проекта и переиспользовать её не нужно. `@shared_task` отдаёт прокси, который находит нужное приложение в момент вызова, а не в момент объявления. Это критично для библиотек и Django-приложений, которые подключаются в разные проекты: на этапе импорта конкретного app ещё может не быть. Практическое правило: внутри reusable-приложения или пакета всегда `@shared_task`, для задач, жёстко привязанных к одному app, можно `@task`.
+
+## Как это работает
+
+`@task` обычно берут у экземпляра приложения: `app.task`. Задача регистрируется в реестре именно этого приложения.
+
+```python
+from myproject.celery import app
+
+@app.task
+def add(x, y):
+    return x + y
+```
+
+`@shared_task` не требует ссылки на конкретный app. Он возвращает прокси, который при вызове разрешает текущее активное приложение Celery. Поэтому такую задачу можно объявить в модуле, который импортируется до создания app.
+
+```python
+from celery import shared_task
+
+@shared_task
+def multiply(x, y):
+    return x * y
+```
+
+Запускаются обе одинаково: вызов не выполняет функцию сразу, а кладёт сообщение в брокер; воркер забирает его и выполняет.
+
+```python
+add.delay(2, 3)
+multiply.apply_async(args=[4, 5])
+```
+
+<figure>
+
+<svg viewBox="0 0 560 100" width="560" height="100" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="10" y="38" width="120" height="30" rx="4" />
+  <text x="70" y="57" fontSize="10" textAnchor="middle" stroke="none" fill="currentColor">.delay() вызов</text>
+  <rect x="220" y="38" width="120" height="30" rx="4" stroke="#6366f1" />
+  <text x="280" y="57" fontSize="10" textAnchor="middle" stroke="none" fill="currentColor">брокер (очередь)</text>
+  <rect x="430" y="38" width="120" height="30" rx="4" />
+  <text x="490" y="57" fontSize="10" textAnchor="middle" stroke="none" fill="currentColor">воркер</text>
+  <line x1="130" y1="53" x2="220" y2="53" />
+  <line x1="340" y1="53" x2="430" y2="53" />
+  <text x="175" y="30" fontSize="8" textAnchor="middle" stroke="none" fill="currentColor">сообщение</text>
+  <text x="385" y="30" fontSize="8" textAnchor="middle" stroke="none" fill="currentColor">забирает и выполняет</text>
+  <circle cx="130" cy="53" r="4" fill="#6366f1" stroke="none">
+    <animateMotion dur="2.5s" repeatCount="indefinite" path="M0,0 L90,0 L300,0" />
+  </circle>
+</svg>
+
+</figure>
+
+## Подводные камни
+
+- В переиспользуемом Django-приложении `app.task` может сломаться: на момент импорта `tasks.py` нужного app ещё нет. `@shared_task` решает это отложенным разрешением приложения.
+- `@shared_task` не «магически глобальный»: он привязывается к активному экземпляру через `autodiscover_tasks()` или явный импорт. Если ни одно приложение не сконфигурировано, задача не зарегистрируется.
+- Голый `from celery import task` устарел; в современных версиях для привязанных задач используют `app.task`, а не импорт `task`.
+- Сам декоратор не делает функцию параллельной. Параллелизм даёт постановка в очередь и воркеры; прямой вызов `add(2, 3)` выполнит функцию синхронно, минуя брокер.

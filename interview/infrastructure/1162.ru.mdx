@@ -1,0 +1,102 @@
+---
+id: 1162
+title: "Зомби против демона: два совершенно разных «живых мертвеца» в Linux"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зомби против демона: два совершенно разных «живых мертвеца» в Linux
+
+## Суть
+
+Зомби — это уже завершившийся процесс, чья запись висит в таблице процессов, пока родитель не забрал код выхода через `wait()`. Демон — наоборот, полностью живой фоновый процесс, отвязанный от терминала и обслуживающий системные задачи. Общего у них только «незаметность», в остальном это противоположности.
+
+## Что ответить на собесе
+
+Зомби (defunct) появляется, когда дочерний процесс отработал и завершился, но родитель ещё не вызвал `wait()`/`waitpid()`, чтобы прочитать его код возврата. Сам код уже не исполняется, память освобождена — остаётся только строка в таблице процессов с кодом завершения. Зомби нельзя «убить» сигналом, потому что убивать уже нечего; он исчезнет, когда родитель сделает `wait()`, а если родитель умрёт раньше, зомби усыновит `init`/`systemd` и приберёт за ним. Демон — это специально оформленный фоновый процесс: его отвязывают от управляющего терминала через `setsid()`, и он работает независимо от сессий пользователя, обслуживая сеть, оборудование или периодические задачи.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 150" role="img" aria-label="Жизненный цикл потомка: выполняется, завершается, висит зомби, исчезает после wait родителя" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <g stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05">
+    <rect x="20" y="55" width="110" height="44" rx="22" />
+    <rect x="180" y="55" width="110" height="44" rx="22" />
+    <rect x="340" y="55" width="110" height="44" rx="22" />
+    <rect x="500" y="55" width="80" height="44" rx="22" />
+  </g>
+  <text x="75" y="82" textAnchor="middle" fill="currentColor">running</text>
+  <text x="235" y="82" textAnchor="middle" fill="currentColor">_exit()</text>
+  <text x="395" y="76" textAnchor="middle" fill="#6366f1">zombie</text>
+  <text x="395" y="92" textAnchor="middle" fill="currentColor" fillOpacity="0.6" fontSize="10">defunct</text>
+  <text x="540" y="82" textAnchor="middle" fill="currentColor">reaped</text>
+
+  <g stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M 130 77 L 178 77" />
+    <path d="M 290 77 L 338 77" />
+    <path d="M 450 77 L 498 77" />
+  </g>
+  <text x="154" y="68" textAnchor="middle" fill="currentColor" fillOpacity="0.6" fontSize="10">завершился</text>
+  <text x="474" y="68" textAnchor="middle" fill="#6366f1" fontSize="10">wait()</text>
+  <text x="395" y="120" textAnchor="middle" fill="currentColor" fillOpacity="0.6" fontSize="10">запись в таблице ждёт родителя</text>
+
+  <circle r="4" fill="#6366f1">
+    <animateMotion path="M 450 77 L 498 77" dur="2s" repeatCount="indefinite" />
+  </circle>
+</svg>
+
+</figure>
+
+**Зомби.** Процесс становится зомби в промежутке между своим завершением и `wait()` со стороны родителя:
+
+```c
+#include <sys/wait.h>
+#include <unistd.h>
+#include <stdio.h>
+
+int main() {
+    pid_t pid = fork();
+    if (pid > 0) {
+        sleep(10);          // родитель спит и НЕ делает wait() — потомок висит зомби
+    } else if (pid == 0) {
+        printf("Child done\n");
+        _exit(0);           // потомок завершился, его запись ждёт сбора
+    }
+    return 0;
+}
+```
+
+Записи нужны, чтобы родитель мог узнать, как завершился потомок (код выхода, был ли сигнал).
+
+**Демон.** Демона создают двойным `fork()` с `setsid()` между ними, чтобы навсегда оторваться от терминала:
+
+```c
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+void create_daemon() {
+    if (fork() > 0) exit(EXIT_SUCCESS);   // выходим из родителя
+    setsid();                             // новый сеанс, отвязка от терминала
+    if (fork() > 0) exit(EXIT_SUCCESS);   // второй fork: не быть лидером сеанса
+    umask(0);
+    chdir("/");                           // не держим занятым раздел
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+}
+```
+
+Второй `fork()` гарантирует, что процесс не станет лидером сеанса и не сможет случайно захватить терминал.
+
+## Подводные камни
+
+- Зомби не освобождается через `kill -9`: его уже нет, нужен `wait()` родителя или смерть самого родителя.
+- Толпа зомби — это симптом бага в родителе (он не собирает потомков), а не самостоятельная проблема; опасны они тем, что забивают таблицу PID.
+- Сирота (orphan) — не то же самое, что зомби: у сироты ещё живой код, просто умер родитель, и её усыновляет `init`.
+- Без второго `fork()` демон может оставаться лидером сеанса и при открытии терминала захватит его как управляющий.
+- Если демон не сделает `chdir("/")`, он удержит занятой ту файловую систему, из которой стартовал, и её не размонтировать.

@@ -1,0 +1,95 @@
+---
+id: 1196
+title: "Чем проверять корутины: организация тестов для async-функций"
+category: quality-process
+categoryLabel: "Качество и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем проверять корутины: организация тестов для async-функций
+
+## Суть
+
+Корутину нельзя просто вызвать и сравнить результат - её нужно прогнать через событийный цикл. Поэтому для async-кода берут инструмент, который умеет запускать `await` внутри теста: плагин `pytest-asyncio` или встроенный `unittest.IsolatedAsyncioTestCase`.
+
+## Что ответить на собесе
+
+Асинхронную функцию тестируют так же, как обычную, но тест-фреймворку нужно дать event loop. На практике я использую `pytest` с плагином `pytest-asyncio`: помечаю тест `@pytest.mark.asyncio` и пишу `await` прямо в теле. Если хочется обойтись стандартной библиотекой, есть `unittest.IsolatedAsyncioTestCase` - он даёт каждому тесту изолированный цикл. Главное - не забыть дождаться корутины: голый вызов `async`-функции возвращает объект корутины, а не результат, и assert на нём ничего не проверит.
+
+## Как это работает
+
+Вызов `async def`-функции не запускает её тело - он создаёт объект корутины, который надо прокрутить в событийном цикле. Тест-раннер для async берёт на себя создание и закрытие этого цикла.
+
+<figure>
+
+<svg viewBox="0 0 560 150" width="560" height="150" role="img" aria-label="Корутина проходит через событийный цикл и возвращает результат" fill="none" stroke="currentColor">
+  <rect x="8" y="50" width="120" height="50" rx="6" />
+  <text x="68" y="72" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">async def</text>
+  <text x="68" y="88" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">вызов</text>
+  <rect x="220" y="36" width="130" height="78" rx="6" stroke="#6366f1" />
+  <text x="285" y="60" fill="#6366f1" stroke="none" fontSize="11" textAnchor="middle">event loop</text>
+  <text x="285" y="78" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">прокручивает</text>
+  <text x="285" y="94" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">await</text>
+  <rect x="438" y="50" width="114" height="50" rx="6" />
+  <text x="495" y="72" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">результат</text>
+  <text x="495" y="88" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">для assert</text>
+  <path d="M128 75 L220 75" strokeWidth="1.5" />
+  <path d="M212 71 L220 75 L212 79" strokeWidth="1.5" />
+  <path d="M350 75 L438 75" strokeWidth="1.5" />
+  <path d="M430 71 L438 75 L430 79" strokeWidth="1.5" />
+  <text x="174" y="68" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">объект</text>
+  <text x="174" y="80" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">корутины</text>
+  <circle r="5" fill="#6366f1" stroke="none">
+    <animateMotion path="M128 75 L220 75 L350 75 L438 75" dur="3s" repeatCount="indefinite" />
+  </circle>
+</svg>
+
+</figure>
+
+Вариант с `pytest-asyncio`:
+
+```python
+import pytest
+import asyncio
+
+async def async_function():
+    await asyncio.sleep(0)
+    return 42
+
+@pytest.mark.asyncio
+async def test_async_function():
+    result = await async_function()
+    assert result == 42
+```
+
+Метка `@pytest.mark.asyncio` говорит плагину обернуть тест в цикл. Внутри можно свободно ставить `await`.
+
+Тот же сценарий на стандартном `unittest`:
+
+```python
+import unittest
+import asyncio
+
+class TestAsyncFunction(unittest.IsolatedAsyncioTestCase):
+    async def produce(self):
+        await asyncio.sleep(0)
+        return 42
+
+    async def test_async_function(self):
+        result = await self.produce()
+        self.assertEqual(result, 42)
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+`IsolatedAsyncioTestCase` создаёт свежий цикл на каждый тест и поддерживает `asyncSetUp` / `asyncTearDown` для асинхронной подготовки и очистки.
+
+## Подводные камни
+
+- Самая частая ошибка - забыть `await`. Тогда тест получает объект корутины, assert проходит впустую, а в логах висит предупреждение `coroutine was never awaited`.
+- Без `@pytest.mark.asyncio` (или нужного `asyncio_mode`) pytest вернёт корутину как обычное значение и тест ничего не проверит.
+- Не зашивайте реальные таймауты: `asyncio.sleep(1)` лишь тормозит прогон. Для проверки логики хватает `sleep(0)`, а ожидание лучше мокать.
+- Исключения внутри корутины всплывают только после `await`, поэтому проверять их надо через `pytest.raises` вокруг самого `await`, а не вокруг создания корутины.

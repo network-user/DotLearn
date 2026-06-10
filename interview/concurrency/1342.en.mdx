@@ -1,0 +1,73 @@
+---
+id: 1342
+title: "Global Interpreter Lock: why threads in CPython do not compute in parallel"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Global Interpreter Lock: why threads in CPython do not compute in parallel
+
+## In short
+
+The GIL is the global interpreter lock of CPython, which allows only one thread to execute bytecode at a time. It simplifies memory management but deprives purely computational multithreaded code of parallelism across multiple cores.
+
+## How to answer in an interview
+
+The GIL (Global Interpreter Lock) is an interpreter-level mutex in CPython: to execute bytecode, a thread must hold this lock, so exactly one thread is active at any given moment. This was done for the safety of reference counting during garbage collection. The consequence: CPU-bound tasks cannot be sped up with multithreading; for them you use `multiprocessing`. I/O-bound workloads, however, do benefit, because during the I/O wait the thread releases the GIL.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 520 200" width="520" height="200" fill="none" stroke="currentColor" strokeWidth="1.5" role="img" aria-label="Several threads wait for the single GIL, only the lock holder can execute bytecode">
+  <text x="60" y="24" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">threads</text>
+  <rect x="20" y="40" width="80" height="28" rx="4" />
+  <text x="60" y="59" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">T1</text>
+  <rect x="20" y="86" width="80" height="28" rx="4" />
+  <text x="60" y="105" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">T2</text>
+  <rect x="20" y="132" width="80" height="28" rx="4" />
+  <text x="60" y="151" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">T3</text>
+  <rect x="220" y="78" width="80" height="44" rx="6" stroke="#6366f1" />
+  <text x="260" y="104" textAnchor="middle" fontSize="12" stroke="none" fill="#6366f1">GIL</text>
+  <rect x="400" y="78" width="100" height="44" rx="6" />
+  <text x="450" y="104" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">CPU: bytecode</text>
+  <line x1="100" y1="54" x2="218" y2="92" strokeDasharray="4 4" />
+  <line x1="100" y1="100" x2="218" y2="100" strokeDasharray="4 4" />
+  <line x1="100" y1="146" x2="218" y2="108" strokeDasharray="4 4" />
+  <line x1="300" y1="100" x2="398" y2="100" />
+  <circle r="6" fill="#6366f1" stroke="none">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M60 54 L260 100 L60 100 L260 100 L60 146 L260 100" />
+  </circle>
+</svg>
+
+</figure>
+
+The lock is tied to reference counting: when an object is modified, its reference count is updated, and without the GIL two threads could corrupt this counter simultaneously. So a thread acquires the GIL, executes a chunk of bytecode, periodically releases the lock, and yields its turn to another thread.
+
+```python
+import threading
+
+def increment(counter):
+    for _ in range(1_000_000):
+        counter[0] += 1
+
+counter = [0]
+t1 = threading.Thread(target=increment, args=(counter,))
+t2 = threading.Thread(target=increment, args=(counter,))
+
+t1.start(); t2.start()
+t1.join(); t2.join()
+
+print(counter[0])  # 2000000
+```
+
+Here two threads run the same CPU-bound work, but the GIL prevents them from computing simultaneously - on a multi-core machine there will be no speedup, rather the opposite: switching overhead is added.
+
+## Pitfalls
+
+- The GIL does not make operations atomic "for free": `counter[0] += 1` is a read, an increment, and a write, and when the lock is released between them, a race is possible. For reliability you need a `Lock`.
+- "The GIL always gets in the way" is a myth. On I/O (network, disk) the thread releases the lock, and multithreading really helps.
+- The GIL is a CPython detail, not a feature of the language itself. Jython, IronPython, and builds without the GIL (the free-threaded build) behave differently; for CPU-bound work in CPython, the standard workaround is processes.

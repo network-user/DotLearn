@@ -1,0 +1,105 @@
+---
+id: 1318
+title: "Alembic: why you need it for versioning the database schema"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Alembic: why you need it for versioning the database schema
+
+## In short
+
+Alembic is a database schema versioning tool for SQLAlchemy projects. It describes each structural change as a separate step (a revision) that can be applied and rolled back, and keeps the schema in sync across all environments.
+
+## How to answer in an interview
+
+Alembic solves the problem of managed schema evolution. Any structural change - a new table, a renamed column, a dropped index - is captured as a separate revision with `upgrade` and `downgrade` functions. Revisions are kept in a linear (or branching) history and applied in order. Because of this, dev, staging, and production reach an identical structure using the same set of commands, with no manual SQL transfer and no drift. With `--autogenerate` Alembic also compares the SQLAlchemy models against the current schema and drafts a migration for you.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 640 200" role="img" aria-label="Linear history of Alembic revisions with upgrade and downgrade" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="40" y="80" width="120" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+  <text x="100" y="100" textAnchor="middle" fontSize="12" fill="currentColor">base</text>
+  <text x="100" y="116" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">empty schema</text>
+  <rect x="260" y="80" width="120" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="100" textAnchor="middle" fontSize="12" fill="currentColor">rev a1b2</text>
+  <text x="320" y="116" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">users</text>
+  <rect x="480" y="80" width="120" height="40" rx="8" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="540" y="100" textAnchor="middle" fontSize="12" fill="currentColor">rev c3d4</text>
+  <text x="540" y="116" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">head · orders</text>
+  <path d="M160 92 L260 92" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arr)" />
+  <path d="M380 92 L480 92" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arr)" />
+  <text x="210" y="82" textAnchor="middle" fontSize="11" fill="currentColor">upgrade</text>
+  <text x="430" y="82" textAnchor="middle" fontSize="11" fill="currentColor">upgrade</text>
+  <path d="M480 110 L380 110" stroke="currentColor" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+  <path d="M260 110 L160 110" stroke="currentColor" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+  <text x="320" y="128" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.7">downgrade</text>
+  <circle cx="540" cy="60" r="5" fill="#6366f1">
+    <animate attributeName="cy" values="60;70;60" dur="2s" repeatCount="indefinite" />
+  </circle>
+  <text x="540" y="48" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">alembic_version</text>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+</svg>
+
+</figure>
+
+The basic unit is a revision. It is a Python file with a unique identifier, a reference to the previous revision (`down_revision`), and two functions: what to do on upgrade and what to do on downgrade.
+
+The starter set of commands:
+
+```bash
+alembic init alembic
+```
+
+Creates an `alembic/` directory with the config and migration templates.
+
+```bash
+alembic revision --autogenerate -m "add users table"
+```
+
+Compares the models with the database and generates a draft revision. The `-m` flag sets a human-readable description.
+
+```bash
+alembic upgrade head
+```
+
+Applies all not-yet-applied revisions up to the latest (`head`).
+
+```bash
+alembic downgrade -1
+```
+
+Rolls back one last step.
+
+An end-to-end example - adding a `users` table. First we describe the model:
+
+```python
+from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+```
+
+Then we generate the revision with `alembic revision --autogenerate -m "add users table"` and apply it via `alembic upgrade head`. The identifier of the current revision is recorded in the `alembic_version` table - that is how Alembic knows which step the database is currently at.
+
+## Pitfalls
+
+- `--autogenerate` does not see everything: a column type change, renames, changes in `CHECK` and server `default`s are often missed or treated as drop+create. The generated revision must always be reviewed by hand.
+- The `downgrade` function is easy to leave empty or incorrect - and then a rollback on production breaks exactly when you need it.
+- Several development branches produce several `head`s, and Alembic will require `alembic merge`. This cannot be ignored.
+- Data migrations (not structural ones) must be written carefully: a heavy `UPDATE` inside a revision can lock a table for a long time on production.
+- A revision captures the structure as of the moment it was written: importing the application's "live" models inside a migration is a path to breakage when the code changes in the future.

@@ -1,0 +1,84 @@
+---
+id: 947
+title: "What turns a Dockerfile into a finished image during a build"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What turns a Dockerfile into a finished image during a build
+
+## In short
+
+An image is built from a `Dockerfile` with the `docker build` command: Docker executes the file's instructions in order, turning each one into a separate layer, and assembles the layers into the final image.
+
+## How to answer in an interview
+
+The build happens in two steps. First I describe the recipe in a `Dockerfile`: which base image to start from, what to copy, which dependencies to install, what to run the application with. Then I run `docker build -t myimage:latest .`, where `-t` sets the name and tag, and `.` is the build context (the directory whose files are available to commands like `COPY`). Docker reads the instructions top to bottom, creates a layer for each, caches unchanged layers, and assembles them into the final image, from which containers are later spun up.
+
+## How it works
+
+The core idea is layering and caching. Each instruction (`FROM`, `COPY`, `RUN`, ...) produces one read-only layer. On a rebuild Docker compares layers: if an instruction and its inputs haven't changed, the cache is used, otherwise the layer is rebuilt - and so is every layer below it.
+
+<figure>
+<svg viewBox="0 0 560 230" fontFamily="sans-serif" fontSize="11" role="img">
+<text x="280" y="16" textAnchor="middle" fill="currentColor">Dockerfile → layers → image</text>
+<rect x="40" y="30" width="220" height="26" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="150" y="47" textAnchor="middle" fill="currentColor">FROM python:3.12-slim</text>
+<rect x="40" y="60" width="220" height="26" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="150" y="77" textAnchor="middle" fill="currentColor">COPY requirements.txt</text>
+<rect x="40" y="90" width="220" height="26" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="150" y="107" textAnchor="middle" fill="currentColor">RUN pip install</text>
+<rect x="40" y="120" width="220" height="26" stroke="#6366f1" fill="#6366f1" fillOpacity="0.08" />
+<text x="150" y="137" textAnchor="middle" fill="currentColor">COPY . .</text>
+<rect x="40" y="150" width="220" height="26" stroke="#6366f1" fill="#6366f1" fillOpacity="0.08" />
+<text x="150" y="167" textAnchor="middle" fill="currentColor">CMD</text>
+<text x="285" y="78" fill="currentColor">cache</text>
+<text x="285" y="138" fill="#6366f1">rebuild</text>
+<line x1="330" y1="38" x2="330" y2="168" stroke="currentColor" strokeWidth="1" strokeDasharray="3 3" strokeOpacity="0.4" />
+<rect x="360" y="60" width="160" height="86" stroke="currentColor" fill="none" />
+<text x="440" y="50" textAnchor="middle" fill="currentColor">Final image</text>
+<text x="440" y="100" textAnchor="middle" fill="currentColor">myimage:latest</text>
+<text x="440" y="120" textAnchor="middle" fill="currentColor" fillOpacity="0.7">stack of layers</text>
+<text x="150" y="200" textAnchor="middle" fill="currentColor" fillOpacity="0.7">rarely changing on top → code below</text>
+</svg>
+</figure>
+
+Hence the rule: what changes less often goes higher. Dependencies first, source code second:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "app.py"]
+```
+
+Here `requirements.txt` is copied and dependencies are installed BEFORE copying all the code. As long as the dependency list doesn't change, the heavy `pip install` layer is taken from cache, no matter how many edits there are in the code.
+
+The layer order schematically:
+
+```
+[FROM python] -> [WORKDIR] -> [COPY requirements] -> [RUN pip install] -> [COPY .] -> [CMD]
+   base           meta          rarely changes         cached             changes often
+```
+
+Running the build:
+
+```bash
+docker build -t myimage:latest .
+```
+
+## Pitfalls
+
+- The order of instructions determines the speed. If you put `COPY . .` BEFORE installing dependencies, any code edit invalidates the `pip install` cache, and dependencies are reinstalled every time.
+- The `.` in the command is the build context, not "the current folder for convenience". Docker packages and sends the entire contents of the context to the daemon; without a `.dockerignore`, `.git`, `node_modules`, and the venv all fly in there - the image bloats and the build slows down.
+- Each `RUN` is a separate layer. Several `RUN apt-get ...` in a row bloat the image; you combine them into a single instruction with `&&`, and clean the apt cache in the same layer.
+- `latest` isn't "the freshest forever", it's just the default tag. It doesn't update itself and is misleading in production - better to pin specific versions.

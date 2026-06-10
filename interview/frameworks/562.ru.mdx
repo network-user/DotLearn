@@ -1,0 +1,117 @@
+---
+id: 562
+title: "Какими способами одна модель Django может наследовать другую?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какими способами одна модель Django может наследовать другую?
+
+## Суть
+
+Django поддерживает три модели наследования, и различаются они тем, сколько таблиц рождается в базе. Абстрактный базовый класс раздаёт поля дочерним моделям, но своей таблицы не имеет. Многотабличное наследование заводит таблицу под каждую модель. Прокси меняет поведение, не трогая ни одну таблицу.
+
+## Что ответить на собесе
+
+Вариантов наследования три. Абстрактные модели (`abstract = True` в `Meta`) — чистый шаблон полей: таблицы у базового класса нет, поля копируются в каждую дочернюю модель, своя таблица только у потомков. Многотабличное наследование — когда базовый класс не абстрактный: у него своя таблица, у потомка своя, а между ними неявная `OneToOne`-связь, и обращение к унаследованному полю делает JOIN. Прокси-модель (`proxy = True`) — это та же таблица, но другой Python-класс: можно добавить методы, поменять менеджер или сортировку по умолчанию, без единого нового столбца. Выбор сводится к вопросу: нужна ли отдельная таблица и нужны ли новые поля.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 230" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Сколько таблиц рождает каждый вид наследования</title>
+  <g fontFamily="sans-serif" fontSize="12" textAnchor="middle">
+    <text x="100" y="22" fill="currentColor">Абстрактная</text>
+    <text x="300" y="22" fill="currentColor">Многотабличная</text>
+    <text x="500" y="22" fill="currentColor">Прокси</text>
+
+    <rect x="40" y="40" width="120" height="34" rx="6" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+    <text x="100" y="62" fill="currentColor" fillOpacity="0.6">база (нет таблицы)</text>
+    <rect x="40" y="100" width="55" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="67" y="124" fill="currentColor">Student</text>
+    <rect x="105" y="100" width="55" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="132" y="124" fill="currentColor">Teacher</text>
+    <text x="100" y="172" fill="currentColor" fillOpacity="0.7">2 таблицы</text>
+
+    <rect x="240" y="40" width="120" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="300" y="64" fill="currentColor">BaseModel</text>
+    <rect x="240" y="100" width="120" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="300" y="124" fill="currentColor">ChildModel</text>
+    <text x="300" y="172" fill="currentColor" fillOpacity="0.7">2 таблицы + JOIN</text>
+
+    <rect x="440" y="70" width="120" height="40" rx="6" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="500" y="94" fill="currentColor">Person</text>
+    <text x="500" y="138" fill="currentColor" fillOpacity="0.6">PersonProxy</text>
+    <text x="500" y="172" fill="currentColor" fillOpacity="0.7">1 таблица</text>
+  </g>
+  <g stroke="currentColor" strokeWidth="1.5">
+    <line x1="300" y1="80" x2="300" y2="100" />
+    <line x1="500" y1="110" x2="500" y2="124" strokeDasharray="4 3" />
+  </g>
+</svg>
+</figure>
+
+**Абстрактная модель.** Базовый класс помечен `abstract = True`, поэтому таблицы под него не будет, а его поля переедут в каждого потомка:
+
+```python
+from django.db import models
+
+
+class CommonInfo(models.Model):
+    name = models.CharField(max_length=100)
+    age = models.IntegerField()
+
+    class Meta:
+        abstract = True
+
+
+class Student(CommonInfo):
+    school = models.CharField(max_length=100)
+
+
+class Teacher(CommonInfo):
+    subject = models.CharField(max_length=100)
+```
+
+В базе появятся таблицы `Student` и `Teacher`, каждая со своими `name` и `age`. Таблицы `CommonInfo` нет.
+
+**Многотабличное наследование.** Базовый класс обычный, не абстрактный:
+
+```python
+class BaseModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ChildModel(BaseModel):
+    name = models.CharField(max_length=100)
+```
+
+Здесь две таблицы. У `ChildModel` поля `created_at` нет физически в своей таблице — оно достаётся через автоматическую связь с `BaseModel`, и запрос делает JOIN.
+
+**Прокси-модель.** Та же таблица, но расширенное поведение:
+
+```python
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+
+
+class PersonProxy(Person):
+    class Meta:
+        proxy = True
+
+    def get_uppercase_name(self):
+        return self.name.upper()
+```
+
+`PersonProxy` читает и пишет ровно в таблицу `Person`, новой таблицы нет, а метод `get_uppercase_name` доступен только через прокси.
+
+## Подводные камни
+
+- **Многотабличное наследование скрывает JOIN-ы:** каждое обращение к полю родителя — это запрос с соединением таблиц, на горячих путях это бьёт по производительности. Часто абстрактная модель предпочтительнее.
+- **В прокси нельзя добавлять поля:** только методы, менеджеры и `Meta`-опции вроде `ordering`. Попытка объявить новое поле приведёт к ошибке.
+- **`Meta` у абстрактного класса наследуется не полностью:** дочерняя модель получает копию `Meta`, но `abstract` сбрасывается в `False`, иначе потомок тоже стал бы абстрактным.
+- **Меняешь схему — пиши миграции:** переход от абстрактной к многотабличной модели меняет структуру таблиц и требует аккуратной миграции данных.
+- **У прокси и оригинала общие строки:** объект, сохранённый через `Person`, виден и через `PersonProxy` — это одна и та же запись, не копия.

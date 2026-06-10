@@ -1,0 +1,75 @@
+---
+id: 1389
+title: "Почему глубокая рекурсия в Python упирается в потолок и тормозит?"
+category: python-core
+categoryLabel: "Python: язык и идиомы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему глубокая рекурсия в Python упирается в потолок и тормозит?
+
+## Суть
+
+CPython ограничивает глубину рекурсии (по умолчанию около 1000 вложенных вызовов), чтобы стек интерпретатора не переполнился. Плюс сами вызовы функций недёшевы, поэтому рекурсия обычно медленнее эквивалентного цикла.
+
+## Что ответить на собесе
+
+В Python нет оптимизации хвостовых вызовов, и каждый рекурсивный вызов кладёт в стек новый фрейм. Чтобы не словить переполнение, интерпретатор держит лимит глубины (~1000) и при его превышении бросает `RecursionError`. Лимит можно поднять через `sys.setrecursionlimit`, но это лишь сдвигает потолок и рискует уронить процесс на реальном стеке C. Для глубоких задач я переписываю рекурсию в итеративную форму с явным стеком.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 520 240" role="img" aria-label="Стек фреймов растёт при каждом рекурсивном вызове и упирается в лимит" xmlns="http://www.w3.org/2000/svg">
+  <line x1="40" y1="30" x2="480" y2="30" stroke="#6366f1" strokeWidth="2" strokeDasharray="6 4" />
+  <text x="40" y="22" fontSize="12" fill="#6366f1">лимит глубины (~1000) -&gt; RecursionError</text>
+  <rect x="160" y="180" width="200" height="32" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="260" y="201" fontSize="12" textAnchor="middle" fill="currentColor">factorial(n)</text>
+  <rect x="160" y="142" width="200" height="32" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="260" y="163" fontSize="12" textAnchor="middle" fill="currentColor">factorial(n-1)</text>
+  <rect x="160" y="104" width="200" height="32" rx="4" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="260" y="125" fontSize="12" textAnchor="middle" fill="currentColor">factorial(n-2)</text>
+  <rect x="160" y="66" width="200" height="32" rx="4" fill="currentColor" fillOpacity="0.1" stroke="#6366f1" strokeWidth="1.5">
+    <animate attributeName="y" values="180;66" dur="2.4s" repeatCount="indefinite" />
+    <animate attributeName="fillOpacity" values="0;0.1" dur="2.4s" repeatCount="indefinite" />
+  </rect>
+  <text x="260" y="87" fontSize="12" textAnchor="middle" fill="currentColor">...</text>
+  <text x="395" y="200" fontSize="12" fill="currentColor" fillOpacity="0.6">каждый</text>
+  <text x="395" y="216" fontSize="12" fill="currentColor" fillOpacity="0.6">вызов -&gt;</text>
+  <text x="395" y="232" fontSize="12" fill="currentColor" fillOpacity="0.6">новый фрейм</text>
+</svg>
+
+</figure>
+
+Активные вызовы интерпретатор хранит в стеке: на каждый вызов заводится фрейм с локальными переменными. При самовызове фреймы накапливаются, и при достижении лимита поднимается `RecursionError`.
+
+```python
+import sys
+
+print("Текущий лимит:", sys.getrecursionlimit())
+sys.setrecursionlimit(1500)
+print("Новый лимит:", sys.getrecursionlimit())
+```
+
+Накладные расходы тоже важны: каждый фрейм - это память и время на его создание и снятие. Классический пример - факториал:
+
+```python
+def factorial(n):
+    if n == 0:
+        return 1
+    return n * factorial(n - 1)
+
+print(factorial(5))  # 120
+```
+
+Базовый случай `n == 0` останавливает рекурсию, а шаг `n * factorial(n - 1)` сводит задачу к меньшей. Без корректного базового случая рекурсия не остановится и упрётся в лимит.
+
+## Подводные камни
+
+- Превышение глубины - это `RecursionError`, а не тихое зависание.
+- `sys.setrecursionlimit` слишком высоким значением может уронить интерпретатор сегфолтом: лимит Python не знает реального размера стека C.
+- Хвостовой рекурсии Python не оптимизирует - не рассчитывайте на TCO.
+- Отсутствие или недостижимый базовый случай гарантированно приводит к ошибке глубины.
+- Для глубоких структур (обход дерева, графа) надёжнее явный стек или очередь в цикле.

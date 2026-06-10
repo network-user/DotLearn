@@ -1,0 +1,76 @@
+---
+id: 472
+title: "Signals in Django: how to react to events without tight coupling?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Signals in Django: how to react to events without tight coupling?
+
+## In short
+
+Signals are a built-in publisher-subscriber mechanism: some parts of the application send events, others subscribe to them and react. This lets you attach side logic (mailings, auditing, cache invalidation) to model events without baking it into the core code.
+
+## How to answer in an interview
+
+Signals provide loose coupling: the sender of an event doesn't know who will react to it or how. For example, on the `post_save` of the `Article` model I attach a receiver that notifies subscribers, and the article-saving code stays clean. The upsides are separation of concerns and testability. But don't overuse them: signals make the control flow implicit, so for logic that should be visible "right there in place" I prefer an explicit call in the `save()` method or in a service layer.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 560 220" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>The post_save signal is dispatched to several receivers</title>
+  <g fontFamily="sans-serif" fontSize="12" textAnchor="middle">
+    <rect x="20" y="85" width="120" height="50" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="80" y="106" fill="currentColor">Article.save()</text>
+    <text x="80" y="122" fill="currentColor" fillOpacity="0.7">sender</text>
+    <rect x="210" y="90" width="110" height="40" rx="8" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="265" y="115" fill="currentColor">post_save</text>
+    <rect x="400" y="20" width="140" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="470" y="45" fill="currentColor">notifications</text>
+    <rect x="400" y="90" width="140" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="470" y="115" fill="currentColor">audit</text>
+    <rect x="400" y="160" width="140" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+    <text x="470" y="185" fill="currentColor">cache reset</text>
+  </g>
+  <g stroke="currentColor" strokeWidth="1.5">
+    <line x1="140" y1="110" x2="208" y2="110" />
+    <path d="M 320 105 C 360 90 360 50 398 40" />
+    <line x1="320" y1="110" x2="398" y2="110" />
+    <path d="M 320 115 C 360 130 360 170 398 180" />
+  </g>
+  <circle r="4.5" fill="#6366f1">
+    <animateMotion dur="2.4s" repeatCount="indefinite" path="M 140 110 L 208 110" />
+  </circle>
+</svg>
+</figure>
+
+At its core it's the publisher-subscriber pattern. The **sender** emits a signal (a model on save, delete, or migration). The **receiver** is a function subscribed to the signal that performs actions in response.
+
+The subscription is set up with the `@receiver` decorator: it ties the function to a specific signal and, optionally, to a specific sender (`sender`).
+
+```python
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from .models import Article
+
+@receiver(post_save, sender=Article)
+def notify_subscribers(sender, instance, created, **kwargs):
+    if created:
+        print(f"New article created: {instance.title}")
+        # the notification mailing is triggered here
+```
+
+The `created` argument distinguishes creation from an update, and `instance` is the saved object itself. For the receiver to get registered, its module must be imported at startup - usually this is done in the `ready()` method of the `AppConfig` class.
+
+Typical uses: auditing and logging changes, cache invalidation when data is edited, user notifications, additional post-processing of records.
+
+## Pitfalls
+
+- **Implicit flow.** A signal fires "off to the side" - which complicates debugging. If the logic clearly belongs to the model, explicit code in `save()` is better.
+- **Receiver registration.** If the module with `@receiver` isn't imported anywhere, the signal silently won't fire. Wire it up in `AppConfig.ready()`.
+- **`post_save` and transactions.** The signal fires before the transaction commits; if you send emails or call an external service inside it, a rollback leaves you with a phantom action. Use `transaction.on_commit`.
+- **Recursion.** Calling `instance.save()` inside a `post_save` handler will raise `post_save` again - it's easy to fall into an infinite loop.

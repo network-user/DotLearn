@@ -1,0 +1,89 @@
+---
+id: 1316
+title: "Where does the N+1 query problem come from and how to fix it?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where does the N+1 query problem come from and how to fix it?
+
+## In short
+
+N+1 is when the main list is fetched with one query, and then for each of its elements another query flies off to fetch related data. As a result, instead of a single round trip to the database you get N+1 of them. It is cured by eager loading via JOIN or with ORM features.
+
+## How to answer in an interview
+
+"The N+1 problem arises from lazy loading of relationships in the ORM. I fetch the list of authors with one query, and then in a loop I access `author.books` - and for each author the ORM quietly makes a separate SQL query. Ten authors turn into eleven queries, a hundred into a hundred and one. I solve this with eager loading: with a single JOIN or a dedicated ORM method (`joinedload`/`selectinload` in SQLAlchemy, `select_related`/`prefetch_related` in Django) I pull the related rows in advance. The main thing is to be able to spot N+1 in the query log rather than by eye."
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 640 260" role="img" aria-label="Comparison of N+1 queries and a single JOIN" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="150" y="22" textAnchor="middle" fontSize="14" fill="currentColor">N+1 queries</text>
+  <text x="490" y="22" textAnchor="middle" fontSize="14" fill="currentColor">Single JOIN</text>
+  <rect x="100" y="40" width="100" height="34" rx="6" stroke="currentColor" strokeWidth="1.5" />
+  <text x="150" y="62" textAnchor="middle" fontSize="12" fill="currentColor">authors</text>
+  <line x1="150" y1="74" x2="60" y2="120" stroke="currentColor" strokeWidth="1" />
+  <line x1="150" y1="74" x2="120" y2="120" stroke="currentColor" strokeWidth="1" />
+  <line x1="150" y1="74" x2="180" y2="120" stroke="currentColor" strokeWidth="1" />
+  <line x1="150" y1="74" x2="240" y2="120" stroke="currentColor" strokeWidth="1" />
+  <rect x="34" y="120" width="52" height="28" rx="5" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="60" y="139" textAnchor="middle" fontSize="11" fill="currentColor">books</text>
+  <rect x="94" y="120" width="52" height="28" rx="5" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="120" y="139" textAnchor="middle" fontSize="11" fill="currentColor">books</text>
+  <rect x="154" y="120" width="52" height="28" rx="5" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="180" y="139" textAnchor="middle" fontSize="11" fill="currentColor">books</text>
+  <text x="222" y="139" textAnchor="middle" fontSize="14" fill="currentColor">…</text>
+  <text x="150" y="180" textAnchor="middle" fontSize="12" fill="currentColor" fillOpacity="0.75">1 + N round-trip</text>
+  <line x1="300" y1="40" x2="300" y2="200" stroke="currentColor" strokeWidth="1" strokeDasharray="4 4" strokeOpacity="0.5" />
+  <rect x="410" y="40" width="160" height="34" rx="6" stroke="currentColor" strokeWidth="1.5" />
+  <text x="490" y="62" textAnchor="middle" fontSize="12" fill="currentColor">authors ⋈ books</text>
+  <rect x="430" y="120" width="120" height="28" rx="5" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="490" y="139" textAnchor="middle" fontSize="11" fill="currentColor">result set</text>
+  <line x1="490" y1="74" x2="490" y2="120" stroke="currentColor" strokeWidth="1.5">
+    <animate attributeName="stroke-opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite" />
+  </line>
+  <text x="490" y="180" textAnchor="middle" fontSize="12" fill="currentColor" fillOpacity="0.75">1 round-trip</text>
+</svg>
+
+</figure>
+
+Suppose we have authors and their books. The naive path:
+
+1. One query - all authors.
+2. One query per author for that author's books.
+
+With 10 authors this is `1 + 10 = 11` queries. Each query is a network round trip, parsing, and execution, so the time grows linearly and the database chokes under load.
+
+Eager loading reduces everything to one query via JOIN:
+
+```sql
+SELECT authors.id, authors.name, books.title
+FROM authors
+LEFT JOIN books ON authors.id = books.author_id;
+```
+
+In an ORM this is expressed explicitly. Example in SQLAlchemy:
+
+```python
+from sqlalchemy.orm import joinedload
+
+authors = (
+    session.query(Author)
+    .options(joinedload(Author.books))
+    .all()
+)
+```
+
+`joinedload(Author.books)` tells the ORM to pull books with the same query, and accessing `author.books` in a loop no longer triggers new trips to the database.
+
+## Pitfalls
+
+- Not every "single query" is better. `joinedload` over a collection (one-to-many) multiplies the parent rows in the result; sometimes `selectinload` (a separate batched IN query) is more efficient.
+- N+1 is easily hidden behind properties and serializers: a DRF serializer that touches a nested relationship creates the same problem invisibly.
+- Profile against the real SQL log (`django-debug-toolbar`, `echo=True` in SQLAlchemy) rather than guessing.
+- Overdoing eager loading is also bad: pulling data with a JOIN that you do not need is wasted traffic and memory.

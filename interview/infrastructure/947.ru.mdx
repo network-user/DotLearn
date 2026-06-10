@@ -1,0 +1,84 @@
+---
+id: 947
+title: "Что превращает Dockerfile в готовый образ при сборке"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что превращает Dockerfile в готовый образ при сборке
+
+## Суть
+
+Образ собирается из `Dockerfile` командой `docker build`: Docker выполняет инструкции файла по порядку, превращая каждую в отдельный слой, и складывает слои в итоговый образ.
+
+## Что ответить на собесе
+
+Сборка идёт в два шага. Сначала я описываю рецепт в `Dockerfile`: от какого базового образа отталкиваться, что скопировать, какие зависимости поставить, чем запускать приложение. Потом запускаю `docker build -t myimage:latest .`, где `-t` задаёт имя и тег, а `.` — контекст сборки (директория, файлы которой доступны командам вроде `COPY`). Docker читает инструкции сверху вниз, на каждую создаёт слой, кэширует неизменившиеся слои и собирает их в финальный образ, из которого потом поднимаются контейнеры.
+
+## Как это работает
+
+Ключевая идея — слоистость и кэш. Каждая инструкция (`FROM`, `COPY`, `RUN`, ...) даёт один read-only слой. При повторной сборке Docker сверяет слои: если инструкция и её входные данные не менялись, берётся кэш, иначе слой пересобирается — и все слои ниже него тоже.
+
+<figure>
+<svg viewBox="0 0 560 230" fontFamily="sans-serif" fontSize="11" role="img">
+<text x="280" y="16" textAnchor="middle" fill="currentColor">Dockerfile → слои → образ</text>
+<rect x="40" y="30" width="220" height="26" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="150" y="47" textAnchor="middle" fill="currentColor">FROM python:3.12-slim</text>
+<rect x="40" y="60" width="220" height="26" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="150" y="77" textAnchor="middle" fill="currentColor">COPY requirements.txt</text>
+<rect x="40" y="90" width="220" height="26" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="150" y="107" textAnchor="middle" fill="currentColor">RUN pip install</text>
+<rect x="40" y="120" width="220" height="26" stroke="#6366f1" fill="#6366f1" fillOpacity="0.08" />
+<text x="150" y="137" textAnchor="middle" fill="currentColor">COPY . .</text>
+<rect x="40" y="150" width="220" height="26" stroke="#6366f1" fill="#6366f1" fillOpacity="0.08" />
+<text x="150" y="167" textAnchor="middle" fill="currentColor">CMD</text>
+<text x="285" y="78" fill="currentColor">кэш</text>
+<text x="285" y="138" fill="#6366f1">пересборка</text>
+<line x1="330" y1="38" x2="330" y2="168" stroke="currentColor" strokeWidth="1" strokeDasharray="3 3" strokeOpacity="0.4" />
+<rect x="360" y="60" width="160" height="86" stroke="currentColor" fill="none" />
+<text x="440" y="50" textAnchor="middle" fill="currentColor">Итоговый образ</text>
+<text x="440" y="100" textAnchor="middle" fill="currentColor">myimage:latest</text>
+<text x="440" y="120" textAnchor="middle" fill="currentColor" fillOpacity="0.7">стек слоёв</text>
+<text x="150" y="200" textAnchor="middle" fill="currentColor" fillOpacity="0.7">редко меняется сверху → ниже по коду</text>
+</svg>
+</figure>
+
+Отсюда правило: то, что меняется реже, ставим выше. Сначала зависимости, потом исходный код:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "app.py"]
+```
+
+Здесь `requirements.txt` копируется и зависимости ставятся ДО копирования всего кода. Пока список зависимостей не меняется, тяжёлый слой `pip install` берётся из кэша, даже если правок в коде сколько угодно.
+
+Схематично порядок слоёв:
+
+```
+[FROM python] -> [WORKDIR] -> [COPY requirements] -> [RUN pip install] -> [COPY .] -> [CMD]
+   базовый        мета          редко меняется         кэшируется         часто меняется
+```
+
+Запуск сборки:
+
+```bash
+docker build -t myimage:latest .
+```
+
+## Подводные камни
+
+- Порядок инструкций решает скорость. Если поставить `COPY . .` ПЕРЕД установкой зависимостей, любая правка кода инвалидирует кэш `pip install`, и зависимости переустанавливаются каждый раз.
+- `.` в команде — это контекст сборки, а не «текущая папка для удобства». Docker упаковывает и отправляет демону всё содержимое контекста; без `.dockerignore` туда улетят `.git`, `node_modules`, venv — образ распухает и сборка тормозит.
+- Каждый `RUN` — отдельный слой. Несколько `RUN apt-get ...` подряд раздувают образ; их объединяют в одну инструкцию через `&&`, а кэш apt чистят в том же слое.
+- `latest` — не «самая свежая навсегда», а просто тег по умолчанию. Он не обновляется сам и в проде вводит в заблуждение — лучше пинить конкретные версии.

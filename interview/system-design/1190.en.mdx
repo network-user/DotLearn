@@ -1,0 +1,75 @@
+---
+id: 1190
+title: "Vertical vs horizontal scaling: how they differ and when to choose which?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: system-design
+stageLabel: "System Design"
+lang: en
+---
+
+# Vertical vs horizontal scaling: how they differ and when to choose which?
+
+## In short
+
+When load grows, a system has two paths: beef up a single server (scale-up) or place many servers side by side and spread the load across them (scale-out). The first path is simpler to adopt but hits a hardware ceiling; the second is harder, but it's nearly unbounded and resilient to failures.
+
+## How to answer in an interview
+
+There are two basic approaches. Vertical scaling means growing the resources of a single machine: we add RAM, CPU, disk. The upside - you don't have to touch the application's architecture; the downside - there's a physical ceiling and usually downtime during the upgrade. Horizontal scaling means adding new nodes and distributing the load across them through a balancer. The upside - it scales almost linearly and survives the failure of individual nodes; the downside - the application must be ready for distributed operation: stateless services, shared state storage, data consistency. In practice monoliths gravitate toward vertical, while distributed systems and microservices lean horizontal, and the two are often combined.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 560 230" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+<text x="140" y="24" textAnchor="middle" stroke="none" fill="currentColor">Vertical (scale-up)</text>
+<rect x="105" y="150" width="70" height="40" rx="4" />
+<rect x="105" y="105" width="70" height="40" rx="4" stroke="#6366f1" />
+<rect x="105" y="60" width="70" height="40" rx="4" stroke="#6366f1" />
+<text x="140" y="212" textAnchor="middle" stroke="none" fill="currentColor">one node grows upward</text>
+<line x1="280" y1="40" x2="280" y2="200" strokeDasharray="4 4" strokeOpacity="0.5" />
+<text x="420" y="24" textAnchor="middle" stroke="none" fill="currentColor">Horizontal (scale-out)</text>
+<rect x="380" y="50" width="80" height="34" rx="4" stroke="#6366f1" strokeWidth="2" />
+<text x="420" y="72" textAnchor="middle" stroke="none" fill="#6366f1">LB</text>
+<rect x="335" y="140" width="50" height="40" rx="4" />
+<rect x="395" y="140" width="50" height="40" rx="4" />
+<rect x="455" y="140" width="50" height="40" rx="4" />
+<line x1="420" y1="84" x2="360" y2="140" />
+<line x1="420" y1="84" x2="420" y2="140" />
+<line x1="420" y1="84" x2="480" y2="140" />
+<text x="420" y="200" textAnchor="middle" stroke="none" fill="currentColor">nodes added in a row</text>
+</svg>
+</figure>
+
+Vertical scaling (scale-up) changes one axis: the same server, just more powerful. The application doesn't know it now has more cores and memory underneath, so the code doesn't change. The problem is that the cost of the resource grows non-linearly, and the maximum bumps into the most powerful hardware available.
+
+Horizontal scaling (scale-out) adds nodes and puts a load balancer in front of them, which distributes requests. The key requirement - the service must be **stateless**: any state (sessions, cache) is moved into external storage (Redis, a database), otherwise a user's requests start landing on different nodes and losing context.
+
+A simple illustration of horizontally distributing requests across nodes:
+
+```python
+class RoundRobinBalancer:
+    def __init__(self, nodes):
+        self.nodes = nodes
+        self.index = 0
+
+    def next_node(self):
+        node = self.nodes[self.index % len(self.nodes)]
+        self.index += 1
+        return node
+
+
+balancer = RoundRobinBalancer(["node-1", "node-2", "node-3"])
+route = [balancer.next_node() for _ in range(4)]
+print(route)
+```
+
+Output: `['node-1', 'node-2', 'node-3', 'node-1']` - requests cycle across the nodes.
+
+## Pitfalls
+
+- **A stateful service doesn't scale horizontally without pain.** If sessions live in process memory, a round-robin balancer will start logging users out. Move state outside or use sticky sessions (but that reduces evenness).
+- **A vertical upgrade often means downtime.** Replacing hardware or resizing an instance usually requires a restart. For systems with high availability requirements this is critical.
+- **Horizontal adds the data consistency problem.** Multiple nodes and DB replicas immediately surface questions from the CAP theorem and distributed transactions.
+- **The balancer becomes a single point of failure.** It itself needs redundancy, otherwise horizontal scaling of the services won't save you.
+- **Not everything distributes.** A heavy monolith with shared in-memory state is sometimes simpler and cheaper to scale vertically than to rewrite for scale-out.

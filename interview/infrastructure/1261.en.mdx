@@ -1,0 +1,89 @@
+---
+id: 1261
+title: "Caching in the Grafana stack: where it lives and how it affects metric freshness"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Caching in the Grafana stack: where it lives and how it affects metric freshness
+
+## In short
+
+Grafana itself neither stores nor caches metrics - it only draws what comes from sources like Prometheus or InfluxDB. The cache lives at the sources, or it's added by proxies and plugins. Caching speeds up responses and reduces load, but it doesn't change metric values - only their freshness.
+
+## How to answer in an interview
+
+Grafana is a visualization layer, not storage. Dashboards are built from data it queries from sources (Prometheus, InfluxDB, Graphite). So by default Grafana caches nothing - every panel refresh goes to the source. Caching appears in three places: at the sources themselves (Prometheus keeps recent data in memory), at a caching proxy in front of the source (Nginx, Varnish), and through plugins/Enterprise features that store results in Redis or Memcached. Important: the cache affects only freshness - with too long a TTL the user sees stale points, so the lifetime is tuned to the freshness requirements.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 620 200" role="img" aria-label="Request path from Grafana through a caching proxy to the data source" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+  <rect x="20" y="70" width="120" height="60" rx="8" />
+  <text x="80" y="96" textAnchor="middle" stroke="none" fill="currentColor">Grafana</text>
+  <text x="80" y="114" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">panel</text>
+
+  <rect x="250" y="70" width="120" height="60" rx="8" stroke="#6366f1" />
+  <text x="310" y="96" textAnchor="middle" stroke="none" fill="#6366f1">Proxy / cache</text>
+  <text x="310" y="114" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">Nginx · Redis</text>
+
+  <rect x="480" y="70" width="120" height="60" rx="8" />
+  <text x="540" y="96" textAnchor="middle" stroke="none" fill="currentColor">Source</text>
+  <text x="540" y="114" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">Prometheus</text>
+
+  <line x1="140" y1="100" x2="245" y2="100" />
+  <polygon points="245,100 237,96 237,104" fill="currentColor" stroke="none" />
+  <line x1="370" y1="100" x2="475" y2="100" strokeDasharray="5 4" />
+  <polygon points="475,100 467,96 467,104" fill="currentColor" stroke="none" />
+
+  <text x="192" y="60" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">request</text>
+  <text x="422" y="60" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="11">only on MISS</text>
+
+  <circle r="5" fill="#6366f1" stroke="none">
+    <animateMotion dur="2.6s" repeatCount="indefinite" path="M150,100 L245,100" />
+  </circle>
+
+  <text x="310" y="165" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.7" fontSize="11">HIT - served from cache, the source is left alone</text>
+</svg>
+
+</figure>
+
+A cache reduces the number of requests to the sources and speeds up responses - critical at large volumes and frequent access. Where it arises:
+
+1. **Data sources.** Connected systems have their own cache. Prometheus, for instance, keeps recent samples in RAM.
+2. **Proxy servers.** Nginx or Varnish are placed in front of the source - they cache HTTP responses and offload the backend.
+3. **Plugins and extensions.** Some plugins (and query caching in Grafana Enterprise) store query results in Redis or Memcached.
+
+### Example: a caching Nginx in front of Prometheus
+
+```nginx
+http {
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=my_cache:10m max_size=1g inactive=60m use_temp_path=off;
+
+    server {
+        location / {
+            proxy_pass http://prometheus-server;
+            proxy_cache my_cache;
+            proxy_cache_valid 200 1m;
+            add_header X-Cache-Status $upstream_cache_status;
+        }
+    }
+}
+```
+
+- `proxy_cache_path` - the path, size, and retention period of the cache.
+- `proxy_pass` - forwarding requests to Prometheus.
+- `proxy_cache` - enables the cache for this location.
+- `proxy_cache_valid 200 1m` - responses with code 200 live in the cache for 1 minute.
+- `X-Cache-Status` - a header with the status (HIT, MISS, EXPIRED) for diagnostics.
+
+## Pitfalls
+
+- **The cache doesn't change values, but it does change freshness.** With a long TTL the user sees stale points even though the source has already updated. For alerts and live dashboards this is dangerous.
+- **TTL by data type.** A one-minute cache is fine for slowly changing graphs but unacceptable where real-time reaction matters.
+- **The cache keys on the request.** A proxy caches by URL/parameters. A shifting time range (`now-5m`) produces new keys and a low hit rate - caching "hot" requests is nearly useless.
+- **Double caching confuses things.** A cache on the proxy on top of the source's cache complicates debugging: it's unclear whose data is stale. The `X-Cache-Status` header helps figure out where the response came from.

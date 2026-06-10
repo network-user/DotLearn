@@ -6,7 +6,7 @@ let cached: SqlJsRuntime | undefined;
 
 export const getSqlRuntime = (): SqlJsRuntime => {
   if (!cached) {
-    cached = createSqlJsRuntime({ worker: new SqlWorker(), wasmUrl: sqlWasmUrl });
+    cached = createSqlJsRuntime({ createWorker: () => new SqlWorker(), wasmUrl: sqlWasmUrl });
   }
   return cached;
 };

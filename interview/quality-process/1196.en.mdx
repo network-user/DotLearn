@@ -1,0 +1,95 @@
+---
+id: 1196
+title: "Testing coroutines: organizing tests for async functions"
+category: quality-process
+categoryLabel: "Качество и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Testing coroutines: organizing tests for async functions
+
+## In short
+
+You can't just call a coroutine and compare the result - it has to be driven through an event loop. So for async code you reach for a tool that knows how to run `await` inside a test: the `pytest-asyncio` plugin or the built-in `unittest.IsolatedAsyncioTestCase`.
+
+## How to answer in an interview
+
+You test an async function the same way as a regular one, but the test framework needs an event loop. In practice I use `pytest` with the `pytest-asyncio` plugin: I mark the test `@pytest.mark.asyncio` and write `await` right in the body. If you want to stick to the standard library, there's `unittest.IsolatedAsyncioTestCase` - it gives each test an isolated loop. The main thing is not to forget to await the coroutine: a bare call to an `async` function returns a coroutine object, not a result, and asserting on it checks nothing.
+
+## How it works
+
+Calling an `async def` function doesn't run its body - it creates a coroutine object that you have to spin through an event loop. The async test runner takes care of creating and closing that loop.
+
+<figure>
+
+<svg viewBox="0 0 560 150" width="560" height="150" role="img" aria-label="A coroutine passes through the event loop and returns a result" fill="none" stroke="currentColor">
+  <rect x="8" y="50" width="120" height="50" rx="6" />
+  <text x="68" y="72" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">async def</text>
+  <text x="68" y="88" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">call</text>
+  <rect x="220" y="36" width="130" height="78" rx="6" stroke="#6366f1" />
+  <text x="285" y="60" fill="#6366f1" stroke="none" fontSize="11" textAnchor="middle">event loop</text>
+  <text x="285" y="78" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">drives</text>
+  <text x="285" y="94" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">await</text>
+  <rect x="438" y="50" width="114" height="50" rx="6" />
+  <text x="495" y="72" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">result</text>
+  <text x="495" y="88" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">for assert</text>
+  <path d="M128 75 L220 75" strokeWidth="1.5" />
+  <path d="M212 71 L220 75 L212 79" strokeWidth="1.5" />
+  <path d="M350 75 L438 75" strokeWidth="1.5" />
+  <path d="M430 71 L438 75 L430 79" strokeWidth="1.5" />
+  <text x="174" y="68" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">coroutine</text>
+  <text x="174" y="80" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">object</text>
+  <circle r="5" fill="#6366f1" stroke="none">
+    <animateMotion path="M128 75 L220 75 L350 75 L438 75" dur="3s" repeatCount="indefinite" />
+  </circle>
+</svg>
+
+</figure>
+
+The `pytest-asyncio` variant:
+
+```python
+import pytest
+import asyncio
+
+async def async_function():
+    await asyncio.sleep(0)
+    return 42
+
+@pytest.mark.asyncio
+async def test_async_function():
+    result = await async_function()
+    assert result == 42
+```
+
+The `@pytest.mark.asyncio` mark tells the plugin to wrap the test in a loop. Inside, you can use `await` freely.
+
+The same scenario with plain `unittest`:
+
+```python
+import unittest
+import asyncio
+
+class TestAsyncFunction(unittest.IsolatedAsyncioTestCase):
+    async def produce(self):
+        await asyncio.sleep(0)
+        return 42
+
+    async def test_async_function(self):
+        result = await self.produce()
+        self.assertEqual(result, 42)
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+`IsolatedAsyncioTestCase` creates a fresh loop for each test and supports `asyncSetUp` / `asyncTearDown` for asynchronous setup and cleanup.
+
+## Pitfalls
+
+- The most common mistake is forgetting `await`. Then the test gets a coroutine object, the assert passes for nothing, and a `coroutine was never awaited` warning hangs in the logs.
+- Without `@pytest.mark.asyncio` (or the right `asyncio_mode`), pytest returns the coroutine as an ordinary value and the test checks nothing.
+- Don't bake in real timeouts: `asyncio.sleep(1)` just slows the run down. To verify logic, `sleep(0)` is enough, and waiting is better mocked.
+- Exceptions inside a coroutine only surface after `await`, so you have to check them with `pytest.raises` around the `await` itself, not around creating the coroutine.

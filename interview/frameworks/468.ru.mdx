@@ -1,0 +1,110 @@
+---
+id: 468
+title: "Зачем поверх Django ставят DRF и что он берёт на себя?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем поверх Django ставят DRF и что он берёт на себя?
+
+## Суть
+
+Django REST Framework (DRF) — надстройка над Django, которая закрывает рутину построения веб-API: сериализацию, аутентификацию, права доступа и разбор запросов. Благодаря готовым классам RESTful-сервис собирается в разы быстрее, чем вручную на голом Django.
+
+## Что ответить на собесе
+
+DRF — это инструментарий для REST API поверх Django. Он избавляет от шаблонного кода: сериализаторы переводят модели в JSON и обратно, классовые view обрабатывают HTTP-методы, а механизмы аутентификации (токены, JWT, OAuth) и permissions решают, кому и что можно. Я беру DRF, когда нужен API для SPA, мобильного клиента или внешней интеграции, и почти любой его компонент при необходимости переопределяю под проект.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 640 150" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Путь HTTP-запроса через слои DRF</title>
+  <g fontFamily="sans-serif" fontSize="12" textAnchor="middle">
+    <rect x="8" y="55" width="92" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="54" y="79" fill="currentColor">Запрос</text>
+    <rect x="120" y="55" width="100" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="170" y="73" fill="currentColor">Auth /</text>
+    <text x="170" y="88" fill="currentColor">Permissions</text>
+    <rect x="240" y="55" width="92" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="286" y="79" fill="currentColor">View</text>
+    <rect x="352" y="55" width="100" height="40" rx="6" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="402" y="79" fill="currentColor">Serializer</text>
+    <rect x="472" y="55" width="92" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="518" y="73" fill="currentColor">Модель /</text>
+    <text x="518" y="88" fill="currentColor">БД</text>
+    <rect x="580" y="55" width="52" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="606" y="79" fill="currentColor">JSON</text>
+  </g>
+  <g stroke="currentColor" strokeWidth="1.5">
+    <line x1="100" y1="75" x2="118" y2="75" />
+    <line x1="220" y1="75" x2="238" y2="75" />
+    <line x1="332" y1="75" x2="350" y2="75" />
+    <line x1="452" y1="75" x2="470" y2="75" />
+    <line x1="564" y1="75" x2="578" y2="75" />
+  </g>
+  <circle r="5" fill="#6366f1">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 54 30 L 606 30" />
+  </circle>
+</svg>
+</figure>
+
+DRF строится из нескольких слоёв, каждый со своей зоной ответственности.
+
+**Сериализаторы** превращают сложные объекты (например, QuerySet) в простые Python-типы, готовые к отдаче как JSON, и валидируют входящие данные на запись.
+
+```python
+from rest_framework import serializers
+from .models import Article
+
+class ArticleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Article
+        fields = ['id', 'title', 'content', 'author']
+```
+
+**Представления** принимают запрос и формируют ответ. Их пишут функциями или классами; класс `APIView` даёт по методу на каждый HTTP-глагол.
+
+```python
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .models import Article
+from .serializers import ArticleSerializer
+
+class ArticleList(APIView):
+    def get(self, request):
+        articles = Article.objects.all()
+        serializer = ArticleSerializer(articles, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ArticleSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+```
+
+**Аутентификация и права** подключаются декларативно: классы authentication разбирают, кто пришёл, классы permission решают, что ему доступно. **Роутинг** опирается на штатные URL Django, а для ViewSet есть автоматические роутеры.
+
+```python
+from django.urls import path
+from .views import ArticleList
+
+urlpatterns = [
+    path('articles/', ArticleList.as_view()),
+]
+```
+
+Сверху — самодокументирующийся browsable API и генерация схемы, что упрощает отладку и тестирование.
+
+## Подводные камни
+
+- `ModelSerializer` удобен, но `fields = '__all__'` опасен: легко случайно отдать наружу пароль или служебное поле. Перечисляйте поля явно.
+- Сериализатор валидирует данные только если вызвать `is_valid()`; обращение к `serializer.data` до этого на входных данных бросит ошибку.
+- Без явных `permission_classes` срабатывают настройки по умолчанию — по ним эндпоинт может оказаться открытым. Проверяйте `DEFAULT_PERMISSION_CLASSES`.
+- DRF тянет дополнительную зависимость и слой абстракций; для пары простых эндпоинтов иногда дешевле обычный `JsonResponse`.

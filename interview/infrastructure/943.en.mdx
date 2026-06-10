@@ -1,0 +1,64 @@
+---
+id: 943
+title: "Signals in Linux: what are they for and which ones are worth knowing by heart?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Signals in Linux: what are they for and which ones are worth knowing by heart?
+
+## In short
+
+A signal is an asynchronous notification to a process that an event has occurred; this is how the kernel and processes communicate with each other. The key five: SIGINT (Ctrl+C), SIGTERM (a polite request to terminate), SIGKILL (a hard kill), SIGSEGV (accessing memory that isn't yours), and SIGCHLD (a child process changed state).
+
+## How to answer in an interview
+
+Signals are an inter-process communication mechanism for short notifications. The key thing to say: most signals can be intercepted and handled by your own handler (for example, on SIGTERM you cleanly close connections and save data), but two signals - SIGKILL (9) and SIGSTOP - cannot be intercepted, ignored, or blocked; the kernel itself handles them. That's why the correct order for stopping a service is SIGTERM first, giving it time for a graceful shutdown, and only if that doesn't help - SIGKILL.
+
+## How it works
+
+You can send a signal to a process with the `kill` system call (or the shell utility of the same name). A simple example - a process sends a signal to itself:
+
+```c
+#include <signal.h>
+#include <unistd.h>
+
+int main(void) {
+    kill(getpid(), SIGTERM);
+    return 0;
+}
+```
+
+`getpid()` returns the current process's PID, and `kill` delivers SIGTERM to it. To not just receive a signal but react to it, you install a handler:
+
+```c
+#include <stdio.h>
+#include <signal.h>
+#include <unistd.h>
+
+void handle_sigint(int sig) {
+    printf("Caught signal %d\n", sig);
+}
+
+int main(void) {
+    signal(SIGINT, handle_sigint);
+    while (1) {
+        printf("Running...\n");
+        sleep(1);
+    }
+    return 0;
+}
+```
+
+Now Ctrl+C won't kill the program but will call `handle_sigint`. The main signals and their numbers: SIGINT (2), SIGKILL (9), SIGSEGV (11), SIGTERM (15), SIGCHLD (17).
+
+## Pitfalls
+
+- **SIGKILL and SIGSTOP are uncatchable.** Any attempt to attach a handler to them is ignored; you can't count on "cleanup before death" on SIGKILL.
+- **SIGKILL doesn't free resources via your code.** The process dies instantly, destructors and buffer flushes don't run - data loss is possible, so always SIGTERM first.
+- **`signal()` is historically non-portable.** In real code people prefer `sigaction`: with `signal`, the handler-restart behavior differs between systems.
+- **Ignoring SIGCHLD spawns zombies.** If the parent doesn't read the exit status of finished children (`wait`), they remain as zombie processes in the table.
+- **Signal numbers aren't universal.** Numeric values like 9 and 15 match on common platforms, but tying yourself to them instead of names is a bad idea on exotic architectures.

@@ -1,0 +1,84 @@
+---
+id: 1310
+title: "Connection pool in SQLAlchemy: what it solves and what it's built from"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Connection pool in SQLAlchemy: what it solves and what it's built from
+
+## In short
+
+The pool keeps a set of already-open database connections ready and hands them out on request, instead of establishing a connection from scratch every time. This removes the expensive handshake from the hot path and also caps the number of concurrent connections to the database.
+
+## How to answer in an interview
+
+Establishing a new TCP and authentication connection to the database costs milliseconds and resources on both sides. The pool solves this like so: when the engine is created, SQLAlchemy sets up a set of reusable connections (`QueuePool` by default). When code needs a connection, it takes a free one from the pool; when the work is done and the connection is closed at the application level, the physical connection isn't torn down but returned to the pool. With the `pool_size`, `max_overflow`, and `pool_timeout` parameters I tune the base size, the allowed overflow, and the wait time for a free connection.
+
+## How it works
+
+In SQLAlchemy the pool is built into the engine and works transparently:
+
+<figure>
+<svg viewBox="0 0 600 170" role="img" aria-label="The application borrows a connection from the pool and returns it; the pool holds connections to the database" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="20" y="60" width="110" height="50" rx="8" />
+  <text x="75" y="90" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Application</text>
+
+  <rect x="245" y="30" width="130" height="110" rx="8" />
+  <text x="310" y="22" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Pool (QueuePool)</text>
+  <rect x="265" y="48" width="90" height="18" rx="3" strokeOpacity="0.7" />
+  <rect x="265" y="74" width="90" height="18" rx="3" strokeOpacity="0.7" />
+  <rect x="265" y="100" width="90" height="18" rx="3" strokeOpacity="0.7" />
+
+  <rect x="490" y="60" width="90" height="50" rx="8" />
+  <text x="535" y="90" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Database</text>
+
+  <line x1="375" y1="85" x2="490" y2="85" strokeDasharray="4 4" strokeOpacity="0.7" />
+  <text x="432" y="78" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">TCP</text>
+
+  <line x1="130" y1="85" x2="245" y2="85" strokeOpacity="0.5" />
+  <text x="187" y="50" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">checkout</text>
+  <text x="187" y="124" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">return (close)</text>
+
+  <circle r="6" fill="#6366f1" stroke="none">
+    <animateMotion dur="4s" repeatCount="indefinite" path="M 245 85 L 130 85 L 245 85" keyPoints="0;0.5;1" keyTimes="0;0.5;1" calcMode="linear" />
+  </circle>
+</svg>
+</figure>
+
+
+- **Creation**: `create_engine` brings up the pool. By default this is `QueuePool` over a queue of ready connections.
+- **Handout**: if there's a free one, it's handed out; if not, but the `pool_size + max_overflow` limit isn't reached, a new one is opened; otherwise the request waits up to `pool_timeout` seconds and gets an error on timeout.
+- **Return**: `connection.close()` in code doesn't close the physical socket but puts it back into the pool.
+- **Recycling**: connections beyond `pool_size` (overflow) are closed after return; long-lived ones can be recreated via `pool_recycle`.
+
+```python
+from sqlalchemy import create_engine, text
+
+engine = create_engine(
+    "postgresql://user:password@localhost/mydatabase",
+    pool_size=5,        # the permanent set of connections
+    max_overflow=10,    # how many more are allowed beyond the pool
+    pool_timeout=30,    # how many seconds to wait for a free connection
+    pool_recycle=1800,  # recreate a connection older than 30 minutes
+)
+
+with engine.connect() as connection:
+    result = connection.execute(text("SELECT id FROM my_table"))
+    for row in result:
+        print(row.id)
+# exiting the with returns the connection to the pool rather than tearing it down
+```
+
+`engine.connect()` takes a connection from the pool, the context manager guarantees its return, and `pool_recycle` saves you from dead connections that the DB or a firewall silently closed.
+
+## Pitfalls
+
+- **Unclosed connections** leak: if you don't use `with` or call `close()`, connections aren't returned and the pool quickly runs dry, raising a `TimeoutError` on `pool_timeout`.
+- **Too large a pool × the number of workers** easily hits PostgreSQL's `max_connections` limit. The real ceiling is `(pool_size + max_overflow)` multiplied by the number of processes.
+- **A process fork** (gunicorn, multiprocessing) breaks inherited connections. After a fork you need `engine.dispose()`, otherwise several processes share one socket.
+- **`max_overflow=-1`** removes the overflow ceiling - the pool will open connections without limit, which nullifies the database's protection against overload.
+- Overflow connections are short-lived: they're closed after return, so constant operation on overflow means `pool_size` is set too small.

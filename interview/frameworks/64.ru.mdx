@@ -1,0 +1,73 @@
+---
+id: 64
+title: "Зачем нужен слой middleware и как он перехватывает запрос"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужен слой middleware и как он перехватывает запрос
+
+## Суть
+
+Middleware - это перехватчик, встроенный между приёмом HTTP-запроса и формированием ответа. Он позволяет вынести сквозную логику (аутентификацию, логирование, обработку ошибок) из view в один общий слой, чтобы не дублировать её в каждом обработчике.
+
+## Что ответить на собесе
+
+Middleware в Django - это компоненты, через которые проходит каждый запрос по пути к view и каждый ответ на обратном пути. Они выстроены в стек (`MIDDLEWARE` в настройках), и порядок важен: на входе запрос идёт сверху вниз, на выходе ответ - снизу вверх. Я использую middleware для задач, общих для всех представлений: проверка сессии, добавление заголовков безопасности, замер времени, единая обработка исключений. Это держит view сфокусированными на бизнес-логике, а кросс-функциональные вещи решаются централизованно.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 200" fontFamily="sans-serif" fontSize="12">
+<rect x="40" y="30" width="520" height="140" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeWidth="1.5" />
+<text x="300" y="22" textAnchor="middle" fill="currentColor" fontSize="11">SessionMiddleware</text>
+<rect x="90" y="55" width="420" height="90" rx="8" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeWidth="1.5" />
+<text x="300" y="48" textAnchor="middle" fill="currentColor" fontSize="11">AuthenticationMiddleware</text>
+<rect x="150" y="80" width="300" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="#6366f1" strokeWidth="1.5" />
+<text x="300" y="104" textAnchor="middle" fill="currentColor">view (бизнес-логика)</text>
+<text x="105" y="100" textAnchor="middle" fill="currentColor" fontSize="11">request</text>
+<text x="495" y="100" textAnchor="middle" fill="currentColor" fontSize="11">response</text>
+<path d="M20 100 L60 100" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arrowIn)" />
+<path d="M540 100 L580 100" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arrowIn)" />
+<defs>
+<marker id="arrowIn" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0 0 L6 3 L0 6 Z" fill="currentColor" />
+</marker>
+</defs>
+<circle r="5" fill="#6366f1">
+<animateMotion dur="3s" repeatCount="indefinite" path="M20 100 L150 100 L450 100 L580 100" />
+</circle>
+</svg>
+</figure>
+
+Современное middleware в Django - это вызываемый объект, который получает `get_response` при инициализации и вызывается на каждый запрос. До `self.get_response(request)` выполняется код «на входе», после - «на выходе».
+
+```python
+import time
+
+
+class TimingMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        started = time.monotonic()
+
+        response = self.get_response(request)
+
+        elapsed_ms = (time.monotonic() - started) * 1000
+        response["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
+        return response
+```
+
+Здесь код до вызова `get_response` стартует таймер, а код после - дописывает заголовок с длительностью. Каждый слой стека оборачивает следующий, образуя «луковицу»: запрос погружается внутрь до view, ответ всплывает обратно. Дополнительно можно объявить хуки `process_view`, `process_exception` и `process_template_response`.
+
+## Подводные камни
+
+- **Порядок в `MIDDLEWARE` критичен.** Например, `AuthenticationMiddleware` должен идти после `SessionMiddleware`, иначе `request.user` будет недоступен.
+- **Раннее завершение цепочки.** Если middleware вернёт ответ, не вызвав `get_response`, нижележащие слои и view не выполнятся - это удобно для редиректов, но легко выстрелить себе в ногу.
+- **Исключения и порядок выхода.** Ответ обрабатывается слоями в обратном порядке; `process_exception` срабатывает только если view бросил исключение, и проверяется снизу вверх.
+- **Производительность.** Тяжёлая логика в middleware выполняется для каждого запроса, включая статику и health-check, поэтому держите её лёгкой.

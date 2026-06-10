@@ -1,0 +1,54 @@
+---
+id: 1428
+title: "API versioning: what approaches exist and where is their boundary?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# API versioning: what approaches exist and where is their boundary?
+
+## In short
+
+Versioning lets you evolve an API without cutting off old clients. The version is indicated in the URL path, in an HTTP header, or in a query parameter; the choice comes down to a trade-off between an obvious address and flexibility in negotiating the format.
+
+## How to answer in an interview
+
+I distinguish three approaches. The first is the version in the path (`/v1/resource`): it's visible right away, easy to cache, and trivial to route, but with large divergences it leads to duplicated handlers. The second is the version in a header, more often via `Accept: application/vnd.example.v1+json`: this is the "correct" approach from a REST standpoint through content negotiation, the URL stays clean, but the version isn't visible in the address and is harder to debug from a browser. The third is the version in a query parameter (`?version=1`): flexible, but the parameter is easy to lose and it clutters the routing logic. In practice, for public APIs people more often take the version in the path for predictability; the key idea is that any incompatible change must be moved to a new version, while compatible ones are changed without it.
+
+## How it works
+
+**Version in the URL.** Each version is a separate set of routes.
+
+```python
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+@app.route("/v1/resource")
+def resource_v1():
+    return jsonify({"message": "resource, schema version 1"})
+
+@app.route("/v2/resource")
+def resource_v2():
+    return jsonify({"message": "resource, schema version 2", "extra": True})
+
+if __name__ == "__main__":
+    app.run(debug=True)
+```
+
+**Version in a header.** The client states the desired version through `Accept`, and the server picks the handler based on the header's content. The URL stays the same (`/resource`), which is considered more "honest" REST: the representation of the resource changes, not its identifier.
+
+**Version in a parameter.** The client sends `/resource?version=2`, the server reads the parameter and branches the logic. Convenient for quick experiments, but the parameter is optional and easily drops out.
+
+The main selection criterion is compatibility. Adding an optional field is compatible and requires no new version. Removing a field, renaming, changing a type, or altering semantics are incompatible, and they are moved to the next version.
+
+## Pitfalls
+
+- **"Major" semantics, not "any change".** Spawning versions for every small change is harmful. A new version is needed only for breaking changes; backward-compatible ones roll out into the current one.
+- **Caching and the header.** With the version in `Accept`, always return `Vary: Accept`, otherwise proxies and CDNs will serve one version a response cached for another.
+- **Code duplication in the URL approach.** If v1 and v2 diverge heavily, it's easy to end up with two nearly identical trees of handlers; move common logic into a service layer, and keep only the differences in the versions.
+- **Lifetime of old versions.** Without an explicit deprecation policy and shutdown dates, old versions live forever and accumulate technical debt. Announce deprecation in advance, for example with a `Deprecation` header.
+- **Default version.** If a client doesn't specify a version (especially in the header/query approaches), you must decide in advance: substitute the latest stable version or respond with an error. A silent switch to the "fresh" version breaks integrations.

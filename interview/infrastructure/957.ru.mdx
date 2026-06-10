@@ -1,0 +1,66 @@
+---
+id: 957
+title: "Контейнер против виртуалки: где проходит граница изоляции?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Контейнер против виртуалки: где проходит граница изоляции?
+
+## Суть
+
+Вся разница в том, на каком уровне строится изоляция. Контейнер делит ядро хоста и изолируется средствами самого ядра, поэтому он лёгкий. Виртуалка несёт собственную ОС поверх гипервизора, поэтому изоляция жёстче, но цена в ресурсах выше.
+
+## Что ответить на собесе
+
+Виртуальная машина виртуализирует железо: гипервизор поднимает несколько гостевых ОС, у каждой своё ядро. Контейнер виртуализирует уровень ОС: все контейнеры используют ядро хоста, а разделяет их само ядро через namespaces и cgroups. Из этого следует всё остальное: контейнер стартует за миллисекунды и весит мегабайты, виртуалка грузится секундами и тащит гигабайты гостевой системы. Зато виртуалка даёт более сильную границу безопасности и позволяет крутить ОС с другим ядром (Windows-гость на Linux-хосте). Контейнер привязан к ядру хоста: на Linux-хосте нативно идут только Linux-контейнеры.
+
+## Как это работает
+
+Виртуалка живёт поверх гипервизора. Гипервизор либо ставится прямо на железо (bare-metal, тип 1), либо поверх хостовой ОС (тип 2). Он нарезает CPU, память и диск между гостями и держит их изолированными. Каждый гость грузит полное ядро.
+
+Контейнер не эмулирует железо. Docker Engine просит ядро хоста создать процессу изолированное окружение через два механизма:
+
+- **namespaces** — изолируют то, что процесс видит: PID, сеть, точки монтирования, имена хостов;
+- **cgroups** — ограничивают то, что процесс потребляет: CPU, память, I/O.
+
+Образ контейнера несёт пользовательское пространство (библиотеки, бинарники), но не ядро — ядро берётся у хоста.
+
+<figure>
+<svg viewBox="0 0 560 200" fontFamily="sans-serif" fontSize="11">
+<text x="140" y="16" textAnchor="middle" fill="currentColor">Виртуальные машины</text>
+<text x="420" y="16" textAnchor="middle" fill="currentColor">Контейнеры</text>
+<rect x="20" y="26" width="240" height="22" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="140" y="41" textAnchor="middle" fill="currentColor">Гипервизор</text>
+<rect x="20" y="52" width="115" height="56" stroke="currentColor" fill="none" />
+<rect x="145" y="52" width="115" height="56" stroke="currentColor" fill="none" />
+<text x="77" y="72" textAnchor="middle" fill="currentColor">Гость + ядро</text>
+<text x="77" y="92" textAnchor="middle" fill="currentColor">App</text>
+<text x="202" y="72" textAnchor="middle" fill="currentColor">Гость + ядро</text>
+<text x="202" y="92" textAnchor="middle" fill="currentColor">App</text>
+<rect x="300" y="26" width="240" height="22" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="420" y="41" textAnchor="middle" fill="currentColor">Docker Engine</text>
+<rect x="300" y="52" width="74" height="56" stroke="currentColor" fill="none" />
+<rect x="383" y="52" width="74" height="56" stroke="currentColor" fill="none" />
+<rect x="466" y="52" width="74" height="56" stroke="currentColor" fill="none" />
+<text x="337" y="84" textAnchor="middle" fill="currentColor">App</text>
+<text x="420" y="84" textAnchor="middle" fill="currentColor">App</text>
+<text x="503" y="84" textAnchor="middle" fill="currentColor">App</text>
+<rect x="20" y="118" width="520" height="22" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="280" y="133" textAnchor="middle" fill="currentColor">Хостовая ОС / общее ядро</text>
+<rect x="20" y="144" width="520" height="22" stroke="currentColor" fill="currentColor" fillOpacity="0.05" />
+<text x="280" y="159" textAnchor="middle" fill="currentColor">Железо</text>
+</svg>
+</figure>
+
+Аналогия: виртуалки — это отдельные дома, у каждого свой фундамент и коммуникации. Контейнеры — комнаты в одном здании: свои стены и двери, но фундамент и инженерные системы общие, поэтому они дешевле и подвижнее.
+
+## Подводные камни
+
+- **«Контейнер — это лёгкая виртуалка» — неверно.** У контейнера нет своего ядра, он не виртуализирует железо. Это изолированный процесс хоста.
+- **Граница безопасности слабее.** Уязвимость в ядре хоста потенциально доступна всем контейнерам сразу. Где нужна жёсткая изоляция недоверенного кода, виртуалка (или микро-ВМ вроде gVisor/Kata) уместнее.
+- **Привязка к ядру.** Linux-контейнеры на Windows/macOS на деле крутятся внутри скрытой Linux-виртуалки — «нативности» там нет.
+- **Это не «или-или».** На практике контейнеры часто запускают внутри ВМ: ВМ даёт изоляцию арендаторов, контейнеры — плотность и скорость.

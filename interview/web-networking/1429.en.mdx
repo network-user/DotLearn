@@ -1,0 +1,88 @@
+---
+id: 1429
+title: "The access/refresh pair: how to renew a session without logging in again?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# The access/refresh pair: how to renew a session without logging in again?
+
+## In short
+
+A refresh token is a long-lived secret that the client uses to request a new short-lived access token without re-entering a login and password. The access token carries permissions and lives for minutes, while the refresh token sits in secure storage and extends the session.
+
+## How to answer in an interview
+
+The access token is made short-lived (for example, 15 minutes) so that if it leaks, the window for abuse is small. But forcing the user to log in every 15 minutes is inconvenient, so on sign-in the server issues a pair: access and refresh. The access token rides along in every request to the API; when it expires, the client sends the refresh token to a separate endpoint and gets a fresh access token. The refresh token lives longer and is therefore stored as securely as possible — usually in an httpOnly cookie inaccessible from JavaScript. A good answer adds: the refresh token should be made single-use with rotation (each renewal issues a new refresh token and invalidates the old one) and the server should keep a revocation list so a session can be killed.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 600 240" role="img" aria-label="Lifecycle of the access/refresh token pair" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="90" y="24" textAnchor="middle" fontSize="13" fill="currentColor">Client</text>
+  <text x="510" y="24" textAnchor="middle" fontSize="13" fill="currentColor">Server</text>
+  <line x1="90" y1="34" x2="90" y2="220" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+  <line x1="510" y1="34" x2="510" y2="220" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+
+  <line x1="90" y1="64" x2="510" y2="64" stroke="currentColor" strokeWidth="1.5" />
+  <polygon points="510,64 500,59 500,69" fill="currentColor" />
+  <text x="300" y="58" textAnchor="middle" fontSize="11" fill="currentColor">login: username + password</text>
+
+  <line x1="510" y1="98" x2="90" y2="98" stroke="#6366f1" strokeWidth="1.5" />
+  <polygon points="90,98 100,93 100,103" fill="#6366f1" />
+  <text x="300" y="92" textAnchor="middle" fontSize="11" fill="#6366f1">token pair: access + refresh</text>
+
+  <line x1="90" y1="132" x2="510" y2="132" stroke="currentColor" strokeWidth="1.5" />
+  <polygon points="510,132 500,127 500,137" fill="currentColor" />
+  <text x="300" y="126" textAnchor="middle" fontSize="11" fill="currentColor">request with access (expired)</text>
+
+  <line x1="510" y1="166" x2="90" y2="166" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+  <polygon points="90,166 100,161 100,171" fill="currentColor" />
+  <text x="300" y="160" textAnchor="middle" fontSize="11" fill="currentColor">401 Unauthorized</text>
+
+  <line x1="90" y1="200" x2="510" y2="200" stroke="#6366f1" strokeWidth="1.5" />
+  <polygon points="510,200 500,195 500,205" fill="#6366f1" />
+  <text x="300" y="194" textAnchor="middle" fontSize="11" fill="#6366f1">refresh → new access</text>
+
+  <circle r="4" fill="#6366f1">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M90,200 L510,200" />
+  </circle>
+</svg>
+
+</figure>
+
+1. **Login.** The server checks the credentials and returns two tokens. The access token goes into the client's memory/header, the refresh token is placed in secure storage.
+2. **Normal requests.** The client sends the access token in the `Authorization` header. As long as the token is valid, the resource is served.
+3. **Expiration.** An expired access token leads to a `401` response. This is a signal for the client to renew.
+4. **Renewal.** The client sends the refresh token to the renewal endpoint; the server checks the signature and expiry, consults the revocation list, and issues a new access token (and, with rotation, a new refresh token as well).
+
+```python
+import requests
+
+refresh_url = "https://example.com/api/token/refresh"
+refresh_token = "<refresh_token_from_secure_storage>"
+
+response = requests.post(
+    refresh_url,
+    headers={"Content-Type": "application/json"},
+    json={"refresh_token": refresh_token},
+)
+
+if response.status_code == 200:
+    new_access_token = response.json().get("access_token")
+    print("New access token obtained")
+else:
+    print("Failed to refresh token:", response.status_code)
+```
+
+## Pitfalls
+
+- **Where to store.** The access token can be kept in the app's memory; the refresh token is safest in an httpOnly + Secure cookie. localStorage is vulnerable to XSS — a refresh token stolen from there gives an attacker long-lived access.
+- **Refresh theft.** A long lifetime makes the refresh token a tempting target. The defense is rotation on every use and detection of reuse of an already-exchanged token (a sign of theft, which is met by revoking the whole chain).
+- **Revocation.** A JWT is self-contained by default and isn't checked against a database, so "log out from all devices" isn't possible without a server-side revocation list (or a short access TTL).
+- **Renewal race.** If a client has several parallel requests catch a `401` at once, they may hit refresh simultaneously. You need to serialize the renewal, otherwise with rotation some requests will get an already-invalidated token.
+- **Payload contents.** Put only what's safe to show into the access token: a JWT body is merely base64url-encoded, not encrypted, and is easily read.

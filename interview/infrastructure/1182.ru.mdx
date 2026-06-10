@@ -1,0 +1,70 @@
+---
+id: 1182
+title: "Сетевые драйверы Docker: bridge, host, none, overlay - что выбрать"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сетевые драйверы Docker: bridge, host, none, overlay - что выбрать
+
+## Суть
+
+За связь контейнеров между собой и с внешним миром отвечает сетевой драйвер. Четыре базовых режима покрывают почти всё: `bridge` - изолированная сеть на одном хосте, `host` - прямой стек хоста, `none` - сети нет, `overlay` - единая сеть поверх нескольких хостов.
+
+## Что ответить на собесе
+
+По умолчанию контейнер попадает в `bridge` - виртуальный мост на хосте, где контейнеры видят друг друга, а наружу выходят только через проброс портов. `host` отдаёт контейнеру сетевой стек хоста без отдельного namespace - быстрее, но без изоляции и без проброса портов. `none` полностью отключает сеть для задач, которым она не нужна. `overlay` связывает контейнеры с разных машин в одну логическую сеть - это режим для Swarm и кластеров. Выбор - это компромисс между изоляцией, производительностью и масштабом.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 150" fontFamily="sans-serif" fontSize="13">
+<rect x="20" y="40" width="120" height="70" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="80" y="70" textAnchor="middle" fill="currentColor">bridge</text>
+<text x="80" y="90" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">один хост</text>
+<rect x="160" y="40" width="120" height="70" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="220" y="70" textAnchor="middle" fill="currentColor">host</text>
+<text x="220" y="90" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">стек хоста</text>
+<rect x="300" y="40" width="120" height="70" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="360" y="70" textAnchor="middle" fill="currentColor">none</text>
+<text x="360" y="90" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">без сети</text>
+<rect x="440" y="40" width="140" height="70" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="510" y="70" textAnchor="middle" fill="currentColor">overlay</text>
+<text x="510" y="90" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">разные хосты</text>
+</svg>
+</figure>
+
+**bridge.** Docker поднимает виртуальный мост `docker0` и подключает к нему новый контейнер, выдавая ему адрес из внутренней подсети. Снаружи контейнер недоступен, пока порт не проброшен.
+
+```bash
+docker run -d --name web --network bridge nginx
+```
+
+**host.** Контейнер делит сетевой namespace с хостом: его порты - это порты хоста. Нет накладных расходов на NAT, но и нет изоляции.
+
+```bash
+docker run -d --name web --network host nginx
+```
+
+**none.** Сетевой стек поднимается без интерфейсов - только loopback. Контейнер заперт от сети.
+
+```bash
+docker run -d --name job --network none nginx
+```
+
+**overlay.** Поверх физической сети строится виртуальная L2-сеть, и контейнеры с разных хостов общаются так, будто они в одном сегменте. Базовый режим для Swarm.
+
+```bash
+docker network create -d overlay my_overlay
+```
+
+## Подводные камни
+
+- На дефолтном `bridge` (без явной пользовательской сети) встроенного DNS по именам контейнеров нет - резолв по имени работает только в созданной вручную сети `docker network create`.
+- `host` доступен полноценно на Linux; на Docker Desktop под macOS/Windows контейнеры крутятся в VM, и поведение `host` отличается.
+- В режиме `host` флаг `-p`/`--publish` игнорируется, и два контейнера не займут один и тот же порт хоста.
+- `overlay` без Swarm требует ручной настройки key-value store; «просто так» на одиночном хосте он не нужен.
+- Все контейнеры в одной bridge-сети видят друг друга по умолчанию - для изоляции сервисов их разводят по разным сетям, а не полагаются на firewall внутри.

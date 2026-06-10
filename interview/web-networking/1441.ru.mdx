@@ -1,0 +1,84 @@
+---
+id: 1441
+title: "Управление HTTP-кешем: какие заголовки решают, хранить ответ и насколько он свеж"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Управление HTTP-кешем: какие заголовки решают, хранить ответ и насколько он свеж
+
+## Суть
+
+Поведение HTTP-кеша задают четыре заголовка. `Cache-Control` описывает политику (кому и насколько долго хранить), `Expires` указывает абсолютный момент протухания, а `ETag` и `Last-Modified` позволяют проверить, не устарела ли копия, не перекачивая её целиком.
+
+## Что ответить на собесе
+
+HTTP-кеш управляется через заголовки ответа. Главный — `Cache-Control` с директивами `max-age`, `no-cache`, `no-store`, `public`, `private`. Старый `Expires` задаёт абсолютную дату протухания и нужен для совместимости с HTTP/1.0. Для валидации устаревшей копии есть два валидатора: `ETag` (отпечаток версии ресурса) и `Last-Modified` (дата изменения). Клиент переспрашивает сервер условными запросами `If-None-Match` и `If-Modified-Since`, и если ничего не поменялось, сервер отвечает `304 Not Modified` без тела. Так экономятся трафик, время и нагрузка на сервер.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 640 210" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="30" y="80" width="120" height="44" rx="8" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <text x="90" y="107" textAnchor="middle" fontSize="13" fill="currentColor">Кеш / клиент</text>
+  <rect x="490" y="80" width="120" height="44" rx="8" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <text x="550" y="107" textAnchor="middle" fontSize="13" fill="currentColor">Сервер</text>
+  <text x="90" y="40" textAnchor="middle" fontSize="11" fill="currentColor">копия свежа?</text>
+  <path d="M90 46 L90 80" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="62" textAnchor="middle" fontSize="11" fill="#6366f1">max-age не истёк → отдать из кеша мгновенно</text>
+  <line x1="150" y1="96" x2="490" y2="96" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="90" textAnchor="middle" fontSize="11" fill="currentColor">If-None-Match: "abc123" →</text>
+  <line x1="490" y1="120" x2="150" y2="120" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+  <text x="320" y="136" textAnchor="middle" fontSize="11" fill="currentColor">← 304 Not Modified (без тела)</text>
+  <text x="320" y="170" textAnchor="middle" fontSize="11" fill="currentColor">не совпало → 200 OK с новым телом и ETag</text>
+  <circle r="5" fill="#6366f1">
+    <animateMotion dur="2.6s" repeatCount="indefinite" path="M150,96 L490,96" />
+  </circle>
+</svg>
+
+</figure>
+
+Заголовки делятся на две группы — политика свежести и валидаторы.
+
+**Политика свежести:**
+
+- **`Cache-Control`** — основной механизм. Директивы:
+  - `max-age=N` — сколько секунд копия считается свежей.
+  - `no-cache` — кешировать можно, но перед использованием обязательно сверить с сервером.
+  - `no-store` — не сохранять ответ вообще.
+  - `public` — хранить может любой кеш, включая прокси.
+  - `private` — хранить только в кеше конкретного клиента (браузера).
+- **`Expires`** — абсолютная дата протухания, наследие HTTP/1.0. В HTTP/1.1 при конфликте `Cache-Control: max-age` имеет приоритет.
+
+```http
+Cache-Control: public, max-age=3600
+Expires: Wed, 21 Oct 2026 07:28:00 GMT
+```
+
+**Валидаторы (проверка актуальности):**
+
+- **`ETag`** — отпечаток версии ресурса. Сервер отдаёт его с ответом, клиент возвращает в `If-None-Match`. Совпало — `304 Not Modified`.
+
+```http
+ETag: "abc123"
+```
+
+- **`Last-Modified`** — дата последнего изменения. Клиент шлёт `If-Modified-Since`; если с тех пор ресурс не менялся — снова `304`.
+
+```http
+Last-Modified: Wed, 21 Oct 2026 07:28:00 GMT
+```
+
+Свежая копия отдаётся из кеша мгновенно; устаревшая проходит дешёвую валидацию, и при `304` тело не передаётся.
+
+## Подводные камни
+
+- **`no-cache` ≠ «не кешировать»** — это «кешируй, но всегда перепроверяй». Запрет хранения — это `no-store`.
+- **`ETag` точнее `Last-Modified`** — дата даёт гранулярность в секунду и врёт при «изменении без изменения содержимого»; `ETag` ловит любую правку байтов.
+- **Слабые vs сильные ETag** — `W/"abc"` (weak) допускает семантически эквивалентные версии, сильный требует побайтового совпадения.
+- **Конфликт `Expires` и `max-age`** — в HTTP/1.1 выигрывает `Cache-Control: max-age`, поэтому одновременно их задают аккуратно.
+- **`private` на общем прокси** — пометив ответ `public` по ошибке, можно отдать чужие персональные данные из кеша прокси другому пользователю.

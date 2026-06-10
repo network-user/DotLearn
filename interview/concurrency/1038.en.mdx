@@ -1,0 +1,79 @@
+---
+id: 1038
+title: "The event loop: who actually runs the coroutines"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# The event loop: who actually runs the coroutines
+
+## In short
+
+The event loop is the dispatcher of an asynchronous program. It runs ready coroutines one after another, tracks the completion of I/O operations, and switches between tasks in a single thread without blocking.
+
+## How to answer in an interview
+
+The event loop is the core of `asyncio`. On their own, `async def` and `await` start nothing: the loop is what actually drives the coroutines. It holds a queue of tasks ready to run, hands control to each in turn up to the next `await`, and at that moment the coroutine hands control back. In parallel the loop uses system mechanisms (`epoll`/`kqueue`/`select`) to watch which sockets and files are ready and wakes up the corresponding coroutines. The result is single-threaded cooperative multitasking: while one task waits on I/O, others run. `asyncio.run(main())` creates the loop, runs the coroutine in it, and closes the loop cleanly.
+
+## How it works
+
+The loop runs on an "event → reaction" scheme: it continuously checks whether any ready tasks or completed operations have appeared and invokes the corresponding coroutine continuations.
+
+<figure>
+<svg viewBox="0 0 560 260" role="img" aria-label="Event loop: queue of ready tasks, execution up to await, waiting on I/O" fontFamily="sans-serif" fontSize="12">
+  <text x="280" y="22" fill="currentColor" textAnchor="middle" fontSize="14">Event loop</text>
+
+  <rect x="30" y="100" width="140" height="60" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="100" y="125" fill="currentColor" textAnchor="middle">Queue of</text>
+  <text x="100" y="143" fill="currentColor" textAnchor="middle">ready tasks</text>
+
+  <rect x="210" y="100" width="140" height="60" rx="6" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeOpacity="0.6" />
+  <text x="280" y="125" fill="currentColor" textAnchor="middle">Execution</text>
+  <text x="280" y="143" fill="currentColor" textAnchor="middle">up to await</text>
+
+  <rect x="390" y="100" width="140" height="60" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="460" y="125" fill="currentColor" textAnchor="middle">Waiting on I/O</text>
+  <text x="460" y="143" fill="currentColor" textAnchor="middle">epoll / select</text>
+
+  <path d="M170 130 L205 130" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" />
+  <path d="M350 130 L385 130" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" />
+  <path d="M460 165 L460 210 L100 210 L100 165" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" fill="none" strokeDasharray="5 4" markerEnd="url(#arrow)" />
+  <text x="280" y="228" fill="currentColor" textAnchor="middle" fontSize="11">ready → back into the queue</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 Z" fill="currentColor" fillOpacity="0.7" />
+    </marker>
+  </defs>
+
+  <circle r="6" fill="#6366f1">
+    <animateMotion dur="4s" repeatCount="indefinite" path="M100 130 L280 130 L460 130 L460 210 L100 210 Z" />
+  </circle>
+</svg>
+</figure>
+
+```python
+import asyncio
+
+async def say_hello():
+    print("Hello")
+    await asyncio.sleep(1)
+    print("World")
+
+async def main():
+    await asyncio.gather(say_hello(), say_hello())
+
+asyncio.run(main())
+```
+
+Here `asyncio.gather` puts two coroutines to work at the same time. Both print `Hello`, both go into `await asyncio.sleep(1)` and yield control to the loop. A second later the loop wakes them, and both print `World`. The total time is about one second, not two: the waits overlapped because a single loop managed them.
+
+## Pitfalls
+
+- Only one event loop is active per thread. You cannot call `asyncio.run` inside an already running loop (for example, in Jupyter) - it raises `RuntimeError`.
+- Any synchronous blocking call inside a coroutine freezes the whole loop: until it returns, the other tasks stall.
+- `gather` gives concurrency only with two or more `await` points. Pure CPU computation without `await` still runs sequentially.
+- Do not confuse this with OS threads: switching here is cooperative and happens only at `await`, it is not preempted by the scheduler.

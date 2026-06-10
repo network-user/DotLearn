@@ -1,0 +1,71 @@
+---
+id: 1211
+title: "What problem do custom model managers and QuerySet methods solve?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What problem do custom model managers and QuerySet methods solve?
+
+## In short
+
+A custom manager and your own QuerySet methods move repeated selection logic out of the views into a single reusable layer at the model level. A manager is the entry point to the model (`Model.objects`), and QuerySet methods add named, chainable filters.
+
+## How to answer in an interview
+
+This is a way to avoid smearing the same `filter(status='published')` all over the project. I encapsulate such logic in the model: either I override the manager (for example, to return only published items by default through `get_queryset`), or I create a QuerySet class with methods like `published()` and attach it via `as_manager()`. The main advantage of the second approach is that the methods stay chainable: `Article.objects.published().filter(...)`. As a result the views become shorter and more readable, while the selection rules live in one place and are tested in isolation.
+
+## How it works
+
+A manager is the interface for accessing the model. Every model has `objects` - an instance of `models.Manager`. A custom manager can override the base set:
+
+```python
+from django.db import models
+
+class PublishedManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(status='published')
+
+class Article(models.Model):
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    status = models.CharField(max_length=10)
+
+    objects = models.Manager()          # the default manager
+    published = PublishedManager()      # returns only published items
+```
+
+After this, `Article.published.all()` will return only records with the status `published`.
+
+QuerySet methods are more convenient when the filters need to chain. We describe a QuerySet class and turn it into a manager:
+
+```python
+class ArticleQuerySet(models.QuerySet):
+    def published(self):
+        return self.filter(status='published')
+
+    def by_author(self, author):
+        return self.filter(author=author)
+
+class Article(models.Model):
+    title = models.CharField(max_length=200)
+    status = models.CharField(max_length=10)
+
+    objects = ArticleQuerySet.as_manager()
+```
+
+Now the methods chain together like the built-in ones:
+
+```python
+recent = Article.objects.published().by_author(some_author)
+```
+
+## Pitfalls
+
+- A method on a manager (like `PublishedManager.get_queryset`) does not chain: you cannot call `.published()` after it. A method on a QuerySet does chain. That is why reusable filters are written on the QuerySet, not on the manager.
+- When you override `objects` with your own manager, remember: the first declared manager becomes the `_default_manager` (used, for example, by related access and the admin). If the first manager is a filtering one, some objects will "disappear" from related lookups.
+- Logic hidden in a manager with `get_queryset` is applied implicitly to all queries through it. This is easy to forget, and then you are surprised why `count()` is lower than expected.
+- `as_manager()` makes a manager from a QuerySet, but not the other way around: a manager class on its own does not expose the QuerySet method chain without `from_queryset`.

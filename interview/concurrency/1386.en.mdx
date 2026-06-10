@@ -1,0 +1,56 @@
+---
+id: 1386
+title: "Why did CPython need a GIL in the first place?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why did CPython need a GIL in the first place?
+
+## In short
+
+The GIL appeared in CPython to solve two problems: to protect shared objects from data races and to simplify automatic memory management. By letting only one thread through to bytecode at a time, it eliminates race conditions inside the interpreter at the cost of parallelism.
+
+## How to answer in an interview
+
+The main reason for the GIL is memory management via reference counting. Each object's reference counter changes constantly, and without a lock two threads could corrupt it with a simultaneous increment or decrement, which would lead to leaks or premature freeing of memory. A global lock is the simplest way to guarantee this: one lock per interpreter instead of thousands of small locks on each object. This made the CPython implementation simpler and faster on single-threaded code, and integration with C extensions safer. The cost is the absence of parallelism for Python threads across multiple cores.
+
+## How it works
+
+The GIL behaves like an interpreter lock. To execute bytecode, a thread first acquires the GIL, releases it when its time slice ends or on a blocking operation, and then the next thread can take the lock.
+
+What it covers:
+
+1. Thread safety - with simultaneous edits to shared data the result would depend on the order of execution; the GIL eliminates such races.
+2. Simple memory management - garbage collection and reference counting work without a complex system of fine-grained locks.
+
+An example with a global counter:
+
+```python
+import threading
+
+counter = 0
+
+def increment():
+    global counter
+    for _ in range(1000000):
+        counter += 1
+
+t1 = threading.Thread(target=increment)
+t2 = threading.Thread(target=increment)
+t1.start(); t2.start()
+t1.join(); t2.join()
+print(counter)
+```
+
+Even under the GIL the result can turn out to be less than 2,000,000: the increment itself is not atomic, and a switch between read and write loses some of the updates.
+
+## Pitfalls
+
+- The GIL protects the interpreter's internals, but not your logic: compound operations like `counter += 1` still need to be wrapped in a `Lock`.
+- On I/O-bound tasks the GIL barely gets in the way - threads release it while waiting for input/output, so multithreading is justified there.
+- On CPU-bound tasks the GIL is a bottleneck: multiple cores won't help, you need `multiprocessing` or processes.
+- The GIL is an implementation detail of CPython specifically. In Jython, IronPython, or PyPy-STM the model is different, so "Python always has a GIL" is inaccurate.

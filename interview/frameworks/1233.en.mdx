@@ -1,0 +1,102 @@
+---
+id: 1233
+title: "How does a DRF serializer validate input data at two levels of validation?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a DRF serializer validate input data at two levels of validation?
+
+## In short
+
+A serializer validates data in two passes: first per-field validation through `validate_<field>` methods, then overall validation through the `validate(self, data)` method, which has access to all fields at once. This lets you catch both errors in an individual field and contradictions between fields.
+
+## How to answer in an interview
+
+Validation is triggered by calling `serializer.is_valid()`. DRF first runs the built-in type and field-constraint checks (`EmailField`, `max_length`, etc.), then my `validate_<field_name>` methods for individual fields, and finally the `validate(self, data)` method for cross-field rules. Each method either returns a (possibly modified) value or raises `serializers.ValidationError`. All the collected errors end up in `serializer.errors`. Importantly, `validate(self, data)` only sees the fields that passed the previous stages.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 600 120" role="img" aria-label="Two levels of DRF serializer validation" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="8" y="46" width="96" height="30" rx="5" />
+  <text x="56" y="65" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">is_valid()</text>
+  <rect x="138" y="46" width="110" height="30" rx="5" />
+  <text x="193" y="61" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">field types</text>
+  <text x="193" y="73" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">EmailField…</text>
+  <rect x="282" y="46" width="120" height="30" rx="5" />
+  <text x="342" y="61" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">validate_&lt;field&gt;</text>
+  <text x="342" y="73" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">one field at a time</text>
+  <rect x="436" y="46" width="120" height="30" rx="5" stroke="#6366f1" />
+  <text x="496" y="61" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">validate(data)</text>
+  <text x="496" y="73" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">all fields at once</text>
+  <line x1="104" y1="61" x2="136" y2="61" />
+  <line x1="248" y1="61" x2="280" y2="61" />
+  <line x1="402" y1="61" x2="434" y2="61" />
+  <text x="282" y="30" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">error → serializer.errors</text>
+  <line x1="193" y1="46" x2="193" y2="34" strokeDasharray="3 3" strokeOpacity="0.6" />
+  <line x1="342" y1="46" x2="342" y2="34" strokeDasharray="3 3" strokeOpacity="0.6" />
+  <line x1="496" y1="46" x2="496" y2="34" strokeDasharray="3 3" strokeOpacity="0.6" />
+</svg>
+
+</figure>
+
+The `validate_<field>` method is responsible for one field and receives its already-cleaned value:
+
+```python
+from rest_framework import serializers
+
+class UserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        if not value.endswith("@example.com"):
+            raise serializers.ValidationError("Only the example.com domain is allowed")
+        return value
+```
+
+The `validate(self, data)` method sees the whole set and is needed for rules that depend on several fields:
+
+```python
+class UserSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+
+    def validate(self, data):
+        if data['username'] == data['email']:
+            raise serializers.ValidationError("Username and email must not match")
+        return data
+```
+
+In practice both levels are combined — for example, in registration: we check email uniqueness and password length separately.
+
+```python
+from rest_framework import serializers
+
+class RegistrationSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Email is already taken")
+        return value
+
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError("Password is shorter than 8 characters")
+        return value
+```
+
+## Pitfalls
+
+- The method must be named exactly `validate_<field_name>` matching the field, otherwise it simply won't be called — a typo in the name silently disables the check.
+- Each `validate_<field>` must return a value. Forget `return` and the field becomes `None` in `validated_data`.
+- In `validate(self, data)` a field may be absent from `data` if it's optional or didn't pass earlier; access it via `data.get('field')`.
+- Field validation runs before `validate()`; if a field failed at its own level, it won't reach the overall check.
+- To attach an error to a specific field in the overall `validate`, raise `ValidationError({'field': '...'})`, not a bare string.

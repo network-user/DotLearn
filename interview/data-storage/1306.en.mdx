@@ -1,0 +1,63 @@
+---
+id: 1306
+title: "How do you make a single column effectively immutable in PostgreSQL?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you make a single column effectively immutable in PostgreSQL?
+
+## In short
+
+There's no dedicated "forbid UPDATE on one column" command in PostgreSQL. You assemble the effect from available tools: a `BEFORE UPDATE` trigger rejects attempts to change the value, and a view hides the field from those who shouldn't see it at all.
+
+## How to answer in an interview
+
+I'd say Postgres has no built-in immutability flag for a column. I implement write protection with a trigger: a `BEFORE UPDATE` function compares `NEW.salary` with `OLD.salary` via `IS DISTINCT FROM` and raises an exception if the value is being changed. If the field additionally needs to be hidden from reads, I hand the user a view without that column rather than the table itself, and lock down direct access to the base table with privileges. The trigger covers writes, the view covers reads - together they give "read-only" at the level of a single field.
+
+## How it works
+
+A view is a virtual table: it includes only the columns listed at creation. The sensitive field simply isn't included, and a user working through the view doesn't see it.
+
+```sql
+CREATE TABLE employees (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100),
+    salary NUMERIC
+);
+
+INSERT INTO employees (name, salary) VALUES ('Alice', 50000), ('Bob', 60000);
+
+CREATE VIEW public_employees AS
+SELECT id, name FROM employees;
+```
+
+The edit ban is hung on a trigger. A `plpgsql` function checks the old and new value and, on a mismatch, aborts the operation with an exception - the whole transaction rolls back.
+
+```sql
+CREATE OR REPLACE FUNCTION prevent_salary_update()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.salary IS DISTINCT FROM OLD.salary THEN
+        RAISE EXCEPTION 'Updating salary is not allowed';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER salary_update_trigger
+BEFORE UPDATE ON employees
+FOR EACH ROW EXECUTE FUNCTION prevent_salary_update();
+```
+
+A `BEFORE UPDATE FOR EACH ROW` trigger fires for every row being modified before the actual write, so the forbidden change never reaches the table at all.
+
+## Pitfalls
+
+- `IS DISTINCT FROM` is mandatory instead of `<>`: an ordinary comparison yields `NULL` (i.e. "not true") if one of the values is `NULL`, and the check would silently let a `NULL → value` change slip through.
+- A view by itself doesn't protect the base table: if the user has privileges on `employees`, they bypass the view. Access to the table must be locked down with `GRANT`/`REVOKE`.
+- The trigger catches only `UPDATE`. It won't stop a rewrite via `DELETE` + `INSERT` or `TRUNCATE` - if needed, add separate triggers for those.
+- A superuser and the table owner can disable the trigger (`ALTER TABLE ... DISABLE TRIGGER`), so this protects against mistakes and ordinary users, not against an admin.

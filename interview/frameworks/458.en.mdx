@@ -1,0 +1,95 @@
+---
+id: 458
+title: "Customizing the user in Django: User, AbstractUser, or AbstractBaseUser"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Customizing the user in Django: User, AbstractUser, or AbstractBaseUser
+
+## In short
+
+Django offers three entry points for the user model, and they differ in the balance of "control versus manual work." At the top is the ready-made `User`, which you just plug in. Below it is `AbstractUser`, where you add fields on top of the built-in logic. At the bottom is `AbstractBaseUser`, where you define the structure and login identifier yourself, paying for it with your own manager and permission fields.
+
+## How to answer in an interview
+
+Name the three options in increasing order of freedom. You take `User` from `django.contrib.auth` when the standard fields are enough. You inherit from `AbstractUser` to add your own attributes without losing the built-in model's behavior. You choose `AbstractBaseUser` when you need to redefine the whole structure - for example, to log in by email; then you'll have to write your own `BaseUserManager` and set up permission fields. And the key practical point: set `AUTH_USER_MODEL` from the start of the project, even if your custom model is empty for now, because swapping the user out on a project with data is an expensive and risky operation.
+
+## How it works
+
+### Level 1. The ready-made `User`
+
+The model from `django.contrib.auth.models` already carries `username`, `email`, `password`, and the entire permission system.
+
+```python
+from django.contrib.auth.models import User
+
+user = User.objects.create_user(username="john", password="password123")
+```
+
+Use it when no extra fields are needed.
+
+### Level 2. Extending via `AbstractUser`
+
+Inheritance preserves all the standard fields and logic, and you merely augment the model with your own attributes.
+
+```python
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+
+class CustomUser(AbstractUser):
+    bio = models.TextField(max_length=500, blank=True)
+```
+
+This is the working choice when you don't need to change behavior but the fields fall short.
+
+### Level 3. Full control with `AbstractBaseUser`
+
+Here you decide which fields exist and what serves as the login identifier, but you're obligated to implement a manager.
+
+```python
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.db import models
+
+
+class CustomUserManager(BaseUserManager):
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError("The Email field must be set")
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+        return self.create_user(email, password, **extra_fields)
+
+
+class CustomUser(AbstractBaseUser):
+    email = models.EmailField(unique=True)
+    first_name = models.CharField(max_length=30)
+    last_name = models.CharField(max_length=30)
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+
+    objects = CustomUserManager()
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["first_name", "last_name"]
+```
+
+This is for cases where the user's structure must be redefined entirely or you want to log in by email instead of username.
+
+## Pitfalls
+
+- Changing the user model on a live project with data is painful: migrations, foreign keys, dangling references. Declare `AUTH_USER_MODEL` right away, even if the model is temporarily empty.
+- `AbstractBaseUser` does not bring the permission system. If you need groups and permissions, mix in `PermissionsMixin`; otherwise `is_staff`, `is_superuser`, and admin access have to be assembled by hand.
+- The field in `USERNAME_FIELD` must be `unique=True` and must not be duplicated in `REQUIRED_FIELDS`, otherwise login becomes ambiguous.
+- With your own model it's easy to miss `create_superuser`: without a correct manager the `createsuperuser` command will fail.

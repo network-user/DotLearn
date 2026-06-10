@@ -1,0 +1,97 @@
+---
+id: 1204
+title: "Event-driven architecture (EDA): how components communicate through events?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: system-design
+stageLabel: "System Design"
+lang: en
+---
+
+# Event-driven architecture (EDA): how components communicate through events?
+
+## In short
+
+Event-Driven Architecture is a design style where parts of the system don't call each other directly but exchange events: one component publishes the fact that "something happened", and others react to it. Thanks to this, components are loosely coupled, work asynchronously, and scale independently.
+
+## How to answer in an interview
+
+EDA is an architecture in which interaction is built around events rather than direct calls. An event is a message about a significant state change: "order placed", "payment went through". There are three roles: producers (publishers) generate events, consumers are subscribed to them and react, and a broker (Kafka, RabbitMQ, SNS) receives events from producers and delivers them to consumers. The main advantage is loose coupling: the producer doesn't know who or how many consumers will process the event, so new consumers can be added without changing existing code. We pay for this with harder debugging, the need to make consumers idempotent, and consistency becoming eventual.
+
+## How it works
+
+An event is an immutable fact about something that happened: a user placed an order, a profile was updated, a payment went through. A component publishes an event and moves on, without waiting for someone to process it.
+
+<figure>
+<svg viewBox="0 0 560 200" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+<rect x="20" y="80" width="100" height="40" rx="6" />
+<text x="70" y="104" textAnchor="middle" stroke="none" fill="currentColor">Producer</text>
+<rect x="230" y="75" width="100" height="50" rx="8" stroke="#6366f1" strokeWidth="2" />
+<text x="280" y="105" textAnchor="middle" stroke="none" fill="#6366f1">Broker</text>
+<rect x="440" y="20" width="100" height="36" rx="6" />
+<text x="490" y="42" textAnchor="middle" stroke="none" fill="currentColor">warehouse</text>
+<rect x="440" y="82" width="100" height="36" rx="6" />
+<text x="490" y="104" textAnchor="middle" stroke="none" fill="currentColor">notify</text>
+<rect x="440" y="144" width="100" height="36" rx="6" />
+<text x="490" y="166" textAnchor="middle" stroke="none" fill="currentColor">analytics</text>
+<line x1="120" y1="100" x2="230" y2="100" />
+<line x1="330" y1="95" x2="440" y2="40" />
+<line x1="330" y1="100" x2="440" y2="100" />
+<line x1="330" y1="105" x2="440" y2="160" />
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion dur="2.2s" repeatCount="indefinite" path="M120,100 L230,100" />
+</circle>
+</svg>
+</figure>
+
+
+Three participants:
+
+1. **Producer (Event Producer).** Publishes an event when something happens. For example, a web app sends an event when an order is placed.
+2. **Consumer (Event Consumer).** Subscribed to the events it cares about and reacts to them - kicks off processing, sends a notification, updates statistics.
+3. **Broker (Event Broker).** The intermediary between them: receives events, stores them in a queue/log, and delivers them to subscribers, providing asynchrony and decoupling.
+
+A simple "publisher-subscriber" model in code:
+
+```python
+class EventBus:
+    def __init__(self):
+        self.subscribers = {}
+
+    def subscribe(self, event_type, handler):
+        self.subscribers.setdefault(event_type, []).append(handler)
+
+    def publish(self, event_type, payload):
+        for handler in self.subscribers.get(event_type, []):
+            handler(payload)
+
+
+bus = EventBus()
+bus.subscribe("order_created", lambda p: print(f"warehouse: reserve {p}"))
+bus.subscribe("order_created", lambda p: print(f"notify: confirm {p}"))
+bus.publish("order_created", "order-42")
+```
+
+Output:
+
+```
+warehouse: reserve order-42
+notify: confirm order-42
+```
+
+The producer (`publish`) knows nothing about the subscribers - it merely announces a fact. Adding an analytics service is one more `subscribe`, with no change to the publishing code.
+
+Why this is convenient:
+
+- **Asynchrony.** Components don't wait for each other; events are processed in parallel.
+- **Scalability.** New consumers and producers are added without touching the rest.
+- **Loose coupling.** Components can be changed and deployed independently.
+- **Reactivity.** The system responds quickly to what's happening.
+
+## Pitfalls
+
+- **Eventual, not instant, consistency.** Consumers process events with a delay, so the system's state is inconsistent for a while. The logic must be built with this in mind.
+- **Idempotency is mandatory.** Brokers usually guarantee "at-least-once" delivery, meaning an event may arrive again. The consumer must handle duplicates correctly.
+- **Harder to debug.** The control flow is smeared out: tracing who reacted to what is harder than with a direct call. You need tracing and correlation ids.
+- **Event ordering isn't guaranteed by default.** If order matters (first "created", then "paid"), it has to be ensured separately - for instance, with partition keys.
+- **The broker is a critical node.** It becomes a point of failure and itself requires fault tolerance and monitoring.

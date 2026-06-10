@@ -1,0 +1,93 @@
+---
+id: 1234
+title: "Почему асинхронные view в Django нельзя считать «бесплатным» ускорением?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему асинхронные view в Django нельзя считать «бесплатным» ускорением?
+
+## Суть
+
+Async view выигрывает только на операциях ввода-вывода и только если вся цепочка вокруг него тоже не блокирует поток. Синхронный код (включая большую часть ORM), несовместимые middleware и блокирующие библиотеки сводят выигрыш на нет, а при неаккуратном вызове — даже ухудшают ситуацию.
+
+## Что ответить на собесе
+
+Django умеет `async def` view, но фреймворк исторически синхронный, и многие его части до сих пор такими и остаются. Если из async-вьюхи напрямую дёрнуть блокирующий синхронный код — например, синхронный ORM-вызов, — он застопорит event loop и убьёт смысл асинхронности. Поэтому синхронные участки оборачивают в `sync_to_async` из `asgiref`. Плюс не каждый middleware и не каждая сторонняя библиотека асинхронны: Django умеет «адаптировать» их, но через переключение контекста, что добавляет накладные расходы. Async-view оправдан на I/O-bound нагрузке (внешние API, файлы), а для CPU-bound задач он бесполезен.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 150" role="img" aria-label="Поток освобождается во время await и обслуживает другой запрос" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <text x="14" y="38" fill="currentColor" stroke="none" fontSize="11">поток</text>
+  <line x1="60" y1="34" x2="580" y2="34" strokeOpacity="0.4" />
+  <rect x="60" y="22" width="90" height="24" rx="4" />
+  <text x="105" y="38" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">запрос A</text>
+  <rect x="150" y="22" width="200" height="24" rx="4" strokeDasharray="4 3" strokeOpacity="0.6" />
+  <text x="250" y="38" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">await: ждём I/O, поток свободен</text>
+  <rect x="350" y="22" width="120" height="24" rx="4" stroke="#6366f1" />
+  <text x="410" y="38" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">запрос B</text>
+  <rect x="470" y="22" width="90" height="24" rx="4" />
+  <text x="515" y="38" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">ответ A</text>
+
+  <text x="14" y="100" fill="currentColor" stroke="none" fontSize="11">I/O</text>
+  <line x1="60" y1="96" x2="580" y2="96" strokeOpacity="0.4" />
+  <line x1="150" y1="46" x2="150" y2="96" strokeDasharray="3 3" strokeOpacity="0.5" />
+  <line x1="470" y1="96" x2="470" y2="46" strokeDasharray="3 3" strokeOpacity="0.5" />
+  <circle cx="150" cy="96" r="5" fill="#6366f1" stroke="none">
+    <animate attributeName="cx" values="150;470;470" keyTimes="0;0.8;1" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="cy" values="96;96;46" keyTimes="0;0.8;1" dur="3s" repeatCount="indefinite" />
+  </circle>
+  <text x="310" y="118" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">внешний API / файл</text>
+</svg>
+
+</figure>
+
+Async view опирается на `async`/`await` и неблокирующие операции ввода-вывода:
+
+```python
+from django.http import JsonResponse
+from django.views import View
+import asyncio
+
+class MyAsyncView(View):
+    async def get(self, request):
+        await asyncio.sleep(1)
+        return JsonResponse({'message': 'Hello, async world!'})
+```
+
+Синхронный код из async вызывают через обёртку, чтобы не блокировать цикл событий:
+
+```python
+from django.http import JsonResponse
+from django.views import View
+from asgiref.sync import sync_to_async
+
+class SafeAsyncView(View):
+    async def get(self, request):
+        result = await sync_to_async(self.some_sync_method)()
+        return JsonResponse({'result': result})
+
+    def some_sync_method(self):
+        return "Hello, World!"
+```
+
+Поток данных: ASGI-сервер держит соединение, пока `await` ждёт I/O, и в это время обслуживает другие запросы.
+
+```text
+запрос ─▶ async view ─▶ await (ждём I/O, поток свободен) ─▶ ответ
+                          ▲
+            синхронный ORM/библиотека → sync_to_async, иначе блокировка
+```
+
+## Подводные камни
+
+- Прямой синхронный ORM-вызов из async-view блокирует event loop. Нужен либо `sync_to_async`, либо асинхронный ORM-интерфейс (`aget`, `acreate`, `async for`).
+- Async-view ускоряет только I/O-bound задачи. CPU-bound вычисления всё равно держат поток — асинхронность тут не поможет, нужны процессы/воркеры.
+- Middleware и сторонние библиотеки бывают только синхронными; Django их адаптирует, но через переключение контекстов, что съедает часть выигрыша.
+- Async-view требует ASGI-сервера (uvicorn/daphne). Под классическим WSGI преимущества асинхронности недоступны.
+- `sync_to_async` по умолчанию исполняет код в отдельном потоке (thread-sensitive), и неаккуратное смешивание sync/async легко приводит к скрытым блокировкам.

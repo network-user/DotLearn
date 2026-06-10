@@ -1,0 +1,86 @@
+---
+id: 1442
+title: "JWT from the inside: the token's three parts, the signature, and why the server can skip storing sessions"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JWT from the inside: the token's three parts, the signature, and why the server can skip storing sessions
+
+## In short
+
+A JWT (JSON Web Token) is a compact, URL-safe token of three parts (header, payload, signature) encoded with Base64URL and separated by dots. The signature proves the payload was not tampered with, so the server can verify a request without storing session state.
+
+## How to answer in an interview
+
+A JWT is a self-contained token that parties use to exchange information as signed JSON. It consists of three dot-separated parts: header (type and algorithm), payload (claims — assertions about the user), and signature. The first two parts are just Base64URL; anyone can read them — it is the signature that protects them. The server issues the token after login, the client sends it in `Authorization: Bearer <token>`, the server verifies the signature with a secret (HS256) or a public key (RS256) and trusts the contents. No state is kept on the server — this simplifies horizontal scaling and SSO.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 640 150" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="40" width="170" height="48" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="105" y="62" textAnchor="middle" fontSize="13" fill="currentColor">Header</text>
+  <text x="105" y="80" textAnchor="middle" fontSize="11" fill="currentColor">alg, typ</text>
+  <rect x="210" y="40" width="170" height="48" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="295" y="62" textAnchor="middle" fontSize="13" fill="currentColor">Payload</text>
+  <text x="295" y="80" textAnchor="middle" fontSize="11" fill="currentColor">claims (sub, exp...)</text>
+  <rect x="400" y="40" width="170" height="48" rx="8" stroke="#6366f1" strokeWidth="1.5" fill="#6366f1" fillOpacity="0.06" />
+  <text x="485" y="62" textAnchor="middle" fontSize="13" fill="currentColor">Signature</text>
+  <text x="485" y="80" textAnchor="middle" fontSize="11" fill="currentColor">signed with a secret</text>
+  <text x="200" y="70" textAnchor="middle" fontSize="16" fill="currentColor">.</text>
+  <text x="390" y="70" textAnchor="middle" fontSize="16" fill="currentColor">.</text>
+  <path d="M105 88 L105 112 L485 112 L485 92" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="5 4" />
+  <path d="M295 88 L295 112" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="5 4" />
+  <text x="295" y="132" textAnchor="middle" fontSize="11" fill="currentColor">Base64URL(header) + Base64URL(payload) → signature</text>
+</svg>
+
+</figure>
+
+The structure is `header.payload.signature`:
+
+1. **Header** — token type and signing algorithm:
+
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+2. **Payload** — a set of claims. There are registered ones (`iss` — issuer, `sub` — subject, `exp` — expiration, `iat` — issued at) and arbitrary custom ones:
+
+```json
+{
+  "sub": "1234567890",
+  "name": "Ivan Petrov",
+  "admin": true,
+  "exp": 1735689600
+}
+```
+
+3. **Signature** — take Base64URL(header) + "." + Base64URL(payload) and sign it with a secret using the chosen algorithm:
+
+```python
+import jwt
+
+payload = {"sub": "1234567890", "name": "Ivan", "admin": True}
+secret = "your-256-bit-secret"
+
+token = jwt.encode(payload, secret, algorithm="HS256")
+decoded = jwt.decode(token, secret, algorithms=["HS256"])
+```
+
+Authentication flow: the client logs in → the server issues a JWT → the client sends it with every request → the server verifies the signature and expiry and grants access. Used in REST APIs and in SSO, where a single authentication unlocks multiple applications.
+
+## Pitfalls
+
+- **The payload is encoded, not encrypted** — Base64URL can be decoded by anyone; do not put secrets in the payload (for encryption you need JWE).
+- **`alg: none` and algorithm substitution** — a classic vulnerability: the library must not trust the `alg` field from the token itself; always set `algorithms=[...]` explicitly.
+- **Token revocation** — an issued JWT is valid until `exp` and cannot be "logged out" without a separate blacklist or a short TTL plus refresh tokens.
+- **Expiration is mandatory** — without `exp` a stolen token lives forever; make access tokens short-lived.
+- **HS256 vs RS256** — HS256 has a single shared secret (anyone who can verify can also sign); RS256 splits the private issuing key from the public verification key — which is safer for distributed systems.

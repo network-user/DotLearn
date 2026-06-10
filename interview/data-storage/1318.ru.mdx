@@ -1,0 +1,105 @@
+---
+id: 1318
+title: "Alembic: зачем он нужен для управления версиями схемы базы данных"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Alembic: зачем он нужен для управления версиями схемы базы данных
+
+## Суть
+
+Alembic — инструмент версионирования схемы БД для проектов на SQLAlchemy. Он описывает каждое изменение структуры как отдельный шаг (ревизию), который можно накатить и откатить, и держит схему синхронной во всех окружениях.
+
+## Что ответить на собесе
+
+Alembic решает задачу управляемой эволюции схемы. Любая правка структуры — новая таблица, переименованный столбец, удалённый индекс — оформляется отдельной ревизией с функциями `upgrade` и `downgrade`. Ревизии складываются в линейную (или ветвящуюся) историю и применяются по порядку. За счёт этого dev, staging и продакшен приходят к одинаковой структуре одним и тем же набором команд, без ручного переноса SQL и без рассинхрона. С `--autogenerate` Alembic ещё и сам сравнивает модели SQLAlchemy с текущей схемой и набрасывает черновик миграции.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 640 200" role="img" aria-label="Линейная история ревизий Alembic с накатом и откатом" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="40" y="80" width="120" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+  <text x="100" y="100" textAnchor="middle" fontSize="12" fill="currentColor">base</text>
+  <text x="100" y="116" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">пустая схема</text>
+  <rect x="260" y="80" width="120" height="40" rx="8" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="100" textAnchor="middle" fontSize="12" fill="currentColor">rev a1b2</text>
+  <text x="320" y="116" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">users</text>
+  <rect x="480" y="80" width="120" height="40" rx="8" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="540" y="100" textAnchor="middle" fontSize="12" fill="currentColor">rev c3d4</text>
+  <text x="540" y="116" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">head · orders</text>
+  <path d="M160 92 L260 92" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arr)" />
+  <path d="M380 92 L480 92" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arr)" />
+  <text x="210" y="82" textAnchor="middle" fontSize="11" fill="currentColor">upgrade</text>
+  <text x="430" y="82" textAnchor="middle" fontSize="11" fill="currentColor">upgrade</text>
+  <path d="M480 110 L380 110" stroke="currentColor" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+  <path d="M260 110 L160 110" stroke="currentColor" strokeWidth="1.2" strokeDasharray="4 3" markerEnd="url(#arr)" />
+  <text x="320" y="128" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.7">downgrade</text>
+  <circle cx="540" cy="60" r="5" fill="#6366f1">
+    <animate attributeName="cy" values="60;70;60" dur="2s" repeatCount="indefinite" />
+  </circle>
+  <text x="540" y="48" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">alembic_version</text>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+</svg>
+
+</figure>
+
+Базовая единица — ревизия. Это Python-файл с уникальным идентификатором, ссылкой на предыдущую ревизию (`down_revision`) и двумя функциями: что сделать при накате и что при откате.
+
+Стартовый набор команд:
+
+```bash
+alembic init alembic
+```
+
+Создаёт каталог `alembic/` с конфигом и шаблонами миграций.
+
+```bash
+alembic revision --autogenerate -m "add users table"
+```
+
+Сравнивает модели с базой и генерирует черновик ревизии. Флаг `-m` задаёт человекочитаемое описание.
+
+```bash
+alembic upgrade head
+```
+
+Применяет все ещё не накатанные ревизии до самой свежей (`head`).
+
+```bash
+alembic downgrade -1
+```
+
+Откатывает один последний шаг.
+
+Сквозной пример — добавляем таблицу `users`. Сначала описываем модель:
+
+```python
+from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+```
+
+Затем генерируем ревизию командой `alembic revision --autogenerate -m "add users table"` и накатываем её через `alembic upgrade head`. В таблице `alembic_version` записывается идентификатор текущей ревизии — так Alembic знает, на каком шаге сейчас находится база.
+
+## Подводные камни
+
+- `--autogenerate` видит не всё: смену типа столбца, переименования, изменения в `CHECK` и серверных `default` он часто пропускает или трактует как drop+create. Сгенерированную ревизию обязательно нужно вычитывать руками.
+- Функцию `downgrade` легко оставить пустой или некорректной — тогда откат на проде сломается именно тогда, когда он нужен.
+- Несколько веток разработки порождают несколько `head`, и Alembic потребует `alembic merge`. Игнорировать это нельзя.
+- Миграции данных (не структуры) надо писать аккуратно: тяжёлый `UPDATE` внутри ревизии может надолго заблокировать таблицу на проде.
+- Ревизия фиксирует структуру на момент написания: импортировать «живые» модели приложения внутрь миграции — путь к поломке при будущих изменениях кода.

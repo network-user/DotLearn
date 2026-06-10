@@ -1,0 +1,70 @@
+---
+id: 1230
+title: "Чем annotate отличается от aggregate в Django ORM и когда что брать?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем annotate отличается от aggregate в Django ORM и когда что брать?
+
+## Суть
+
+Оба метода считают агрегаты прямо в СУБД, но возвращают разное. `annotate` навешивает вычисляемое поле на каждый объект (или на каждую группу) QuerySet — счётчик, сумму, среднее по строке. `aggregate` схлопывает весь QuerySet в один словарь с итоговыми числами. Грубо: `annotate` — это «по каждому», `aggregate` — это «по всем сразу».
+
+## Что ответить на собесе
+
+`annotate` возвращает QuerySet с добавленным полем и остаётся ленивым: запрос ещё не выполнен, его можно фильтровать и сортировать дальше. `aggregate` — терминальная операция: она сразу бьёт в базу и отдаёт `dict`. Главный плюс обоих в том, что суммирование и группировка происходят на стороне базы (через `GROUP BY` и агрегатные SQL-функции), а не в Python после выгрузки всех строк в память.
+
+## Как это работает
+
+`annotate` добавляет к каждому объекту QuerySet поле, посчитанное агрегатной функцией. В связке с `values()` он образует группировку: перечисленные в `values()` поля попадают в `GROUP BY`, а агрегат считается внутри каждой группы.
+
+Модель `Book` с полями `author` и `price`. Сколько книг у каждого автора:
+
+```python
+from django.db.models import Count
+from .models import Book
+
+authors_with_book_count = Book.objects.values('author').annotate(book_count=Count('id'))
+
+for row in authors_with_book_count:
+    print(f"Author: {row['author']}, Number of Books: {row['book_count']}")
+```
+
+Здесь к каждой строке-автору приписано поле `book_count` с числом его книг.
+
+`aggregate` берёт весь QuerySet и сводит его к одному результату — словарю. Суммарная стоимость всех книг:
+
+```python
+from django.db.models import Sum
+from .models import Book
+
+total_price = Book.objects.aggregate(total=Sum('price'))
+
+print(f"Total price of all books: {total_price['total']}")
+```
+
+Ключ словаря — это имя аргумента (`total`), значение — сумма цен по всей таблице.
+
+<svg viewBox="0 0 320 120" width="320" height="120" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="10" y="20" width="120" height="80" rx="6" />
+  <text x="70" y="14" fontSize="11" textAnchor="middle" stroke="none" fill="currentColor">annotate</text>
+  <line x1="10" y1="45" x2="130" y2="45" />
+  <line x1="10" y1="70" x2="130" y2="70" />
+  <text x="70" y="38" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">row + поле</text>
+  <text x="70" y="63" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">row + поле</text>
+  <text x="70" y="90" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">row + поле</text>
+  <rect x="200" y="50" width="110" height="30" rx="6" />
+  <text x="255" y="44" fontSize="11" textAnchor="middle" stroke="none" fill="currentColor">aggregate</text>
+  <text x="255" y="69" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">один dict</text>
+</svg>
+
+## Подводные камни
+
+- **`annotate` ленивый, `aggregate` — нет.** После `annotate` можно цепочкой добавить `filter`, `order_by`, срез; `aggregate` выполняет запрос немедленно и возвращает обычный `dict`, который дальше через ORM не отфильтруешь.
+- **Группировку задаёт `values()` до `annotate`.** Если поставить `values()` после `annotate`, состав `GROUP BY` изменится и числа поедут. Порядок важен: сначала `values('author')`, потом `annotate(...)`.
+- **Двойной `JOIN` раздувает счётчики.** Аннотации сразу по нескольким связанным таблицам (`Count` по двум разным `ForeignKey`) дают декартово произведение и завышенные суммы. Лечится `distinct=True` в `Count` или раздельными запросами.
+- **`Count('id')` и `Count('field')` — не одно и то же.** Второй вариант не считает строки с `NULL` в этом поле, что иногда и нужно, а иногда выходит сюрпризом.

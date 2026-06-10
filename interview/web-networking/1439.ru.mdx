@@ -1,0 +1,91 @@
+---
+id: 1439
+title: "RPC и gRPC: чем удалённый вызов от Google сильнее классической схемы"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# RPC и gRPC: чем удалённый вызов от Google сильнее классической схемы
+
+## Суть
+
+RPC прячет сеть за фасадом обычного вызова функции: код «дёргает» процедуру на чужой машине так, будто она лежит рядом. gRPC — реализация этой идеи от Google поверх HTTP/2 с бинарной сериализацией Protocol Buffers и встроенными стримами, отчего работает быстрее и кросс-языково.
+
+## Что ответить на собесе
+
+RPC (Remote Procedure Call) — это стиль межсервисного общения, где вызов кода на удалённом сервере выглядит для разработчика как локальный: аргументы сериализуются, летят по сети, сервер выполняет процедуру и возвращает результат. gRPC — современная реализация RPC: транспорт на HTTP/2 даёт мультиплексирование и двунаправленные стримы, сообщения кодируются в компактный бинарный protobuf вместо текстового JSON, контракт описывается в `.proto` и генерирует клиент/сервер сразу под десяток языков. Итог — меньше латентность, меньше трафик и строгий контракт из коробки.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 640 220" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="120" y="28" textAnchor="middle" fontSize="13" fill="currentColor">Клиент</text>
+  <text x="520" y="28" textAnchor="middle" fontSize="13" fill="currentColor">Сервер</text>
+  <rect x="40" y="40" width="160" height="150" rx="8" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <rect x="440" y="40" width="160" height="150" rx="8" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <rect x="60" y="70" width="120" height="34" rx="6" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <text x="120" y="92" textAnchor="middle" fontSize="12" fill="currentColor">стаб клиента</text>
+  <rect x="460" y="70" width="120" height="34" rx="6" stroke="currentColor" strokeWidth="1.5" fillOpacity="0" />
+  <text x="520" y="92" textAnchor="middle" fontSize="12" fill="currentColor">стаб сервера</text>
+  <rect x="460" y="130" width="120" height="34" rx="6" stroke="#6366f1" strokeWidth="1.5" fillOpacity="0" />
+  <text x="520" y="152" textAnchor="middle" fontSize="12" fill="currentColor">процедура</text>
+  <line x1="180" y1="82" x2="460" y2="82" stroke="currentColor" strokeWidth="1.5" />
+  <text x="320" y="74" textAnchor="middle" fontSize="11" fill="currentColor">marshalling →</text>
+  <line x1="460" y1="100" x2="180" y2="100" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+  <text x="320" y="116" textAnchor="middle" fontSize="11" fill="currentColor">← ответ (unmarshalling)</text>
+  <line x1="520" y1="104" x2="520" y2="130" stroke="currentColor" strokeWidth="1.5" />
+  <circle r="5" fill="#6366f1">
+    <animateMotion dur="2.4s" repeatCount="indefinite" path="M180,82 L460,82" />
+  </circle>
+</svg>
+
+</figure>
+
+Классический RPC проходит через стабы (заглушки). На клиенте лежит сгенерированный стаб с теми же сигнатурами, что и на сервере. Шаги одного вызова:
+
+1. Клиент вызывает метод стаба как локальную функцию.
+2. Аргументы сериализуются (marshalling) в сетевой формат.
+3. Данные уходят на сервер по выбранному транспорту.
+4. Серверный стаб десериализует запрос, выполняет реальную процедуру, сериализует ответ.
+5. Результат возвращается клиенту и десериализуется обратно в объект.
+
+gRPC надстраивает над этой схемой:
+
+- **HTTP/2** — мультиплексирование запросов в одном соединении и серверный push без блокировок.
+- **Protocol Buffers** — бинарный формат, который парсится быстрее и весит меньше JSON/XML.
+- **Кодогенерация** — из `.proto` генерируются типизированные клиенты под разные языки.
+- **Четыре режима вызова** — unary, server-streaming, client-streaming и bidi-streaming.
+
+Контракт описывают в `.proto`:
+
+```proto
+syntax = "proto3";
+
+service ChatService {
+  rpc SendMessage (MessageRequest) returns (MessageResponse);
+  rpc ChatStream (stream MessageRequest) returns (stream MessageResponse);
+}
+
+message MessageRequest {
+  string user = 1;
+  string text = 2;
+}
+
+message MessageResponse {
+  string status = 1;
+}
+```
+
+Здесь `SendMessage` — разовый (unary) вызов, а `ChatStream` с двумя `stream` — двунаправленный поток для живого чата.
+
+## Подводные камни
+
+- **Браузер напрямую не говорит на gRPC** — нужен gRPC-Web с прокси, потому что обычный JS не управляет фреймами HTTP/2.
+- **Бинарный формат непрозрачен** — protobuf не прочитать глазами в логах, отладка сложнее, чем у JSON-REST.
+- **Эволюция схемы требует дисциплины** — номера полей в `.proto` нельзя переиспользовать; удалённые поля помечают `reserved`, иначе ломается совместимость.
+- **Стрим — не магия** — долгоживущие потоки требуют ручной обработки переподключений, таймаутов и обратного давления.
+- **RPC создаёт иллюзию локального вызова**, но сеть всё равно может упасть; ошибки и латентность нельзя игнорировать «потому что выглядит как функция».

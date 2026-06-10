@@ -1,0 +1,117 @@
+---
+id: 562
+title: "In what ways can one Django model inherit from another?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# In what ways can one Django model inherit from another?
+
+## In short
+
+Django supports three inheritance styles, and they differ in how many tables get created in the database. An abstract base class hands fields down to child models but has no table of its own. Multi-table inheritance creates a table for every model. A proxy changes behavior without touching any table.
+
+## How to answer in an interview
+
+There are three inheritance options. Abstract models (`abstract = True` in `Meta`) are a pure field template: the base class has no table, the fields are copied into each child model, and only the descendants get their own table. Multi-table inheritance is when the base class is not abstract: it has its own table, the descendant has its own, with an implicit `OneToOne` relation between them, and accessing an inherited field triggers a JOIN. A proxy model (`proxy = True`) is the same table but a different Python class: you can add methods, change the manager, or alter the default ordering, without a single new column. The choice comes down to one question: do you need a separate table, and do you need new fields?
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 230" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>How many tables each kind of inheritance produces</title>
+  <g fontFamily="sans-serif" fontSize="12" textAnchor="middle">
+    <text x="100" y="22" fill="currentColor">Abstract</text>
+    <text x="300" y="22" fill="currentColor">Multi-table</text>
+    <text x="500" y="22" fill="currentColor">Proxy</text>
+
+    <rect x="40" y="40" width="120" height="34" rx="6" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+    <text x="100" y="62" fill="currentColor" fillOpacity="0.6">base (no table)</text>
+    <rect x="40" y="100" width="55" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="67" y="124" fill="currentColor">Student</text>
+    <rect x="105" y="100" width="55" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="132" y="124" fill="currentColor">Teacher</text>
+    <text x="100" y="172" fill="currentColor" fillOpacity="0.7">2 tables</text>
+
+    <rect x="240" y="40" width="120" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="300" y="64" fill="currentColor">BaseModel</text>
+    <rect x="240" y="100" width="120" height="40" rx="6" stroke="currentColor" strokeWidth="1.5" />
+    <text x="300" y="124" fill="currentColor">ChildModel</text>
+    <text x="300" y="172" fill="currentColor" fillOpacity="0.7">2 tables + JOIN</text>
+
+    <rect x="440" y="70" width="120" height="40" rx="6" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="500" y="94" fill="currentColor">Person</text>
+    <text x="500" y="138" fill="currentColor" fillOpacity="0.6">PersonProxy</text>
+    <text x="500" y="172" fill="currentColor" fillOpacity="0.7">1 table</text>
+  </g>
+  <g stroke="currentColor" strokeWidth="1.5">
+    <line x1="300" y1="80" x2="300" y2="100" />
+    <line x1="500" y1="110" x2="500" y2="124" strokeDasharray="4 3" />
+  </g>
+</svg>
+</figure>
+
+**Abstract model.** The base class is marked `abstract = True`, so there will be no table for it, and its fields move into each descendant:
+
+```python
+from django.db import models
+
+
+class CommonInfo(models.Model):
+    name = models.CharField(max_length=100)
+    age = models.IntegerField()
+
+    class Meta:
+        abstract = True
+
+
+class Student(CommonInfo):
+    school = models.CharField(max_length=100)
+
+
+class Teacher(CommonInfo):
+    subject = models.CharField(max_length=100)
+```
+
+The database gets `Student` and `Teacher` tables, each with its own `name` and `age`. There's no `CommonInfo` table.
+
+**Multi-table inheritance.** The base class is a regular, non-abstract one:
+
+```python
+class BaseModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ChildModel(BaseModel):
+    name = models.CharField(max_length=100)
+```
+
+Here there are two tables. `ChildModel` doesn't physically have a `created_at` field in its own table - it's fetched through the automatic relation with `BaseModel`, and the query does a JOIN.
+
+**Proxy model.** The same table, but extended behavior:
+
+```python
+class Person(models.Model):
+    name = models.CharField(max_length=100)
+
+
+class PersonProxy(Person):
+    class Meta:
+        proxy = True
+
+    def get_uppercase_name(self):
+        return self.name.upper()
+```
+
+`PersonProxy` reads from and writes to exactly the `Person` table, there's no new table, and the `get_uppercase_name` method is available only through the proxy.
+
+## Pitfalls
+
+- **Multi-table inheritance hides JOINs:** every access to a parent field is a query with a table join, and on hot paths that hurts performance. An abstract model is often preferable.
+- **You can't add fields to a proxy:** only methods, managers, and `Meta` options like `ordering`. Trying to declare a new field raises an error.
+- **An abstract class's `Meta` is not inherited in full:** the child model gets a copy of `Meta`, but `abstract` is reset to `False`, otherwise the descendant would become abstract too.
+- **Change the schema - write migrations:** moving from an abstract to a multi-table model changes the table structure and requires careful data migration.
+- **A proxy and the original share rows:** an object saved through `Person` is visible through `PersonProxy` too - it's one and the same record, not a copy.

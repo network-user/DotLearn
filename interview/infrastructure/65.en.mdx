@@ -1,0 +1,85 @@
+---
+id: 65
+title: "How Docker differs from Docker Compose and where the line between them lies"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How Docker differs from Docker Compose and where the line between them lies
+
+## In short
+
+Docker runs and isolates a single container, while Docker Compose orchestrates a bundle of several containers from a YAML description. The first is responsible for the unit, the second for their shared life.
+
+## How to answer in an interview
+
+Docker is a containerization engine: it takes an application with all its dependencies and packages it into a container that behaves identically on any machine running Docker. Docker Compose is a tool on top of Docker for multi-container applications: instead of manually starting each container, I describe all services, networks, and volumes in `docker-compose.yml` and bring them up with a single `docker compose up` command. Roughly: Docker is about one container, Compose is about managing a group of them as a single application.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 560 260" role="img" aria-label="Docker Compose orchestrates several containers over a shared kernel" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="13">
+  <rect x="20" y="20" width="520" height="50" rx="8" stroke="#6366f1" />
+  <text x="280" y="50" textAnchor="middle" fill="#6366f1" stroke="none">docker compose up — description from docker-compose.yml</text>
+  <line x1="180" y1="70" x2="180" y2="110" stroke="#6366f1" strokeDasharray="4 4" />
+  <line x1="380" y1="70" x2="380" y2="110" stroke="#6366f1" strokeDasharray="4 4" />
+  <rect x="100" y="110" width="160" height="60" rx="8" />
+  <text x="180" y="135" textAnchor="middle" fill="currentColor" stroke="none">web container</text>
+  <text x="180" y="155" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">:5000</text>
+  <rect x="300" y="110" width="160" height="60" rx="8" />
+  <text x="380" y="135" textAnchor="middle" fill="currentColor" stroke="none">db container</text>
+  <text x="380" y="155" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">postgres:16</text>
+  <line x1="260" y1="140" x2="300" y2="140" />
+  <text x="280" y="132" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">network</text>
+  <rect x="20" y="200" width="520" height="44" rx="8" fillOpacity="0.06" fill="currentColor" />
+  <text x="280" y="227" textAnchor="middle" fill="currentColor" stroke="none">shared Linux kernel: namespaces + cgroups</text>
+  <line x1="180" y1="170" x2="180" y2="200" />
+  <line x1="380" y1="170" x2="380" y2="200" />
+</svg>
+</figure>
+
+Docker relies on Linux kernel primitives — namespaces (isolation of process visibility, network, filesystem) and cgroups (CPU and memory limits). Thanks to this, dozens of containers share a single OS kernel, and heavy virtualization isn't needed.
+
+A minimal Dockerfile for a Python service:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "app.py"]
+```
+
+Compose doesn't replace Docker, it conducts it. It reads a declarative description and in a single pass creates networks, volumes, and brings up containers in the right order:
+
+```yaml
+services:
+  web:
+    image: my-web-app:latest
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: example
+      POSTGRES_PASSWORD: example
+```
+
+Here `web` depends on `db`, so Compose starts the database before the web service, places both on a shared network, and lets them communicate by service names.
+
+## Pitfalls
+
+- `depends_on` only guarantees the container's start order, not the readiness of the service inside. The database may still be initializing when `web` has already started — a healthcheck or application-side retries are needed.
+- The `version:` key is deprecated and ignored in modern Compose — don't copy `version: '3'` from old examples.
+- Compose is great for local development and small environments, but it's not a production-grade orchestrator: horizontal scaling, self-healing, and rolling updates are jobs for Kubernetes or Swarm, not Compose.
+- Containers on the same host share the kernel. This isn't a full-fledged VM: a Linux image won't run on a kernel that doesn't support it without a compatibility layer.

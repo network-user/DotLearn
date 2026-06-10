@@ -1,0 +1,76 @@
+---
+id: 1152
+title: "A message's journey inside RabbitMQ: from producer to consumer"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# A message's journey inside RabbitMQ: from producer to consumer
+
+## In short
+
+A message in RabbitMQ never lands in a queue directly: it arrives at an exchange, which - based on its type and routing key, using bindings - distributes it across queues, where the message waits until a consumer picks it up.
+
+## How to answer in an interview
+
+The key idea: a producer publishes not to a queue but to an exchange. The exchange looks at its type and its bindings and decides which queues to send a copy of the message to. A binding links an exchange to a queue by routing key or headers. After that the message sits in the queue until a consumer pulls it out. So the full path is: producer → exchange → binding → queue → consumer. If no binding matches, the message is either dropped or routed to an alternate exchange.
+
+<figure>
+<svg viewBox="0 0 620 90" fontFamily="sans-serif" fontSize="12">
+<rect x="8" y="30" width="90" height="32" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="53" y="50" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="138" y="30" width="90" height="32" rx="5" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="183" y="50" textAnchor="middle" fill="currentColor">Exchange</text>
+<rect x="268" y="30" width="90" height="32" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="313" y="46" textAnchor="middle" fill="currentColor">Binding</text>
+<text x="313" y="58" textAnchor="middle" fill="currentColor" fillOpacity="0.6">routing</text>
+<rect x="398" y="30" width="90" height="32" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="443" y="50" textAnchor="middle" fill="currentColor">Queue</text>
+<rect x="522" y="30" width="90" height="32" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="567" y="50" textAnchor="middle" fill="currentColor">Consumer</text>
+<line x1="98" y1="46" x2="138" y2="46" stroke="currentColor" strokeWidth="1.5" />
+<line x1="228" y1="46" x2="268" y2="46" stroke="currentColor" strokeWidth="1.5" />
+<line x1="358" y1="46" x2="398" y2="46" stroke="currentColor" strokeWidth="1.5" />
+<line x1="488" y1="46" x2="522" y2="46" stroke="currentColor" strokeWidth="1.5" />
+</svg>
+</figure>
+
+## How it works
+
+1. **Publishing.** The producer opens a channel and publishes a message to an exchange, specifying a routing key. The AMQP protocol is used.
+2. **Routing by the exchange.** The exchange type determines the queue-selection logic:
+   - **direct** — an exact match of the routing key with the binding key;
+   - **fanout** — a copy to all bound queues, the key is ignored;
+   - **topic** — the key matches a binding pattern (`*`, `#`);
+   - **headers** — routing by headers rather than by key.
+3. **Binding.** A binding connects an exchange to a specific queue and sets the selection condition.
+4. **Storage.** The message stays in the queue until a consumer picks it up. The queue and the message can be declared durable so they survive a broker restart.
+5. **Delivery.** The consumer receives messages through a subscription (push) or polls the queue itself (pull).
+
+```python
+import pika
+
+connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+
+channel.exchange_declare(exchange='direct_logs', exchange_type='direct')
+
+channel.basic_publish(
+    exchange='direct_logs',
+    routing_key='info',
+    body='Hello RabbitMQ!',
+)
+
+connection.close()
+```
+
+## Pitfalls
+
+- The producer publishes to an exchange, not directly to a queue. A queue with no binding to a matching exchange simply receives no messages.
+- With the `fanout` type the routing key is irrelevant; beginners often try to filter with it and are surprised that the filter does nothing.
+- The default nameless exchange (`""`) behaves like a direct one where the routing_key equals the queue name, which creates the illusion of "publishing straight to a queue."
+- Without `durable` on the queue and `delivery_mode=2` on the message, data is lost when the broker restarts.
+- If no binding matches, the message is lost silently until an alternate exchange or the `mandatory` flag is configured.

@@ -1,0 +1,109 @@
+---
+id: 1202
+title: "Какими инструментами Django ускоряют выдачу за счёт кэша?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какими инструментами Django ускоряют выдачу за счёт кэша?
+
+## Суть
+
+Django из коробки даёт многоуровневую систему кэша поверх Memcached или Redis: можно положить в хранилище целую страницу, отдельный кусок шаблона или произвольные данные через низкоуровневый API. Идея одна — не пересчитывать дорогой результат повторно.
+
+## Что ответить на собесе
+
+Кэш в Django работает на трёх высотах. Декоратор `@cache_page` оборачивает представление и отдаёт готовый HTML, пока не истёк таймаут. Шаблонный тег `{% cache %}` кэширует только фрагмент — например, общее меню. А когда нужна гибкость, я беру низкоуровневый API `django.core.cache.cache` с методами `set`/`get` и сам решаю, что и на сколько класть. Бэкенд (Redis, Memcached, локальная память) настраивается одной секцией `CACHES` в `settings.py`, поэтому код кэширования от выбора хранилища не зависит.
+
+## Как это работает
+
+Кэш — это временное хранилище готовых результатов: при повторном обращении мы достаём их оттуда, а не выполняем заново запросы к БД и тяжёлый рендеринг. Это снимает нагрузку с базы и сокращает время отклика.
+
+<figure>
+
+<svg viewBox="0 0 600 220" role="img" aria-label="Поток запроса через кэш: при попадании ответ отдаётся из кэша, при промахе идёт обращение к базе" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="13">
+  <rect x="20" y="86" width="110" height="48" rx="8" />
+  <text x="75" y="115" textAnchor="middle" stroke="none" fill="currentColor">Запрос</text>
+
+  <rect x="245" y="86" width="110" height="48" rx="8" stroke="#6366f1" />
+  <text x="300" y="108" textAnchor="middle" stroke="none" fill="#6366f1">Кэш</text>
+  <text x="300" y="124" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">Redis / Memcached</text>
+
+  <rect x="470" y="86" width="110" height="48" rx="8" />
+  <text x="525" y="115" textAnchor="middle" stroke="none" fill="currentColor">База данных</text>
+
+  <line x1="130" y1="110" x2="245" y2="110" />
+  <polygon points="245,110 236,106 236,114" fill="currentColor" stroke="none" />
+
+  <path d="M300 86 L300 40 L75 40 L75 86" stroke="#6366f1" />
+  <polygon points="75,86 71,77 79,77" fill="#6366f1" stroke="none" />
+  <text x="187" y="32" textAnchor="middle" stroke="none" fill="#6366f1" fontSize="12">hit: ответ из кэша</text>
+
+  <line x1="355" y1="110" x2="470" y2="110" strokeDasharray="5 4" />
+  <polygon points="470,110 461,106 461,114" fill="currentColor" stroke="none" />
+  <text x="412" y="100" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">miss</text>
+
+  <path d="M525 134 L525 180 L300 180 L300 134" strokeDasharray="5 4" />
+  <polygon points="300,134 296,143 304,143" fill="currentColor" stroke="none" />
+  <text x="412" y="196" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">результат кладётся в кэш</text>
+
+  <circle r="5" fill="#6366f1" stroke="none">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M75 110 L300 110" />
+  </circle>
+</svg>
+
+</figure>
+
+Бэкенд задаётся секцией `CACHES`. Для Redis:
+
+```python
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        },
+    }
+}
+```
+
+Кэш целого представления — декоратор `@cache_page`, аргумент задаёт время жизни в секундах:
+
+```python
+from django.views.decorators.cache import cache_page
+
+@cache_page(60 * 15)  # держим ответ 15 минут
+def my_view(request):
+    return HttpResponse('Hello, World!')
+```
+
+Кэш фрагмента шаблона — теги `load cache` и `cache`, у блока есть таймаут и имя ключа:
+
+```html
+{% load cache %}
+{% cache 500 sidebar %}
+    <div>
+        <!-- тяжёлый для рендеринга контент -->
+    </div>
+{% endcache %}
+```
+
+Низкоуровневый API — кладём и читаем произвольные значения:
+
+```python
+from django.core.cache import cache
+
+cache.set('my_key', 'my_value', timeout=60 * 15)
+value = cache.get('my_key')  # 'my_value', либо None после истечения
+```
+
+## Подводные камни
+
+- `@cache_page` кэширует страницу одинаково для всех, поэтому к персональным данным (профиль, корзина) его применять нельзя — иначе один пользователь увидит контент другого. Кэш всей страницы варьируется по URL и заголовкам из `Vary`.
+- `cache.get` для отсутствующего или протухшего ключа возвращает `None`, а не бросает исключение. Если валидное значение само может быть `None`, передавайте sentinel-объект по умолчанию: `cache.get(key, MISSING)`.
+- Таймаут в секундах. `timeout=None` означает «вечно», `timeout=0` — не кэшировать вовсе; это частая путаница.
+- Главная боль кэша — инвалидация. После изменения данных устаревший кэш надо явно сбрасывать (`cache.delete`) либо завязываться на версии ключей, иначе пользователь увидит старое.

@@ -1,0 +1,111 @@
+---
+id: 1215
+title: "Как организовать вызовы сторонних HTTP-API из Django-приложения?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как организовать вызовы сторонних HTTP-API из Django-приложения?
+
+## Суть
+
+Обращение к чужому сервису по HTTP - это обычный сетевой запрос, который не должен жить прямо во вьюхе. Я выношу всю работу с внешним API в отдельный слой-клиент: там собраны URL, заголовки, авторизация, разбор ответа и обработка сбоев. Вьюха просто зовёт функцию клиента и получает готовые данные. Для самих запросов беру `requests`, поверх вешаю таймауты, проверку статуса и кэш Django, чтобы не дёргать сервис на каждый чих.
+
+## Что ответить на собесе
+
+Короткий ответ, который закрывает вопрос:
+
+- Логику HTTP-запросов держу в отдельном модуле-клиенте, а не в представлениях, - так её проще тестировать и переиспользовать.
+- Запросы делаю через `requests` с обязательным `timeout` и `raise_for_status()`, чтобы не подвисать на недоступном сервисе и явно ловить ошибки.
+- Ключи и токены передаю через заголовки, а сами секреты беру из настроек/окружения, а не из кода.
+- Частые и медленные ответы кэширую через `django.core.cache`, задавая разумный TTL.
+
+Этого набора хватает, чтобы показать, что вы думаете про надёжность и структуру, а не просто умеете дернуть `requests.get`.
+
+## Как это работает
+
+Внешний API нужен, чтобы приложение брало данные или функции у чужого сервиса: погоду, курсы валют, платежи, профили в соцсетях. Вместо того чтобы писать это самому, вы делаете сетевой запрос и получаете ответ, обычно в JSON.
+
+Базовый поток выглядит так:
+
+1. Ставим библиотеку для запросов:
+
+```bash
+pip install requests
+```
+
+2. Заводим отдельный модуль, например `api_client.py`, и собираем там весь код общения с сервисом.
+
+3. Выполняем запрос. Простой GET с таймаутом и разбором JSON:
+
+```python
+import requests
+
+def fetch_weather(city):
+    api_key = "your_api_key"
+    url = "http://api.weatherapi.com/v1/current.json"
+    params = {"key": api_key, "q": city}
+    response = requests.get(url, params=params, timeout=5)
+
+    if response.status_code == 200:
+        return response.json()
+    return None
+```
+
+4. Если сервис требует авторизацию, передаём токен заголовком:
+
+```python
+headers = {"Authorization": "Bearer your_access_token"}
+response = requests.get(url, headers=headers, timeout=5)
+```
+
+5. Чтобы реже ходить в сеть, оборачиваем вызов кэшем Django:
+
+```python
+from django.core.cache import cache
+
+def fetch_cached_weather(city):
+    cache_key = f"weather_{city}"
+    data = cache.get(cache_key)
+
+    if data is None:
+        data = fetch_weather(city)
+        cache.set(cache_key, data, timeout=60 * 15)
+
+    return data
+```
+
+Так схема обращения к сервису выглядит на уровне слоёв:
+
+<svg viewBox="0 0 360 70" width="100%" role="img" aria-label="Поток запроса от вьюхи через клиент к внешнему API">
+  <rect x="4" y="22" width="80" height="26" rx="6" fill="none" stroke="currentColor" />
+  <text x="44" y="39" fontSize="11" textAnchor="middle" fill="currentColor">View</text>
+  <rect x="130" y="22" width="90" height="26" rx="6" fill="none" stroke="currentColor" />
+  <text x="175" y="39" fontSize="11" textAnchor="middle" fill="currentColor">API client</text>
+  <rect x="268" y="22" width="88" height="26" rx="6" fill="none" stroke="currentColor" />
+  <text x="312" y="39" fontSize="11" textAnchor="middle" fill="currentColor">Сервис</text>
+  <line x1="84" y1="35" x2="130" y2="35" stroke="currentColor" />
+  <line x1="220" y1="35" x2="268" y2="35" stroke="currentColor" />
+</svg>
+
+## Подводные камни
+
+- **Нет таймаута.** Без `timeout` запрос может висеть бесконечно и заблокировать воркер. Всегда задавайте таймаут.
+- **Проверка только статуса вручную.** Удобнее `response.raise_for_status()`, чтобы HTTP-ошибка стала исключением, и ловить её через `requests.exceptions.HTTPError`. Остальные сетевые сбои перехватывает более общий `except`.
+
+```python
+try:
+    response = requests.get(url, timeout=5)
+    response.raise_for_status()
+except requests.exceptions.HTTPError as err:
+    print(f"HTTP error occurred: {err}")
+except Exception as err:
+    print(f"Other error occurred: {err}")
+```
+
+- **Секреты в коде.** API-ключи и токены не хардкодим, а берём из настроек или переменных окружения.
+- **Слепое кэширование ошибок.** Если в кэш положить пустой/ошибочный ответ с долгим TTL, приложение будет долго отдавать мусор. Кэшируйте только валидные данные и выбирайте TTL под частоту изменений.
+- **Логика в представлении.** Когда запросы размазаны по вьюхам, их тяжело тестировать и переиспользовать - держите их в клиенте.

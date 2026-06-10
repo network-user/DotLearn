@@ -7,8 +7,9 @@ import {
 import type { PyodideWorkerRequest, PyodideWorkerResponse } from './protocol';
 
 export interface PyodideRuntimeOptions {
-  worker: Worker;
+  createWorker: () => Worker;
   indexUrl?: string;
+  timeoutMs?: number;
 }
 
 export interface PyodideRuntime extends PythonRuntime {
@@ -19,7 +20,10 @@ export interface PyodideRuntime extends PythonRuntime {
 interface PendingResolver {
   resolve(response: PyodideWorkerResponse): void;
   reject(error: Error): void;
+  timer?: ReturnType<typeof setTimeout>;
 }
+
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 let idCounter = 0;
 const nextId = (): string => {
@@ -28,8 +32,11 @@ const nextId = (): string => {
 };
 
 export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRuntime => {
-  const { worker } = options;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pending = new Map<string, PendingResolver>();
+
+  let worker: Worker | undefined;
+  let initPromise: Promise<void> | undefined;
 
   const onMessage = (event: MessageEvent<PyodideWorkerResponse>): void => {
     const response = event.data;
@@ -38,27 +45,60 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
       return;
     }
     pending.delete(response.id);
+    if (resolver.timer !== undefined) {
+      clearTimeout(resolver.timer);
+    }
     resolver.resolve(response);
   };
 
-  const onError = (event: ErrorEvent): void => {
-    const error = new Error(event.message || 'pyodide worker crashed');
+  const disposeWorker = (error: Error): void => {
+    if (worker) {
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      worker.terminate();
+      worker = undefined;
+    }
+    initPromise = undefined;
     for (const resolver of pending.values()) {
+      if (resolver.timer !== undefined) {
+        clearTimeout(resolver.timer);
+      }
       resolver.reject(error);
     }
     pending.clear();
   };
 
-  worker.addEventListener('message', onMessage);
-  worker.addEventListener('error', onError);
+  function onError(event: ErrorEvent): void {
+    disposeWorker(new PythonExecutionError(event.message || 'pyodide worker crashed'));
+  }
 
-  const send = (request: PyodideWorkerRequest): Promise<PyodideWorkerResponse> =>
+  const ensureWorker = (): Worker => {
+    if (!worker) {
+      worker = options.createWorker();
+      worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
+    }
+    return worker;
+  };
+
+  const send = (
+    request: PyodideWorkerRequest,
+    timeout: number | undefined,
+  ): Promise<PyodideWorkerResponse> =>
     new Promise<PyodideWorkerResponse>((resolve, reject) => {
-      pending.set(request.id, { resolve, reject });
-      worker.postMessage(request);
+      const activeWorker = ensureWorker();
+      const resolver: PendingResolver = { resolve, reject };
+      if (timeout !== undefined) {
+        resolver.timer = setTimeout(() => {
+          pending.delete(request.id);
+          disposeWorker(
+            new PythonExecutionError(`python execution exceeded ${timeout}ms and was terminated`),
+          );
+        }, timeout);
+      }
+      pending.set(request.id, resolver);
+      activeWorker.postMessage(request);
     });
-
-  let initPromise: Promise<void> | undefined;
 
   const buildInitRequest = (): PyodideWorkerRequest =>
     options.indexUrl !== undefined
@@ -67,7 +107,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
 
   const init = (): Promise<void> => {
     if (!initPromise) {
-      initPromise = send(buildInitRequest()).then((response) => {
+      initPromise = send(buildInitRequest(), undefined).then((response) => {
         if (response.type === 'error') {
           throw new PythonExecutionError(response.message);
         }
@@ -78,7 +118,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
 
   const evaluate = async (source: string, call: string): Promise<PythonExecution> => {
     await init();
-    const response = await send({ id: nextId(), type: 'evaluate', source, call });
+    const response = await send({ id: nextId(), type: 'evaluate', source, call }, timeoutMs);
     if (response.type === 'error') {
       throw new PythonExecutionError(response.message);
     }
@@ -93,11 +133,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
   };
 
   const terminate = (): void => {
-    worker.removeEventListener('message', onMessage);
-    worker.removeEventListener('error', onError);
-    worker.terminate();
-    pending.clear();
-    initPromise = undefined;
+    disposeWorker(new PythonExecutionError('python runtime terminated'));
   };
 
   return { init, evaluate, terminate };

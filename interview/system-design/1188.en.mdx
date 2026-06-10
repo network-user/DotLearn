@@ -1,0 +1,94 @@
+---
+id: 1188
+title: "How microservices talk to each other: synchronous calls vs queues"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: system-design
+stageLabel: "System Design"
+lang: en
+---
+
+# How microservices talk to each other: synchronous calls vs queues
+
+## In short
+
+The ways services communicate come down to two axes - synchronous or asynchronous exchange. The synchronous options are REST (over HTTP, simple and universal) and gRPC (over HTTP/2 with Protobuf, fast for high-load scenarios). The asynchronous one is message queues, which separate sending and processing in time and improve resilience to failures.
+
+## How to answer in an interview
+
+"I start picking a communication style with one question: do I need a response right now? If yes - it's a synchronous call. REST over HTTP fits almost everywhere: simple, readable, debuggable from the browser, but verbose and slower. gRPC over HTTP/2 with Protocol Buffers gives low latency and compact messages, with typed contracts from a .proto file - I reach for it for internal high-load calls. If I don't need a response right now, or decoupling the services matters, I take a message queue: the producer drops a message, the consumer picks it up when it's ready. This buys peak buffering, retries, and fault tolerance, but we pay for it with complexity and with the result becoming eventual rather than instant."
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 560 200" width="560" height="200" fill="none" stroke="currentColor" strokeWidth="1.5" aria-label="Synchronous call vs asynchronous queue">
+  <text x="14" y="20" fill="currentColor" stroke="none" fontSize="12">Synchronous (REST, gRPC): response right now</text>
+  <rect x="14" y="32" width="92" height="38" rx="6" />
+  <text x="60" y="55" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Service A</text>
+  <rect x="380" y="32" width="92" height="38" rx="6" />
+  <text x="426" y="55" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Service B</text>
+  <line x1="106" y1="44" x2="380" y2="44" />
+  <polygon points="380,44 370,40 370,48" fill="currentColor" stroke="none" />
+  <text x="243" y="38" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">request</text>
+  <line x1="380" y1="60" x2="106" y2="60" strokeDasharray="4 3" />
+  <polygon points="106,60 116,56 116,64" fill="currentColor" stroke="none" />
+  <text x="243" y="74" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">response (A waits)</text>
+  <text x="14" y="118" fill="currentColor" stroke="none" fontSize="12">Asynchronous (queue): decoupled in time</text>
+  <rect x="14" y="130" width="92" height="38" rx="6" />
+  <text x="60" y="153" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Producer</text>
+  <rect x="222" y="130" width="116" height="38" rx="6" />
+  <text x="280" y="153" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Queue</text>
+  <rect x="454" y="130" width="92" height="38" rx="6" />
+  <text x="500" y="153" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Consumer</text>
+  <line x1="106" y1="149" x2="222" y2="149" />
+  <line x1="338" y1="149" x2="454" y2="149" />
+  <circle cx="106" cy="149" r="5" fill="#6366f1" stroke="none">
+    <animate attributeName="cx" values="106;222" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+  <text x="500" y="186" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">picks up when ready</text>
+</svg>
+
+</figure>
+
+Microservices are a set of independent services, each with its own area of responsibility. For them to behave as one system, they need a communication channel. Three working options:
+
+**REST** - a style over HTTP. Every resource is addressed by a URL, actions are expressed with the GET, POST, PUT, DELETE methods. The orders service synchronously calls the users service to fetch the customer's profile:
+
+```python
+import urllib.request, json
+
+def fetch_user(user_id):
+    url = f"http://users-svc/users/{user_id}"
+    with urllib.request.urlopen(url) as resp:
+        return json.load(resp)
+```
+
+**gRPC** - an RPC framework from Google. The contract is described in a .proto file, from which client and server code is generated, so a remote method is called like a local one. The HTTP/2 transport provides multiplexing and streaming, and Protobuf provides compact binary serialization. This is the profile for internal communication where speed and a strict contract matter.
+
+**Message queue** (RabbitMQ, Kafka) - an asynchronous channel. The producer publishes a message into the queue, the consumer picks it up at its own pace:
+
+```python
+import queue
+
+orders = queue.Queue()
+
+def producer(order_id):
+    orders.put(order_id)
+
+def consumer():
+    while not orders.empty():
+        order_id = orders.get()
+        print(f"processing order {order_id}")
+
+producer(1)
+producer(2)
+consumer()
+```
+
+## Pitfalls
+
+- A synchronous call creates temporal coupling: if the callee service goes down, the caller goes down too. Without timeouts, retries, and a circuit breaker, one slow service stalls the whole chain.
+- gRPC speeds up internal exchange but lives poorly in the browser directly (you need gRPC-Web/a proxy) and is harder to debug than human-readable JSON in REST.
+- A queue doesn't cancel errors, it shifts them in time: duplicate messages appear, ordering can break, and you need idempotency and a dead-letter queue.
+- Don't confuse REST as a style with "any HTTP API". A GET that mutates data on the server is already a violation of method semantics.

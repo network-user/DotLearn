@@ -1,0 +1,80 @@
+---
+id: 1213
+title: "Механизм CSRF-токенов в Django: как фреймворк отсекает поддельные запросы"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Механизм CSRF-токенов в Django: как фреймворк отсекает поддельные запросы
+
+## Суть
+
+CSRF (Cross-Site Request Forgery) — это когда чужой сайт исподтишка инициирует запрос на ваш ресурс, пользуясь тем, что в браузере жертвы уже живёт активная сессия. Браузер послушно прикладывает к такому запросу куки авторизации, и сервер не отличает его от настоящего действия пользователя. Django закрывает эту дыру парным секретом: к каждому изменяющему запросу должен прийти CSRF-токен, который атакующий сайт получить и подставить не может.
+
+## Что ответить на собесе
+
+Django требует, чтобы любой небезопасный по HTTP запрос (POST, PUT, PATCH, DELETE) нёс корректный CSRF-токен, иначе `CsrfViewMiddleware` его отклонит с ответом 403. Токен связан с конкретным пользователем и проверяется на совпадение. Поскольку чужой сайт не имеет доступа к содержимому вашей страницы и не может прочитать значение токена, он физически не способен сформировать валидный запрос — даже если куки сессии браузер подставит сам. Ключевая мысль: одних куки для подтверждения действия недостаточно, нужен секрет, недоступный стороннему домену.
+
+## Как это работает
+
+Защиту обеспечивает `CsrfViewMiddleware` плюс шаблонный тег `{% csrf_token %}`. Цикл такой:
+
+1. **Выдача токена.** Когда рендерится страница с формой, Django кладёт CSRF-секрет в cookie (`csrftoken`) и вставляет связанное с ним значение в скрытое поле формы через тег.
+2. **Возврат токена.** При отправке формы значение уходит на сервер: в обычной форме — скрытым полем `csrfmiddlewaretoken`, в AJAX — заголовком `X-CSRFToken`.
+3. **Сверка.** На входящем POST middleware сравнивает токен из тела или заголовка с секретом из cookie. Не совпало или пусто — запрос режется до того, как дойдёт до вью.
+
+Обычная форма закрывается одним тегом:
+
+```html
+<form method="post">
+    {% csrf_token %}
+    <input type="text" name="username" placeholder="Username">
+    <input type="password" name="password" placeholder="Password">
+    <button type="submit">Login</button>
+</form>
+```
+
+Тег `{% csrf_token %}` разворачивается в скрытый `<input>` с токеном, который автоматически уезжает вместе с POST.
+
+Для AJAX токен приходится подставлять в заголовок руками — фреймворк сам этого не сделает:
+
+```javascript
+$.ajax({
+    type: "POST",
+    url: "/your-url/",
+    data: {
+        // ваши данные
+    },
+    beforeSend: function(xhr, settings) {
+        xhr.setRequestHeader("X-CSRFToken", getCookie('csrftoken'));
+    },
+    success: function(response) {
+        // обработка успешного ответа
+    }
+});
+```
+
+Здесь `getCookie` вытаскивает значение токена из cookie `csrftoken`, чтобы положить его в заголовок.
+
+<svg viewBox="0 0 320 90" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Поток CSRF-токена" fill="none" stroke="currentColor" strokeWidth="2">
+  <rect x="8" y="30" width="80" height="30" rx="4" />
+  <text x="48" y="50" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Сервер</text>
+  <line x1="88" y1="45" x2="128" y2="45" />
+  <text x="108" y="38" fill="currentColor" stroke="none" fontSize="8" textAnchor="middle">токен</text>
+  <rect x="128" y="30" width="80" height="30" rx="4" />
+  <text x="168" y="50" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Форма</text>
+  <line x1="208" y1="45" x2="248" y2="45" />
+  <text x="228" y="38" fill="currentColor" stroke="none" fontSize="8" textAnchor="middle">POST</text>
+  <rect x="248" y="30" width="64" height="30" rx="4" />
+  <text x="280" y="50" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Сверка</text>
+</svg>
+
+## Подводные камни
+
+- **AJAX без заголовка.** Самая частая ошибка: забыли добавить `X-CSRFToken`, и все POST-запросы летят в 403. Тег `{% csrf_token %}` помогает только обычным формам.
+- **Только небезопасные методы.** GET/HEAD/OPTIONS не проверяются по дизайну — поэтому изменяющие действия нельзя вешать на GET.
+- **Куки недостаточно.** Защита держится на том, что чужой домен не прочитает токен из cookie вашего сайта; не отдавайте токен через CORS и не отключайте middleware «чтобы заработало».
+- **`@csrf_exempt` точечно.** Снимать проверку можно только осознанно (например, для вебхука с собственной аутентификацией), а не глобально.

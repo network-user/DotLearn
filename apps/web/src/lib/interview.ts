@@ -1,8 +1,12 @@
 import { lazy, type ComponentType } from 'react';
 
 import {
+  ExerciseFile,
+  parseInterviewExercisesIndex,
   parseInterviewIndex,
+  type Exercise,
   type InterviewCategory,
+  type InterviewExerciseMeta,
   type InterviewQuestionMeta,
   type InterviewStage,
 } from '@dotlearn/contracts';
@@ -104,3 +108,78 @@ export const getInterviewComponent = (
   }
   return Component;
 };
+
+export const localizedInterviewTitle = (
+  question: InterviewQuestionMeta,
+  locale: string,
+): string => (locale === 'en' && question.titleEn ? question.titleEn : question.title);
+
+export const getInterviewComponentForLocale = (
+  question: InterviewQuestionMeta,
+  locale: string,
+): ComponentType<Record<string, unknown>> | undefined => {
+  if (locale === 'en') {
+    const enComponent = getInterviewComponent(question.path.replace(/\.ru\.mdx$/, '.en.mdx'));
+    if (enComponent) return enComponent;
+  }
+  return getInterviewComponent(question.path);
+};
+
+const exerciseIndexModules = import.meta.glob<{ default: unknown }>(
+  '../../../../interview/exercises-index.json',
+  { eager: true },
+);
+
+const rawExerciseIndex = Object.values(exerciseIndexModules)[0]?.default ?? [];
+
+export const interviewExercises: InterviewExerciseMeta[] =
+  parseInterviewExercisesIndex(rawExerciseIndex);
+
+const exerciseFileImporters = import.meta.glob<{ default: unknown }>(
+  '../../../../interview/*/*.exercises.json',
+);
+
+const exerciseImporterByPath = new Map<string, () => Promise<{ default: unknown }>>();
+for (const [rawPath, importer] of Object.entries(exerciseFileImporters)) {
+  const key = rawPath.startsWith(MDX_PREFIX) ? rawPath.slice(MDX_PREFIX.length) : rawPath;
+  exerciseImporterByPath.set(key, importer);
+}
+
+const exerciseFileCache = new Map<string, Promise<Exercise[]>>();
+
+const loadExerciseFile = (exercisesPath: string): Promise<Exercise[]> => {
+  const cached = exerciseFileCache.get(exercisesPath);
+  if (cached) return cached;
+  const importer = exerciseImporterByPath.get(exercisesPath);
+  if (!importer) {
+    return Promise.resolve([]);
+  }
+  const pending = importer()
+    .then((mod) => ExerciseFile.parse(mod.default).exercises)
+    .catch(() => [] as Exercise[]);
+  exerciseFileCache.set(exercisesPath, pending);
+  return pending;
+};
+
+const exercisesPathOfQuestion = (questionPath: string): string =>
+  questionPath.replace(/\.ru\.mdx$/, '.exercises.json');
+
+export const loadQuestionExercises = (question: InterviewQuestionMeta): Promise<Exercise[]> =>
+  question.exerciseCount > 0
+    ? loadExerciseFile(exercisesPathOfQuestion(question.path))
+    : Promise.resolve([]);
+
+export const loadExerciseById = async (
+  meta: InterviewExerciseMeta,
+): Promise<Exercise | undefined> => {
+  const list = await loadExerciseFile(meta.path);
+  return list.find((exercise) => exercise.id === meta.exerciseId);
+};
+
+export const interviewExerciseTypes: string[] = [
+  ...new Set(interviewExercises.map((meta) => meta.type)),
+].sort();
+
+export const interviewDifficulties: number[] = [
+  ...new Set(interviewExercises.map((meta) => meta.difficulty)),
+].sort((a, b) => a - b);
