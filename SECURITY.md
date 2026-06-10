@@ -29,13 +29,28 @@ Consequences:
 - **Python worker hardening.** After Pyodide loads, escape globals are
   neutralized in the worker scope: `fetch`, `XMLHttpRequest`, `WebSocket`,
   `EventSource`, `importScripts`, `indexedDB`, `caches`, `Worker`,
-  `SharedWorker`, `BroadcastChannel`, `postMessage`. This blocks
-  `import js; js.fetch(...)` style network/storage access. Responses use a
-  captured `rawPostMessage`. See `python/worker.ts` (`hardenWorkerScope`).
+  `SharedWorker`, `BroadcastChannel`, `postMessage`, plus `navigator.sendBeacon`
+  and `navigator.serviceWorker` (a beacon is a self-contained cross-origin POST
+  that does not depend on the `fetch` global). This blocks
+  `import js; js.fetch(...)` / `js.navigator.sendBeacon(...)` exfiltration.
+  Responses use a captured `rawPostMessage`. See `python/worker.ts`
+  (`hardenWorkerScope`).
+- **Per-run namespace isolation.** Each evaluation runs in a fresh Python globals
+  dict (`runPython(source, { globals })`), so definitions, imports, and
+  `__builtins__` monkeypatching from one run cannot poison a later grading run.
 - **Output cap.** Python stdout is truncated at 100k characters.
-- **Self-hosted Pyodide.** Pyodide runtime assets are served same-origin from
-  `/pyodide/` (emitted at build, served by a dev middleware), not from a public
-  CDN. See `pyodideAssetsPlugin` in `apps/web/vite.config.ts`.
+- **Known limit — no memory cap.** The timeout kills runaway CPU/loops, but not
+  allocation: `x = [0] * 10**9` or a `WITH RECURSIVE` blow-up can OOM the worker
+  (and tab) before `terminate()` fires. The `terminate`+recreate path restores
+  the feature on the next call.
+- **Self-hosted Pyodide, fail-closed.** Pyodide runtime assets are served
+  same-origin from `/pyodide/` (emitted at build, served by a dev middleware),
+  never a public CDN. The worker now **refuses to load** without a same-origin
+  `indexUrl` (no CDN fallback), and `connect-src` (below) does not list any CDN,
+  so a regressed fallback would be blocked at the policy layer too. Worker
+  messages are validated against the protocol shape before dispatch. See
+  `pyodideAssetsPlugin` in `apps/web/vite.config.ts` and `ensurePyodide` in
+  `python/worker.ts`.
 - **JavaScript runner is fail-closed.** `inlineJavascriptRuntime`
   (`packages/lesson-engine`) uses `new Function` and **throws if run on a
   browser main thread**. There is intentionally no JS exercise runner in the
@@ -45,15 +60,25 @@ Consequences:
 
 ## Web app controls (`apps/web`)
 
-- **Content Security Policy.** Injected as a `<meta>` only in production builds
-  (`cspPlugin`, `apply: 'build'`) and mirrored in `public/_headers`. Key
-  directives: `script-src 'self' 'wasm-unsafe-eval'` (no `unsafe-eval`,
-  `wasm-unsafe-eval` is required by Pyodide/sql.js), `object-src 'none'`,
-  `frame-ancestors 'none'`, `worker-src 'self' blob:`.
-  - `connect-src` is intentionally broad (`'self' https:` + localhost) because
-    BYOK lets users point at arbitrary AI providers and custom base URLs
-    (including a local Ollama). **Do not** lock `connect-src` to a fixed
-    provider list — it breaks BYOK.
+- **Content Security Policy + security headers.** The production nginx image
+  serves the full header set (`Content-Security-Policy`, `Strict-Transport-Security`,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `Cross-Origin-Opener-Policy`) from
+  `apps/web/security-headers.conf`, re-`include`d in every `location` so a
+  per-location `add_header` cannot drop them. A `<meta>` CSP (`cspPlugin`,
+  `apply: 'build'`) is kept as a belt-and-suspenders for non-nginx hosts, but
+  `frame-ancestors`/HSTS are spec-ignored in `<meta>` and rely on the real
+  headers. `public/_headers` mirrors the policy for Netlify/Cloudflare hosts.
+  Keep all three in sync. Key directives: `script-src 'self' 'wasm-unsafe-eval'`
+  (no `unsafe-eval`), `object-src 'none'`, `frame-ancestors 'none'`,
+  `worker-src 'self' blob:`.
+  - `connect-src` is an **allowlist**: `'self'`, the four built-in provider
+    hosts (`api.anthropic.com`, `api.openai.com`, `openrouter.ai`,
+    `localhost:*` for Ollama), and localhost websockets for dev. The previous
+    blanket `https:` gave any XSS foothold an open channel to exfiltrate
+    decrypted BYOK keys to any host; the allowlist closes that. A user pointing
+    a provider at a custom host outside the allowlist must have the deployer
+    extend the policy — an intentional security/flexibility trade-off.
 - **BYOK key encryption at rest.** API keys are encrypted with a non-extractable
   AES-GCM key (Web Crypto) before being written to IndexedDB; see
   `lib/crypto-store.ts`, wired through `lib/provider-credentials.ts`. Legacy
@@ -70,8 +95,23 @@ Consequences:
 - Global `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`, `transform`) +
   `ZodBodyPipe` for contract payloads.
 - CORS restricted to an allowlist from `WEB_ORIGIN`.
-- Admin auth: password hash + TOTP + JWT secrets from env, account lockout,
-  throttling. No secrets in code.
+- Admin auth: password hash + TOTP + JWT secrets from env, throttling. No
+  secrets in code.
+  - **TOTP anti-replay:** each successful code's `timeStep` is persisted and
+    passed as `afterTimeStep` on the next verify, so a code cannot be replayed
+    within its acceptance window. The window is RFC-compliant past-only
+    (`epochTolerance: [1, 0]`), not the previous symmetric ±30 steps.
+  - **JWT hardening:** algorithm is pinned to `HS256` on sign and verify;
+    `ADMIN_REFRESH_SECRET` is now **required and must differ** from
+    `ADMIN_JWT_SECRET`, so a leaked access secret cannot forge refresh tokens.
+  - **Durable auth state:** revoked token jtis, session epochs, consumed backup
+    codes, and TOTP timesteps survive a restart (persisted via the JSON file
+    store), so `logout`/`logout-all` and one-time backup codes are not undone by
+    a process restart.
+  - **Lockout is DoS-resistant:** a wrong username/password does **not** count
+    toward account lockout (that would let an unauthenticated attacker lock the
+    admin out); only a TOTP failure after a correct password escalates lockout.
+    Password guessing is bounded by the per-route throttle.
 - Rate limiting: global `ThrottlerGuard` (100/min); public `POST /submissions`
   tightened to 5/min.
 - No `child_process` / shell execution; submissions are not written to disk by

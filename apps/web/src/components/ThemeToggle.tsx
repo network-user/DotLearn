@@ -29,7 +29,7 @@ export const ThemeToggle = () => {
       onClick={toggle}
       aria-label={label}
       title={label}
-      className="rounded-md border border-border-base px-2 py-1.5 text-sm text-fg-muted hover:text-fg hover:bg-surface-2 transition"
+      className="inline-flex items-center justify-center min-h-[var(--tap)] min-w-[var(--tap)] sm:min-h-0 sm:min-w-0 rounded-md border border-border-base px-2 py-1.5 text-sm text-fg-muted hover:text-fg hover:bg-surface-2 transition"
     >
       <span aria-hidden className="font-mono text-[11px] uppercase tracking-wide">
         {isDark ? t('dark') : t('light')}

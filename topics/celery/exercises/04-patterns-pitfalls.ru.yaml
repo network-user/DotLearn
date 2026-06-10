@@ -1,0 +1,327 @@
+exercises:
+  - id: pat-chain-group-001
+    concept: patterns-pitfalls
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Чем `chain` отличается от `group` в Celery canvas?"
+    choices:
+      - id: a
+        text: "Chain выполняет задачи по очереди, передавая результат дальше; group запускает их параллельно и независимо."
+      - id: b
+        text: "Chain запускает задачи параллельно, group - последовательно."
+      - id: c
+        text: "Chain и group делают одно и то же, отличаются только синтаксисом."
+      - id: d
+        text: "Chain нужен для одной задачи, group - для одной задачи с повтором."
+    correct: [a]
+    explanation: "Chain - это последовательность: результат каждой задачи становится входом следующей. Group - веер независимых задач, выполняемых параллельно и не знающих друг о друге."
+    variants:
+      - prompt: "Что такое chord в Celery canvas?"
+        choices:
+          - id: a
+            text: "Группа задач плюс финальный callback, который запускается над всеми результатами, когда группа завершилась."
+          - id: b
+            text: "Цепочка из ровно двух задач."
+          - id: c
+            text: "Группа задач без какого-либо итога."
+          - id: d
+            text: "Одна задача, повторённая несколько раз подряд."
+        correct: [a]
+        explanation: "Chord = group + callback. Параллельные задачи группы сходятся в одну финальную задачу, которая получает список их результатов и запускается ровно один раз, когда отработала вся группа."
+      - prompt: "Что создаёт метод `.s()` у задачи, например `add.s(2)`?"
+        choices:
+          - id: a
+            text: "Signature - задачу с зафиксированной частью аргументов, не выполняя её."
+          - id: b
+            text: "Сразу выполняет задачу add(2) и возвращает результат."
+          - id: c
+            text: "Строку с именем задачи для логирования."
+          - id: d
+            text: "Новый worker для выполнения задачи."
+        correct: [a]
+        explanation: "`.s()` создаёт signature - кирпич canvas: задачу с уже зафиксированными аргументами, но без выполнения. Из signature собираются chain, group и chord."
+
+  - id: pat-chord-backend-001
+    concept: patterns-pitfalls
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Какой из паттернов canvas требует настроенного result backend и почему?"
+    choices:
+      - id: a
+        text: "Chord: чтобы понять, что вся группа завершилась, и собрать её результаты для callback, Celery должен где-то их хранить."
+      - id: b
+        text: "Chain: каждый шаг обязан сохранять результат в backend."
+      - id: c
+        text: "Group: иначе параллельные задачи не запустятся."
+      - id: d
+        text: "Никакой: canvas работает без backend всегда."
+    correct: [a]
+    explanation: "Chord единственный из трёх требует backend: ему надо отследить, сколько задач группы завершилось, и собрать их результаты для финального callback. Chain и group без callback в backend не нуждаются."
+    hints:
+      - "Какому паттерну нужно дождаться завершения целой группы и собрать её результаты в одном месте?"
+      - "Где Celery будет хранить промежуточные результаты группы, пока ждёт последнюю задачу?"
+
+  - id: pat-heavy-args-001
+    concept: patterns-pitfalls
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Почему `process_image.delay(huge_image_bytes)` - плохая идея, а `process_image.delay(image_id)` - хорошая?"
+    choices:
+      - id: a
+        text: "Аргументы целиком сериализуются и едут через брокер; передавать надо ссылку (id), а данные задача загрузит сама."
+      - id: b
+        text: "Передавать байты нельзя технически - брокер принимает только числа."
+      - id: c
+        text: "`image_id` выполняется быстрее, потому что это короче печатать."
+      - id: d
+        text: "Разницы нет, оба варианта одинаковы по нагрузке."
+    correct: [a]
+    explanation: "Что вы передаёте, то и кладётся в очередь целиком. Картинка в аргументе раздувает сообщение, тормозит сериализацию и забивает брокер мегабайтами. Передавайте идентификаторы и ключи, а данные грузите внутри задачи."
+    hints:
+      - "Куда попадают аргументы задачи перед тем, как worker их получит?"
+
+  - id: pat-on-commit-001
+    concept: patterns-pitfalls
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Вы создаёте пользователя в транзакции БД и тут же зовёте `send_welcome_email.delay(user.id)`. Иногда задача падает с «пользователь не найден». Почему и как чинить?"
+    choices:
+      - id: a
+        text: "Worker хватает задачу раньше, чем транзакция закоммитилась, и не видит пользователя; ставить задачу надо после коммита (`transaction.on_commit`)."
+      - id: b
+        text: "У задачи слишком мало повторов; надо увеличить max_retries."
+      - id: c
+        text: "Брокер теряет аргумент user.id; надо передавать весь объект user."
+      - id: d
+        text: "Пользователь создаётся в другом процессе, поэтому его не видно никогда."
+    correct: [a]
+    explanation: "Worker свободен и хватает задачу за миллисекунды - до того, как ваша транзакция закоммитилась. Задача читает базу, не находит ещё не видимого пользователя и падает. Лечится постановкой задачи после коммита: данные должны стать видимыми остальным до того, как задача попадёт в очередь."
+    hints:
+      - "Сравните по времени два события: коммит транзакции producer и момент, когда worker хватает задачу."
+      - "Что должно случиться раньше - стать видимыми данные или попасть задаче в очередь?"
+
+  - id: pat-queue-backlog-001
+    concept: patterns-pitfalls
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Задачи ставятся быстрее, чем worker'ы их разбирают. Ошибок в логах нет, но «Celery тормозит». Что происходит и как решать?"
+    choices:
+      - id: a
+        text: "Очередь растёт, задержка тихо увеличивается; решают добавлением worker'ов, разделением очередей или ограничением скорости постановки."
+      - id: b
+        text: "Брокер начал терять задачи; надо переключиться на RabbitMQ."
+      - id: c
+        text: "Задачи стали неидемпотентными; надо добавить ключи."
+      - id: d
+        text: "Worker выполняет задачи в неправильном порядке; надо включить chord."
+    correct: [a]
+    explanation: "Это переполнение очереди: пропускной способности не хватает, задачи копятся, и всё выполняется всё позже - без единой ошибки. Лечится масштабированием worker'ов, разделением задач по очередям и приоритетам или ограничением скорости постановки."
+    hints:
+      - "Если входящий поток задач больше исходящего, что происходит с длиной очереди?"
+      - "«Тормозит без ошибок» - это про нехватку пропускной способности, а не про баг."
+
+  - id: pat-blanks-chain-001
+    concept: patterns-pitfalls
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Заполните пропуски: соберите цепочку «скачать → обработать → сохранить»."
+    template: |
+      from celery import chain
+
+      workflow = {{builder}}(
+          download.{{sig}}(url),
+          process.{{sig}}(),
+          store.{{sig}}(),
+      )
+      workflow.delay()
+    blanks:
+      builder:
+        accept: ["chain"]
+      sig:
+        accept: ["s"]
+    hints:
+      - "Один вызов соединяет задачи последовательно; один метод превращает задачу в signature с зафиксированными аргументами."
+    variants:
+      - template: |
+          from celery import chain
+
+          pipeline = {{builder}}(
+              fetch_invoice.{{sig}}(invoice_id),
+              render_pdf.{{sig}}(),
+              email_pdf.{{sig}}(customer_email),
+          )
+          pipeline.delay()
+        blanks:
+          builder:
+            accept: ["chain"]
+          sig:
+            accept: ["s"]
+      - template: |
+          from celery import group
+
+          job = {{builder}}(send_email.{{sig}}(uid) for uid in user_ids)
+          job.delay()
+        blanks:
+          builder:
+            accept: ["group"]
+          sig:
+            accept: ["s"]
+
+  - id: pat-blanks-pipe-001
+    concept: patterns-pitfalls
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Заполните пропуск: короткий синтаксис цепочки через оператор-конвейер."
+    template: |
+      (download.s(url) {{op}} process.s() {{op}} store.s()).delay()
+    blanks:
+      op:
+        accept: ["|"]
+    hints:
+      - "Этот оператор читается как конвейер слева направо и делает то же, что chain(...)."
+    variants:
+      - template: |
+          workflow = download.s(url) {{op}} process.s() {{op}} store.s()
+          workflow.delay()
+        blanks:
+          op:
+            accept: ["|"]
+      - template: |
+          (fetch.s(u) {{op}} parse.s()).delay()
+        blanks:
+          op:
+            accept: ["|"]
+
+  - id: pat-predict-chain-001
+    concept: patterns-pitfalls
+    type: predict-output
+    difficulty: 3
+    prompt: "Эта программа моделирует chain: результат каждого шага передаётся в следующий. Что выведет программа?"
+    snippet: |
+      def download(url):
+          return len(url)
+
+      def process(n):
+          return n * 2
+
+      def store(n):
+          return "stored:" + str(n)
+
+      result = store(process(download("https://x.io")))
+      print(result)
+    expected:
+      kind: stdout
+      value: "stored:24"
+    hints:
+      - "Цепочка течёт изнутри наружу: сначала download, его результат идёт в process, затем в store."
+      - "Посчитайте по шагам: длина строки -> умножение на два -> префикс stored:."
+    variants:
+      - snippet: |
+          def download(url):
+              return len(url)
+
+          def process(n):
+              return n + 10
+
+          def store(n):
+              return "saved:" + str(n)
+
+          print(store(process(download("abcd"))))
+        expected:
+          kind: stdout
+          value: "saved:14"
+      - snippet: |
+          def step_a(x):
+              return x + 1
+
+          def step_b(x):
+              return x * 3
+
+          def step_c(x):
+              return x - 2
+
+          print(step_c(step_b(step_a(2))))
+        expected:
+          kind: stdout
+          value: "7"
+
+  - id: pat-predict-group-chord-001
+    concept: patterns-pitfalls
+    type: predict-output
+    difficulty: 4
+    prompt: "Эта программа моделирует chord: параллельная group из задач и финальный callback над их результатами. Что выведет программа?"
+    snippet: |
+      user_ids = [1, 2, 3, 4]
+
+      def send_email(uid):
+          return uid * 10
+
+      def summarize(results):
+          return "sent:" + str(len(results)) + " sum:" + str(sum(results))
+
+      group_results = [send_email(uid) for uid in user_ids]
+      print(summarize(group_results))
+    expected:
+      kind: stdout
+      value: "sent:4 sum:100"
+    hints:
+      - "Сначала отрабатывает вся группа (по одному send_email на пользователя), потом callback получает список их результатов."
+      - "Соберите список результатов group, затем посчитайте его длину и сумму в summarize."
+    variants:
+      - snippet: |
+          user_ids = [5, 5, 5]
+
+          def send_email(uid):
+              return uid
+
+          def summarize(results):
+              return str(len(results)) + "/" + str(sum(results))
+
+          print(summarize([send_email(u) for u in user_ids]))
+        expected:
+          kind: stdout
+          value: "3/15"
+      - snippet: |
+          items = [2, 4, 6]
+
+          def work(x):
+              return x * x
+
+          def finalize(results):
+              return max(results)
+
+          print(finalize([work(i) for i in items]))
+        expected:
+          kind: stdout
+          value: "36"
+
+  - id: pat-challenge-pipeline-001
+    concept: patterns-pitfalls
+    type: predict-output
+    difficulty: 5
+    prompt: "Эта программа моделирует надёжный конвейер: idempotent-обработка по ключу внутри chord, где один элемент группы приходит дважды (дубль-повтор). Что выведет программа?"
+    snippet: |
+      processed = {}
+
+      def handle(item_id, value):
+          if item_id in processed:
+              return processed[item_id]
+          result = value * value
+          processed[item_id] = result
+          return result
+
+      tasks = [(1, 2), (2, 3), (1, 2), (3, 4)]
+      results = [handle(item_id, value) for item_id, value in tasks]
+
+      def summarize(values):
+          unique = sorted(set(processed.values()))
+          return "results=" + str(results) + " unique=" + str(unique)
+
+      print(summarize(results))
+    expected:
+      kind: stdout
+      value: "results=[4, 9, 4, 16] unique=[4, 9, 16]"
+    hints:
+      - "Ключ item_id запоминает результат при первом появлении; повтор того же id возвращает сохранённое значение, не пересчитывая заново."
+      - "Список results хранит ВСЕ возвраты по порядку (включая дубль), а processed.values() - только по уникальным ключам 1, 2, 3."
+      - "Пройдите кортежи по порядку: (1,2)->4 сохранён, (2,3)->9, (1,2) повтор вернёт сохранённое 4, (3,4)->16."

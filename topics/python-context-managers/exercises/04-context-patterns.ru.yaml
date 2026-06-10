@@ -1,0 +1,315 @@
+exercises:
+  - id: patterns-symmetry-001
+    concept: context-patterns
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Что общего у паттернов «блокировка», «транзакция» и «временная подмена настройки»?"
+    choices:
+      - id: a
+        text: "У каждого есть прямое действие на входе и парное обратное на выходе, которое нельзя пропустить."
+      - id: b
+        text: "Все три обязаны подавлять исключения в `__exit__`."
+      - id: c
+        text: "Все три захватывают ресурс в `__init__`, а не в `__enter__`."
+      - id: d
+        text: "Все три работают только в однопоточных программах."
+    correct: [a]
+    explanation: "Это вариации одной идеи: парная операция, где вторую половину (release, commit/rollback, restore) нельзя пропустить. Контекст-менеджер привязывает её к выходу из блока."
+    variants:
+      - prompt: "Почему `with lock` надёжнее ручной пары `acquire()` / `release()`?"
+        choices:
+          - id: a
+            text: "Потому что `release()` привязан к выходу из блока и выполнится даже при исключении."
+          - id: b
+            text: "Потому что `with lock` запрещает исключения внутри блока."
+          - id: c
+            text: "Потому что `with lock` ускоряет захват блокировки."
+          - id: d
+            text: "Потому что `with lock` делает блокировку рекурсивной."
+        correct: [a]
+        explanation: "Ручной `release()` легко пропустить при исключении - и поток зависнет навсегда. `with` привязывает освобождение к выходу из блока."
+      - prompt: "Почему `__exit__` транзакции обычно возвращает `False`?"
+        choices:
+          - id: a
+            text: "Чтобы откатить транзакцию, но не скрывать причину ошибки от вызывающего кода."
+          - id: b
+            text: "Чтобы транзакция всегда фиксировалась, независимо от ошибки."
+          - id: c
+            text: "Потому что `__exit__` обязан возвращать `False` по правилам Python."
+          - id: d
+            text: "Чтобы транзакцию можно было использовать повторно."
+        correct: [a]
+        explanation: "Откатить и спрятать причину - разные задачи. `return False` пробрасывает исключение дальше, чтобы вызывающий код узнал, почему случился откат."
+
+  - id: patterns-lock-001
+    concept: context-patterns
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Допишите защиту общего счётчика блокировкой через `with`."
+    template: |
+      import threading
+
+      lock = threading.Lock()
+      total = 0
+
+      def add(n):
+          global total
+          {{stmt}} lock:
+              total += n
+    blanks:
+      stmt:
+        accept: ["with"]
+    variants:
+      - prompt: "Допишите класс транзакции: что вызвать на входе и что вернуть наружу?"
+        template: |
+          class Transaction:
+              def __init__(self, db):
+                  self.db = db
+
+              def __enter__(self):
+                  self.db.{{begin}}()
+                  return self.db
+
+              def __exit__(self, exc_type, exc, tb):
+                  if exc_type is None:
+                      self.db.commit()
+                  else:
+                      self.db.rollback()
+                  return False
+        blanks:
+          begin:
+            accept: ["begin"]
+      - prompt: "Допишите временную подмену через @contextmanager: где восстанавливается старое значение?"
+        template: |
+          from contextlib import contextmanager
+
+          settings = {"debug": False}
+
+          @contextmanager
+          def temporary(key, value):
+              saved = settings[key]
+              settings[key] = value
+              try:
+                  yield
+              {{block}}:
+                  settings[key] = saved
+        blanks:
+          block:
+            accept: ["finally"]
+
+  - id: patterns-transaction-001
+    concept: context-patterns
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет эта программа?"
+    snippet: |
+      class FakeDB:
+          def __init__(self):
+              self.value = 0
+              self._saved = None
+
+          def begin(self):
+              self._saved = self.value
+
+          def set(self, v):
+              self.value = v
+
+          def commit(self):
+              print("commit", self.value)
+
+          def rollback(self):
+              self.value = self._saved
+              print("rollback", self.value)
+
+
+      class Transaction:
+          def __init__(self, db):
+              self.db = db
+
+          def __enter__(self):
+              self.db.begin()
+              return self.db
+
+          def __exit__(self, exc_type, exc, tb):
+              if exc_type is None:
+                  self.db.commit()
+              else:
+                  self.db.rollback()
+              return False
+
+
+      db = FakeDB()
+
+      with Transaction(db) as conn:
+          conn.set(10)
+
+      try:
+          with Transaction(db) as conn:
+              conn.set(99)
+              raise RuntimeError("сбой")
+      except RuntimeError:
+          pass
+
+      print("итог", db.value)
+    expected:
+      kind: stdout
+      value: "commit 10\nrollback 10\nитог 10"
+    hints:
+      - "В `__exit__` решение принимается по `exc_type`: `None` - commit, иначе rollback. Что произошло в каждом из двух блоков?"
+      - "Второй блок упал на `raise`, поэтому транзакция откатилась к значению, сохранённому в `begin()` - а это 10, зафиксированное первым блоком."
+
+  - id: patterns-temporary-001
+    concept: context-patterns
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет эта программа?"
+    snippet: |
+      from contextlib import contextmanager
+
+      settings = {"debug": False}
+
+      @contextmanager
+      def temporary(key, value):
+          saved = settings[key]
+          settings[key] = value
+          try:
+              yield
+          finally:
+              settings[key] = saved
+
+      print(settings["debug"])
+      try:
+          with temporary("debug", True):
+              print(settings["debug"])
+              raise ValueError("оп")
+      except ValueError:
+          pass
+      print(settings["debug"])
+    expected:
+      kind: stdout
+      value: "False\nTrue\nFalse"
+    hints:
+      - "Восстановление лежит в `finally`, поэтому случается при любом исходе блока, включая исключение."
+      - "Внутри блока флаг подменён на `True`; на выходе `finally` возвращает сохранённое исходное значение."
+
+  - id: patterns-init-vs-enter-001
+    concept: context-patterns
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Почему захват ресурса в `__init__` (а не в `__enter__`) - ненадёжный приём?"
+    choices:
+      - id: a
+        text: "Если между созданием объекта и входом в `with` возникнет исключение, ресурс уже захвачен, но `__exit__` не вызовется."
+      - id: b
+        text: "Потому что `__init__` не может открывать файлы."
+      - id: c
+        text: "Потому что `__enter__` не имеет доступа к `self`."
+      - id: d
+        text: "Потому что захват в `__init__` подавляет все исключения в блоке."
+    correct: [a]
+    explanation: "`__exit__` срабатывает только на выходе из `with`. Если в блок так и не вошли, освобождение из `__exit__` не выполнится, а ресурс из `__init__` останется захваченным. Захват в `__enter__` держит захват и освобождение парой."
+    hints:
+      - "`__exit__` привязан к выходу из блока `with`. А что произойдёт, если в блок вообще не войти?"
+      - "Сравните момент захвата (конструктор) и момент гарантированного освобождения (выход из `with`): между ними может вклиниться ошибка."
+
+  - id: patterns-nesting-order-001
+    concept: context-patterns
+    type: predict-output
+    difficulty: 4
+    prompt: "Что выведет эта программа?"
+    snippet: |
+      class Step:
+          def __init__(self, name):
+              self.name = name
+
+          def __enter__(self):
+              print("enter", self.name)
+              return self
+
+          def __exit__(self, exc_type, exc, tb):
+              print("exit", self.name)
+              return False
+
+      with Step("lock"), Step("tx"):
+          print("work")
+    expected:
+      kind: stdout
+      value: "enter lock\nenter tx\nwork\nexit tx\nexit lock"
+    hints:
+      - "Несколько контекстов в одном `with` захватываются слева направо. В каком порядке они освобождаются?"
+      - "Освобождение идёт в обратном порядке: внутренний (`tx`) закрывается раньше внешнего (`lock`). Внешний ресурс ставят первым, чтобы он закрылся последним."
+    variants:
+      - snippet: |
+          from contextlib import contextmanager
+
+          @contextmanager
+          def step(name):
+              print("enter", name)
+              try:
+                  yield
+              finally:
+                  print("exit", name)
+
+          with step("outer"), step("inner"):
+              print("body")
+        expected:
+          kind: stdout
+          value: "enter outer\nenter inner\nbody\nexit inner\nexit outer"
+
+  - id: patterns-managed-resource-001
+    concept: context-patterns
+    type: python-function
+    difficulty: 5
+    prompt: "Реализуйте `class Managed`: контекст-менеджер вокруг общего журнала `events` (передаётся в конструктор вместе с именем). На входе он дописывает `f\"acquire {name}\"`, на выходе - `f\"rollback {name}\"`, если в блоке было исключение, и `f\"commit {name}\"`, если нет; затем всегда `f\"release {name}\"`. Исключения он НЕ подавляет. Функция `transfer(events, fail)` входит в `with Managed('tx', events)`, и если `fail` истинно, возбуждает внутри блока `ValueError`; вернуть нужно журнал `events`. При ошибке исключение гасится снаружи функции, в журнал ничего больше не пишется."
+    starter: |
+      class Managed:
+          def __init__(self, name, events):
+              ...
+          def __enter__(self):
+              ...
+          def __exit__(self, exc_type, exc, tb):
+              ...
+
+      def transfer(events, fail):
+          try:
+              with Managed("tx", events):
+                  if fail:
+                      raise ValueError("boom")
+          except ValueError:
+              pass
+          return events
+    cases:
+      - call: "transfer([], False)"
+        expect: ["acquire tx", "commit tx", "release tx"]
+      - call: "transfer([], True)"
+        expect: ["acquire tx", "rollback tx", "release tx"]
+      - call: "transfer(['start'], False)"
+        expect: ["start", "acquire tx", "commit tx", "release tx"]
+    hints:
+      - "Это комбинация двух паттернов: решение commit/rollback по результату блока плюс безусловное release в конце. Какой аргумент `__exit__` различает успех и ошибку?"
+      - "`exc_type is None` означает «исключения не было». Порядок записей в `__exit__`: сначала commit или rollback, затем release - всегда."
+      - "Сохраните `name` и `events` в конструкторе. В `__exit__` сначала выберите commit или rollback по `exc_type`, потом добавьте release, и верните `False`, чтобы не подавлять исключение."
+    solution: |
+      class Managed:
+          def __init__(self, name, events):
+              self.name = name
+              self.events = events
+          def __enter__(self):
+              self.events.append(f"acquire {self.name}")
+              return self
+          def __exit__(self, exc_type, exc, tb):
+              if exc_type is None:
+                  self.events.append(f"commit {self.name}")
+              else:
+                  self.events.append(f"rollback {self.name}")
+              self.events.append(f"release {self.name}")
+              return False
+
+      def transfer(events, fail):
+          try:
+              with Managed("tx", events):
+                  if fail:
+                      raise ValueError("boom")
+          except ValueError:
+              pass
+          return events

@@ -1,0 +1,290 @@
+exercises:
+  - id: retry-at-least-once-001
+    concept: retries-idempotency
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Какую гарантию доставки даёт Celery по умолчанию?"
+    choices:
+      - id: a
+        text: "«Хотя бы один раз» (at-least-once): задача выполнится минимум однажды, но может и повториться."
+      - id: b
+        text: "«Ровно один раз» (exactly-once): дубли невозможны."
+      - id: c
+        text: "«Не более одного раза»: задача может вообще не выполниться."
+      - id: d
+        text: "«Строго по порядку»: каждая задача выполняется ровно после предыдущей."
+    correct: [a]
+    explanation: "Celery работает по принципу at-least-once. Если worker умер до подтверждения (ack), брокер считает задачу невыполненной и отдаёт её снова. Итог: задача выполнится хотя бы раз, но возможны дубли."
+    variants:
+      - prompt: "Почему задача может выполниться дважды, даже если в коде нет ошибки?"
+        choices:
+          - id: a
+            text: "Worker успел сделать эффект, но упал до ack - брокер не увидел подтверждения и переотправил задачу."
+          - id: b
+            text: "Потому что producer случайно вызвал .delay() два раза."
+          - id: c
+            text: "Потому что брокер всегда дублирует каждое сообщение для надёжности."
+          - id: d
+            text: "Потому что worker всегда выполняет каждую задачу ровно дважды."
+        correct: [a]
+        explanation: "Дубль возникает не из-за бага: worker сделал побочный эффект, но не успел подтвердить выполнение. Брокер не видит ack и честно переотправляет задачу другому worker."
+      - prompt: "Что такое ack (acknowledge) в контексте Celery и брокера?"
+        choices:
+          - id: a
+            text: "Сигнал worker брокеру «эту задачу можно забыть, я её обработал»."
+          - id: b
+            text: "Команда брокера worker «начни выполнять задачу»."
+          - id: c
+            text: "Подтверждение пользователю, что письмо доставлено."
+          - id: d
+            text: "Запись результата задачи в result backend."
+        correct: [a]
+        explanation: "Ack - это подтверждение от worker брокеру, что задача обработана и её можно удалить из очереди. Пока ack не пришёл, брокер держит задачу как «выданную, но не подтверждённую» и может переотправить."
+
+  - id: retry-which-errors-001
+    concept: retries-idempotency
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Какую ошибку имеет смысл повторять через `self.retry`?"
+    choices:
+      - id: a
+        text: "Временную: внешний API ответил 503 или сеть моргнула - на следующем заходе может получиться."
+      - id: b
+        text: "`ValueError` из-за заведомо плохих входных данных - данные те же, повтор не поможет."
+      - id: c
+        text: "`KeyError` из-за опечатки в коде задачи."
+      - id: d
+        text: "Любую ошибку - повтор всегда полезен."
+    correct: [a]
+    explanation: "Повторять стоит только временные сбои, которые могут пройти сами: таймаут, 503, обрыв сети. Повтор `ValueError` из-за плохих данных бессмысленен - на следующем заходе данные те же, и вы лишь забьёте очередь обречёнными повторами."
+    hints:
+      - "Спросите: изменится ли что-то к следующей попытке, или ошибка повторится с теми же входными данными?"
+
+  - id: retry-idempotent-def-001
+    concept: retries-idempotency
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Что значит, что задача идемпотентна?"
+    choices:
+      - id: a
+        text: "Её повторный запуск с теми же аргументами оставляет систему в том же состоянии, что и один запуск."
+      - id: b
+        text: "Она никогда не падает и не требует повторов."
+      - id: c
+        text: "Она выполняется быстрее при каждом следующем запуске."
+      - id: d
+        text: "Она не имеет аргументов и не обращается к базе."
+    correct: [a]
+    explanation: "Идемпотентность - это безопасность к повтору: один запуск или пять, состояние системы одинаковое. Раз дубли в Celery в принципе возможны, важные задачи проектируют идемпотентными."
+    hints:
+      - "Сравните результат одного запуска и пяти запусков подряд - для идемпотентной задачи они равны."
+
+  - id: retry-key-from-producer-001
+    concept: retries-idempotency
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Почему ключ идемпотентности должен приходить в аргументах от producer, а не генерироваться внутри задачи?"
+    choices:
+      - id: a
+        text: "Иначе каждый повтор сгенерирует новый ключ, дедупликация не распознает дубль и эффект случится снова."
+      - id: b
+        text: "Внутри задачи нельзя вызвать uuid4 из-за ограничений Celery."
+      - id: c
+        text: "Producer быстрее генерирует ключи, чем worker."
+      - id: d
+        text: "Ключ внутри задачи занимает больше места в брокере."
+    correct: [a]
+    explanation: "Ключ должен быть стабильным между повторами одной задачи. Если генерировать его в теле задачи (новый uuid4 на каждом заходе), повтор получит другой ключ, и защита от дубля не сработает. Producer создаёт ключ один раз и передаёт в аргументах."
+    hints:
+      - "Что станет с ключом, если задача повторится и снова сгенерирует его внутри себя?"
+      - "Защита от дубля работает, только если повтор приносит тот же ключ, что и первый запуск."
+
+  - id: retry-partial-001
+    concept: retries-idempotency
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Задача списывает деньги, затем начисляет товар. Идемпотентность навесили только на начисление товара. Чем это опасно при повторе после падения между шагами?"
+    choices:
+      - id: a
+        text: "Если задача упала после списания, но до начисления, повтор спишет деньги второй раз - идемпотентным должен быть каждый внешний эффект."
+      - id: b
+        text: "Ничем: защита последнего шага делает всю задачу безопасной."
+      - id: c
+        text: "Товар начислится дважды, а деньги останутся нетронутыми."
+      - id: d
+        text: "Задача вообще не сможет повториться после частичного выполнения."
+    correct: [a]
+    explanation: "Самый коварный случай - повтор после частичного выполнения. Если защищён только второй шаг, а упало между первым и вторым, первый эффект (списание) случится снова. Идемпотентным должен быть каждый внешний эффект задачи, а не только последний."
+    hints:
+      - "Проследите путь повтора, если падение случилось ровно между списанием и начислением."
+      - "На каком шаге сработает защита, а какой шаг повторится без защиты?"
+
+  - id: retry-blanks-retry-001
+    concept: retries-idempotency
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Заполните пропуски, чтобы задача повторяла временную ошибку с задержкой."
+    template: |
+      @app.task({{bind}}=True, max_retries=3)
+      def fetch_rate(self, currency):
+          try:
+              return call_external_api(currency)
+          except TimeoutError as exc:
+              raise self.{{retry}}(exc=exc, countdown=10)
+    blanks:
+      bind:
+        accept: ["bind"]
+      retry:
+        accept: ["retry"]
+    hints:
+      - "Один параметр декоратора даёт задаче доступ к самой себе через self; один метод self переставляет задачу в очередь."
+    variants:
+      - template: |
+          @app.task({{bind}}=True, max_retries=4)
+          def send_sms(self, phone, text):
+              try:
+                  return sms_gateway.send(phone, text)
+              except ConnectionError as exc:
+                  raise self.{{retry}}(exc=exc, countdown=15)
+        blanks:
+          bind:
+            accept: ["bind"]
+          retry:
+            accept: ["retry"]
+      - template: |
+          @app.task({{bind}}=True, max_retries=5)
+          def sync_order(self, order_id):
+              try:
+                  push_to_warehouse(order_id)
+              except ConnectionError as exc:
+                  raise self.{{retry}}(exc=exc, countdown=30)
+        blanks:
+          bind:
+            accept: ["bind"]
+          retry:
+            accept: ["retry"]
+
+  - id: retry-blanks-idempotent-001
+    concept: retries-idempotency
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Заполните пропуски: начисление бонуса должно сработать только один раз благодаря ключу идемпотентности."
+    template: |
+      @app.task
+      def grant_bonus(user_id, bonus_id):
+          _, created = Bonus.objects.{{method}}(
+              id=bonus_id, defaults={"user_id": user_id, "amount": 100}
+          )
+          if {{flag}}:
+              User.objects.filter(id=user_id).update(balance=F("balance") + 100)
+    blanks:
+      method:
+        accept: ["get_or_create"]
+      flag:
+        accept: ["created"]
+    hints:
+      - "Один метод создаёт запись только при первом вызове; флаг говорит, действительно ли запись была создана сейчас."
+    variants:
+      - template: |
+          @app.task
+          def register_payment(order_id, payment_id):
+              _, created = Payment.objects.{{method}}(
+                  id=payment_id, defaults={"order_id": order_id, "amount": 500}
+              )
+              if {{flag}}:
+                  Order.objects.filter(id=order_id).update(status="paid")
+        blanks:
+          method:
+            accept: ["get_or_create"]
+          flag:
+            accept: ["created"]
+      - template: |
+          @app.task
+          def ship_order(order_id):
+              order = Order.objects.get(id=order_id)
+              if order.{{attr}} != "sent":
+                  send_to_carrier(order)
+                  order.status = "sent"
+                  order.save()
+        blanks:
+          attr:
+            accept: ["status"]
+
+  - id: retry-predict-non-idempotent-001
+    concept: retries-idempotency
+    type: predict-output
+    difficulty: 2
+    prompt: "Эта программа моделирует НЕидемпотентное начисление: задача выполнилась дважды (как при повторе). Что выведет программа?"
+    snippet: |
+      balance = 0
+
+      def grant_bonus():
+          global balance
+          balance += 100
+
+      grant_bonus()
+      grant_bonus()
+      print(balance)
+    expected:
+      kind: stdout
+      value: "200"
+    hints:
+      - "`balance += 100` накапливает эффект. Сколько раз вызвана задача?"
+    variants:
+      - prompt: "Эта программа моделирует идемпотентную задачу с дедупликацией по ключу: задача вызвана дважды с одним bonus_id. Что выведет программа?"
+        snippet: |
+          granted = set()
+
+          def grant_bonus(bonus_id):
+              if bonus_id in granted:
+                  return
+              granted.add(bonus_id)
+              print("granted", bonus_id)
+
+          grant_bonus("b1")
+          grant_bonus("b1")
+          print("total", len(granted))
+        expected:
+          kind: stdout
+          value: "granted b1\ntotal 1"
+      - prompt: "Эта программа моделирует естественно идемпотентную операцию-перезапись: установка значения повторяется дважды. Что выведет программа?"
+        snippet: |
+          balance = 50
+
+          def set_balance(value):
+              global balance
+              balance = value
+
+          set_balance(200)
+          set_balance(200)
+          print(balance)
+        expected:
+          kind: stdout
+          value: "200"
+
+  - id: retry-predict-idempotent-key-001
+    concept: retries-idempotency
+    type: predict-output
+    difficulty: 3
+    prompt: "Эта программа моделирует идемпотентное начисление с ключом: задача запущена трижды с одним bonus_id. Что выведет программа?"
+    snippet: |
+      processed = set()
+      balance = 0
+
+      def grant_bonus(bonus_id):
+          global balance
+          if bonus_id in processed:
+              return
+          processed.add(bonus_id)
+          balance += 100
+
+      grant_bonus("bonus-7")
+      grant_bonus("bonus-7")
+      grant_bonus("bonus-7")
+      print(balance)
+    expected:
+      kind: stdout
+      value: "100"
+    hints:
+      - "Ключ `bonus-7` запоминается при первом вызове. Что делают второй и третий вызовы с тем же ключом?"
+      - "Только первый вызов добавляет ключ и трогает баланс; остальные выходят на проверке `in processed`."

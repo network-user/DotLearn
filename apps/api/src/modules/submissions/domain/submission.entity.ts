@@ -7,6 +7,8 @@ import type {
   SubmissionStatus,
 } from '@dotlearn/contracts';
 
+import { DomainError } from '../../../common/errors/domain-error';
+
 export class SubmissionEntity {
   private constructor(
     public readonly id: string,
@@ -70,7 +72,11 @@ export class SubmissionEntity {
 
   markMaterialized(materializedSlug?: string, reviewerNote?: string): void {
     if (this.status !== 'approved') {
-      throw new Error(`Submission ${this.id} must be approved before materialization`);
+      throw new DomainError(
+        `Submission ${this.id} must be approved before materialization`,
+        422,
+        'SubmissionNotApproved',
+      );
     }
     this.status = 'materialized';
     if (materializedSlug) {
@@ -96,7 +102,11 @@ export class SubmissionEntity {
 
   private assertReviewable(): void {
     if (this.status !== 'pending') {
-      throw new Error(`Submission ${this.id} is ${this.status}; only pending submissions can be reviewed`);
+      throw new DomainError(
+        `Submission ${this.id} is ${this.status}; only pending submissions can be reviewed`,
+        409,
+        'SubmissionNotReviewable',
+      );
     }
   }
 }

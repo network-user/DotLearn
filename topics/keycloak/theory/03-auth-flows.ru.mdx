@@ -1,0 +1,138 @@
+---
+conceptId: auth-flows
+title: "Потоки: authorization code + PKCE, client credentials"
+estimatedMinutes: 50
+---
+
+# Потоки получения token: редиректы для людей, секрет для машин
+
+У вас есть client и realm - теперь нужно, чтобы client реально получил token. Способ получения token называется **flow** (поток, grant type), и их несколько не от избытка фантазии: разные клиенты находятся в разных условиях безопасности. Браузерное SPA не может хранить секрет, но может водить пользователя по редиректам. Фоновый сервис, наоборот, секрет хранить умеет, но никакого человека за ним нет, чтобы тот вводил пароль.
+
+Из этого вырастают два главных потока. **Authorization code flow с PKCE** - для входа человека через браузер; это сегодня дефолт для веба и мобильных приложений. **Client credentials flow** - для машинного доступа, когда сервис ходит в API от своего имени. К концу раздела вы будете понимать, зачем нужен промежуточный `code`, как PKCE защищает его перехват и почему один поток требует присутствия человека, а другой - нет.
+
+## Ментальная модель: почему не отдать token сразу
+
+Самый прямой путь - чтобы authorization server после логина сразу отдал token в редиректе обратно client. Так когда-то и работал implicit flow, и именно поэтому от него отказались: token летел через адресную строку браузера, попадал в историю, в логи прокси, в Referer. Перехватить его было слишком легко.
+
+Authorization code flow вводит обходной манёвр. Сначала через браузер возвращается не token, а одноразовый **authorization code** - короткоживущий код, бесполезный сам по себе. Затем client меняет этот code на token прямым запросом backend-to-backend (или прямым POST из SPA), который не проходит через адресную строку. Token таким образом никогда не появляется в браузерной навигации.
+
+<Figure caption="Через браузер летит только одноразовый code; на token его меняют отдельным прямым запросом к token endpoint, не через адресную строку.">
+  <Sketch viewBox="0 0 460 200" title="Authorization code flow">
+    <SketchBox x={20} y={80} width={100} height={50} accent />
+    <SketchLabel x={70} y={110} mono accent>Client</SketchLabel>
+    <SketchBox x={180} y={20} width={120} height={50} />
+    <SketchLabel x={240} y={50} mono>Browser</SketchLabel>
+    <SketchBox x={340} y={80} width={110} height={50} />
+    <SketchLabel x={395} y={108} mono>Keycloak</SketchLabel>
+    <SketchArrow from={[120, 95]} to={[185, 55]} />
+    <SketchLabel x={130} y={62} size={11} muted>redirect на /authorize</SketchLabel>
+    <SketchArrow from={[300, 50]} to={[340, 95]} />
+    <SketchLabel x={305} y={40} size={11} muted>логин</SketchLabel>
+    <SketchArrow from={[340, 110]} to={[195, 60]} dashed />
+    <SketchLabel x={215} y={150} size={11} muted>возврат code</SketchLabel>
+    <SketchArrow from={[120, 115]} to={[340, 115]} accent />
+    <SketchLabel x={230} y={180} size={11} accent>code → token (прямой POST)</SketchLabel>
+  </Sketch>
+</Figure>
+
+Двухшаговость - это не бюрократия, а защита. Code виден в браузере, но без второго шага (обмена) он ничего не даёт. А второй шаг происходит там, куда у злоумышленника нет доступа. Остаётся одна дыра: что если злоумышленник перехватит code и сам выполнит обмен? Её закрывает PKCE.
+
+## PKCE: привязка code к тому, кто его запросил
+
+**PKCE** (Proof Key for Code Exchange) защищает от перехвата authorization code. Идея - доказать, что token меняет тот же client, что и запрашивал code, без участия секрета (которого у public client нет).
+
+Перед стартом client генерирует случайную строку - **code_verifier** - и держит её у себя. Из неё он вычисляет **code_challenge** как `SHA-256` хэш и отправляет в `/authorize` именно challenge, а не verifier.
+
+```text
+code_verifier  = "dBjftJeZ4CVP...случайное"
+code_challenge = BASE64URL(SHA256(code_verifier))
+GET /authorize?...&code_challenge=...&code_challenge_method=S256
+```
+
+Когда приходит время менять code на token, client присылает в `/token` уже сам verifier. Keycloak хэширует присланный verifier и сверяет с challenge, который запомнил на первом шаге. Совпало - значит обмен делает тот же client.
+
+```text
+POST /token  code=<code>&code_verifier=dBjftJeZ4CVP...
+Keycloak: SHA256(verifier) == сохранённый challenge ?  да → token
+```
+
+Перехваченный code теперь бесполезен: у злоумышленника нет verifier, а из challenge его не восстановить - это односторонний хэш. PKCE задумывался для мобильных приложений, но сейчас рекомендован для всех authorization code flow, включая confidential clients.
+
+<Callout type="tip">
+Всегда используйте `code_challenge_method=S256` (хэширование SHA-256). Метод `plain`, где challenge равен verifier, спецификация допускает только как запасной для платформ без SHA-256 - он не даёт защиты от перехвата.
+</Callout>
+
+## Client credentials: token без человека
+
+Иногда никакого пользователя нет: фоновый сервис раз в минуту дёргает чужое API. Здесь нет кого редиректить и некому вводить пароль. Для этого случая есть **client credentials flow**: confidential client получает token, предъявляя свой `client_secret` напрямую, без браузера и без redirect.
+
+```text
+POST /realms/corp/protocol/openid-connect/token
+  grant_type=client_credentials
+  client_id=report-worker
+  client_secret=●●●●
+```
+
+В ответ приходит access_token, выписанный на сам client (его service account), а не на человека. `id_token` здесь не выдаётся - личности нет, удостоверять нечего. Поток применим только к confidential clients: public client не может предъявить секрет, поэтому client credentials для него недоступен.
+
+<Figure caption="Client credentials: один прямой запрос с секретом, без браузера и без пользователя; token выписан на сам сервис.">
+  <Sketch viewBox="0 0 440 130" title="Client credentials flow">
+    <SketchBox x={30} y={45} width={130} height={50} accent />
+    <SketchLabel x={95} y={66} mono accent>report-worker</SketchLabel>
+    <SketchLabel x={95} y={84} size={11} accent>confidential</SketchLabel>
+    <SketchBox x={300} y={45} width={110} height={50} />
+    <SketchLabel x={355} y={73} mono>Keycloak</SketchLabel>
+    <SketchArrow from={[160, 60]} to={[300, 60]} accent />
+    <SketchLabel x={230} y={48} size={11} muted>client_id + secret</SketchLabel>
+    <SketchArrow from={[300, 82]} to={[160, 82]} dashed />
+    <SketchLabel x={230} y={104} size={11} muted>access_token (без id_token)</SketchLabel>
+  </Sketch>
+</Figure>
+
+Различие между потоками сводится к одному вопросу: есть ли за запросом человек. Есть - authorization code с PKCE, и вы получаете id_token про этого человека. Нет - client credentials, и token представляет сам сервис.
+
+## Краевой случай: redirect_uri должен совпадать точно
+
+Вот что ловит многих на старте: Keycloak принимает code и меняет его на token, только если `redirect_uri` в запросе совпадает с одним из заранее зарегистрированных у client значений. Не «начинается с», не «похож» - совпадает по правилам, заданным в настройках client.
+
+```text
+зарегистрировано: https://app.example/callback
+пришло:           https://app.example/callback/   ← лишний слеш → отказ
+```
+
+Это не придирка, а защита от open redirect: без строгой проверки злоумышленник подставил бы свой `redirect_uri` и увёл code на свой сервер. Поэтому при ошибке `Invalid redirect_uri` первым делом сверяйте строку символ в символ с тем, что прописано в client.
+
+## Типичные ошибки
+
+- **Использовать implicit flow в новых проектах.** Он отдаёт token прямо в редиректе, где его легко перехватить. Современный дефолт для браузера - authorization code с PKCE; implicit считается устаревшим.
+- **Опускать PKCE у public client.** Без PKCE перехваченный authorization code можно обменять на token. Для SPA и мобильных приложений PKCE обязателен, метод - `S256`.
+- **Пытаться использовать client credentials для входа пользователя.** Этот поток не аутентифицирует человека и не выдаёт id_token - он про сам сервис. Для входа человека нужен authorization code.
+- **Слать `client_secret` из браузера.** Секрет, попавший в код фронтенда, скомпрометирован. Если потоку нужен секрет, его место - на backend (confidential client).
+
+<Detail summary="state и nonce: ещё две защитные строки">
+
+Кроме PKCE, authorization code flow обычно несёт два дополнительных одноразовых значения.
+
+**state** - случайная строка, которую client кладёт в запрос `/authorize` и проверяет при возврате. Она защищает от CSRF на этапе логина: если вернувшийся `state` не совпадает с отправленным, ответ не от вашего запроса, и его надо отбросить.
+
+**nonce** - значение для OIDC, которое client кладёт в запрос и затем ожидает увидеть тем же claim `nonce` внутри id_token. Это связывает конкретный id_token с конкретным запросом и не даёт переиспользовать старый перехваченный id_token. PKCE защищает обмен code, а nonce - привязку id_token; они решают разные задачи и работают вместе.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Authorization code flow возвращает через браузер одноразовый code, а token получают отдельным прямым запросом - token не попадает в адресную строку.",
+    "PKCE привязывает обмен code к тому, кто его запросил: client шлёт challenge, потом verifier; перехваченный code без verifier бесполезен.",
+    "Для public clients (SPA, мобильные) authorization code + PKCE с методом S256 - обязательный современный дефолт.",
+    "Client credentials flow даёт token для машинного доступа: confidential client предъявляет секрет, человека и id_token нет.",
+    "Выбор потока определяется одним вопросом: есть ли за запросом человек.",
+    "redirect_uri должен точно совпадать с зарегистрированным у client - это защита от open redirect и кражи code.",
+  ]}
+/>
+
+## Ссылки
+
+- [RFC 6749 - Authorization Code Grant](https://datatracker.ietf.org/doc/html/rfc6749#section-4.1)
+- [RFC 7636 - Proof Key for Code Exchange (PKCE)](https://datatracker.ietf.org/doc/html/rfc7636)
+- [OAuth 2.0 Security Best Current Practice](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-security-topics)
+- [Keycloak - Securing applications and services guide](https://www.keycloak.org/docs/latest/securing_apps/index.html)

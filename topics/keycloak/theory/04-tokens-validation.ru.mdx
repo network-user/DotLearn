@@ -1,0 +1,149 @@
+---
+conceptId: tokens-validation
+title: JWT, валидация и refresh
+estimatedMinutes: 45
+---
+
+# JWT: документ, который проверяют, а не запрашивают
+
+Token получен - но что это за строка и почему resource server ей верит? Если каждый запрос к API будет заставлять resource server бегать в Keycloak и спрашивать «этот token ещё действителен?», вы получите узкое место: один лишний сетевой вызов на каждый запрос, и identity provider превращается в единую точку отказа. JWT решает это иначе: token несёт всё нужное внутри себя и подписан так, что resource server проверяет его *локально*, без обращения к Keycloak.
+
+Это удобство имеет цену. Раз token проверяется офлайн, его нельзя мгновенно отозвать - он действителен до момента истечения. Чтобы сессии не жили вечно и при этом пользователь не логинился каждые пять минут, существует пара access_token (короткий) и refresh_token (длинный, для обновления). К концу раздела вы будете понимать строение JWT, знать обязательный список проверок при валидации и видеть, зачем нужны два token вместо одного.
+
+## Ментальная модель: три части, разделённые точками
+
+**JWT** (JSON Web Token) - это строка из трёх частей, разделённых точками: `header.payload.signature`. Первые две части - это просто JSON, закодированный в Base64URL; их **может прочитать кто угодно**. Третья - подпись, которой Keycloak скрепляет первые две своим приватным ключом.
+
+```text
+eyJhbGciOiJSUzI1Ni…  .  eyJzdWIiOiJhbGljZ…  .  Q1f7kQ…
+     header                   payload              signature
+```
+
+**Header** говорит, каким алгоритмом подписан token (например `RS256`) и каким ключом (`kid`). **Payload** несёт claims: кто (`sub`), кем выдан (`iss`), для кого (`aud`), когда истекает (`exp`), а также роли. **Signature** - результат подписи header и payload приватным ключом Keycloak; проверить её можно публичным ключом, а подделать без приватного - нельзя.
+
+<Figure caption="JWT - три части через точки: header и payload открыто читаются в Base64URL, signature скрепляет их приватным ключом и проверяется публичным.">
+  <Sketch viewBox="0 0 460 150" title="Структура JWT">
+    <SketchBox x={20} y={40} width={120} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={62} mono>header</SketchLabel>
+    <SketchLabel x={80} y={80} size={11} muted>alg, kid</SketchLabel>
+    <SketchBox x={160} y={40} width={130} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={225} y={62} mono>payload</SketchLabel>
+    <SketchLabel x={225} y={80} size={11} muted>sub, iss, aud, exp</SketchLabel>
+    <SketchBox x={310} y={40} width={130} height={50} accent />
+    <SketchLabel x={375} y={62} mono accent>signature</SketchLabel>
+    <SketchLabel x={375} y={80} size={11} accent>приватный ключ</SketchLabel>
+    <SketchLabel x={150} y={68} muted>.</SketchLabel>
+    <SketchLabel x={300} y={68} muted>.</SketchLabel>
+    <SketchLabel x={230} y={120} size={12} muted>читается всеми ←→ проверяется ключом</SketchLabel>
+  </Sketch>
+</Figure>
+
+Главный вывод из этой картинки: **payload не зашифрован, он подписан**. Кто угодно прочитает email и роли из перехваченного token. Защищает не секретность содержимого, а невозможность его изменить - любая правка ломает подпись. Поэтому JWT всегда передают по HTTPS и не кладут в него того, что нельзя показывать.
+
+## Валидация: что resource server обязан проверить
+
+Получив JWT в заголовке `Authorization: Bearer <token>`, resource server проверяет его сам. Минимальный обязательный набор проверок:
+
+1. **Подпись** - публичным ключом Keycloak (берётся из `jwks_uri`, найденного через discovery). Не сошлось - token подделан или повреждён.
+2. **`exp`** - не истёк ли срок. Истёкший token отклоняется.
+3. **`iss`** - выдан ли token ожидаемым issuer (адресом вашего realm). Чужой issuer - чужой token.
+4. **`aud`** - предназначен ли token этому resource server. Token, выданный для другого получателя, принимать нельзя.
+
+```text
+Authorization: Bearer eyJhbGci…
+проверки: signature ok, exp ok, iss == https://kc/realms/corp, aud ok
+```
+
+Пропуск любой из этих проверок - дыра. Особенно коварен пропуск `aud`: без него resource server примет любой валидно подписанный token этого realm, даже выданный совсем другому приложению с другими правами.
+
+<Callout type="warning">
+Не проверять подпись и доверять payload «потому что это наш Keycloak» - грубейшая ошибка. JWT без проверки подписи подделывается за секунды: меняете `"role":"user"` на `"role":"admin"`, и без проверки подписи resource server это съест.
+</Callout>
+
+## Ключи и kid: как находят, чем проверять
+
+Keycloak подписывает token приватным ключом, а resource server проверяет публичным. Откуда тот берёт публичный ключ? Из набора **JWKS** (JSON Web Key Set), опубликованного по `jwks_uri`. В наборе может быть несколько ключей, и header token несёт `kid` - идентификатор того ключа, которым подписан именно этот token.
+
+```text
+header: { "alg": "RS256", "kid": "key-A" }
+JWKS:   [ { "kid": "key-A", ... }, { "kid": "key-B", ... } ]
+        → проверяем ключом key-A
+```
+
+Это нужно для **ротации ключей**: Keycloak вводит новый ключ, какое-то время в JWKS лежат и старый, и новый, и token проверяется тем ключом, чей `kid` указан. Resource server кэширует JWKS, но при незнакомом `kid` перечитывает набор - иначе после ротации все token перестали бы валидироваться.
+
+## Access и refresh: короткий пропуск и длинный мандат
+
+Поскольку JWT проверяется офлайн, отозвать его до `exp` нельзя. Решение - делать access_token коротким (минуты), чтобы окно жизни украденного token было мало. Но заставлять пользователя логиниться каждые пять минут невозможно. Поэтому в паре с ним выдают **refresh_token** - долгоживущий token, единственное назначение которого - получить новый access_token, когда старый истёк.
+
+```text
+POST /token  grant_type=refresh_token&refresh_token=<refresh>
+  → новый access_token (+ обычно новый refresh_token)
+```
+
+Refresh_token не отправляют в API - его хранят бережно и показывают только token endpoint Keycloak. В отличие от access_token, refresh можно отозвать: при logout или при компрометации Keycloak инвалидирует refresh_token, и обновление перестаёт работать, хотя последний выданный access_token доживёт до своего `exp`.
+
+<Figure caption="Короткий access_token истекает быстро; refresh_token живёт дольше и служит только для получения нового access_token у token endpoint.">
+  <Sketch viewBox="0 0 440 140" title="Access и refresh token">
+    <SketchBox x={30} y={30} width={150} height={40} accent />
+    <SketchLabel x={105} y={47} mono accent>access_token</SketchLabel>
+    <SketchLabel x={105} y={63} size={11} accent>минуты, едет в API</SketchLabel>
+    <SketchBox x={30} y={90} width={150} height={40} />
+    <SketchLabel x={105} y={107} mono>refresh_token</SketchLabel>
+    <SketchLabel x={105} y={123} size={11} muted>часы/дни, только в Keycloak</SketchLabel>
+    <SketchBox x={300} y={60} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={355} y={84} mono>token endpoint</SketchLabel>
+    <SketchArrow from={[180, 110]} to={[300, 85]} />
+    <SketchLabel x={210} y={95} size={11} muted>обновление</SketchLabel>
+    <SketchArrow from={[300, 70]} to={[180, 50]} dashed accent />
+    <SketchLabel x={210} y={40} size={11} accent>новый access</SketchLabel>
+  </Sketch>
+</Figure>
+
+Эта пара - компромисс между удобством офлайн-проверки и контролем над сессией. Access_token быстрый, но неотзывной и короткий; refresh_token отзывной, но не пускается в API. Вместе они дают и производительность, и возможность завершить сессию.
+
+## Краевой случай: разъехавшиеся часы и `exp`
+
+Вот что удивляет на проде: token, который Keycloak только что выдал, resource server иногда отвергает как «ещё не действительный» или «уже истёкший». Причина не в коде, а в часах. Проверка `exp` (и `nbf`, not before) сравнивает время в token с локальными часами resource server. Если часы серверов разъехались на десяток секунд, граничные token начинают то приниматься, то нет.
+
+```text
+exp = 12:00:00, часы resource server = 12:00:07  → «истёк» на 7 секунд раньше
+```
+
+Поэтому валидаторы допускают небольшой **clock skew** - запас в несколько секунд при сравнении времени. И поэтому же на серверах с token обязателен синхронизированный по NTP час: рассинхронизация времени проявляется как плавающие, трудноуловимые ошибки авторизации.
+
+## Типичные ошибки
+
+- **Доверять payload без проверки подписи.** Header и payload открыто редактируются; без проверки signature любой может выдать себе роль `admin`. Подпись проверяется всегда.
+- **Не проверять `aud` и `iss`.** Без `aud` resource server примет token, выданный другому приложению; без `iss` - token из чужого realm. Обе проверки обязательны.
+- **Класть секреты в payload.** JWT подписан, но не зашифрован: всё содержимое читается из перехваченного token. Пароли, ключи и приватные данные в claims недопустимы.
+- **Отправлять refresh_token в API или хранить его небрежно.** Refresh_token - долгоживущий мандат на новые access_token; его место только в обмене с token endpoint, а не в заголовке запроса к resource server.
+
+<Detail summary="Offline-проверка против introspection">
+
+У resource server есть два способа проверить access_token. **Локальная (offline) проверка** - разобрать JWT и проверить подпись публичным ключом, как описано выше. Быстро, не требует сети, но не видит мгновенного отзыва: отозванный token считается валидным до `exp`.
+
+**Token introspection** (RFC 7662) - спросить Keycloak напрямую через `/introspect`, активен ли token. Это видит отзыв сразу, но добавляет сетевой вызов на каждую проверку и возвращает зависимость от доступности Keycloak.
+
+Выбор - компромисс. Для большинства API берут offline-проверку с короткими access_token: окно жизни украденного token мало, а Keycloak не становится узким местом. Introspection оставляют для случаев, где мгновенный отзыв критичен (например, операции с деньгами) и можно стерпеть лишний вызов. Часто их комбинируют: offline на горячем пути, introspection на чувствительных операциях.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "JWT - это header.payload.signature: header и payload открыто читаются в Base64URL, signature скрепляет их и проверяется ключом.",
+    "Payload подписан, но не зашифрован: содержимое видно из перехваченного token, поэтому секреты в claims недопустимы.",
+    "Минимум валидации на resource server: подпись, exp, iss и aud; пропуск aud принимает чужие token этого realm.",
+    "Публичный ключ берётся из JWKS по jwks_uri; kid в header выбирает нужный ключ и позволяет ротацию ключей.",
+    "Короткий access_token едет в API и не отзывается до exp; долгий refresh_token живёт у token endpoint и обновляет access.",
+    "Рассинхронизация часов ломает проверку exp/nbf - нужен синхронизированный NTP и небольшой допуск clock skew.",
+  ]}
+/>
+
+## Ссылки
+
+- [RFC 7519 - JSON Web Token (JWT)](https://datatracker.ietf.org/doc/html/rfc7519)
+- [RFC 7515 - JSON Web Signature (JWS)](https://datatracker.ietf.org/doc/html/rfc7515)
+- [RFC 7517 - JSON Web Key (JWK)](https://datatracker.ietf.org/doc/html/rfc7517)
+- [RFC 7662 - OAuth 2.0 Token Introspection](https://datatracker.ietf.org/doc/html/rfc7662)
+- [Keycloak - Server Administration Guide](https://www.keycloak.org/docs/latest/server_admin/index.html)

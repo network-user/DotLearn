@@ -1,0 +1,313 @@
+exercises:
+  - id: conn-queries-what-001
+    concept: counting-queries
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Что хранит атрибут `connection.queries` в Django?"
+    choices:
+      - id: a
+        text: "Список словарей - по одному на каждый выполненный SQL, с текстом запроса (sql) и временем (time)."
+      - id: b
+        text: "Только число выполненных запросов как целое."
+      - id: c
+        text: "Текущий незавершённый запрос, который ещё выполняется."
+      - id: d
+        text: "План выполнения последнего запроса в формате EXPLAIN."
+    correct: [a]
+    explanation: "`connection.queries` - растущий журнал: список словарей, по одному на каждый выполненный SQL. В каждом есть ключи sql и time. Длина списка равна числу запросов."
+    variants:
+      - prompt: "Как по `connection.queries` узнать число выполненных запросов?"
+        choices:
+          - id: a
+            text: "Взять `len(connection.queries)` - длина журнала равна числу запросов."
+          - id: b
+            text: "Прочитать поле `connection.queries.count`."
+          - id: c
+            text: "Вызвать `connection.queries.total()`."
+          - id: d
+            text: "Сложить все значения поля time."
+        correct: [a]
+        explanation: "Журнал - это обычный список, по элементу на запрос. Его длина `len(connection.queries)` и есть число выполненных запросов."
+      - prompt: "Какого типа значение в поле `time` элемента `connection.queries`?"
+        choices:
+          - id: a
+            text: "Строка вроде `\"0.001\"` - чтобы сложить времена, её нужно привести к float."
+          - id: b
+            text: "Число float в секундах, готовое к суммированию."
+          - id: c
+            text: "Объект datetime с моментом выполнения."
+          - id: d
+            text: "Число миллисекунд как int."
+        correct: [a]
+        explanation: "Поле time - строка, например \"0.001\". Это частый сюрприз: чтобы суммировать тайминги, значения сначала приводят к float."
+
+  - id: debug-true-requirement-001
+    concept: counting-queries
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Разработчик читает `len(connection.queries)` на production-сервере с `DEBUG = False` и всегда получает 0. Почему?"
+    choices:
+      - id: a
+        text: "`connection.queries` заполняется только при `DEBUG = True` - чтобы не тратить память на хранение SQL под нагрузкой. При DEBUG=False журнал не ведётся."
+      - id: b
+        text: "На production запросы выполняются в другом потоке, недоступном для чтения."
+      - id: c
+        text: "`reset_queries()` вызывается автоматически после каждого запроса в проде."
+      - id: d
+        text: "В проде Django использует другую базу, у которой нет журнала."
+    correct: [a]
+    explanation: "Журнал `connection.queries` ведётся только при `DEBUG = True`. При DEBUG=False Django его не заполняет, чтобы не расходовать память под нагрузкой, поэтому длина всегда 0. Считайте запросы в dev или в тестах."
+    hints:
+      - "Журнал SQL расходует память. В каком режиме Django его держит включённым, а в каком отключает ради экономии?"
+
+  - id: reset-queries-purpose-001
+    concept: counting-queries
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Зачем перед точечным замером числа запросов вызывают `reset_queries()`?"
+    choices:
+      - id: a
+        text: "Журнал копит запросы с начала жизни соединения; без обнуления в счёт попадут запросы из подготовки данных, и число будет завышенным."
+      - id: b
+        text: "`reset_queries()` ускоряет последующие запросы, очищая кеш базы."
+      - id: c
+        text: "Без него `connection.queries` вообще не начнёт заполняться."
+      - id: d
+        text: "Он закрывает текущее соединение и открывает новое, более быстрое."
+    correct: [a]
+    explanation: "`connection.queries` накапливается за всё время жизни соединения. Чтобы измерить именно интересующий кусок кода, журнал обнуляют до замера - иначе в счёт попадут посторонние запросы из подготовки."
+    hints:
+      - "Журнал не очищается сам между участками кода. Что в него попадёт, если не обнулить перед замером?"
+
+  - id: list-materialize-001
+    concept: counting-queries
+    type: theory-quiz
+    difficulty: 3
+    prompt: "При ручном замере queryset оборачивают в `list(...)`: `list(Order.objects.all())` между `reset_queries()` и чтением счётчика. Зачем?"
+    choices:
+      - id: a
+        text: "queryset ленив - без материализации запрос ушёл бы позже, уже после замера. `list(...)` заставляет его выполниться здесь и сейчас, между обнулением и подсчётом."
+      - id: b
+        text: "`list(...)` ускоряет запрос, превращая его в один SQL."
+      - id: c
+        text: "Без `list(...)` queryset нельзя перебрать в цикле."
+      - id: d
+        text: "`list(...)` отключает ленивость для всех будущих queryset в процессе."
+    correct: [a]
+    explanation: "Queryset ленив: без материализации SQL уйдёт позже и не попадёт в замер. `list(...)` форсирует выполнение между `reset_queries()` и чтением счётчика, поэтому счёт честно отражает именно этот участок."
+    hints:
+      - "Вспомните, в какой момент queryset реально отправляет SQL. Если не форсировать, попадёт ли запрос в окно между обнулением и замером?"
+      - "Цель замера - привязать запрос к конкретному участку кода. Что заставляет ленивый queryset выполниться именно здесь?"
+
+  - id: assert-num-queries-fixture-001
+    concept: counting-queries
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Тест `with self.assertNumQueries(1): list(Order.objects.all()); ...` зелёный, но в проде у этого эндпоинта N+1. Что не так с тестом?"
+    choices:
+      - id: a
+        text: "Фикстура пуста или содержит слишком мало связанных строк: без заказов цикл не выполняется, дополнительных запросов нет, и `assertNumQueries(1)` проходит даже для наивного N+1-кода."
+      - id: b
+        text: "`assertNumQueries` не работает с `Order.objects.all()`."
+      - id: c
+        text: "Число 1 всегда проходит независимо от кода - проверка фиктивна."
+      - id: d
+        text: "Тест нужно запускать с `DEBUG = True`, иначе он всегда зелёный."
+    correct: [a]
+    explanation: "На пустой или почти пустой фикстуре наивный код не делает лишних запросов: нет строк - нет цикла. Чтобы N+1 проявился, в фикстуре должно быть минимум две связанные строки."
+    hints:
+      - "N+1 проявляется только когда есть по чему итерироваться. Что произойдёт с наивным кодом, если в базе нет связанных строк?"
+      - "Сколько связанных строк минимум нужно в фикстуре, чтобы наивный вариант сделал заметно больше запросов, чем оптимизированный?"
+
+  - id: count-queries-sim-001
+    concept: counting-queries
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она моделирует журнал `connection.queries`: список растёт по одному элементу на запрос, длина равна числу запросов."
+    snippet: |
+      queries = []
+      queries.append("SELECT * FROM orders")
+      for customer_id in [1, 2, 3]:
+          queries.append("SELECT * FROM customers WHERE id = " + str(customer_id))
+      print(len(queries))
+    expected:
+      kind: stdout
+      value: "4"
+    hints:
+      - "Один запрос за списком плюс по одному на каждый id в цикле. Сколько id в списке?"
+    variants:
+      - snippet: |
+          queries = []
+          queries.append("SELECT * FROM orders")
+          for customer_id in [10, 20]:
+              queries.append("SELECT * FROM customers WHERE id = " + str(customer_id))
+          print(len(queries))
+        expected:
+          kind: stdout
+          value: "3"
+      - snippet: |
+          queries = []
+          queries.append("SELECT ... JOIN customers")
+          for _ in range(100):
+              pass
+          print(len(queries))
+        expected:
+          kind: stdout
+          value: "1"
+
+  - id: reset-queries-sim-001
+    concept: counting-queries
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она моделирует точечный замер с обнулением журнала: старые запросы сбрасываются, считается только новый код."
+    snippet: |
+      queries = ["q1 setup", "q2 setup"]
+      queries.clear()
+      queries.append("SELECT * FROM orders")
+      print(len(queries))
+    expected:
+      kind: stdout
+      value: "1"
+    hints:
+      - "`clear()` играет роль reset_queries(): после него в журнале остаётся только то, что добавили после."
+    variants:
+      - snippet: |
+          queries = ["setup a", "setup b", "setup c"]
+          queries.clear()
+          for cid in [1, 2]:
+              queries.append("SELECT customer " + str(cid))
+          print(len(queries))
+        expected:
+          kind: stdout
+          value: "2"
+      - snippet: |
+          queries = ["old"]
+          before = len(queries)
+          queries.append("new")
+          queries.append("new")
+          print(len(queries) - before)
+        expected:
+          kind: stdout
+          value: "2"
+
+  - id: time-is-string-sim-001
+    concept: counting-queries
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она воспроизводит сюрприз: поле time в `connection.queries` - строка, и сложить тайминги можно только после приведения к float."
+    snippet: |
+      query_log = [
+          {"sql": "SELECT 1", "time": "0.001"},
+          {"sql": "SELECT 2", "time": "0.002"},
+      ]
+      total = sum(float(q["time"]) for q in query_log)
+      print(total)
+    expected:
+      kind: stdout
+      value: "0.003"
+    hints:
+      - "Поле time хранится строкой. Что нужно сделать с каждой строкой перед суммированием?"
+      - "Сложите 0.001 и 0.002 как числа float. Сколько знаков после запятой останется в выводе float в Python?"
+
+  - id: count-queries-blanks-001
+    concept: counting-queries
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Заполните пропуски в коде ручного подсчёта запросов через журнал соединения."
+    template: |
+      from django.db import connection, reset_queries
+
+      {{reset}}()
+      orders = {{materialize}}(Order.objects.all())
+      for order in orders:
+          _ = order.customer.name
+      print({{length}}(connection.queries))
+    blanks:
+      reset:
+        accept: ["reset_queries"]
+      materialize:
+        accept: ["list"]
+      length:
+        accept: ["len"]
+    hints:
+      - "Сначала журнал обнуляют, потом форсируют выполнение queryset, в конце берут длину журнала."
+    variants:
+      - template: |
+          from django.db import connection, reset_queries
+
+          {{reset}}()
+          rows = {{materialize}}(Order.objects.select_related("customer"))
+          print({{length}}(connection.queries))
+        blanks:
+          reset:
+            accept: ["reset_queries"]
+          materialize:
+            accept: ["list"]
+          length:
+            accept: ["len"]
+
+  - id: assert-num-queries-blanks-001
+    concept: counting-queries
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Заполните пропуски в тесте, фиксирующем число запросов через assertNumQueries."
+    template: |
+      def test_no_n_plus_one(self):
+          c = Customer.objects.create(name="Ada")
+          Order.objects.create(customer=c, total=10)
+          Order.objects.create(customer=c, total=20)
+          with self.{{assertion}}({{expected}}):
+              for o in Order.objects.{{preload}}("customer"):
+                  _ = o.customer.name
+    blanks:
+      assertion:
+        accept: ["assertNumQueries"]
+      expected:
+        accept: ["1"]
+      preload:
+        accept: ["select_related"]
+    hints:
+      - "Контекстный менеджер проверяет точное число запросов. Связь «к одному» сворачивают в JOIN одним методом - тогда запрос остаётся один."
+      - "Два заказа с одним клиентом, загруженным через JOIN, дают ровно один запрос - именно это число и фиксируется."
+    variants:
+      - template: |
+          from django.db import connection, reset_queries
+
+          {{reset}}()
+          before = len(connection.queries)
+          list(Order.objects.{{preload}}("customer"))
+          after = {{length}}(connection.queries)
+          print(after - before)
+        blanks:
+          reset:
+            accept: ["reset_queries"]
+          preload:
+            accept: ["select_related"]
+          length:
+            accept: ["len"]
+
+  - id: counting-challenge-001
+    concept: counting-queries
+    type: predict-output
+    difficulty: 4
+    prompt: "Что выведет программа? Она моделирует сравнение наивного и оптимизированного кода на одной фикстуре: сначала считает запросы N+1-варианта, затем варианта с предзагрузкой."
+    snippet: |
+      def naive_query_count(orders):
+          queries = 1
+          for _ in orders:
+              queries += 1
+          return queries
+
+      def optimized_query_count(orders):
+          return 1
+
+      data = [1, 2, 3, 4]
+      print(naive_query_count(data))
+      print(optimized_query_count(data))
+      print(naive_query_count(data) - optimized_query_count(data))
+    expected:
+      kind: stdout
+      value: "5\n1\n4"
+    hints:
+      - "Наивный вариант: один за списком плюс по одному на каждый из четырёх элементов. Оптимизированный всегда один."
+      - "Третья строка - разница между двумя счётчиками. Сколько лишних запросов убрала предзагрузка на этой фикстуре?"

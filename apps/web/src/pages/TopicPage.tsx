@@ -2,9 +2,10 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
+import { TopicNotFoundError } from '@dotlearn/lesson-engine';
 import { Link, useParams } from '@tanstack/react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, BookOpen, Check, Flame, ListTree } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, Flame, Languages, ListTree } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
@@ -24,12 +25,12 @@ import { useStreak, useTopicProgress } from '@/lib/use-progress';
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'ready'; bundle: TopicBundle }
+  | { kind: 'notFound' }
   | { kind: 'error'; message: string };
 
 export const TopicPage = () => {
   const { slug } = useParams({ from: '/topics/$slug' });
   const { t, i18n } = useTranslation('topic');
-  const { t: tCommon } = useTranslation('common');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
   const progress = useTopicProgress(slug);
@@ -48,6 +49,13 @@ export const TopicPage = () => {
       })
       .catch((error: unknown) => {
         if (cancelled) return;
+        if (
+          error instanceof TopicNotFoundError ||
+          (error instanceof Error && error.name === 'TopicNotFoundError')
+        ) {
+          setState({ kind: 'notFound' });
+          return;
+        }
         setState({
           kind: 'error',
           message: error instanceof Error ? error.message : String(error),
@@ -62,15 +70,37 @@ export const TopicPage = () => {
     return <TopicSkeleton />;
   }
 
+  if (state.kind === 'notFound') {
+    return (
+      <Surface rule="left" className="border-l-err">
+        <div className="p-6">
+          <h1 className="font-display text-2xl text-err">
+            {t('notFoundTitle', { defaultValue: 'Тема не найдена' })}
+          </h1>
+          <p className="mt-2 text-sm text-fg-muted">
+            {t('notFoundBody', {
+              defaultValue: 'Такой темы нет в каталоге. Возможно, ссылка устарела.',
+            })}
+          </p>
+          <Link to="/" hash="topics">
+            <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />} className="mt-4">
+              {t('backToCatalog', { defaultValue: 'К каталогу тем' })}
+            </Button>
+          </Link>
+        </div>
+      </Surface>
+    );
+  }
+
   if (state.kind === 'error') {
     return (
       <Surface rule="left" className="border-l-err">
         <div className="p-6">
           <h2 className="font-display text-2xl text-err">{t('failed')}</h2>
           <p className="mt-2 text-sm text-fg-muted">{state.message}</p>
-          <Link to="/">
+          <Link to="/" hash="topics">
             <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />} className="mt-4">
-              {tCommon('backToHome')}
+              {t('backToCatalog', { defaultValue: 'К каталогу тем' })}
             </Button>
           </Link>
         </div>

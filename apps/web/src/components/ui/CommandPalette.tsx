@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import * as RadixDialog from '@radix-ui/react-dialog';
 import type { TopicManifest } from '@dotlearn/contracts';
 import { useRouter } from '@tanstack/react-router';
 import { Command } from 'cmdk';
@@ -44,26 +45,17 @@ const navIcon: Record<string, React.ReactNode> = {
   '/proposals': <Inbox size={14} />,
 };
 
-export const CommandPalette = () => {
+interface CommandPaletteProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const setOpen = (value: boolean): void => onOpenChange(value);
   const [manifests, setManifests] = useState<TopicManifest[]>([]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      const isMod = event.metaKey || event.ctrlKey;
-      if (isMod && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setOpen((v) => !v);
-      } else if (event.key === 'Escape' && open) {
-        setOpen(false);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
 
   useEffect(() => {
     let cancelled = false;

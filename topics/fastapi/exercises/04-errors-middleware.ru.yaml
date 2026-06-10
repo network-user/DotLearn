@@ -1,0 +1,324 @@
+exercises:
+  - id: errors-status-meaning-001
+    concept: errors-middleware
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Обработчик не нашёл запрошенный товар. Какой ответ корректен?"
+    choices:
+      - id: a
+        text: "404 Not Found через `raise HTTPException(404)`: клиент по статусу отличит «нет ресурса» от успеха."
+      - id: b
+        text: "200 OK с пустым телом: запрос ведь обработан без сбоя."
+      - id: c
+        text: "500 Internal Server Error: раз данных нет, это ошибка сервера."
+      - id: d
+        text: "422 Unprocessable Entity: отсутствие ресурса - это провал валидации."
+    correct: [a]
+    explanation: "HTTP-статус - часть контракта. 200 на не найденный ресурс неотличим для клиента от успеха. Отсутствие ресурса - это 404, и возвращают его через `raise HTTPException`."
+    variants:
+      - prompt: "Запрос пришёл с валидным токеном, но у пользователя нет прав на это действие. Какой статус?"
+        choices:
+          - id: a
+            text: "403 Forbidden: аутентифицирован, но доступ запрещён."
+          - id: b
+            text: "401 Unauthorized: раз доступа нет, значит и не представился."
+          - id: c
+            text: "404 Not Found: спрятать ресурс - то же, что его отсутствие."
+          - id: d
+            text: "200 OK: запрос синтаксически верен, остальное не важно."
+        correct: [a]
+        explanation: "401 - «вы не представились» (нет или невалиден токен). 403 - «представились, но сюда нельзя». Здесь токен валиден, не хватает прав - это 403."
+      - prompt: "POST успешно создал новый ресурс. Какой статус честнее всего?"
+        choices:
+          - id: a
+            text: "201 Created: ресурс создан; его задают через `status_code` в декораторе."
+          - id: b
+            text: "200 OK всегда, статус создания в FastAPI задать нельзя."
+          - id: c
+            text: "204 No Content: при создании тело не возвращают."
+          - id: d
+            text: "409 Conflict: создание ресурса - это всегда конфликт."
+        correct: [a]
+        explanation: "Для создания ресурса честнее `201 Created`, его задают через `status_code=status.HTTP_201_CREATED` в декораторе. 200 - статус успеха по умолчанию, но 201 точнее описывает исход."
+
+  - id: errors-raise-vs-return-001
+    concept: errors-middleware
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Чем `return HTTPException(404, detail=\"нет\")` отличается от `raise HTTPException(404, detail=\"нет\")`?"
+    choices:
+      - id: a
+        text: "`raise` формирует ответ-ошибку 404; `return` отдаёт сам объект исключения как тело, и клиент получит странный 200."
+      - id: b
+        text: "Ничем: FastAPI одинаково обрабатывает оба варианта."
+      - id: c
+        text: "`return` корректнее: исключения положено возвращать, а не бросать."
+      - id: d
+        text: "`raise` всегда даёт 500, потому что любое исключение - это сбой сервера."
+    correct: [a]
+    explanation: "Ошибку отдают только через `raise`. FastAPI перехватывает брошенный `HTTPException` и собирает ответ с нужным статусом. Если же его `return`, фреймворк попытается сериализовать сам объект исключения как обычное тело - получится 200 с непонятным содержимым."
+    hints:
+      - "Подумайте, как FastAPI узнаёт, что значение - это ошибка, а не обычный результат обработчика."
+      - "Один из этих способов прерывает выполнение обработчика в точке вызова, другой - нет."
+
+  - id: errors-fill-httpexception-001
+    concept: errors-middleware
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Допишите обработчик: если товара нет, вернуть 404 с пояснением."
+    template: |
+      from fastapi import FastAPI, HTTPException
+
+      app = FastAPI()
+      items = {1: "шапка"}
+
+      @app.get("/items/{item_id}")
+      def read_item(item_id: int):
+          if item_id not in items:
+              {{keyword}} HTTPException(status_code={{code}}, detail="товар не найден")
+          return {"name": items[item_id]}
+    blanks:
+      keyword:
+        accept: ["raise"]
+      code:
+        accept: ["404"]
+    variants:
+      - prompt: "Допишите создание ресурса со статусом 201."
+        template: |
+          from fastapi import FastAPI, status
+
+          app = FastAPI()
+
+          @app.post("/items/", status_code=status.{{const}})
+          def create_item(name: str):
+              return {"name": name}
+        blanks:
+          const:
+            accept: ["HTTP_201_CREATED"]
+      - prompt: "Допишите проверку прав: без них вернуть 403."
+        template: |
+          from fastapi import FastAPI, HTTPException
+
+          app = FastAPI()
+
+          @app.delete("/items/{item_id}")
+          def delete_item(item_id: int, is_admin: bool = False):
+              if not is_admin:
+                  raise HTTPException(status_code={{code}}, detail="нет прав")
+              return {"deleted": item_id}
+        blanks:
+          code:
+            accept: ["403"]
+
+  - id: errors-fill-middleware-001
+    concept: errors-middleware
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Допишите middleware, замеряющий время обработки запроса."
+    template: |
+      import time
+      from fastapi import Request
+
+      @app.middleware("http")
+      async def add_timing(request: Request, call_next):
+          start = time.perf_counter()
+          response = {{await_kw}} call_next(request)
+          elapsed = time.perf_counter() - start
+          response.headers["X-Process-Time"] = str(elapsed)
+          return response
+    blanks:
+      await_kw:
+        accept: ["await"]
+    hints:
+      - "`call_next` передаёт запрос дальше по кольцам и возвращает корутину - её результат нужно дождаться, прежде чем читать ответ."
+      - "Это ключевое слово, которым уступают loop в ожидании асинхронной операции."
+
+  - id: errors-predict-status-001
+    concept: errors-middleware
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она моделирует выбор статуса по исходу обработчика."
+    snippet: |
+      def status_for(found, authorized):
+          if not authorized:
+              return 403
+          if not found:
+              return 404
+          return 200
+
+      print(status_for(True, True), status_for(False, True), status_for(False, False))
+    expected:
+      kind: stdout
+      value: "200 404 403"
+    hints:
+      - "Применяйте проверки в порядке их записи: сначала права, потом наличие ресурса, затем успех."
+      - "Первый вызов: ресурс есть и права есть. Второй: прав хватает, но ресурса нет. Третий: прав нет вовсе."
+    variants:
+      - snippet: |
+          def status_for(created, conflict):
+              if conflict:
+                  return 409
+              if created:
+                  return 201
+              return 200
+
+          print(status_for(True, False), status_for(False, True))
+        expected:
+          kind: stdout
+          value: "201 409"
+      - snippet: |
+          def is_success(code):
+              return 200 <= code < 300
+
+          print(is_success(201), is_success(404), is_success(500))
+        expected:
+          kind: stdout
+          value: "True False False"
+
+  - id: errors-predict-middleware-order-001
+    concept: errors-middleware
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует кольца middleware: вход в порядке регистрации, выход в обратном."
+    snippet: |
+      log = []
+
+      def handler():
+          log.append("handler")
+
+      def wrap(name, inner):
+          def call():
+              log.append(name + "-in")
+              inner()
+              log.append(name + "-out")
+          return call
+
+      app = wrap("outer", wrap("inner", handler))
+      app()
+      print(log)
+    expected:
+      kind: stdout
+      value: "['outer-in', 'inner-in', 'handler', 'inner-out', 'outer-out']"
+    hints:
+      - "Middleware - вложенные кольца: внешнее видит запрос первым и ответ последним. В каком порядке выполнится код до и после `call_next`?"
+      - "Идите снаружи внутрь до обработчика (часть «до»), затем изнутри наружу обратно (часть «после»)."
+    variants:
+      - snippet: |
+          log = []
+
+          def handler():
+              log.append("core")
+
+          def wrap(name, inner):
+              def call():
+                  log.append("enter:" + name)
+                  inner()
+                  log.append("exit:" + name)
+              return call
+
+          app = wrap("auth", wrap("timing", handler))
+          app()
+          print(log)
+        expected:
+          kind: stdout
+          value: "['enter:auth', 'enter:timing', 'core', 'exit:timing', 'exit:auth']"
+      - snippet: |
+          steps = []
+
+          def middleware(request, call_next):
+              steps.append("before")
+              call_next(request)
+              steps.append("after")
+
+          def call_next(request):
+              steps.append("handler:" + request)
+
+          middleware("GET /", call_next)
+          print(steps)
+        expected:
+          kind: stdout
+          value: "['before', 'handler:GET /', 'after']"
+
+  - id: errors-predict-detail-001
+    concept: errors-middleware
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она повторяет, как FastAPI оборачивает HTTPException в тело ответа `{\"detail\": ...}`."
+    snippet: |
+      class HTTPException(Exception):
+          def __init__(self, status_code, detail):
+              self.status_code = status_code
+              self.detail = detail
+
+      def respond(item_id, store):
+          try:
+              if item_id not in store:
+                  raise HTTPException(404, "товар не найден")
+              return 200, {"name": store[item_id]}
+          except HTTPException as exc:
+              return exc.status_code, {"detail": exc.detail}
+
+      print(respond(99, {1: "шапка"}))
+    expected:
+      kind: stdout
+      value: "(404, {'detail': 'товар не найден'})"
+    hints:
+      - "`raise HTTPException` прерывает обработчик в точке броска: код после него не выполнится. Что вернёт ветка перехвата?"
+      - "Тело ответа-ошибки FastAPI собирает как `{\"detail\": ...}`, а статус берёт из `status_code` исключения."
+    variants:
+      - snippet: |
+          class HTTPException(Exception):
+              def __init__(self, status_code, detail):
+                  self.status_code = status_code
+                  self.detail = detail
+
+          def respond(is_admin):
+              try:
+                  if not is_admin:
+                      raise HTTPException(403, "нет прав")
+                  return 200, {"ok": True}
+              except HTTPException as exc:
+                  return exc.status_code, {"detail": exc.detail}
+
+          print(respond(False))
+        expected:
+          kind: stdout
+          value: "(403, {'detail': 'нет прав'})"
+      - snippet: |
+          class HTTPException(Exception):
+              def __init__(self, status_code, detail):
+                  self.status_code = status_code
+                  self.detail = detail
+
+          def respond(item_id, store):
+              try:
+                  if item_id not in store:
+                      raise HTTPException(404, "нет")
+                  return 200, {"name": store[item_id]}
+              except HTTPException as exc:
+                  return exc.status_code, {"detail": exc.detail}
+
+          print(respond(1, {1: "шапка"}))
+        expected:
+          kind: stdout
+          value: "(200, {'name': 'шапка'})"
+
+  - id: errors-custom-handler-001
+    concept: errors-middleware
+    type: theory-quiz
+    difficulty: 4
+    prompt: "В приложении есть доменное исключение `ItemNotFound`, которое бросают из разных мест. Как централизованно превратить его в ответ 404, не повторяя `HTTPException` в каждом обработчике?"
+    choices:
+      - id: a
+        text: "Зарегистрировать обработчик через `@app.exception_handler(ItemNotFound)`: перевод доменного исключения в HTTP-статус живёт в одном месте."
+      - id: b
+        text: "Обернуть каждый обработчик в try/except и вручную делать `raise HTTPException(404)` - другого способа нет."
+      - id: c
+        text: "Поместить проверку в middleware до `call_next` - только там можно поймать исключение обработчика."
+      - id: d
+        text: "Никак: FastAPI умеет отдавать ошибки только из встроенного `HTTPException`."
+    correct: [a]
+    explanation: "Для повторяющихся доменных ошибок регистрируют обработчик через `@app.exception_handler(ItemNotFound)`. Тогда из кода бросают доменное исключение, а его перевод в нужный HTTP-статус и тело живёт в одном месте - не приходится тащить `HTTPException` сквозь все слои."
+    hints:
+      - "Ищите механизм, который связывает тип исключения с функцией, формирующей ответ, - один раз на всё приложение."
+      - "Это не middleware и не try/except в каждом обработчике: FastAPI даёт специальный декоратор регистрации обработчика исключений."

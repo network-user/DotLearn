@@ -8,8 +8,6 @@ const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
 const rawPostMessage = workerScope.postMessage.bind(workerScope);
 
-const DEFAULT_INDEX_URL = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
-
 const ESCAPE_GLOBALS = [
   'fetch',
   'XMLHttpRequest',
@@ -24,22 +22,37 @@ const ESCAPE_GLOBALS = [
   'postMessage',
 ] as const;
 
+// navigator.sendBeacon is a self-contained cross-origin POST that does not depend on the
+// fetch global, so neutering fetch alone leaves an exfiltration channel open. serviceWorker
+// is removed for the same defense-in-depth reason.
+const ESCAPE_NAVIGATOR_METHODS = ['sendBeacon', 'serviceWorker'] as const;
+
+const neutralize = (target: Record<string, unknown>, name: string): void => {
+  try {
+    Object.defineProperty(target, name, {
+      value: undefined,
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
+  } catch {
+    try {
+      target[name] = undefined;
+    } catch {
+      // a non-configurable, non-writable property cannot be neutralized; ignore
+    }
+  }
+};
+
 const hardenWorkerScope = (): void => {
   const scope = workerScope as unknown as Record<string, unknown>;
   for (const name of ESCAPE_GLOBALS) {
-    try {
-      Object.defineProperty(scope, name, {
-        value: undefined,
-        writable: false,
-        configurable: false,
-        enumerable: false,
-      });
-    } catch {
-      try {
-        scope[name] = undefined;
-      } catch {
-        // a non-configurable, non-writable global cannot be neutralized; ignore
-      }
+    neutralize(scope, name);
+  }
+  const navigator = (scope as { navigator?: Record<string, unknown> }).navigator;
+  if (navigator) {
+    for (const name of ESCAPE_NAVIGATOR_METHODS) {
+      neutralize(navigator, name);
     }
   }
 };
@@ -48,7 +61,12 @@ let pyodidePromise: Promise<PyodideInterface> | undefined;
 
 const ensurePyodide = (indexUrl?: string): Promise<PyodideInterface> => {
   if (!pyodidePromise) {
-    pyodidePromise = loadPyodide({ indexURL: indexUrl ?? DEFAULT_INDEX_URL }).then((py) => {
+    if (!indexUrl) {
+      return Promise.reject(
+        new Error('Pyodide index URL is required; refusing to fall back to a remote CDN.'),
+      );
+    }
+    pyodidePromise = loadPyodide({ indexURL: indexUrl }).then((py) => {
       hardenWorkerScope();
       return py;
     });
@@ -99,34 +117,57 @@ const toPlain = (value: unknown): unknown => {
 const runEvaluate = async (id: string, source: string, call: string): Promise<void> => {
   try {
     const py = await ensurePyodide();
-    py.runPython(STDOUT_HARNESS);
-    let value: unknown;
-    let thrown: { type: string; message: string } | undefined;
+    // Each evaluation runs in a fresh globals namespace so definitions, imports and any
+    // __builtins__ monkeypatching from one run cannot leak into a later grading run.
+    const namespace = py.toPy({});
+    const options = { globals: namespace };
     try {
-      py.runPython(source);
-      value = py.runPython(call);
-      value = toPlain(value);
-    } catch (error) {
-      thrown = {
-        type: error instanceof Error ? error.name : 'PythonError',
-        message: error instanceof Error ? error.message : String(error),
-      };
+      py.runPython(STDOUT_HARNESS, options);
+      let value: unknown;
+      let thrown: { type: string; message: string } | undefined;
+      try {
+        py.runPython(source, options);
+        value = toPlain(py.runPython(call, options));
+      } catch (error) {
+        thrown = {
+          type: error instanceof Error ? error.name : 'PythonError',
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const stdout = py.runPython(STDOUT_TEARDOWN, options) as string;
+      post({
+        id,
+        type: 'result',
+        value,
+        stdout: capStdout(typeof stdout === 'string' ? stdout : String(stdout ?? '')),
+        ...(thrown !== undefined ? { thrown } : {}),
+      });
+    } finally {
+      (namespace as { destroy?: () => void }).destroy?.();
     }
-    const stdout = py.runPython(STDOUT_TEARDOWN) as string;
-    post({
-      id,
-      type: 'result',
-      value,
-      stdout: capStdout(typeof stdout === 'string' ? stdout : String(stdout ?? '')),
-      ...(thrown !== undefined ? { thrown } : {}),
-    });
   } catch (error) {
     post({ id, type: 'error', message: error instanceof Error ? error.message : String(error) });
   }
 };
 
+const isWorkerRequest = (data: unknown): data is PyodideWorkerRequest => {
+  if (typeof data !== 'object' || data === null) return false;
+  const request = data as Record<string, unknown>;
+  if (typeof request.id !== 'string') return false;
+  if (request.type === 'init') {
+    return request.indexUrl === undefined || typeof request.indexUrl === 'string';
+  }
+  if (request.type === 'evaluate') {
+    return typeof request.source === 'string' && typeof request.call === 'string';
+  }
+  return false;
+};
+
 workerScope.addEventListener('message', (event: MessageEvent<PyodideWorkerRequest>) => {
   const request = event.data;
+  if (!isWorkerRequest(request)) {
+    return;
+  }
   if (request.type === 'init') {
     ensurePyodide(request.indexUrl)
       .then(() => post({ id: request.id, type: 'ready' }))

@@ -37,27 +37,45 @@ const runExecute = async (id: string, sql: string, fixture: string | undefined):
   try {
     const SQL = await ensureSql();
     const db = new SQL.Database();
-    if (fixture) {
-      db.exec(fixture);
-    }
-    const results = db.exec(sql);
-    const last = results[results.length - 1];
-    if (!last) {
+    try {
+      if (fixture) {
+        db.exec(fixture);
+      }
+      const results = db.exec(sql);
+      const last = results[results.length - 1];
+      if (!last) {
+        post({ id, type: 'result', columns: [], rows: [] });
+        return;
+      }
+      const columns = [...last.columns];
+      const rows = last.values.map((row) => toRow(columns, row));
+      post({ id, type: 'result', columns, rows });
+    } finally {
       db.close();
-      post({ id, type: 'result', columns: [], rows: [] });
-      return;
     }
-    const columns = [...last.columns];
-    const rows = last.values.map((row) => toRow(columns, row));
-    db.close();
-    post({ id, type: 'result', columns, rows });
   } catch (error) {
     post({ id, type: 'error', message: error instanceof Error ? error.message : String(error) });
   }
 };
 
+const isWorkerRequest = (data: unknown): data is SqlWorkerRequest => {
+  if (typeof data !== 'object' || data === null) return false;
+  const request = data as Record<string, unknown>;
+  if (typeof request.id !== 'string') return false;
+  if (request.type === 'init') {
+    return request.wasmUrl === undefined || typeof request.wasmUrl === 'string';
+  }
+  if (request.type === 'execute') {
+    return typeof request.sql === 'string' && (request.fixture === undefined || typeof request.fixture === 'string');
+  }
+  return false;
+};
+
 workerScope.addEventListener('message', (event: MessageEvent<SqlWorkerRequest>) => {
   const request = event.data;
+  if (!isWorkerRequest(request)) {
+    return;
+  }
   if (request.type === 'init') {
     ensureSql(request.wasmUrl)
       .then(() => post({ id: request.id, type: 'ready' }))

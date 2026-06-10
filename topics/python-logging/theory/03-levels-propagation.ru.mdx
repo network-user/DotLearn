@@ -1,0 +1,166 @@
+---
+conceptId: levels-propagation
+title: Уровни и propagation
+estimatedMinutes: 45
+---
+
+# Имя логгера с точками - это адрес в дереве
+
+Вы завели `logging.getLogger("shop.orders")` и `logging.getLogger("shop.pay")`, и кажется, что это просто два независимых объекта с похожими именами. Но точка в имени - не украшение: она объявляет родство. `shop.orders` - ребёнок `shop`, а `shop` - ребёнок корневого logger-а. Это родство решает две вещи, которые иначе выглядят необъяснимо: почему сообщение, настроенное в одном logger-е, вдруг печатается обработчиком совсем другого, и почему один `setLevel` на родителе влияет на детей.
+
+К концу раздела Вы будете уверенно отвечать, дойдёт ли конкретное сообщение до вывода: сначала пройдёт ли оно фильтр по уровню, а затем - до чьих handler-ов поднимется по дереву. Это два разных механизма, и путаница между ними - источник большинства вопросов «почему мой лог не виден» и «почему он задвоился».
+
+## Ментальная модель: фильтр по уровню, потом подъём по дереву
+
+У записи на пути два независимых барьера. Первый - **уровень**: logger пропускает запись дальше, только если её уровень не ниже эффективного уровня logger-а. Второй - **propagation**: пройдя фильтр, запись отдаётся handler-ам этого logger-а, а затем поднимается к родителю и отдаётся **его** handler-ам, и так до корня. Не «или-или», а «сначала фильтр, потом подъём».
+
+<Figure caption="Запись от shop.pay сначала проходит фильтр уровня на самом логгере, затем поднимается по дереву к shop и root, отдаваясь handler-ам каждого предка на пути.">
+  <Sketch viewBox="0 0 440 240" title="Иерархия логгеров и propagation">
+    <SketchBox x={160} y={20} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={44} mono>root</SketchLabel>
+    <SketchArrow from={[220, 100]} to={[220, 60]} accent />
+
+    <SketchBox x={160} y={100} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={124} mono>shop</SketchLabel>
+    <SketchArrow from={[160, 190]} to={[200, 140]} accent />
+    <SketchArrow from={[330, 190]} to={[280, 140]} />
+
+    <SketchBox x={90} y={190} width={120} height={40} accent />
+    <SketchLabel x={150} y={214} mono accent>shop.pay</SketchLabel>
+    <SketchBox x={280} y={190} width={130} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={214} mono>shop.orders</SketchLabel>
+
+    <SketchLabel x={30} y={150} muted anchor="start">подъём записи</SketchLabel>
+  </Sketch>
+</Figure>
+
+На картинке запись, рождённая в `shop.pay`, пройдя свой фильтр, поднимается к `shop`, затем к `root` и по дороге задевает handler-ы каждого. Именно поэтому, прицепив один handler к корневому logger-у, Вы получаете вывод от всех дочерних - они делятся handler-ом предка.
+
+## Эффективный уровень: ищем вверх, пока не найдём
+
+Каждый logger может иметь собственный уровень. Если он не задан (значение `NOTSET`), logger берёт уровень ближайшего предка, у которого тот задан. Это и есть **эффективный** уровень.
+
+```python
+import logging
+
+logging.getLogger("shop").setLevel(logging.WARNING)
+child = logging.getLogger("shop.pay")
+
+print(child.level)
+print(logging.getLevelName(child.getEffectiveLevel()))
+```
+
+Печатается `0` и `WARNING`. Собственный уровень `child` - `0` (`NOTSET`, не задан), но эффективный - `WARNING`, унаследованный от `shop`. Поэтому `child.info(...)` будет отброшен: `INFO` ниже эффективного `WARNING`. Задайте порог один раз на `shop` - и он накроет всё поддерево, пока ребёнок не переопределит его явно.
+
+## Propagation поднимает запись к handler-ам предков
+
+Прошедшая фильтр запись по умолчанию идёт не только в handler-ы своего logger-а, но и вверх по дереву. Настроим handler только на родителе и убедимся, что ребёнок им пользуется.
+
+```python
+import logging
+import sys
+
+parent = logging.getLogger("svc")
+parent.setLevel(logging.INFO)
+parent.addHandler(logging.StreamHandler(sys.stdout))
+
+child = logging.getLogger("svc.db")
+child.info("ребёнок без своего handler-а")
+```
+
+Печатается `ребёнок без своего handler-а`. У `child` нет ни одного собственного handler-а, но запись поднялась к `svc` и вышла через его handler. Это объясняет распространённый паттерн: настроить вывод один раз на верхнем logger-е, а во всех модулях просто звать `getLogger(__name__)` и писать - вывод соберётся сам.
+
+<Callout type="warning">
+Подъём по дереву - причина задвоения логов в больших приложениях. Если handler стоит и на ребёнке, и на родителе, запись напечатается дважды: один раз handler-ом ребёнка, второй - handler-ом родителя после подъёма.
+</Callout>
+
+## Выключатель подъёма: propagate = False
+
+Подъём можно отключить, выставив у logger-а `propagate = False`. Тогда запись обслужат только его собственные handler-ы, а к предкам она не пойдёт.
+
+```python
+import logging
+import sys
+
+logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+quiet = logging.getLogger("quiet")
+quiet.setLevel(logging.INFO)
+quiet.propagate = False
+
+quiet.info("к корню я не поднимусь")
+```
+
+Ничего не печатается. У `quiet` нет своего handler-а, а `propagate = False` запретил подъём к handler-у корня, поэтому записи некуда выйти. Этим флагом отделяют шумную подсистему: вешают ей собственный handler и обрывают propagation, чтобы её строки не смешивались с общим потоком.
+
+## Потрогайте дерево руками
+
+Запустите код: handler стоит только на родителе `app`, и сообщение из `app.worker` поднимается к нему. Теперь раскомментируйте строку `worker.propagate = False` и запустите снова - подъём оборвётся, и сообщение исчезнет, потому что у самого `worker` handler-а нет. Затем верните propagation и поменяйте `app` setLevel на `logging.ERROR` - и `info` отфильтруется ещё до подъёма.
+
+<PyDemo
+  title="Уровень фильтрует, propagation поднимает"
+  code={`import logging
+import sys
+
+app = logging.getLogger("app")
+app.setLevel(logging.INFO)
+app.handlers.clear()
+app.addHandler(logging.StreamHandler(sys.stdout))
+
+worker = logging.getLogger("app.worker")
+worker.handlers.clear()
+# worker.propagate = False
+
+worker.info("привет от воркера")
+worker.debug("этого вы не увидите при INFO")`}
+/>
+
+Строка `worker.debug(...)` отброшена эффективным уровнем `INFO`, унаследованным от `app`, - она даже не доходит до стадии подъёма. Это и есть «сначала фильтр, потом propagation» в действии.
+
+## Краевой случай: уровень handler-а - второй, отдельный фильтр
+
+Вы выставили `logger.setLevel(logging.DEBUG)`, ждёте отладку, а её нет. Причина: у handler-а **свой** уровень, и он фильтрует второй раз, уже после logger-а.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("two.filters")
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.WARNING)
+logger.addHandler(handler)
+
+logger.debug("прошёл logger, но не handler")
+logger.warning("прошёл оба фильтра")
+```
+
+Печатается только `прошёл оба фильтра`. Сюрприз в том, что фильтров два, и оба должны пропустить запись. `debug` прошёл logger (`DEBUG`), но упёрся в handler (`WARNING`). Запись доходит до вывода, только если её уровень не ниже **и** уровня logger-а, **и** уровня каждого handler-а на пути.
+
+## Типичные ошибки
+
+- **Поднимать уровень на logger-е, забыв про handler.** Если handler настроен на `WARNING`, никакой `logger.setLevel(DEBUG)` не покажет отладку. Снижайте уровень там, где стоит барьер, - обычно на обоих.
+- **Удивляться задвоению после настройки и корня, и ребёнка.** Это работающий propagation, а не баг. Либо убирайте handler у одного из них, либо ставьте `propagate = False` на ребёнке.
+- **Вешать `propagate = False` и забывать дать свой handler.** Тогда записи logger-а вообще теряются: к предкам не идут, а своего выхода нет. Отключая подъём, обязательно дайте logger-у собственный handler.
+
+<Detail summary="Почему фильтр уровня и подъём - это два разных шага">
+
+Уровень и propagation отвечают на разные вопросы. Уровень: «достаточно ли это сообщение важное, чтобы вообще им заниматься?» Решается на logger-е один раз, по эффективному уровню, ещё до handler-ов. Propagation: «кто будет это сообщение выводить?» Решается обходом дерева вверх. Поэтому отброшенная по уровню запись не поднимается никуда - подниматься нечему. А запись, прошедшая фильтр, может выйти сразу через несколько handler-ов на разных уровнях дерева. Разделение позволяет настраивать «что важно» и «куда писать» независимо: первое - по подсистемам, второе - одной точкой на верхнем logger-е.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Точка в имени logger-а задаёт родство: shop.pay - ребёнок shop, shop - ребёнок root.",
+    "Эффективный уровень ищется вверх по дереву до первого предка с заданным уровнем (NOTSET наследует).",
+    "Прошедшая фильтр запись по умолчанию поднимается к handler-ам всех предков - так один handler на корне обслуживает всё дерево.",
+    "propagate = False обрывает подъём: запись обслужат только собственные handler-ы logger-а.",
+    "У handler-а свой уровень - это второй фильтр после уровня logger-а; запись должна пройти оба.",
+    "Задвоение логов - обычно работающий propagation: handler стоит и на ребёнке, и на предке.",
+  ]}
+/>
+
+## Ссылки
+
+- [Документация Python - объекты Logger и propagate](https://docs.python.org/3/library/logging.html#logging.Logger.propagate)
+- [Документация Python - getEffectiveLevel и уровни](https://docs.python.org/3/library/logging.html#logging.Logger.getEffectiveLevel)
+- [Документация Python - Logging HOWTO: Logger Flow](https://docs.python.org/3/howto/logging.html#logging-flow)

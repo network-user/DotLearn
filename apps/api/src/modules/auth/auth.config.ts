@@ -42,16 +42,23 @@ export const loadAuthConfig = (): AuthConfig => {
   const passwordHash = process.env.ADMIN_PASSWORD_HASH ?? '';
   const totpSecret = process.env.ADMIN_TOTP_SECRET ?? '';
   const accessSecret = process.env.ADMIN_JWT_SECRET ?? '';
-  const refreshSecret = process.env.ADMIN_REFRESH_SECRET ?? accessSecret;
+  const refreshSecret = process.env.ADMIN_REFRESH_SECRET ?? '';
   const missing: string[] = [];
   if (!login) missing.push('ADMIN_LOGIN');
   if (!passwordHash) missing.push('ADMIN_PASSWORD_HASH');
   if (!totpSecret) missing.push('ADMIN_TOTP_SECRET');
   if (!accessSecret) missing.push('ADMIN_JWT_SECRET');
+  if (!refreshSecret) missing.push('ADMIN_REFRESH_SECRET');
   if (missing.length > 0) {
     throw new Error(
       `Auth not configured. Set: ${missing.join(', ')}. ` +
         'Use pnpm admin:hash / admin:totp / admin:jwt-secret to generate them.',
+    );
+  }
+  if (refreshSecret === accessSecret) {
+    throw new Error(
+      'ADMIN_REFRESH_SECRET must differ from ADMIN_JWT_SECRET so a leaked access ' +
+        'secret cannot forge refresh tokens. Run pnpm admin:jwt-secret for two distinct values.',
     );
   }
   return {

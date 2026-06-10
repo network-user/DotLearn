@@ -1,0 +1,144 @@
+---
+conceptId: reading-and-fixing
+title: Чтение профиля и устранение N+1
+estimatedMinutes: 45
+---
+
+# Сто запросов - в один: где сворачивается N+1
+
+Вы научились считать запросы руками, фиксировать число тестом и снимать профиль через silk. Теперь самое полезное: превратить диагноз в исправление. Хорошая новость в том, что подавляющее большинство N+1 в Django чинятся двумя методами queryset - `select_related` и `prefetch_related`, - и выбор между ними определяется типом связи. Понять, какой из них применить, важнее, чем помнить синтаксис: неправильный метод либо не сработает, либо сам добавит лишних запросов.
+
+К концу раздела Вы научитесь по профилю с десятками одинаковых SELECT выбирать правильную стратегию предзагрузки, отличать связь, которую сворачивает JOIN, от связи, которую нужно догружать отдельным запросом, и проверять результат тем же счётчиком, что нашёл проблему. Это замыкает цикл: нашли - починили - закрепили тестом.
+
+## Ментальная модель: загрузить связи заранее, одним планом
+
+N+1 возникает, потому что ORM узнаёт о нужде в связанных данных слишком поздно - уже в цикле, по одному объекту за раз. Лекарство одно по своей сути: сказать ORM заранее, какие связи вам понадобятся, чтобы он загрузил их вместе с основным queryset. Тогда вместо «запрос за списком плюс по запросу на строку» получается «запрос за списком вместе со связями».
+
+<Figure caption="Слева наивный queryset: N+1 запросов. select_related сворачивает связь в JOIN (1 запрос), prefetch_related догружает её вторым запросом (2 запроса, не зависящих от N).">
+  <Sketch viewBox="0 0 470 220" title="Три стратегии загрузки связей">
+    <SketchLabel x={75} y={22} weight="bold" size={12}>all()</SketchLabel>
+    <SketchBox x={20} y={34} width={110} height={26} accent />
+    <SketchLabel x={75} y={51} mono size={10}>1 за списком</SketchLabel>
+    <SketchBox x={20} y={66} width={110} height={22} />
+    <SketchBox x={20} y={92} width={110} height={22} />
+    <SketchBox x={20} y={118} width={110} height={22} dashed />
+    <SketchLabel x={75} y={158} size={11}>1 + N</SketchLabel>
+    <SketchLabel x={235} y={22} weight="bold" size={12}>select_related</SketchLabel>
+    <SketchBox x={175} y={48} width={120} height={50} accent />
+    <SketchLabel x={235} y={68} mono size={10} accent>SELECT ... JOIN</SketchLabel>
+    <SketchLabel x={235} y={84} mono size={10} accent>customers</SketchLabel>
+    <SketchLabel x={235} y={158} size={11}>1 запрос</SketchLabel>
+    <SketchLabel x={400} y={22} weight="bold" size={12}>prefetch_related</SketchLabel>
+    <SketchBox x={345} y={42} width={110} height={28} accent />
+    <SketchLabel x={400} y={60} mono size={10} accent>SELECT orders</SketchLabel>
+    <SketchBox x={345} y={78} width={110} height={28} />
+    <SketchLabel x={400} y={96} mono size={10}>SELECT items IN (..)</SketchLabel>
+    <SketchLabel x={400} y={158} size={11}>2 запроса</SketchLabel>
+  </Sketch>
+</Figure>
+
+Различие справа - не стилистическое. `select_related` сворачивает связь в JOIN и тащит её тем же запросом; `prefetch_related` делает второй запрос и сшивает результаты в Python. Какой из двух применим, диктует тип связи, а не вкус.
+
+## select_related: связи «к одному» через JOIN
+
+`select_related` работает для связей, где у объекта ровно один связанный: `ForeignKey` и `OneToOneField`. Такую связь можно подтянуть JOIN-ом в тот же запрос - одна строка результата несёт и заказ, и его клиента.
+
+```python
+orders = Order.objects.select_related("customer")
+for order in orders:
+    print(order.customer.name)
+```
+
+Теперь весь цикл укладывается в один запрос: ORM добавил `JOIN customers` и заполнил `order.customer` сразу. Доступ `order.customer.name` больше не ходит в базу - объект уже в памяти. Если бы здесь стоял `Order.objects.all()`, тот же цикл дал бы N+1; единственное изменение - `select_related("customer")` - убирает все N дополнительных запросов.
+
+<Callout type="tip">
+Правило выбора простое: если идёте «к одному» (ForeignKey, OneToOne) - берите `select_related`. JOIN не размножает строки, потому что у каждого заказа один клиент, и всё помещается в один запрос.
+</Callout>
+
+## prefetch_related: связи «ко многим» отдельным запросом
+
+Для связей «ко многим» - `ManyToManyField` и обратная сторона `ForeignKey` (`customer.orders`) - JOIN не годится: он размножил бы строки и притащил бы декартово произведение. Поэтому `prefetch_related` делает отдельный запрос за всеми связанными объектами разом и сшивает их по ключу в Python.
+
+```python
+customers = Customer.objects.prefetch_related("orders")
+for customer in customers:
+    print(customer.name, len(customer.orders.all()))
+```
+
+Здесь два запроса независимо от числа клиентов: один за клиентами, один за всеми их заказами через `WHERE customer_id IN (...)`. Без `prefetch_related` каждый `customer.orders.all()` сделал бы свой запрос - снова N+1, но уже на обратной связи. Два запроса вместо 1+N - и число не растёт с данными.
+
+<Callout type="warning">
+`prefetch_related` загружает связь во второй запрос, выполняемый сразу. Но если внутри цикла вы вызовете `customer.orders.filter(...)`, Django выполнит *новый* запрос мимо предзагруженного кеша - и N+1 вернётся. Применяйте фильтрацию через `Prefetch(...)` заранее, а не в цикле.
+</Callout>
+
+## Краевой случай: «починил» и сделал хуже
+
+Предзагрузка не бесплатна, и наивное «добавлю select_related на всё» иногда вредит. `select_related` с несколькими ForeignKey строит JOIN по нескольким таблицам - и если связей много, один запрос становится тяжёлым и тащит больше данных, чем нужно. А `select_related` по связи «ко многим» Django вообще не позволит свернуть в один запрос - это не та форма связи.
+
+Удивляет другое: можно убрать N+1 и при этом замедлить страницу. Если вы вызвали `prefetch_related("orders")`, но в шаблоне заказы так и не понадобились, второй запрос ушёл впустую - вы загрузили данные, которые не используете. Предзагружать стоит ровно те связи, к которым код действительно обращается. Профайлер тут снова судья: после правки посмотрите, упало ли *общее* число запросов и не вырос ли объём одного запроса до неприличия.
+
+```python
+orders = (
+    Order.objects
+    .select_related("customer")
+    .prefetch_related("items")
+)
+```
+
+Так комбинируют оба метода: клиента «к одному» сворачивают JOIN-ом, а позиции заказа «ко многим» догружают отдельным запросом. Итог - константное число запросов вне зависимости от числа заказов и позиций.
+
+## Замыкаем цикл: проверяем профайлером
+
+Исправление без проверки - гипотеза. Тот же `assertNumQueries`, что ловил N+1, подтверждает, что его больше нет: оборачиваем код в ожидаемое константное число и убеждаемся, что оно не зависит от размера фикстуры.
+
+```python
+def test_list_is_constant_queries(self):
+    c = Customer.objects.create(name="Ada")
+    Order.objects.create(customer=c, total=10)
+    Order.objects.create(customer=c, total=20)
+    with self.assertNumQueries(1):
+        for o in Order.objects.select_related("customer"):
+            _ = o.customer.name
+```
+
+Добавьте в фикстуру третий, четвёртый заказ - тест должен оставаться зелёным с тем же `assertNumQueries(1)`. Если число запросов не растёт вместе со строками, N+1 устранён по-настоящему, а не замаскирован на маленьких данных. Это и есть критерий: запросов константа, а не функция от N.
+
+## Типичные ошибки
+
+- **Применять `select_related` к связи «ко многим».** Для `ManyToMany` и обратного `ForeignKey` он не работает как нужно - тут только `prefetch_related`. Метод выбирается по форме связи, а не наугад.
+- **Фильтровать предзагруженную связь в цикле.** `prefetch_related("orders")` с последующим `customer.orders.filter(...)` внутри цикла бьёт мимо кеша и возвращает N+1. Готовьте отфильтрованную связь через `Prefetch` заранее.
+- **Предзагружать связи, которые не используются.** Лишний `prefetch_related` добавляет запрос за данными, которые код не читает. Загружайте только то, к чему реально обращаетесь, и проверяйте профайлером, что общее число запросов упало.
+
+<Detail summary="Prefetch: фильтрация и переименование предзагрузки">
+
+Объект `Prefetch` даёт контроль над тем, *что именно* и *куда* предзагружается. Им можно сузить связанный queryset и положить результат в отдельный атрибут, чтобы не путать с полной связью:
+
+```python
+from django.db.models import Prefetch
+
+big_orders = Order.objects.filter(total__gt=100)
+customers = Customer.objects.prefetch_related(
+    Prefetch("orders", queryset=big_orders, to_attr="big_orders")
+)
+```
+
+Теперь `customer.big_orders` - готовый список только дорогих заказов, загруженный одним дополнительным запросом, а не фильтрацией в цикле. Это правильный способ применить условие к связи «ко многим» без возврата N+1: фильтр уходит в тот самый второй запрос, а не повторяется на каждой итерации.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "N+1 чинится предзагрузкой: сказать ORM о нужных связях заранее, чтобы он загрузил их вместе с основным queryset.",
+    "select_related сворачивает связи «к одному» (ForeignKey, OneToOne) в JOIN - один запрос на весь список.",
+    "prefetch_related догружает связи «ко многим» (ManyToMany, обратный ForeignKey) вторым запросом - всего два запроса вне зависимости от N.",
+    "Метод выбирается по форме связи: к одному - select_related, ко многим - prefetch_related; их можно комбинировать.",
+    "Фильтрация предзагруженной связи в цикле возвращает N+1; используйте Prefetch с queryset заранее.",
+    "Проверяйте исправление тем же счётчиком: assertNumQueries должен оставаться константой при росте фикстуры.",
+  ]}
+/>
+
+## Ссылки
+
+- [Django - select_related](https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related)
+- [Django - prefetch_related и Prefetch](https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related)
+- [Django - Database access optimization](https://docs.djangoproject.com/en/stable/topics/db/optimization/)

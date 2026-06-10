@@ -14,6 +14,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY topics ./topics
+COPY interview ./interview
 COPY apps/web ./apps/web
 
 RUN pnpm install --frozen-lockfile
@@ -27,6 +28,7 @@ FROM nginx:alpine AS runtime
 
 COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/web/security-headers.conf /etc/nginx/security-headers.conf
 
 EXPOSE 80
 
