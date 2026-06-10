@@ -1,30 +1,20 @@
 ---
-title: Encapsulation
-summary: How Python signals "private" attributes without enforcing it, and why properties are the right way to gate access.
+conceptId: encapsulation
+title: "Encapsulation: a contract, not a lock"
+estimatedMinutes: 45
 ---
 
-# Encapsulation
+# Encapsulation: a contract, not a lock
 
-Python has no `private` or `protected` keyword. Visibility is a **social
-contract** expressed through naming. Read this concept as: *what is the
-convention, and how do I add a real boundary when I need one?*
+On a Friday evening the tests go red: one user's account balance is -3400, even though no scenario in the app allows going below zero. A code search finds eleven places that write to `acc.balance` directly, and one of them forgot the check before the write. The guilty party is not the line that wrote the negative number - it is the design that let anyone write it.
 
-## The two leading-underscore conventions
+In Java or C++ you would mark the field `private` and the compiler would cut off all eleven call sites at once. Python has no such keyword: visibility here is an agreement expressed through names, plus one renaming mechanism and one access-interception mechanism. By the end of this article you will understand what a leading underscore really means, what an attribute with two underscores turns into, and how `property` turns a plain attribute into a controlled write point with validation.
 
-There are two conventions, with different meanings:
+## An invariant wants to live in one place
 
-- `_attr` — **single underscore**: "internal, please don't touch." Linters
-  and IDEs respect it; the language does not.
-- `__attr` — **double underscore**: triggers *name mangling*. Python
-  rewrites `self.__attr` to `self._ClassName__attr` so subclasses cannot
-  accidentally clobber it.
+A class is useful not because it stores data and functions side by side, but because it makes promises about its state: the balance is non-negative, the end date is after the start date, the cache agrees with its source. Such promises are called invariants. As long as any part of the program can write to an attribute, the invariant has to be guarded everywhere - and one day somebody forgets. Encapsulation narrows all write points down to a few methods, and the check lives in one place.
 
-<Callout type="tip" title="Use name mangling sparingly">
-Name mangling is for collision avoidance, not for "real privacy." If you
-just want to discourage external use, a single underscore is enough.
-</Callout>
-
-Try all three levels yourself — what happens on access from outside the class:
+Python approaches this without locks: the language does not forbid access, it labels it with names. A name without an underscore is the public interface. One leading underscore means "internal, do not rely on me." Two mean "internal to the point that Python renames it." Try accessing each of the three attributes from outside the class and see how the levels differ in practice:
 
 <AccessScope
   className="Account"
@@ -36,17 +26,86 @@ Try all three levels yourself — what happens on access from outside the class:
   ]}
 />
 
-## Property — the gate
+Next, let's take each level apart: what it guarantees, what it does not, and when to pick it.
 
-When you want to expose a value but **control access**, replace the bare
-attribute with a `property`. The instance still looks like it has an
-attribute, but you get a function call on every read or write.
+## One underscore: a note for humans
+
+The convention looks like this: an attribute that outsiders should not touch gets a leading underscore.
+
+```python
+class Account:
+    def __init__(self, owner, balance):
+        self.owner = owner
+        self._balance = balance
+
+    def deposit(self, amount):
+        if amount <= 0:
+            raise ValueError("amount must be positive")
+        self._balance += amount
+```
+
+<MarginNote label="PEP 8">PEP 8 calls a single leading underscore a "weak internal use indicator" - and that indicator is enough for most code.</MarginNote>
+
+`_balance` is reachable from outside exactly like `owner`: the expression `acc._balance` returns the value without a single runtime warning. The underscore is addressed to humans and tools: an IDE will not offer `_balance` in autocomplete outside the class, a linter will flag the access, and `from module import *` skips underscored names. That is the contract: the class author says "I may rename or delete this field at any moment," the reader promises not to depend on it. The contract can be broken, but the violation is visible in a diff and easy to catch in review.
+
+## Two underscores: a rename, not a lock
+
+With two leading underscores a language mechanism kicks in - name mangling. Inside a class body, every identifier of the form `__name` (without two trailing underscores) is rewritten to `_ClassName__name`. This happens when the class body is compiled, before a single line runs.
+
+```python
+class Account:
+    def __init__(self, owner, balance):
+        self.owner = owner
+        self.__balance = balance
+```
+
+When `__init__` runs, the attribute stored on the object is not named `__balance` but `_Account__balance`. Look at the instance contents in the figure: there is simply no `__balance` attribute in it.
+
+<Figure caption="There is no __balance attribute inside the object: the compiler rewrote the name to _Account__balance before __init__ ever ran.">
+  <ObjectMemoryFigure
+    title="Name mangling inside the instance"
+    objects={[
+      {
+        name: 'acc',
+        className: 'Account',
+        attrs: { owner: "'Ada'", '_Account__balance': '100' },
+      },
+    ]}
+  />
+</Figure>
+
+The outside behaviour follows from this. Accessing `acc.__balance` outside the class fails with `AttributeError` not because Python checked access rights, but because no attribute with that name exists: outside the class body the rename does not apply, and the interpreter looks for a literal `__balance`. Meanwhile `acc._Account__balance` works - it is the attribute's real name, and nothing protects it: you can read it and even overwrite it.
+
+<PullQuote>Two underscores are not a lock on the door - they are a different name plate on it.</PullQuote>
+
+Check both paths yourself:
 
 <PyDemo
-  title="Property gate"
+  title="Direct access vs the mangled name"
   code={`class Account:
-    def __init__(self, balance):
-        self._balance = balance
+    def __init__(self, owner, balance):
+        self.owner = owner
+        self.__balance = balance
+
+acc = Account("Ada", 100)
+print(vars(acc))
+print(acc._Account__balance)`}
+/>
+
+Run the code: `vars(acc)` shows the instance's real attribute names. Now replace the last line with `print(acc.__balance)` and confirm you get an `AttributeError`. Then a third experiment: add `acc._Account__balance = -100` before the `print` - the write goes through without objection. No protection, just a rename.
+
+Why does the mechanism exist at all, then? To guard against accidental name collisions under inheritance - details in the deep dive below. If you are not writing a base class for other people's subclasses, you almost never need two underscores: one is enough.
+
+## property: a real checkpoint
+
+Conventions mark the boundary but do not guard it. When an invariant really matters, you need to intercept writes - and Python has `property` for that. From the outside the attribute looks ordinary, but every read goes through the getter and every assignment goes through the setter.
+
+<PyDemo
+  title="A setter with validation"
+  code={`class Account:
+    def __init__(self, owner, balance):
+        self.owner = owner
+        self.balance = balance
 
     @property
     def balance(self):
@@ -58,34 +117,112 @@ attribute, but you get a function call on every read or write.
             raise ValueError("balance cannot be negative")
         self._balance = value
 
-a = Account(100)
-print(a.balance)
-a.balance = 50
-print(a.balance)`}
+acc = Account("Ada", 100)
+acc.balance -= 30
+print(acc.balance)`}
 />
 
-The getter looks like attribute access, the setter validates. If you ever
-add this gate later, callers do not change.
+Notice `__init__`: it assigns `self.balance = balance`, passing through the same setter as external code. The check is written once and fires both when the object is created and on every later assignment. Try it: change `-= 30` to `-= 200` and run - the setter rejects the negative balance. Then create an account that starts negative, `Account("Ada", -5)`, and the check fires there too.
 
-## Name mangling in action
+The real value sits in `self._balance` - an ordinary attribute with a single underscore. The convention and `property` work as a pair: the public name `balance` became the gate, the internal `_balance` holds the data.
 
-<PyStepper
-  title="What __ does at runtime"
-  code={`class Box:
+The setter is optional, by the way. A `property` without a setter is a read-only attribute, and also a convenient way to declare a computed value:
+
+```python
+class Card:
+    def __init__(self, number):
+        self._number = number
+
+    @property
+    def masked(self):
+        return "**** " + self._number[-4:]
+```
+
+`Card("1234 5678 9012 4242").masked` returns `'**** 4242'`, and an attempt to assign `card.masked = "x"` fails with `AttributeError: property 'masked' of 'Card' object has no setter`. The value is not stored on the object at all: it is computed on every read and can never drift out of sync with `_number`.
+
+## When a plain attribute is enough
+
+The main reason Python programmers do not write getters and setters preemptively: switching from a plain attribute to a `property` does not change calling code. In Java, a field once published directly can no longer be wrapped with a check without editing every call site, so accessors are written up front. In Python, `acc.balance` looks the same for an attribute and for a `property` - you can add the gate on the day you need it.
+
+<Callout type="tip" title="Do not write getters up front">
+A pair of get_x and set_x methods with no logic is a habit carried over from other languages. In Python it is noise: a plain attribute can become a property later without touching calling code.
+</Callout>
+
+The default rule is simple. Start with a public attribute: most state is public. Add `_` when the field is an implementation detail. Add a `property` when validation, computation, or a read-only field appears. And reach for `__` only when you are writing a class that strangers will subclass.
+
+## What will surprise you
+
+The rename has precise boundaries, and they are easy to trip over.
+
+First: names with two underscores on both sides are not mangled. That is why `__init__`, `__repr__`, and the other dunder names work as usual - the mechanism only touches names of the form `__name`.
+
+Second: the rename is tied to the class whose body contains the code, not to the object's type. If a method of class `Reporter` accesses `account.__balance`, the compiler rewrites it to `account._Reporter__balance` - and the lookup fails, because the attribute is named `_Account__balance`. Another class's "private" attributes are unreachable even under their original name.
+
+Third, and most treacherous: a check in `__init__` without a `property` guards nothing except the moment of creation.
+
+```python
+class Account:
+    def __init__(self, balance):
+        if balance < 0:
+            raise ValueError("negative balance")
+        self.balance = balance
+
+acc = Account(100)
+acc.balance = -3400
+```
+
+The constructor rejects a negative balance, and the assignment one line below silently writes it. This is exactly the bug from the start of the article: there is a check, but it stands at the wrong door. Validation of state that can change after creation lives in a `property` setter, and `__init__` assigns through it.
+
+## Common mistakes
+
+**Treating `__` as security.** Symptom: a secret is stored in a double-underscore attribute in the belief that outsiders cannot reach it. Why it happens: the analogy with `private` from other languages. In reality `__pin` sits on the object under the name `_Account__pin`, readable and writable by any code. Mangling protects against name collisions, not against reading; sensitive data needs proper tooling, not attribute names.
+
+**A `property` without a setter, then an assignment.** Symptom: `AttributeError: property ... has no setter` (older Pythons say `can't set attribute`) on an innocent-looking assignment. Why it happens: `@property` defines only the read path; the write path appears only with `@name.setter`. The fix is one of two: add a setter, or accept that the field is read-only and mutate the internal `_name` from within the class.
+
+**Validating only in `__init__`.** Symptom: the object is created valid and breaks later, on an ordinary assignment. Why it happens: the constructor feels like the only entry point for data, while attribute assignment is available at all times. The fix is to move the check into a `property` setter; the constructor assigns through the public name and automatically passes the same check.
+
+<Detail summary="How mangling interacts with inheritance">
+
+The mechanism's true purpose shows up with two classes:
+
+```python
+class Base:
     def __init__(self):
-        self.__secret = 42
+        self.__id = "base"
 
-b = Box()
-print(b._Box__secret)`}
+    def base_id(self):
+        return self.__id
+
+class Child(Base):
+    def __init__(self):
+        super().__init__()
+        self.__id = "child"
+
+c = Child()
+print(vars(c))
+```
+
+Output: `{'_Base__id': 'base', '_Child__id': 'child'}`. Each class got its own attribute: code inside `Base` was compiled with `__id` replaced by `_Base__id`, code inside `Child` with `_Child__id`. That is why `c.base_id()` still returns `'base'`: the parent's method is physically unable to accidentally read the child's field, and vice versa.
+
+This is what mangling was invented for. A base class inherited by dozens of unknown subclasses shields its internals from accidental name matches: a subclass can introduce its own `__id` without breaking anything. The flip side: if a subclass legitimately needs the parent's field, it has to write `self._Base__id` with someone else's class name in the middle of its code - a sure sign the field should have had a single underscore and been part of the protocol for subclasses.
+
+The substitution is textual and total: every identifier of the form `__name` in the class body, including method names and accesses on other objects, goes through it.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Encapsulation exists so a class invariant is checked in one place, not at every write site.",
+    "A single leading underscore is an agreement for humans and tools; the language does not enforce it.",
+    "Two underscores trigger name mangling: __attr becomes _ClassName__attr; it guards against inheritance collisions, not against access.",
+    "property intercepts reads and writes; setter validation fires in __init__ too, as long as you assign through the public name.",
+    "A property without a setter gives you read-only fields and computed values.",
+    "Start with plain public attributes: you can turn them into properties later without changing calling code.",
+  ]}
 />
 
-Step through and watch how the local `self.__secret` becomes the
-mangled `_Box__secret` on the instance. The original attribute name no
-longer exists.
+## References
 
-## Rule of thumb
-
-1. Default to **public**. Most state is public.
-2. Add a leading `_` when the attribute is an implementation detail.
-3. Use `@property` to add validation, lazy computation, or read-only fields.
-4. Reach for `__name` only when subclasses might collide.
+- [Python tutorial: private variables and name mangling](https://docs.python.org/3/tutorial/classes.html#private-variables)
+- [Built-in property documentation](https://docs.python.org/3/library/functions.html#property)
+- [PEP 8: naming conventions](https://peps.python.org/pep-0008/#descriptive-naming-styles)

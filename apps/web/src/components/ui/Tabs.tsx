@@ -21,11 +21,7 @@ interface TabsListProps {
 
 export const TabsList = ({ className, children }: TabsListProps) => (
   <RadixTabs.List
-    className={cx(
-      'inline-flex items-center gap-1 rounded-pill border border-border-base bg-surface/40 p-1 backdrop-blur-soft',
-      'self-start',
-      className,
-    )}
+    className={cx('inline-flex items-center gap-4 border-b border-border-base', 'self-start', className)}
   >
     {children}
   </RadixTabs.List>
@@ -41,9 +37,9 @@ export const TabsTrigger = ({ value, className, children }: TabsTriggerProps) =>
   <RadixTabs.Trigger
     value={value}
     className={cx(
-      'relative inline-flex items-center gap-1.5 rounded-pill px-3 py-2.5 sm:py-1 text-[13px] font-medium tracking-snug text-fg-muted',
+      'relative -mb-px inline-flex items-center gap-1.5 border-b-2 border-transparent px-1 py-2.5 sm:py-2 text-[13px] font-medium tracking-snug text-fg-muted',
       'transition-colors duration-fast hover:text-fg',
-      'data-[state=active]:bg-surface data-[state=active]:text-fg data-[state=active]:shadow-card',
+      'data-[state=active]:border-accent data-[state=active]:text-fg',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
       className,
     )}

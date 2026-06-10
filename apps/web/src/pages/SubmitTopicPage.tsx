@@ -103,13 +103,13 @@ export const SubmitTopicPage = () => {
 
   if (submitted) {
     return (
-      <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/30 p-8 text-center">
-        <h2 className="font-semibold text-emerald-200">{t('successTitle')}</h2>
-        <p className="mt-2 text-sm text-emerald-300/80">{t('successMessage')}</p>
+      <div className="rounded-lg border border-ok/30 bg-ok/10 p-8 text-center">
+        <h2 className="font-semibold text-ok">{t('successTitle')}</h2>
+        <p className="mt-2 text-sm text-fg-muted">{t('successMessage')}</p>
         <button
           type="button"
           onClick={() => navigate({ to: '/' })}
-          className="mt-5 px-4 py-2 rounded-md bg-emerald-500 text-emerald-950 font-medium hover:bg-emerald-400"
+          className="mt-5 px-4 py-2 rounded-md bg-ok text-surface dark:text-canvas font-medium hover:bg-ok/90"
         >
           {tCommon('backToTopics')}
         </button>
@@ -241,7 +241,7 @@ export const SubmitTopicPage = () => {
         </div>
 
         {errors.length > 0 ? (
-          <ul className="rounded-md border border-rose-900/40 bg-rose-950/30 p-3 text-sm text-rose-300 space-y-1">
+          <ul className="rounded-md border border-err/30 bg-err/10 p-3 text-sm text-err space-y-1">
             {errors.map((message) => (
               <li key={message}>{message}</li>
             ))}
@@ -251,27 +251,11 @@ export const SubmitTopicPage = () => {
         <button
           type="submit"
           disabled={submitting}
-          className="px-4 py-2 rounded-md bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white font-medium"
+          className="px-4 py-2 rounded-md bg-accent hover:bg-accent/90 disabled:opacity-50 text-surface dark:text-canvas font-medium"
         >
           {submitting ? t('submitting') : t('submit')}
         </button>
       </form>
-
-      <style>{`
-        .form-input {
-          width: 100%;
-          background-color: rgb(24 24 27 / 0.6);
-          border: 1px solid rgb(39 39 42);
-          border-radius: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          color: rgb(244 244 245);
-          font-size: 0.875rem;
-        }
-        .form-input:focus {
-          outline: none;
-          border-color: rgb(99 102 241);
-        }
-      `}</style>
     </div>
   );
 };
@@ -329,15 +313,15 @@ const LanguagesPicker = ({
               className={
                 'flex items-center gap-2 rounded-md border px-3 py-1.5 cursor-pointer text-sm ' +
                 (active
-                  ? 'border-indigo-500/60 bg-indigo-500/10 text-fg'
-                  : 'border-border-base bg-canvas/40 text-fg-muted hover:border-border-strong')
+                  ? 'border-accent/60 bg-accent/10 text-fg'
+                  : 'border-border-base bg-surface text-fg-muted hover:border-border-strong')
               }
             >
               <input
                 type="checkbox"
                 checked={active}
                 onChange={() => toggle(lang)}
-                className="accent-indigo-500"
+                className="accent-[rgb(var(--accent-1))]"
               />
               <span className="uppercase tracking-wide">{lang}</span>
             </label>
@@ -354,7 +338,7 @@ const LanguagesPicker = ({
                 name="primary-language"
                 checked={primary === lang}
                 onChange={() => setPrimary(lang)}
-                className="accent-indigo-500"
+                className="accent-[rgb(var(--accent-1))]"
               />
               <span className="uppercase tracking-wide text-fg">{lang}</span>
             </label>

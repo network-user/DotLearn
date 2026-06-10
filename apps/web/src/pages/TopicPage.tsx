@@ -9,13 +9,12 @@ import { useTranslation } from 'react-i18next';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
 import { TheoryContent } from '@/components/TheoryContent';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
-import { GlassSurface } from '@/components/ui/GlassSurface';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
 import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
@@ -65,9 +64,9 @@ export const TopicPage = () => {
 
   if (state.kind === 'error') {
     return (
-      <GlassSurface intensity="medium" bordered className="rounded-2xl">
+      <Surface rule="left" className="border-l-err">
         <div className="p-6">
-          <h2 className="font-display text-2xl text-rose-300">{t('failed')}</h2>
+          <h2 className="font-display text-2xl text-err">{t('failed')}</h2>
           <p className="mt-2 text-sm text-fg-muted">{state.message}</p>
           <Link to="/">
             <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />} className="mt-4">
@@ -75,7 +74,7 @@ export const TopicPage = () => {
             </Button>
           </Link>
         </div>
-      </GlassSurface>
+      </Surface>
     );
   }
 
@@ -125,12 +124,12 @@ export const TopicPage = () => {
         streak={streak}
       />
       {showFallbackBanner && (
-        <GlassSurface intensity="subtle" bordered className="rounded-xl">
-          <div className="px-4 py-3 text-sm text-amber-300 flex items-center gap-2">
+        <Surface variant="inset" rule="left" className="border-l-warn">
+          <div className="px-4 py-3 text-sm text-warn flex items-center gap-2">
             <Flame size={14} />
             {t('fallbackBanner', { language: t(`languages.${usedLang}` as const) })}
           </div>
-        </GlassSurface>
+        </Surface>
       )}
       <ConceptStrip
         bundle={bundle}
@@ -151,6 +150,7 @@ export const TopicPage = () => {
               <ConceptPanel
                 slug={slug}
                 concept={activeManifestConcept}
+                index={activeIndex}
                 theoryFiles={theoryFilenames}
                 exercises={conceptExercises}
                 passed={conceptPassed}
@@ -184,31 +184,31 @@ const TopicHeader = ({ manifest, passed, totalExercises, streak }: TopicHeaderPr
   const { t } = useTranslation('topic');
   const ratio = totalExercises === 0 ? 0 : passed / totalExercises;
   return (
-    <GlassSurface intensity="strong" tint="accent" bordered noiseOverlay className="rounded-2xl">
-      <div className="p-6 flex flex-wrap items-start justify-between gap-6">
-        <div className="space-y-3 min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] uppercase tracking-widest text-fg-subtle">
-            <Badge tone="accent" variant="soft">
-              {manifest.runtime}
-            </Badge>
-            <Badge tone="neutral" variant="outline">
-              {manifest.difficulty}
-            </Badge>
+    <header className="border-y border-border-base py-6 sm:py-8">
+      <div className="flex flex-wrap items-start justify-between gap-6">
+        <div className="space-y-4 min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 eyebrow">
+            <span className="text-accent">{manifest.runtime}</span>
+            <span aria-hidden>·</span>
+            <span>{manifest.difficulty}</span>
+            <span aria-hidden>·</span>
             <span>~{manifest.estimatedHours}h</span>
             {streak > 0 && (
-              <Badge tone="warning" variant="soft" icon={<Flame size={12} />}>
-                {t('streak', { count: streak })}
-              </Badge>
+              <>
+                <span aria-hidden>·</span>
+                <span className="inline-flex items-center gap-1 text-warn">
+                  <Flame size={12} />
+                  {t('streak', { count: streak })}
+                </span>
+              </>
             )}
           </div>
-          <h1 className="font-display text-[clamp(28px,4vw,40px)] leading-tight tracking-tightish text-balance">
+          <h1 className="font-display font-medium text-[clamp(32px,5vw,52px)] leading-[1.08] tracking-tightish text-balance">
             {manifest.title}
           </h1>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 eyebrow text-fg-subtle">
             {manifest.tags.map((tag) => (
-              <Badge key={tag} tone="neutral" variant="soft">
-                {tag}
-              </Badge>
+              <span key={tag}>{tag}</span>
             ))}
           </div>
         </div>
@@ -216,12 +216,10 @@ const TopicHeader = ({ manifest, passed, totalExercises, streak }: TopicHeaderPr
           <ProgressRing
             value={ratio}
             size={72}
-            stroke={6}
-            indicatorClassName={
-              ratio === 1 ? 'text-emerald-400' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'
-            }
+            stroke={3}
+            indicatorClassName={ratio === 1 ? 'text-ok' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'}
             label={
-              <span className="tabular-nums text-[13px]">
+              <span className="tabular-nums text-[13px] font-display">
                 {Math.round(ratio * 100)}
                 <span className="text-[9px] text-fg-subtle">%</span>
               </span>
@@ -236,7 +234,7 @@ const TopicHeader = ({ manifest, passed, totalExercises, streak }: TopicHeaderPr
           </div>
         </div>
       </div>
-    </GlassSurface>
+    </header>
   );
 };
 
@@ -277,70 +275,62 @@ const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
       const active = concept.id === activeConceptId;
       const { passed, total, ratio, done } = conceptStatOf(bundle, progress, concept.id);
       return (
-            <li key={concept.id}>
-              <button
-                type="button"
-                onClick={() => onSelect(concept.id)}
-                className={cx(
-                  'relative w-full text-left px-4 py-3 border-b border-border-base/40 last:border-b-0 transition-colors',
-                  active ? 'bg-accent/8 text-fg' : 'text-fg hover:bg-surface-2/40',
-                )}
-                aria-current={active ? 'true' : undefined}
-              >
-                {active && (
-                  <span
-                    aria-hidden
-                    className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-accent via-accent-2 to-accent-3"
-                  />
-                )}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span
-                      className={cx(
-                        'grid place-items-center size-6 rounded-md font-mono text-[11px] tabular-nums shrink-0',
-                        done
-                          ? 'bg-emerald-500/15 text-emerald-300'
-                          : active
-                            ? 'bg-accent/15 text-accent'
-                            : 'bg-surface-2/80 text-fg-subtle',
-                      )}
-                    >
-                      {done ? <Check size={12} /> : index + 1}
-                    </span>
-                    <span className="text-[13.5px] font-medium truncate">{concept.title}</span>
-                  </div>
-                  <span className="text-[10px] text-fg-subtle tabular-nums shrink-0">
-                    {concept.estimatedMinutes}m
-                  </span>
-                </div>
-                <div className="mt-2 pl-[34px] flex items-center gap-2">
-                  <div className="flex-1 h-1 rounded-full bg-surface-2/60 overflow-hidden">
-                    <div
-                      className={cx(
-                        'h-full transition-[width] duration-slow',
-                        done ? 'bg-emerald-400' : 'bg-gradient-to-r from-accent to-accent-2',
-                      )}
-                      style={{ width: `${Math.round(ratio * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-fg-subtle tabular-nums">
-                    {passed}/{total}
-                  </span>
-                </div>
-              </button>
-            </li>
-          );
-        })}
+        <li key={concept.id}>
+          <button
+            type="button"
+            onClick={() => onSelect(concept.id)}
+            className={cx(
+              'relative w-full text-left px-4 py-3 border-b border-border-base/60 last:border-b-0 transition-colors',
+              active ? 'bg-accent/[0.06] text-fg' : 'text-fg hover:bg-surface-2/50',
+            )}
+            aria-current={active ? 'true' : undefined}
+          >
+            {active && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent" />}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-baseline gap-2.5 min-w-0">
+                <span
+                  className={cx(
+                    'chapter-no text-[15px] tabular-nums shrink-0 w-6',
+                    done ? 'text-ok' : active ? 'text-accent' : undefined,
+                  )}
+                >
+                  {done ? <Check size={13} className="inline" /> : String(index + 1).padStart(2, '0')}
+                </span>
+                <span className="text-[13.5px] font-medium truncate">{concept.title}</span>
+              </div>
+              <span className="text-[10px] text-fg-subtle tabular-nums shrink-0">
+                {concept.estimatedMinutes}m
+              </span>
+            </div>
+            <div className="mt-2 pl-[34px] flex items-center gap-2">
+              <div className="flex-1 h-px bg-border-base overflow-visible">
+                <div
+                  className={cx('h-[2px] -mt-px transition-[width] duration-slow', done ? 'bg-ok' : 'bg-accent')}
+                  style={{ width: `${Math.round(ratio * 100)}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-fg-subtle tabular-nums">
+                {passed}/{total}
+              </span>
+            </div>
+          </button>
+        </li>
+      );
+    })}
   </ol>
 );
 
-const ConceptRail = (props: ConceptRailProps) => (
-  <aside className="hidden lg:block lg:sticky lg:top-24 self-start">
-    <GlassSurface intensity="medium" bordered className="rounded-2xl overflow-hidden">
-      <ConceptList {...props} />
-    </GlassSurface>
-  </aside>
-);
+const ConceptRail = (props: ConceptRailProps) => {
+  const { t } = useTranslation('topic');
+  return (
+    <aside className="hidden lg:block lg:sticky lg:top-24 self-start">
+      <div className="eyebrow pb-2 border-b-2 border-fg/80 mb-0">{t('contents')}</div>
+      <Surface bordered={false} className="rounded-none border-b border-border-base">
+        <ConceptList {...props} />
+      </Surface>
+    </aside>
+  );
+};
 
 const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => {
   const { t } = useTranslation('topic');
@@ -357,11 +347,9 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
   }, [activeConceptId, reduceMotion]);
 
   return (
-    <div className="lg:hidden sticky top-[calc(var(--layout-nav-h)+12px)] z-[var(--z-aside)]">
-      <div className="glass glass--medium glass--bordered rounded-2xl">
-        <span aria-hidden className="glass__highlight" />
-        <span aria-hidden className="glass__shine" />
-        <div className="glass__content flex items-center gap-2 px-2 py-2">
+    <div className="lg:hidden sticky top-[calc(var(--layout-nav-h)+2px)] z-[var(--z-aside)]">
+      <Surface variant="chrome" className="rounded-lg">
+        <div className="flex items-center gap-2 px-2 py-2">
           <button
             type="button"
             onClick={() => setListOpen(true)}
@@ -382,36 +370,29 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
                     onClick={() => onSelect(concept.id)}
                     aria-current={active ? 'true' : undefined}
                     className={cx(
-                      'relative h-11 pl-2 pr-3 rounded-xl border flex items-center gap-2 transition-colors',
+                      'relative h-11 pl-2 pr-3 rounded-md border flex items-center gap-2 transition-colors',
                       active
-                        ? 'border-accent/40 bg-accent/10 text-fg'
-                        : 'border-border-base text-fg-muted hover:bg-surface-2/40',
+                        ? 'border-accent/50 bg-accent/[0.07] text-fg'
+                        : 'border-border-base text-fg-muted hover:bg-surface-2/50',
                     )}
                   >
                     <span
                       className={cx(
-                        'grid place-items-center size-6 rounded-md font-mono text-[11px] tabular-nums shrink-0',
-                        done
-                          ? 'bg-emerald-500/15 text-emerald-300'
-                          : active
-                            ? 'bg-accent/15 text-accent'
-                            : 'bg-surface-2/80 text-fg-subtle',
+                        'chapter-no text-[13px] tabular-nums shrink-0',
+                        done ? 'text-ok' : active ? 'text-accent' : undefined,
                       )}
                     >
-                      {done ? <Check size={12} /> : index + 1}
+                      {done ? <Check size={12} className="inline" /> : String(index + 1).padStart(2, '0')}
                     </span>
                     <span className="text-[13px] font-medium truncate max-w-[40vw]">
                       {concept.title}
                     </span>
                     <span
                       aria-hidden
-                      className="absolute inset-x-2 bottom-[3px] h-0.5 rounded-full bg-surface-2/60 overflow-hidden"
+                      className="absolute inset-x-2 bottom-[3px] h-px bg-border-base overflow-visible"
                     >
                       <span
-                        className={cx(
-                          'block h-full',
-                          done ? 'bg-emerald-400' : 'bg-gradient-to-r from-accent to-accent-2',
-                        )}
+                        className={cx('block h-[2px] -mt-px', done ? 'bg-ok' : 'bg-accent')}
                         style={{ width: `${Math.round(ratio * 100)}%` }}
                       />
                     </span>
@@ -421,7 +402,7 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
             })}
           </ol>
         </div>
-      </div>
+      </Surface>
       <Dialog
         open={listOpen}
         onOpenChange={setListOpen}
@@ -457,9 +438,9 @@ const ConceptTransition = ({
     <AnimatePresence mode="wait" initial={false}>
       <motion.div
         key={conceptId}
-        initial={{ opacity: 0, y: 10, filter: 'blur(5px)' }}
-        animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-        exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4 }}
         transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
       >
         {children}
@@ -471,13 +452,22 @@ const ConceptTransition = ({
 interface ConceptPanelProps {
   slug: string;
   concept: TopicBundle['manifest']['concepts'][number];
+  index: number;
   theoryFiles: string[];
   exercises: Exercise[];
   passed: number;
   ratio: number;
 }
 
-const ConceptPanel = ({ slug, concept, theoryFiles, exercises, passed, ratio }: ConceptPanelProps) => {
+const ConceptPanel = ({
+  slug,
+  concept,
+  index,
+  theoryFiles,
+  exercises,
+  passed,
+  ratio,
+}: ConceptPanelProps) => {
   const { t } = useTranslation('topic');
   const theories = useMemo(
     () => theoryFiles.map((filename) => ({ filename, resolved: getTheory(slug, filename) })),
@@ -485,33 +475,36 @@ const ConceptPanel = ({ slug, concept, theoryFiles, exercises, passed, ratio }: 
   );
   return (
     <article className="space-y-8">
-      <header className="space-y-2">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-fg-subtle">
-          <BookOpen size={12} />
-          {t('theory')}
-          <span>·</span>
-          <span className="text-fg-muted">{concept.estimatedMinutes} min</span>
+      <header>
+        <div className="flex items-center gap-2.5 eyebrow">
+          <span className="text-accent">{t('chapter', { n: index + 1 })}</span>
+          <span aria-hidden>·</span>
+          <span className="inline-flex items-center gap-1">
+            <BookOpen size={12} />
+            {t('readingTime', { minutes: concept.estimatedMinutes })}
+          </span>
         </div>
-        <h2 className="font-display text-3xl leading-tight tracking-tightish text-fg">
+        <h2 className="mt-3 font-display font-medium text-[clamp(26px,3.5vw,34px)] leading-[1.15] tracking-tightish text-fg text-balance">
           {concept.title}
         </h2>
+        <span aria-hidden className="mt-4 block h-0.5 w-14 bg-accent" />
       </header>
 
       <div data-toc-root className="theory-root max-w-prose">
         {theories.map(({ filename, resolved }) => (
           <section key={filename}>
             {resolved ? (
-              <Suspense fallback={<Skeleton rounded="xl" className="h-40" />}>
+              <Suspense fallback={<Skeleton rounded="lg" className="h-40" />}>
                 <TheoryContent Component={resolved.Component} />
               </Suspense>
             ) : (
-              <p className="text-rose-300 text-sm">{t('theoryMissing', { filename })}</p>
+              <p className="text-err text-sm">{t('theoryMissing', { filename })}</p>
             )}
           </section>
         ))}
       </div>
 
-      <section className="space-y-4 pt-2">
+      <section className="space-y-4 pt-4 border-t-2 border-fg/80">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-display text-2xl text-fg tracking-tightish">{t('practice')}</h3>
           <span className="text-[12px] text-fg-muted tabular-nums">
@@ -519,9 +512,9 @@ const ConceptPanel = ({ slug, concept, theoryFiles, exercises, passed, ratio }: 
           </span>
         </div>
         {exercises.length === 0 ? (
-          <GlassSurface intensity="subtle" bordered className="rounded-xl">
+          <Surface variant="inset">
             <p className="px-4 py-6 text-sm text-fg-subtle italic">{t('noExercises')}</p>
-          </GlassSurface>
+          </Surface>
         ) : (
           <div className="space-y-4 stagger">
             {exercises.map((exercise) => (
@@ -545,23 +538,23 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
   const { t } = useTranslation('topic');
   if (!prevTitle && !nextTitle) return null;
   return (
-    <div className="flex items-stretch justify-between gap-3 pt-2">
+    <div className="flex items-stretch justify-between gap-3 pt-4 border-t border-border-base">
       <button
         type="button"
         onClick={onPrev}
         disabled={!prevTitle}
         className={cx(
-          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-left transition',
-          'hover:border-accent/40 hover:bg-surface-2/40 disabled:opacity-30 disabled:cursor-not-allowed',
+          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] px-2 py-2 text-left transition-colors',
+          'disabled:opacity-30 disabled:cursor-not-allowed group',
           'flex items-center gap-3',
         )}
       >
-        <ArrowLeft size={16} className="text-fg-subtle" />
+        <ArrowLeft size={16} className="text-fg-subtle group-hover:text-accent transition-colors" />
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-widest text-fg-subtle">
-            {t('prevConcept')}
+          <div className="eyebrow text-[10px]">{t('prevConcept')}</div>
+          <div className="text-[14px] font-serif text-fg truncate group-hover:underline decoration-accent/50 underline-offset-2">
+            {prevTitle ?? '—'}
           </div>
-          <div className="text-[13.5px] font-medium text-fg truncate">{prevTitle ?? '—'}</div>
         </div>
       </button>
       <button
@@ -569,16 +562,16 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
         onClick={onNext}
         disabled={!nextTitle}
         className={cx(
-          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] rounded-xl border border-border-base bg-surface/40 backdrop-blur-soft px-4 py-3 text-right transition',
-          'hover:border-accent/40 hover:bg-surface-2/40 disabled:opacity-30 disabled:cursor-not-allowed',
+          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] px-2 py-2 text-right transition-colors',
+          'disabled:opacity-30 disabled:cursor-not-allowed group',
           'flex items-center justify-end gap-3',
         )}
       >
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-widest text-fg-subtle">
-            {t('nextConcept')}
+          <div className="eyebrow text-[10px]">{t('nextConcept')}</div>
+          <div className="text-[14px] font-serif text-fg truncate group-hover:underline decoration-accent/50 underline-offset-2">
+            {nextTitle ?? '—'}
           </div>
-          <div className="text-[13.5px] font-medium text-fg truncate">{nextTitle ?? '—'}</div>
         </div>
         <ArrowRight size={16} className="text-accent" />
       </button>
@@ -645,46 +638,42 @@ const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio
 
   return (
     <aside className="hidden xl:block xl:sticky xl:top-24 self-start">
-      <GlassSurface intensity="subtle" bordered className="rounded-2xl">
-        <div className="p-4 space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-fg-subtle">
-              <ListTree size={11} />
-              {t('toc')}
-            </div>
-            <ProgressRing
-              value={ratio}
-              size={26}
-              stroke={3}
-              indicatorClassName={
-                ratio === 1 ? 'text-emerald-400' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'
-              }
-            />
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 pb-2 border-b-2 border-fg/80">
+          <div className="flex items-center gap-1.5 eyebrow text-[10px]">
+            <ListTree size={11} />
+            {t('toc')}
           </div>
-          {entries.length === 0 ? (
-            <p className="text-[12px] text-fg-subtle">—</p>
-          ) : (
-            <ul className="space-y-1">
-              {entries.map((entry) => (
-                <li key={entry.id}>
-                  <a
-                    href={`#${entry.id}`}
-                    className={cx(
-                      'block py-1 text-[12.5px] leading-snug transition-colors duration-fast',
-                      entry.level === 3 && 'pl-3 text-[12px]',
-                      activeId === entry.id
-                        ? 'text-accent font-medium'
-                        : 'text-fg-muted hover:text-fg',
-                    )}
-                  >
-                    {entry.text}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
+          <ProgressRing
+            value={ratio}
+            size={24}
+            stroke={2}
+            indicatorClassName={ratio === 1 ? 'text-ok' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'}
+          />
         </div>
-      </GlassSurface>
+        {entries.length === 0 ? (
+          <p className="text-[12px] text-fg-subtle">—</p>
+        ) : (
+          <ul className="border-l border-border-base">
+            {entries.map((entry) => (
+              <li key={entry.id}>
+                <a
+                  href={`#${entry.id}`}
+                  className={cx(
+                    'block py-1 pl-3 -ml-px border-l-2 text-[12.5px] leading-snug transition-colors duration-fast',
+                    entry.level === 3 && 'pl-6 text-[12px]',
+                    activeId === entry.id
+                      ? 'border-accent text-accent font-medium'
+                      : 'border-transparent text-fg-muted hover:text-fg',
+                  )}
+                >
+                  {entry.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </aside>
   );
 };

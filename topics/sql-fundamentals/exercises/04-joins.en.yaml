@@ -16,8 +16,91 @@ exercises:
         text: INNER JOIN is the only join that uses an ON clause.
     correct: [a, c]
     explanation: |
-      INNER drops mismatches; LEFT preserves the LEFT side and fills NULLs
+      INNER drops mismatches; LEFT preserves the left side and fills NULLs
       on the right. Both joins use ON.
+    variants:
+      - prompt: |
+          An author has no books at all. What happens to their row under
+          INNER JOIN and under LEFT JOIN, with author as the left table?
+        choices:
+          - id: a
+            text: under INNER JOIN the row disappears, under LEFT JOIN it stays with NULL in the book columns.
+          - id: b
+            text: the row disappears in both cases.
+          - id: c
+            text: the row stays unchanged in both cases.
+          - id: d
+            text: under INNER JOIN the row stays with NULL, under LEFT JOIN it disappears.
+        correct: [a]
+        explanation: |
+          INNER keeps only matched pairs. LEFT preserves every left-table
+          row and writes NULL where the unmatched right side would be.
+      - prompt: |
+          What does the ON condition in a JOIN do?
+        choices:
+          - id: a
+            text: out of all possible row pairs, it selects those for which the condition is true.
+          - id: b
+            text: it filters the left table's rows before the join.
+          - id: c
+            text: it defines the order of rows in the result.
+          - id: d
+            text: it caps the number of rows in the result.
+        correct: [a]
+        explanation: |
+          A JOIN conceptually builds every pair of rows from the two tables,
+          and ON decides which pairs count as matches. Row order and row
+          count are controlled by ORDER BY and LIMIT.
+
+  - id: joins-row-count-predict
+    concept: joins
+    type: predict-output
+    difficulty: 2
+    prompt: |
+      What does this query return? Trace the join customer by customer.
+    fixture: |
+      CREATE TABLE customer (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      );
+      INSERT INTO customer VALUES (1, 'Mira'), (2, 'Oleg'), (3, 'Sana');
+
+      CREATE TABLE purchase (
+        id INTEGER PRIMARY KEY,
+        customer_id INTEGER,
+        amount INTEGER
+      );
+      INSERT INTO purchase VALUES
+        (1, 1, 120),
+        (2, 1, 80),
+        (3, 3, 45),
+        (4, 4, 200);
+    snippet: |
+      SELECT COUNT(*)
+      FROM customer c
+      INNER JOIN purchase p ON p.customer_id = c.id;
+    expected:
+      kind: scalar
+      value: 3
+    hints:
+      - The result of a JOIN is row pairs, and COUNT(*) counts exactly the pairs, not the customers. How many pairs survive?
+      - Walk through the customers one by one and count how many purchases attach to each. Do not forget the rule for rows with no match - it depends on the join type.
+    variants:
+      - snippet: |
+          SELECT COUNT(*)
+          FROM customer c
+          LEFT JOIN purchase p ON p.customer_id = c.id;
+        expected:
+          kind: scalar
+          value: 4
+      - prompt: |
+          The join condition got lost from this query. What does COUNT return?
+        snippet: |
+          SELECT COUNT(*)
+          FROM customer, purchase;
+        expected:
+          kind: scalar
+          value: 12
 
   - id: joins-list-each-authors-book
     concept: joins
@@ -50,18 +133,52 @@ exercises:
         - { name: "Ada", title: "Analytical engine" }
         - { name: "Grace", title: null }
         - { name: "Linus", title: "Kernel notes" }
+    hints:
+      - '"Every author, even without a book" means the left side must not lose rows. Which JOIN guarantees that?'
+      - First build the author-book pairs and make sure Grace is there with an empty title; only then add the two-column sort.
     solution: |
       SELECT a.name, b.title
       FROM author a
       LEFT JOIN book b ON b.author_id = a.id
       ORDER BY a.name, b.title;
+    variants:
+      - prompt: |
+          Return only the authors who have a book, together with its title.
+          Order by author name.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { name: "Ada", title: "Analytical engine" }
+            - { name: "Linus", title: "Kernel notes" }
+        solution: |
+          SELECT a.name, b.title
+          FROM author a
+          INNER JOIN book b ON b.author_id = a.id
+          ORDER BY a.name;
+      - prompt: |
+          Return every book title with its author's name. Include books
+          without an author (their `name` will be NULL). Order by book title.
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { title: "Analytical engine", name: "Ada" }
+            - { title: "Kernel notes", name: "Linus" }
+            - { title: "Loose pages", name: null }
+        solution: |
+          SELECT b.title, a.name
+          FROM book b
+          LEFT JOIN author a ON a.id = b.author_id
+          ORDER BY b.title;
 
   - id: joins-orphan-books
     concept: joins
     type: sql-query
     difficulty: 3
     prompt: |
-      Return book titles that have no author (author_id is NULL). Order by
+      Return the titles of books that have no author in the author table:
+      the reference is empty or points to a non-existent id. Order by
       title.
     fixture: |
       CREATE TABLE author (
@@ -73,21 +190,80 @@ exercises:
       CREATE TABLE book (
         id INTEGER PRIMARY KEY,
         title TEXT NOT NULL,
-        author_id INTEGER REFERENCES author(id)
+        author_id INTEGER
       );
       INSERT INTO book VALUES
         (1, 'Analytical engine', 1),
         (2, 'Kernel notes', 2),
         (3, 'Loose pages', NULL),
-        (4, 'Stray draft', NULL);
+        (4, 'Stray draft', 99);
     expected:
       kind: result-set
       ordered: true
       rows:
         - { title: "Loose pages" }
         - { title: "Stray draft" }
+    hints:
+      - '"No author" means "no match found during the join". Which JOIN keeps rows without a match, and how does it mark the unmatched side?'
+      - Make book the left table and join author to it. Look at the whole result - how do the orphan rows differ from the rest?
+      - After a LEFT JOIN the unmatched side is filled with NULL. Catch it with an IS NULL check on a column that is never NULL in author on its own.
     solution: |
-      SELECT title
-      FROM book
-      WHERE author_id IS NULL
-      ORDER BY title;
+      SELECT b.title
+      FROM book b
+      LEFT JOIN author a ON a.id = b.author_id
+      WHERE a.id IS NULL
+      ORDER BY b.title;
+
+  - id: joins-sales-report
+    concept: joins
+    type: sql-query
+    difficulty: 4
+    prompt: |
+      For every sale priced above 30, return the author's name, the book
+      title, and the price. Order by price descending.
+    fixture: |
+      CREATE TABLE author (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      );
+      INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+      CREATE TABLE book (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        author_id INTEGER
+      );
+      INSERT INTO book VALUES
+        (1, 'Analytical engine', 1),
+        (2, 'Kernel notes', 2),
+        (3, 'Loose pages', NULL);
+
+      CREATE TABLE sale (
+        id INTEGER PRIMARY KEY,
+        book_id INTEGER,
+        price INTEGER
+      );
+      INSERT INTO sale VALUES
+        (1, 1, 40),
+        (2, 1, 35),
+        (3, 2, 60),
+        (4, 3, 25),
+        (5, 2, 15);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { name: "Linus", title: "Kernel notes", price: 60 }
+        - { name: "Ada", title: "Analytical engine", price: 40 }
+        - { name: "Ada", title: "Analytical engine", price: 35 }
+    hints:
+      - A sale knows its book, a book knows its author. That is a chain of two references, and each needs its own join with its own ON.
+      - Build the query in steps - first sale plus book, check the row count, then attach author. The price filter and the sort come last.
+      - The second ON ties book to author; sale takes no part in it. Give every table a short alias.
+    solution: |
+      SELECT a.name, b.title, s.price
+      FROM sale s
+      INNER JOIN book b ON b.id = s.book_id
+      INNER JOIN author a ON a.id = b.author_id
+      WHERE s.price > 30
+      ORDER BY s.price DESC;

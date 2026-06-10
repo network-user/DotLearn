@@ -28,17 +28,11 @@ const NavLink = ({ to, active, label }: NavLinkProps) => (
   <Link
     to={to}
     className={cx(
-      'relative px-2 lg:px-3 h-9 inline-flex items-center rounded-md text-[13px] tracking-snug transition-colors duration-fast',
-      active ? 'text-fg' : 'text-fg-muted hover:text-fg',
+      'my-2 px-2.5 lg:px-3.5 inline-flex items-center rounded-full text-[13px] font-medium tracking-snug transition-colors duration-fast',
+      active ? 'bg-fg/[0.07] text-fg' : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
     )}
   >
     {label}
-    {active && (
-      <span
-        aria-hidden
-        className="absolute inset-x-3 -bottom-[7px] h-px bg-gradient-to-r from-transparent via-accent to-transparent"
-      />
-    )}
   </Link>
 );
 
@@ -53,41 +47,31 @@ export const Layout = ({ children }: LayoutProps) => {
 
   return (
     <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
-      <header className="sticky top-0 z-[var(--z-nav)] px-3 pt-3">
-        <div className="mx-auto max-w-layout">
-          <div className="glass glass--medium glass--bordered rounded-2xl">
-            <span aria-hidden className="glass__highlight" />
-            <span aria-hidden className="glass__shine" />
-            <div className="glass__content flex items-center justify-between gap-2 lg:gap-4 px-4 sm:px-5 h-14">
-              <Link to="/" className="group flex items-center gap-2.5 shrink-0">
-                <span className="relative grid place-items-center size-7 rounded-md bg-gradient-to-br from-accent via-accent-2 to-accent-3 shadow-glow">
-                  <span className="size-1.5 rounded-full bg-white/95" />
-                </span>
-                <span className="font-display text-[20px] leading-none text-fg tracking-tightish">
-                  .<span className="text-fg-subtle">learn</span>
-                </span>
-              </Link>
+      <header className="sticky top-0 z-[var(--z-nav)] glass-chrome border-b border-border-base/70">
+        <div className="mx-auto max-w-layout px-[var(--layout-content-gutter)]">
+          <div className="flex items-center justify-between gap-2 lg:gap-4 h-14">
+            <Link to="/" className="group flex items-baseline gap-0.5 shrink-0">
+              <span className="font-display font-semibold text-[22px] leading-none text-accent">.</span>
+              <span className="font-display font-semibold text-[21px] leading-none text-fg tracking-tightish">
+                learn
+              </span>
+            </Link>
 
-              <nav className="hidden md:flex items-center gap-0.5">
-                <NavLink to="/" active={isActive('/')} label={t('topics')} />
-                <NavLink
-                  to="/proposals"
-                  active={isActive('/proposals')}
-                  label={t('proposals')}
-                />
-                <NavLink to="/progress" active={isActive('/progress')} label={t('progress')} />
-                {showAdminLink && (
-                  <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
-                )}
-                <NavLink to="/settings" active={isActive('/settings')} label={t('settings')} />
-              </nav>
+            <nav className="hidden md:flex items-center gap-0.5 self-stretch [&>a]:h-full">
+              <NavLink to="/" active={isActive('/')} label={t('topics')} />
+              <NavLink to="/proposals" active={isActive('/proposals')} label={t('proposals')} />
+              <NavLink to="/progress" active={isActive('/progress')} label={t('progress')} />
+              {showAdminLink && (
+                <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
+              )}
+              <NavLink to="/settings" active={isActive('/settings')} label={t('settings')} />
+            </nav>
 
-              <div className="flex items-center gap-1.5 shrink-0">
-                <LanguageSwitcher />
-                <ThemeToggle />
-                <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
-                <AddTopicButton />
-              </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <LanguageSwitcher />
+              <ThemeToggle />
+              <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
+              <AddTopicButton />
             </div>
           </div>
         </div>
@@ -98,9 +82,12 @@ export const Layout = ({ children }: LayoutProps) => {
         {children}
       </main>
 
-      <footer className="mt-12 border-t border-border-base/60 bg-canvas/40 backdrop-blur-soft">
+      <footer className="mt-12 rule-double-b border-t border-border-base bg-surface/60">
         <div className="mx-auto max-w-layout px-[var(--layout-content-gutter)] py-6 flex items-center justify-between gap-3">
-          <span className="text-xs text-fg-subtle">{t('brandTagline')}</span>
+          <span className="flex items-baseline gap-2">
+            <span className="font-display text-sm text-fg">.learn</span>
+            <span className="text-xs text-fg-subtle">{t('brandTagline')}</span>
+          </span>
           <a
             href="https://github.com/your-org/dotlearn"
             className="text-xs text-fg-subtle hover:text-fg transition-colors"

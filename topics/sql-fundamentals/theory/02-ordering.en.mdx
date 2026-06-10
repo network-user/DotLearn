@@ -1,51 +1,221 @@
 ---
 conceptId: ordering
 title: ORDER BY and LIMIT
-estimatedMinutes: 10
+estimatedMinutes: 45
 ---
 
-# ORDER BY and LIMIT
+# Order exists only when you ask for it: ORDER BY and LIMIT
 
-Without `ORDER BY`, a SQL engine is free to return rows in any order. If your output looks sorted, that's a coincidence you cannot rely on. Sorting is explicit.
+On your local database, `SELECT * FROM tracks` returns rows in exactly the order you inserted them, week after week. The UI looks tidy, the list seems "already sorted", and adding an extra clause to the query feels redundant. Then the data grows, the engine picks a different execution plan or rearranges its storage pages - and the list scrambles. Your code did not change; the thing you were silently relying on did.
 
-## ORDER BY
+In this chapter you will learn to control order explicitly: sort by one key or several, in either direction, cut the top of a list with `LIMIT`, page through results with `OFFSET`, sort by expressions and aliases, and predict where `NULL` lands and what happens to twin rows. By the end, "show the ten most popular" will translate into SQL without a pause.
+
+## A table is a set
+
+A relational table makes no promises about order. Its rows are a set: a set has members, but no "first" or "last" element. When you write `SELECT` without `ORDER BY`, the engine returns rows in whatever way is cheapest right now: physical storage order, the order of the index it picked for `WHERE`, or something else entirely. If the output looks sorted, that is a side effect of the current execution plan, and an engine upgrade, a `VACUUM`, or a new index is allowed to change it.
+
+<PullQuote>A table is a set; order exists only in a query result, and only if you asked for it.</PullQuote>
+
+This gives you the mental model: `ORDER BY` is the last meaningful step of the query pipeline. First `FROM` and `WHERE` collect rows, then `SELECT` shapes the columns, and only the finished result gets arranged by the sort key. `LIMIT` cuts even later - it slices the already-sorted list. Look at the figure: on the left, rows sit in arbitrary storage order; the `ORDER BY plays DESC` arrow arranges them by play count, and the dashed line cuts off everything that missed the top three.
+
+<Figure caption="ORDER BY arranges the finished result, and only then does LIMIT 3 cut the top: rows below the dashed line never reach the answer.">
+  <SortLimitFigure
+    items={[
+      { label: "Drive", value: 412 },
+      { label: "Planes", value: 268 },
+      { label: "Static", value: 597 },
+      { label: "Ember", value: 597 },
+      { label: "Orbit", value: 173 },
+      { label: "Glow", value: 341 },
+    ]}
+    limit={3}
+    orderLabel="ORDER BY plays DESC"
+    title="Sort and slice"
+  />
+</Figure>
+
+## The chapter's data
+
+Every example works against a single table - a mini catalog of a music service:
 
 ```sql
-SELECT * FROM users ORDER BY age;
+CREATE TABLE tracks (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  artist TEXT NOT NULL,
+  plays INTEGER NOT NULL,
+  rating REAL
+);
+INSERT INTO tracks (id, title, artist, plays, rating) VALUES
+  (1, 'Drive', 'Neon Tide', 412, 4.6),
+  (2, 'Planes', 'Neon Tide', 268, NULL),
+  (3, 'Static', 'Glass Harbor', 597, 4.1),
+  (4, 'Ember', 'Glass Harbor', 597, 4.9),
+  (5, 'Orbit', 'Satellite Era', 173, NULL),
+  (6, 'Glow', 'Satellite Era', 341, 3.8);
 ```
 
-The default is ascending. Use `DESC` for descending.
+Keep two details in mind, they will matter later: "Static" and "Ember" have the same play count, and "Planes" and "Orbit" have no rating.
+
+## A single key: ASC and DESC
+
+The simplest form is one sort key:
 
 ```sql
-SELECT * FROM users ORDER BY age DESC;
+SELECT title, plays FROM tracks ORDER BY plays;
 ```
 
-You can sort by multiple columns. The second key only matters when the first is equal.
+The default direction is ascending, so "Orbit" with 173 plays comes first. You can spell out `ASC` explicitly, but it is usually omitted. To flip the list, add `DESC` after the key:
 
 ```sql
-SELECT * FROM users ORDER BY country ASC, age DESC;
+SELECT title, plays FROM tracks ORDER BY plays DESC;
 ```
 
-## LIMIT
+<MarginNote label="Collations">By default SQLite compares text byte by byte: every uppercase Latin letter is smaller than any lowercase one, so "Zoe" lands before "anna". COLLATE NOCASE gives you case-insensitive sorting.</MarginNote>
 
-`LIMIT` caps the result size. Useful for top-N queries and pagination.
+Any column can be a key, not just a numeric one. Numbers compare by value, text follows collation rules, and ISO 8601 dates sort correctly as plain strings - one of the reasons to store them that way.
+
+## Multiple keys
+
+One key often does not pin down the order completely. "Sort by artist, and within each artist by popularity" is two keys separated by a comma:
 
 ```sql
-SELECT * FROM users ORDER BY age DESC LIMIT 3;
+SELECT artist, title, plays
+FROM tracks
+ORDER BY artist ASC, plays DESC;
 ```
 
-Without `ORDER BY`, `LIMIT` returns an arbitrary subset. Almost always wrong.
+The second key wakes up only where the first one failed to tell rows apart: within "Neon Tide", the track "Drive" (412 plays) comes before "Planes" (268). Each key carries its own direction - `artist` ascending, `plays` descending - and they do not affect each other. You can list as many keys as you like, but each next key operates in an ever-narrower zone: only where all previous keys tied.
 
-## When to use this
+## LIMIT and OFFSET: slicing the finished list
 
-Every time you display a list to a user. Top-N reports, "latest 10" feeds, paginated tables — all built on `ORDER BY` + `LIMIT`.
+`LIMIT` caps the number of rows in the answer; `OFFSET` skips the first few. Together they form classic pagination:
+
+```sql
+SELECT title, plays
+FROM tracks
+ORDER BY plays DESC
+LIMIT 2 OFFSET 2;
+```
+
+This is "page two" of a two-row-per-page list: the query skips the two leaders and returns "Drive" and "Glow". The slice happens after sorting, so the formula for page N is `OFFSET (N - 1) * page size`. Note the reasoning order itself: first you fix the complete order of the list, and only then decide which window of it to show. The query does exactly the same, and if the order is not fixed, the window is cut out of a random permutation.
+
+<Callout type="warning" title="LIMIT without ORDER BY">
+LIMIT without ORDER BY returns N arbitrary rows. On a test database they look meaningful; in production it is luck. If a query has a LIMIT, it almost always needs an ORDER BY too.
+</Callout>
+
+## Top-N: the most common pattern
+
+The combination `ORDER BY ... DESC LIMIT N` is so common it earned its own name - top-N. The ten best-selling products, the five latest orders, the three most popular tracks - all the same query skeleton. Run it live:
+
+<SideSql
+  title="Top 3 by plays"
+  editable
+  live
+  fixture={`CREATE TABLE tracks (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  artist TEXT NOT NULL,
+  plays INTEGER NOT NULL,
+  rating REAL
+);
+INSERT INTO tracks (id, title, artist, plays, rating) VALUES
+  (1, 'Drive', 'Neon Tide', 412, 4.6),
+  (2, 'Planes', 'Neon Tide', 268, NULL),
+  (3, 'Static', 'Glass Harbor', 597, 4.1),
+  (4, 'Ember', 'Glass Harbor', 597, 4.9),
+  (5, 'Orbit', 'Satellite Era', 173, NULL),
+  (6, 'Glow', 'Satellite Era', 341, 3.8);`}
+  query="SELECT title, plays FROM tracks ORDER BY plays DESC LIMIT 3;"
+  chart={{ type: "bar", x: "title", y: "plays" }}
+/>
+
+The chart under the table is built straight from the query result. Change `DESC` to `ASC` - you get an "anti-top" of the rarest tracks. Raise `LIMIT` to 4 or drop it entirely and watch the bars rebuild. Now delete the `ORDER BY` while keeping `LIMIT 3`: the query still runs, but which three rows it returns is no longer your decision.
+
+## Expressions and aliases
+
+A sort key does not have to be a column - it can be an expression. For example, a ranking formula that blends plays and rating:
+
+```sql
+SELECT title, plays + 100 * coalesce(rating, 0) AS score
+FROM tracks
+ORDER BY score DESC;
+```
+
+`ORDER BY` can see aliases from `SELECT`, so `score` is usable right away; you could also write the same expression directly inside `ORDER BY` without exposing it as a column. Notice that "Ember" overtakes "Static" - with equal play counts, the rating decides. SQLite also lets you sort by column position (`ORDER BY 2`), but that notation breaks the moment the `SELECT` list changes - avoid it.
+
+## Where NULL lands
+
+"Planes" and "Orbit" have no rating. Where does `ORDER BY rating` put them? SQLite treats `NULL` as smaller than any value: with ascending order, unknown ratings float to the top of the list; with `DESC` they sink to the bottom. This is the engine's choice, not the standard's: PostgreSQL defaults to exactly the opposite.
+
+<SideSql
+  title="NULL under sorting"
+  editable
+  live
+  fixture={`CREATE TABLE tracks (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  artist TEXT NOT NULL,
+  plays INTEGER NOT NULL,
+  rating REAL
+);
+INSERT INTO tracks (id, title, artist, plays, rating) VALUES
+  (1, 'Drive', 'Neon Tide', 412, 4.6),
+  (2, 'Planes', 'Neon Tide', 268, NULL),
+  (3, 'Static', 'Glass Harbor', 597, 4.1),
+  (4, 'Ember', 'Glass Harbor', 597, 4.9),
+  (5, 'Orbit', 'Satellite Era', 173, NULL),
+  (6, 'Glow', 'Satellite Era', 341, 3.8);`}
+  query="SELECT title, rating FROM tracks ORDER BY rating;"
+/>
+
+The two unrated tracks come first. Append `NULLS LAST` after the key - `ORDER BY rating NULLS LAST` - and they move to the end without disturbing the rest. Then switch the direction to `DESC` and remove the modifier: the `NULL` rows end up at the bottom on their own. `NULLS FIRST` and `NULLS LAST` are available in SQLite since version 3.30 and are set per key.
+
+## Ties: looks stable, is not guaranteed
+
+"Static" and "Ember" both have 597 plays. `ORDER BY plays DESC` does not say which comes first: the mutual order of rows with an equal key is unspecified, and the engine may pick either. Worse, the pick can look stable for months - until the query plan changes, and you start hunting a "bug" that is not in your code.
+
+The cure is a tail key that distinguishes any two rows; usually the primary key: `ORDER BY plays DESC, id`. It changes nothing where the main key already told rows apart, and it cleanly resolves every tie. This matters most together with `LIMIT` and `OFFSET`: if a page boundary cuts through a tie, the same row can show up on two consecutive pages while its neighbor never appears at all. The rule is simple: once order becomes part of your contract with the user, the last sort key must be unique.
 
 ## Common mistakes
 
-- Using `LIMIT` without `ORDER BY` and expecting deterministic results.
-- Forgetting that `NULL` ordering is engine-specific. SQLite puts `NULL` first by default; PostgreSQL puts it last.
-- Paginating with `OFFSET` on large tables (it gets slow). Prefer keyset pagination once datasets grow — but that's a later topic.
+**Relying on insertion order.** On a small database, storage order matches `INSERT` order, and the habit sticks. The fix: an explicit `ORDER BY` on the column that expresses the order you want, such as a creation timestamp. Order is a requirement, and its place is in the query, not in hope.
+
+**`LIMIT` without `ORDER BY`.** "Give me three rows" without "in what order" is an arbitrary slice of a set. It happens because on test data any slice looks plausible. The fix: pair every `LIMIT` with a sort, even when it feels "obvious".
+
+**`OFFSET` pagination over live data.** While the user reads page one, someone inserts a row - and page two starts shifted: one row shows twice, another disappears. On top of that, `OFFSET 100000` forces the engine to compute and discard a hundred thousand rows. Tolerable for short lists; for big ones, see the block below.
+
+<Detail summary="Why OFFSET is slow and what keyset pagination is">
+OFFSET cannot jump: the engine must produce and throw away every skipped row, so the cost of a page grows with its number. Keyset pagination remembers the key of the last row shown and requests the next page with a condition instead of a skip:
+
+```sql
+SELECT title, plays, id
+FROM tracks
+WHERE (plays, id) < (341, 6)
+ORDER BY plays DESC, id DESC
+LIMIT 2;
+```
+
+With an index on (plays, id), reading starts right at the right spot, and inserts between pages do not shift the result. The price: you cannot jump to "page 50", only scroll page by page.
+</Detail>
+
+<Detail summary="When no sorting happens at all">
+If an index exists on the sort key, the engine can read rows already in the right order and sort nothing. In SQLite you can see this via EXPLAIN QUERY PLAN: the line "USE TEMP B-TREE FOR ORDER BY" means an actual sort; its absence means an index scan. For top-N with LIMIT, SQLite additionally avoids sorting the whole result and keeps only the N best rows.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Without ORDER BY, row order is unspecified; stable output is a coincidence, not a guarantee.",
+    "ORDER BY arranges the finished result, and LIMIT with OFFSET slice the already-sorted list.",
+    "Each key has its own direction; the next key applies only where all previous keys tied.",
+    "You can sort by an expression or a SELECT alias, but not by column position - that breaks too easily.",
+    "In SQLite, NULL is smaller than any value: it floats up under ASC; NULLS LAST changes that.",
+    "Rows with equal keys have no order among themselves - add a unique tail key, especially when paginating.",
+  ]}
+/>
 
 ## References
 
-- [SQLite ORDER BY](https://www.sqlite.org/lang_select.html#orderby)
+- [SQLite: the ORDER BY clause](https://www.sqlite.org/lang_select.html#the_order_by_clause)
+- [SQLite: the LIMIT clause](https://www.sqlite.org/lang_select.html#the_limit_clause)
+- [SQLite: NULL handling](https://www.sqlite.org/nulls.html)

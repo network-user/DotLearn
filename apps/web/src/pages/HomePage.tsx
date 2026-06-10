@@ -19,7 +19,7 @@ import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
-import { GlassSurface } from '@/components/ui/GlassSurface';
+import { Surface } from '@/components/ui/Surface';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
@@ -137,8 +137,8 @@ const heroRise = (reduceMotion: boolean, delay: number) =>
   reduceMotion
     ? {}
     : {
-        initial: { opacity: 0, y: 18, filter: 'blur(6px)' },
-        animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+        initial: { opacity: 0, y: 14 },
+        animate: { opacity: 1, y: 0 },
         transition: { delay, duration: 0.55, ease: [0.22, 1, 0.36, 1] as const },
       };
 
@@ -155,7 +155,7 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
         <div className="space-y-6">
           <motion.div
             {...heroRise(reduceMotion, 0)}
-            className="inline-flex items-center gap-2 rounded-pill border border-border-base bg-surface/40 px-3 py-1 text-[11px] uppercase tracking-widest text-fg-subtle"
+            className="inline-flex items-center gap-2 eyebrow border-b-2 border-fg/80 pb-1.5"
           >
             <Sparkles size={12} className="text-accent" />
             <span>{t('eyebrow')}</span>
@@ -166,7 +166,7 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
             </motion.span>
             <motion.span
               {...heroRise(reduceMotion, 0.18)}
-              className="block bg-gradient-to-r from-accent via-accent-2 to-accent-3 bg-clip-text text-transparent italic"
+              className="block text-accent italic"
             >
               {t('heroLineB')}
             </motion.span>
@@ -190,7 +190,7 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
               {t('cta.explore')}
             </Button>
             <Link to="/submit">
-              <Button variant="glass" size="lg" trailingIcon={<ArrowUpRight size={16} />}>
+              <Button variant="outline" size="lg" trailingIcon={<ArrowUpRight size={16} />}>
                 {t('cta.submit')}
               </Button>
             </Link>
@@ -208,12 +208,7 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
 const HeroSidePanel = ({ stats }: { stats: HeroStats }) => {
   const { t } = useTranslation('home');
   return (
-    <GlassSurface
-      intensity="strong"
-      tint="accent"
-      noiseOverlay
-      className="relative overflow-hidden rounded-3xl h-full"
-    >
+    <Surface variant="inset" rule="top" className="relative overflow-hidden h-full">
       <div className="p-6 flex flex-col h-full justify-between gap-6 min-h-[260px]">
         <p className="text-[13px] leading-relaxed text-fg-muted">
           <Trans
@@ -227,7 +222,7 @@ const HeroSidePanel = ({ stats }: { stats: HeroStats }) => {
           <Stat value={stats.runtimes} label={t('stats.runtimes')} />
         </dl>
       </div>
-    </GlassSurface>
+    </Surface>
   );
 };
 
@@ -250,17 +245,17 @@ const FilterBar = ({
   const { t } = useTranslation('home');
   const options: DifficultyFilter[] = ['all', 'beginner', 'intermediate', 'advanced'];
   return (
-    <div className="inline-flex items-center gap-1 rounded-pill border border-border-base bg-surface/40 p-1 backdrop-blur-soft">
+    <div className="inline-flex items-center gap-4 border-b border-border-base">
       {options.map((option) => (
         <button
           key={option}
           type="button"
           onClick={() => onChange(option)}
           className={cx(
-            'h-7 px-3 rounded-pill text-[12px] tracking-snug transition-colors duration-fast',
+            '-mb-px h-9 px-1 border-b-2 text-[12px] tracking-snug transition-colors duration-fast',
             value === option
-              ? 'bg-surface shadow-card text-fg'
-              : 'text-fg-muted hover:text-fg',
+              ? 'border-accent text-fg font-medium'
+              : 'border-transparent text-fg-muted hover:text-fg',
           )}
         >
           {t(`filters.${option}` as const)}
@@ -290,12 +285,7 @@ const TopicCard = ({ row }: TopicCardProps) => {
       onFocus={() => prefetchTopic(manifest.slug)}
       onTouchStart={() => prefetchTopic(manifest.slug)}
     >
-      <GlassSurface
-        intensity="medium"
-        interactive
-        bordered
-        className="h-full rounded-2xl"
-      >
+      <Surface interactive className="h-full">
         <div className="p-5 h-full flex flex-col gap-4 min-h-[200px]">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -312,7 +302,7 @@ const TopicCard = ({ row }: TopicCardProps) => {
               size={48}
               stroke={4}
               indicatorClassName={
-                percent === 1 ? 'text-emerald-400' : percent > 0 ? 'text-accent' : 'text-fg-subtle'
+                percent === 1 ? 'text-ok' : percent > 0 ? 'text-accent' : 'text-fg-subtle'
               }
               label={
                 <span className="tabular-nums">
@@ -350,7 +340,7 @@ const TopicCard = ({ row }: TopicCardProps) => {
             </span>
           </div>
         </div>
-      </GlassSurface>
+      </Surface>
     </Link>
   );
 };
@@ -364,7 +354,7 @@ const Stat3 = ({
   value: number;
   formatter?: (v: number) => string;
 }) => (
-  <div className="rounded-md bg-surface-2/40 px-2 py-1.5 min-w-0">
+  <div className="border-t border-border-strong px-0.5 pt-1.5 min-w-0">
     <div className="text-[10px] uppercase tracking-widest text-fg-subtle">{label}</div>
     <div className="text-[13px] font-medium tabular-nums text-fg">
       {formatter ? formatter(value) : value}
@@ -385,7 +375,7 @@ const SkeletonGrid = () => (
 const EmptyState = () => {
   const { t } = useTranslation('home');
   return (
-    <GlassSurface intensity="subtle" bordered className="rounded-2xl">
+    <Surface variant="inset">
       <div className="p-8 text-center">
         <h3 className="font-display text-2xl text-fg">{t('empty.title')}</h3>
         <p className="mt-2 text-sm text-fg-muted">
@@ -395,7 +385,7 @@ const EmptyState = () => {
           />
         </p>
       </div>
-    </GlassSurface>
+    </Surface>
   );
 };
 

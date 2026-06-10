@@ -151,11 +151,9 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
   const hasTrace = trace.length > 0;
 
   return (
-    <aside className="not-prose my-5 rounded-2xl border border-border-base bg-surface/40 backdrop-blur-soft overflow-hidden">
-      <header className="flex items-center justify-between gap-2 px-3.5 py-2 border-b border-border-base bg-surface-2/40">
-        <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
-          {title ?? 'Python stepper'}
-        </span>
+    <aside className="not-prose my-5 rounded-lg border border-border-base bg-surface overflow-hidden">
+      <header className="flex items-center justify-between gap-2 px-3.5 py-2 border-b border-border-base bg-surface-2/60">
+        <span className="eyebrow">{title ?? 'Python stepper'}</span>
         <div className="flex items-center gap-1">
           {hasTrace && (
             <span className="text-[11px] text-fg-subtle tabular-nums mr-1">
@@ -182,7 +180,7 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <pre className="font-mono text-[12.5px] leading-[1.7] py-2 overflow-x-auto bg-canvas/40 m-0 max-h-[420px] overflow-y-auto">
+        <pre className="font-mono text-[12.5px] leading-[1.7] py-2 overflow-x-auto bg-code-bg m-0 max-h-[420px] overflow-y-auto">
           {sourceLines.map((line, lineIndex) => {
             const lineNo = lineIndex + 1;
             const active = step && step.line === lineNo;
@@ -192,8 +190,8 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
                 className={cx(
                   'grid grid-cols-[40px_1fr] gap-2 px-2 transition-colors duration-fast',
                   active && 'bg-accent/14',
-                  step?.event === 'exception' && active && 'bg-rose-500/14',
-                  step?.event === 'return' && active && 'bg-emerald-500/14',
+                  step?.event === 'exception' && active && 'bg-err/14',
+                  step?.event === 'return' && active && 'bg-ok/14',
                 )}
               >
                 <span className="text-fg-subtle/70 text-right select-none tabular-nums pr-1 border-r border-border-base/60">
@@ -209,11 +207,9 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
           })}
         </pre>
 
-        <div className="border-t md:border-t-0 md:border-l border-border-base bg-surface/40 flex flex-col">
+        <div className="border-t md:border-t-0 md:border-l border-border-base bg-surface flex flex-col">
           <div className="px-3 py-2 border-b border-border-base/60 flex items-center justify-between gap-2">
-            <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle">
-              {step ? step.func : 'frame'}
-            </span>
+            <span className="eyebrow">{step ? step.func : 'frame'}</span>
             {step && (
               <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle">
                 {step.event}
@@ -234,12 +230,12 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
               </p>
             )}
             {status === 'error' && (
-              <p className="text-[12.5px] text-rose-300 font-mono whitespace-pre-wrap">
+              <p className="text-[12.5px] text-err font-mono whitespace-pre-wrap">
                 {errorMessage}
               </p>
             )}
             {status === 'ready' && step && step.event === 'exception' && (
-              <p className="text-[12.5px] text-rose-300 font-mono whitespace-pre-wrap">
+              <p className="text-[12.5px] text-err font-mono whitespace-pre-wrap">
                 {step.error}
               </p>
             )}
@@ -317,7 +313,7 @@ const ControlButton = ({ onClick, disabled, label, icon, primary }: ControlButto
     className={cx(
       'inline-flex items-center justify-center size-7 rounded-md transition-colors duration-fast',
       primary
-        ? 'bg-accent text-white hover:bg-accent/85 disabled:opacity-40'
+        ? 'bg-accent text-surface dark:text-canvas hover:bg-accent/85 disabled:opacity-40'
         : 'text-fg-muted hover:bg-surface-2/60 hover:text-fg disabled:opacity-30 disabled:cursor-not-allowed',
     )}
   >

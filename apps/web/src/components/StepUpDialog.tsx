@@ -45,14 +45,14 @@ export const StepUpDialog = ({ action, onCancel, onVerified }: StepUpDialogProps
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-canvas/60"
       onClick={(event) => {
         if (event.target === event.currentTarget) onCancel();
       }}
     >
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-xl border border-border-base bg-surface/95 backdrop-blur-soft p-5 shadow-card"
+        className="w-full max-w-sm rounded-lg border border-border-base bg-surface p-5 shadow-card"
       >
         <h2 className="text-lg font-semibold">{t('stepUp.title')}</h2>
         <p className="mt-1 text-sm text-fg-muted">
@@ -69,11 +69,11 @@ export const StepUpDialog = ({ action, onCancel, onVerified }: StepUpDialogProps
             autoComplete="one-time-code"
             value={totp}
             onChange={(event) => setTotp(event.target.value)}
-            className="w-full bg-surface-2/60 border border-border-base rounded-md px-3 py-2 text-sm focus:outline-none focus:border-indigo-500/60"
+            className="form-input"
           />
         </label>
         {error && (
-          <div className="mt-3 rounded-md border border-rose-900/40 bg-rose-950/30 p-2 text-xs text-rose-300">
+          <div className="mt-3 rounded-md border border-err/30 bg-err/10 p-2 text-xs text-err">
             {error}
           </div>
         )}
@@ -81,14 +81,14 @@ export const StepUpDialog = ({ action, onCancel, onVerified }: StepUpDialogProps
           <button
             type="button"
             onClick={onCancel}
-            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface"
+            className="px-3 py-1.5 rounded-md text-sm border border-border-strong hover:bg-surface-2"
           >
             {t('stepUp.cancel')}
           </button>
           <button
             type="submit"
             disabled={submitting || totp.trim().length < 6}
-            className="px-3 py-1.5 rounded-md text-sm bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50"
+            className="px-3 py-1.5 rounded-md text-sm bg-accent text-surface dark:text-canvas hover:bg-accent/90 disabled:opacity-50"
           >
             {submitting ? t('stepUp.verifying') : t('stepUp.confirm')}
           </button>

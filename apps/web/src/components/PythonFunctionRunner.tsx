@@ -209,14 +209,12 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
         <div className="space-y-3 min-w-0">
           <div
             className={cx(
-              'overflow-hidden rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft',
+              'overflow-hidden rounded-lg border border-border-base bg-surface',
               running && 'dl-anim-pulse-glow',
             )}
           >
-            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-base bg-surface/40">
-              <span className="text-[10.5px] uppercase tracking-widest text-fg-subtle font-mono">
-                python
-              </span>
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-base bg-surface-2/60">
+              <span className="eyebrow font-mono">python</span>
               {!isCoarsePointer && (
                 <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
               )}
@@ -225,7 +223,6 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="python"
-              theme="vs-dark"
               height={buildEditorHeight(isCoarsePointer, '260px', 'min(45dvh, 320px)')}
               options={buildEditorOptions(isCoarsePointer, 4)}
               onMount={(editor) => {
@@ -288,9 +285,9 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
                   className={cx(
                     'ml-1 inline-block size-1.5 rounded-full',
                     state.kind === 'pass'
-                      ? 'bg-emerald-400'
+                      ? 'bg-ok'
                       : state.kind === 'fail'
-                        ? 'bg-rose-400'
+                        ? 'bg-err'
                         : 'bg-fg-subtle/40',
                   )}
                 />
@@ -311,7 +308,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
             </TabsContent>
 
             <TabsContent value="starter">
-              <pre className="rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft p-3 text-[12.5px] font-mono text-fg overflow-x-auto leading-relaxed">
+              <pre className="rounded-lg border border-border-base bg-code-bg p-3 text-[12.5px] font-mono text-fg overflow-x-auto leading-relaxed">
                 {exercise.starter}
               </pre>
             </TabsContent>

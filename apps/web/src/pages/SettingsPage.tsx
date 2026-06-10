@@ -103,7 +103,7 @@ export const SettingsPage = () => {
       </header>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-fg">{t('language.title')}</h2>
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('language.title')}</h2>
         <p className="text-sm text-fg-muted">{t('language.description')}</p>
         <LanguageSwitcher variant="full" />
       </section>
@@ -144,7 +144,7 @@ const ProviderCard = ({ provider, state, onChange, onSave, onTest }: ProviderCar
     onChange({ ...state.credentials, ...patch });
   };
   return (
-    <article className="rounded-xl border border-border-base bg-surface/40 p-5 space-y-4">
+    <article className="rounded-lg border border-border-base bg-surface p-5 space-y-4">
       <header className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-fg">{provider.displayName}</h2>
         <StatusBadge state={state} />
@@ -178,7 +178,7 @@ const ProviderCard = ({ provider, state, onChange, onSave, onTest }: ProviderCar
         <button
           type="button"
           onClick={onSave}
-          className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-400"
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-surface dark:text-canvas hover:bg-accent/90"
         >
           {t('providers.save')}
         </button>
@@ -186,7 +186,7 @@ const ProviderCard = ({ provider, state, onChange, onSave, onTest }: ProviderCar
           type="button"
           onClick={onTest}
           disabled={state.testing}
-          className="rounded-md border border-border-strong px-3 py-1.5 text-sm text-fg hover:bg-surface disabled:opacity-50"
+          className="rounded-md border border-border-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-2 disabled:opacity-50"
         >
           {state.testing ? t('providers.testing') : t('providers.test')}
         </button>
@@ -211,7 +211,7 @@ const Field = ({ label, value, placeholder, type = 'text', onChange }: FieldProp
       value={value}
       placeholder={placeholder}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-md border border-border-base bg-canvas/60 px-3 py-1.5 min-h-[var(--tap)] sm:min-h-0 text-[16px] sm:text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus:border-indigo-500/60"
+      className="form-input placeholder:text-fg-subtle"
     />
   </label>
 );
@@ -226,14 +226,14 @@ const StatusBadge = ({ state }: { state: ProviderRowState }) => {
   }
   if (state.lastStatus.ok) {
     return (
-      <span className="text-xs text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
+      <span className="text-xs text-ok border border-ok/30 bg-ok/10 rounded px-1.5 py-0.5">
         {t('connected')}
       </span>
     );
   }
   return (
     <span
-      className="text-xs text-rose-300 border border-rose-500/30 bg-rose-500/10 rounded px-1.5 py-0.5 truncate max-w-[60%]"
+      className="text-xs text-err border border-err/30 bg-err/10 rounded px-1.5 py-0.5 truncate max-w-[60%]"
       title={state.lastStatus.message}
     >
       {t('error')}

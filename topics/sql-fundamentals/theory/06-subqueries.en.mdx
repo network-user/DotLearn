@@ -1,135 +1,301 @@
 ---
-title: Subqueries and CTEs
-summary: Pass a query's result into another query — inline as a subquery or named as a CTE.
+conceptId: subqueries
+title: "Subqueries: a query inside a query"
+estimatedMinutes: 50
 ---
 
-# Subqueries and CTEs
+# Subqueries: a query inside a query
 
-A **subquery** is a query nested inside another query. A **CTE** (Common
-Table Expression) is the same idea with a name, written above the main
-query so you can reference it like a temporary table.
+You have already run into questions that a single `WHERE` cannot answer, because the comparison threshold itself has to come from the data. "Who earns more than the average salary?" - to write the condition, you first need to compute the average, and that is a separate query. "Which employees have no orders at all?" - first you need the list of those who do have orders. Every time the question splits into two: first compute something over the table, then filter by that result.
 
-## Scalar subquery — one value
+A subquery glues both steps into one. It is an ordinary `SELECT` nested in parentheses inside another query: its result is substituted where the parentheses stand, as if you had computed a number or a list in advance and typed it in by hand. By the end of this section you will be comparing a row against the table's average and maximum, picking rows by a list from another query, building derived tables in `FROM`, and recognizing two genuine traps: a scalar subquery that suddenly returns several rows, and `NOT IN`, which silently returns nothing because of a single NULL.
 
-A scalar subquery returns a single row, single column. Use it where a
-value would go.
+## Inside out: the mental model
+
+A query with a subquery reads from the outside in, but executes the other way around - from the inside out. First the engine fully evaluates the inner `SELECT`, gets a value (or a list of values) from it, substitutes that value where the parentheses were, and only then runs the outer query as if there had been no nesting at all. To the outer query, the inner query is just a constant that was computed a moment earlier.
+
+<Figure caption="The inner query is computed first; the outer one sees a ready-made number in place of the parentheses.">
+  <NestedQueryFigure
+    outerLabel="SELECT name FROM employee WHERE salary > (...)"
+    innerLabel="(SELECT AVG(salary) FROM employee)"
+    innerResult="6200"
+    resultLabel="SELECT name FROM employee WHERE salary > 6200"
+    footnote="Here the inner query is computed once for the whole table."
+  />
+</Figure>
+
+This picture is the key to the whole section. If a subquery ever looks like a riddle, run it separately in your head, write the result on a scrap of paper, and plug that value into the outer query. The riddle disappears: what remains is an ordinary query with a concrete number or list in the condition.
+
+## Scalar subquery: one number from the data
+
+A scalar subquery returns exactly one row and one column - that is, a single value. You can put it anywhere the syntax expects a number: on the right-hand side of a comparison, in `SELECT`, in an expression. Most often it answers the question "how does this row compare to an aggregate over the whole table".
+
+We work with an employee table. Run the query: the inner `SELECT AVG(salary)` computes the average salary, and the outer one keeps those who earn strictly more.
 
 <SideSql
-  title="Books at or above average length"
+  title="Who earns more than the average salary"
   fixture={`
-    CREATE TABLE book (
+    CREATE TABLE employee (
       id INTEGER PRIMARY KEY,
-      title TEXT NOT NULL,
-      pages INTEGER NOT NULL
+      name TEXT NOT NULL,
+      department TEXT NOT NULL,
+      salary INTEGER NOT NULL
     );
-    INSERT INTO book VALUES
-      (1, 'A',  120),
-      (2, 'B',  300),
-      (3, 'C',  450),
-      (4, 'D',  900);
+    INSERT INTO employee VALUES
+      (1, 'Ada',   'eng',     9000),
+      (2, 'Boris', 'eng',     6000),
+      (3, 'Vera',  'sales',   5000),
+      (4, 'Grace', 'sales',   7000),
+      (5, 'Igor',  'support', 4000);
   `}
   query={`
-    SELECT title, pages
-    FROM book
-    WHERE pages >= (SELECT AVG(pages) FROM book)
-    ORDER BY pages;
+    SELECT name, salary
+    FROM employee
+    WHERE salary > (SELECT AVG(salary) FROM employee)
+    ORDER BY salary DESC;
   `}
 />
 
-The inner query is computed once and substituted in.
+The average of the five salaries is `(9000+6000+5000+7000+4000)/5 = 6200`. The condition turns into `salary > 6200`, and the answer is left with Ada (9000) and Grace (7000). The average beats Boris with his 6000 by exactly 200 - the comparison is strict, so he does not pass.
 
-## IN subquery — many values
+The same trick works with `MAX` and `MIN`. To find the employee with the highest salary, compare each row against the table's maximum:
 
-Use a subquery with `IN` when the right-hand side is a set of values
-coming from another query.
+```sql
+SELECT name, salary
+FROM employee
+WHERE salary = (SELECT MAX(salary) FROM employee);
+```
+
+The parentheses with `MAX(salary)` give `9000`, the condition becomes `salary = 9000`, and the answer is just Ada. Note that the subquery refers to the same `employee` table, and that is fine - the inner and outer `SELECT` work with it independently.
+
+## A list of values: subquery in IN
+
+A scalar subquery is good when you need one number from the data. But often you need a whole list: "keep the rows whose key is among these". For that, you put the subquery to the right of `IN` - and it returns not a single value but a column of values.
+
+Let's add an orders table and find the employees who placed at least one order. The inner query collects the set of `employee_id` values from `orders`, and the outer keeps the employees whose `id` is in that set.
 
 <SideSql
-  title="Authors with at least one bestseller"
+  title="Employees who have orders"
   fixture={`
-    CREATE TABLE author (
+    CREATE TABLE employee (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL
     );
-    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+    INSERT INTO employee VALUES
+      (1, 'Ada'), (2, 'Boris'), (3, 'Vera'), (4, 'Grace');
 
-    CREATE TABLE sale (
-      book_id INTEGER NOT NULL,
-      author_id INTEGER NOT NULL,
-      copies INTEGER NOT NULL
+    CREATE TABLE orders (
+      id INTEGER PRIMARY KEY,
+      employee_id INTEGER,
+      amount INTEGER NOT NULL
     );
-    INSERT INTO sale VALUES
-      (1, 1, 12000),
-      (2, 1, 800),
-      (3, 2, 9500),
-      (4, 3, 400);
+    INSERT INTO orders VALUES
+      (1, 1, 500),
+      (2, 1, 300),
+      (3, 3, 900);
   `}
   query={`
     SELECT name
-    FROM author
-    WHERE id IN (SELECT author_id FROM sale WHERE copies >= 5000)
+    FROM employee
+    WHERE id IN (SELECT employee_id FROM orders)
     ORDER BY name;
   `}
 />
 
-## CTE — name the intermediate result
-
-When a subquery gets long or you need to reference the same result
-twice, lift it into a `WITH` clause.
+The inner query returns `1, 1, 3` - duplicates inside `IN` do not matter. The outer keeps Ada (id 1) and Vera (id 3); Boris and Grace are not on the list of customers. Try running just the inner query yourself: erase the outer part and leave `SELECT employee_id FROM orders;`. You will see exactly the list that gets substituted into `IN` - the very "scrap of paper" from the mental model.
 
 <SideSql
-  title="Same idea as a CTE"
+  title="Run the inner query on its own first"
+  editable
+  live
   fixture={`
-    CREATE TABLE author (
+    CREATE TABLE employee (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL
     );
-    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+    INSERT INTO employee VALUES
+      (1, 'Ada'), (2, 'Boris'), (3, 'Vera'), (4, 'Grace');
 
-    CREATE TABLE sale (
-      book_id INTEGER NOT NULL,
-      author_id INTEGER NOT NULL,
-      copies INTEGER NOT NULL
+    CREATE TABLE orders (
+      id INTEGER PRIMARY KEY,
+      employee_id INTEGER,
+      amount INTEGER NOT NULL
     );
-    INSERT INTO sale VALUES
-      (1, 1, 12000),
-      (2, 1, 800),
-      (3, 2, 9500),
-      (4, 3, 400);
+    INSERT INTO orders VALUES
+      (1, 1, 500),
+      (2, 1, 300),
+      (3, 3, 900);
   `}
   query={`
-    WITH bestselling AS (
-      SELECT author_id
-      FROM sale
-      WHERE copies >= 5000
-    )
-    SELECT a.name
-    FROM author a
-    JOIN bestselling b ON b.author_id = a.id
-    ORDER BY a.name;
+    SELECT employee_id FROM orders;
   `}
 />
 
-The query reads top to bottom now — first define the intermediate, then
-use it. Same plan, friendlier shape.
+Switch the query to the full one, with the outer `SELECT ... WHERE id IN (...)`, and compare: the set in `IN` is exactly what you just saw as a standalone query.
 
-<Callout type="tip" title="Reach for a CTE when…">
-- The subquery has its own joins or filters and is hard to scan inline.
-- You need the same intermediate result twice.
-- A reviewer would benefit from a name on the intermediate concept.
+## Derived table: subquery in FROM
+
+A subquery can stand not only in `WHERE` but also in place of a table in `FROM`. Then its result is a temporary table that exists only for the duration of the query. It is called a derived table, and you work with it like an ordinary one: select columns, filter, join.
+
+This is handy when you need to filter by the result of an aggregation. Say we have computed total revenue by department and want to keep only the departments with revenue over 1000. First the inner query computes the sums, then the outer one filters the ready-made sums.
+
+<SideSql
+  title="Departments with revenue over 1000"
+  fixture={`
+    CREATE TABLE sale (
+      id INTEGER PRIMARY KEY,
+      department TEXT NOT NULL,
+      amount INTEGER NOT NULL
+    );
+    INSERT INTO sale VALUES
+      (1, 'eng',   400),
+      (2, 'eng',   800),
+      (3, 'sales', 300),
+      (4, 'sales', 200),
+      (5, 'support', 1500);
+  `}
+  query={`
+    SELECT department, total
+    FROM (
+      SELECT department, SUM(amount) AS total
+      FROM sale
+      GROUP BY department
+    ) AS dept_totals
+    WHERE total > 1000
+    ORDER BY total DESC;
+  `}
+/>
+
+The inner query collapses the sales into three rows: eng - 1200, sales - 500, support - 1500. The outer `WHERE total > 1000` keeps eng and support. The same thing could have been done with `HAVING`, but a derived table helps where `HAVING` cannot reach: for example, when you need to filter by an aggregate of an aggregate, or to join a ready-made summary with another table.
+
+<Callout type="warning" title="A derived table must have an alias">
+In most engines (including PostgreSQL and MySQL) a subquery in `FROM` is required to have a name: `... ) AS dept_totals`. Without an alias the query has no way to refer to this table and fails with a syntax error. SQLite is more lenient and does not require an alias, but it is worth building the habit of giving it a name right away - the code becomes portable and readable.
 </Callout>
 
-## EXISTS — "is there any match?"
+## Correlated subquery: the inner one looks outward
 
-For pure presence checks, `EXISTS` is often clearer (and sometimes faster)
-than `IN`:
+In all the examples above the inner query was self-contained: you could run it separately. But a subquery can reference columns of the outer query - then it is called correlated. The price for this is repeated execution: such a subquery is recomputed anew for each row of the outer table.
+
+A fair example: keep the employees whose salary is above the average of their own department. The engineers have one average, sales another, so a single number for the whole table is not enough - the threshold depends on the row.
+
+<SideSql
+  title="Salary above the department average"
+  fixture={`
+    CREATE TABLE employee (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      department TEXT NOT NULL,
+      salary INTEGER NOT NULL
+    );
+    INSERT INTO employee VALUES
+      (1, 'Ada',   'eng',   9000),
+      (2, 'Boris', 'eng',   6000),
+      (3, 'Vera',  'eng',   3000),
+      (4, 'Grace', 'sales', 7000),
+      (5, 'Igor',  'sales', 5000);
+  `}
+  query={`
+    SELECT name, department, salary
+    FROM employee AS e
+    WHERE salary > (
+      SELECT AVG(salary)
+      FROM employee
+      WHERE department = e.department
+    )
+    ORDER BY name;
+  `}
+/>
+
+Note the `e.department` inside the subquery: it refers to the department of the current row of the outer table. For Ada's row, the subquery computes the average over eng - `(9000+6000+3000)/3 = 6000`, and `9000 > 6000` passes. For Boris the threshold is the same 6000, and `6000 > 6000` does not. For sales the average is `(7000+5000)/2 = 6000`: Grace with 7000 passes, Igor with 5000 does not. The answer is Ada and Grace.
+
+<Callout type="info" title="The cost of a correlated subquery">
+The inner query here runs not once but once per row of `employee` - five times for five employees. On a small table this is unnoticeable, on millions of rows it is significant. Often the same task is solved by a window function or by pre-aggregating in a derived table. A correlated subquery is a legitimate tool, but keep in mind that it costs more than an ordinary one.
+</Callout>
+
+## The NOT IN and NULL trap
+
+Here a surprise awaits you that catches even the experienced. The logical way to find employees without orders is to flip the previous example with `NOT IN`. But if even a single NULL sneaks into the list of customers, the query returns nothing - not the rows with no match, but nothing at all.
+
+<SideSql
+  title="NOT IN and a single NULL"
+  editable
+  live
+  fixture={`
+    CREATE TABLE employee (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL
+    );
+    INSERT INTO employee VALUES
+      (1, 'Ada'), (2, 'Boris'), (3, 'Vera'), (4, 'Grace');
+
+    CREATE TABLE orders (
+      id INTEGER PRIMARY KEY,
+      employee_id INTEGER,
+      amount INTEGER NOT NULL
+    );
+    INSERT INTO orders VALUES
+      (1, 1, 500),
+      (2, 3, 900),
+      (3, NULL, 250);
+  `}
+  query={`
+    SELECT name
+    FROM employee
+    WHERE id NOT IN (SELECT employee_id FROM orders);
+  `}
+/>
+
+You expect Boris and Grace - they have no orders. You get an empty table. The cause is SQL's three-valued logic. The subquery returned `1, 3, NULL`. The condition `id NOT IN (1, 3, NULL)` expands into `id <> 1 AND id <> 3 AND id <> NULL`. The comparison `id <> NULL` is neither true nor false - it is `UNKNOWN`, and `AND` with `UNKNOWN` can never become fully true. So no row passes.
+
+The cure is to cut off NULL right inside the subquery: add `WHERE employee_id IS NOT NULL`, and Boris and Grace come back. Change the query in the sandbox above and see for yourself. Even more robust is to rewrite the condition with `NOT EXISTS`, which is indifferent to NULL:
 
 ```sql
 SELECT name
-FROM author a
-WHERE EXISTS (
-  SELECT 1 FROM sale s WHERE s.author_id = a.id AND s.copies >= 5000
+FROM employee e
+WHERE NOT EXISTS (
+  SELECT 1 FROM orders o WHERE o.employee_id = e.id
 );
 ```
 
-The subquery doesn't need to return a column — just whether it returns a
-row at all.
+`NOT EXISTS` asks "was no matching row found", and a NULL in `employee_id` simply will not match `e.id` - no trap.
+
+## When JOIN is clearer than a subquery
+
+A subquery with `IN` and a `JOIN` often solve the same task. Compare two ways to find employees with orders:
+
+<Compare
+  leftTitle="Subquery with IN"
+  rightTitle="JOIN"
+  left="SELECT name FROM employee WHERE id IN (SELECT employee_id FROM orders). Reads as the question 'is the id in this list?'. Does not multiply rows: each employee appears once."
+  right="SELECT DISTINCT e.name FROM employee e JOIN orders o ON o.employee_id = e.id. Joins rows and gives access to the orders columns, but without DISTINCT it multiplies an employee by their number of orders."
+  verdict="If you only need a presence check, take IN or EXISTS, they express the intent more directly. If you need columns from the second table, take JOIN."
+/>
+
+The difference is not cosmetic. A `JOIN` joins rows and so can multiply an employee: Ada has two orders, so in a `JOIN` without `DISTINCT` she shows up twice. A subquery with `IN` answers a "yes or no" question and shows each employee exactly once. If you need columns from the second table (order amount, date) - you cannot avoid a `JOIN`. If you only need to select rows by the fact of presence - the subquery expresses the intent more cleanly.
+
+## Common mistakes
+
+- **A scalar subquery returned several rows.** `WHERE salary = (SELECT salary FROM employee WHERE department = 'eng')` will fail or behave unpredictably if the eng department has more than one person: in place of a single value the engine got a list. The cure is either to make the subquery genuinely scalar (`MAX`, `MIN`, `AVG`, or `LIMIT 1`), or to change `=` to `IN`. The error happens because the syntax to the right of `=` expects one value, but the data gave several.
+- **NOT IN with a NULL in the subquery.** A single NULL in the subquery's result turns the whole `NOT IN` into nothing - see the section above. Either add `IS NOT NULL` inside the subquery, or rewrite it with `NOT EXISTS`. With a plain `IN` (without `NOT`) a NULL causes no such trouble.
+- **A forgotten alias on a derived table.** A subquery in `FROM` without a name (`FROM (SELECT ...) WHERE ...`) is a syntax error in many engines. Always give it a name with `AS`, even if SQLite is willing to forgive its absence.
+
+<Detail summary="Subquery vs JOIN: what the planner will pick">
+You might think a correlated subquery is always slower than an equivalent `JOIN`, because it runs once per row. In practice, modern planners (PostgreSQL, recent versions of SQLite) frequently rewrite `IN`-subqueries and even correlated forms into a semi-join with the same plan as an explicit `JOIN`. That is, the form of the query and the actual execution plan are not the same thing. So choose a subquery or a `JOIN` based on readability, and turn to the plan via `EXPLAIN QUERY PLAN` only when you hit a performance wall.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A subquery executes from the inside out: the inner SELECT is computed first, and its result is substituted into the outer one.",
+    "A scalar subquery yields a single value and fits where the syntax expects a number; for a list of values use a subquery in IN.",
+    "A subquery in FROM is a derived table; in most engines it must have an alias.",
+    "A correlated subquery references the outer row and runs once per row - convenient but more expensive.",
+    "NOT IN with a single NULL in the subquery silently returns nothing; cut off NULL or use NOT EXISTS.",
+    "Need a presence check - IN or EXISTS; need columns from the second table - JOIN.",
+  ]}
+/>
+
+## References
+
+- [SQLite docs: subqueries and the IN operator](https://www.sqlite.org/lang_expr.html#the_in_and_not_in_operators)
+- [PostgreSQL: subqueries and IN/EXISTS expressions](https://www.postgresql.org/docs/current/functions-subquery.html)
+- [PostgreSQL FAQ: why NOT IN with NULL behaves unexpectedly](https://www.postgresql.org/docs/current/functions-comparisons.html)

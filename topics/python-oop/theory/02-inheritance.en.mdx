@@ -1,16 +1,18 @@
 ---
 conceptId: inheritance
 title: Inheritance and super()
-estimatedMinutes: 10
+estimatedMinutes: 45
 ---
 
-# Inheritance and super()
+# Inheritance: a lookup chain, not a code copy
 
-Inheritance lets one class reuse the behavior of another. A subclass starts with every attribute and method of its base class, then adds or overrides on top.
+You wrote a `Dog` class. Then you needed `Cat`, and half the code came out identical: a constructor with a name, an `eat` method, a `sleep` method. Copying the whole class means fixing every bug twice, forever. Inheritance solves this differently: one class declares itself a special case of another and gains access to all of its behavior without copying a single line.
 
-## Defining a subclass
+By the end of this section you will be able to declare a subclass, override a method, extend a parent constructor with `super().__init__`, predict whose version of a method runs at any point in a hierarchy, and recognize the situations where you should not inherit at all.
 
-Put the base class in parentheses after the subclass name.
+## What class Dog(Animal) actually does
+
+The line `class Dog(Animal)` reads as "a Dog is an Animal": the **is-a** relationship. What matters more is what does *not* happen. Python does not copy `Animal`'s methods into `Dog` - it merely records a reference to the parent. All the work is deferred until the moment an attribute is accessed.
 
 ```python
 class Animal:
@@ -21,43 +23,101 @@ class Animal:
         return f"{self.name} makes a sound"
 
 class Dog(Animal):
-    def speak(self):
-        return f"{self.name} barks"
+    pass
+
+d = Dog("Rex")
+print(d.speak())
 ```
 
-`Dog` inherits `__init__` and `name` for free. It overrides `speak`.
+The program prints `Rex makes a sound`. Where did an empty class get `speak`? When you write `d.speak()`, Python walks the class chain: first `Dog`, then `Animal`, then `object` - and takes the first match. Trace the route in the figure: `Dog` has no such method, the search continues, `Animal` has it - and the walk stops there.
+
+<Figure caption="The d.speak() call passes straight through Dog and stops at Animal: the first match wins, and object is never reached.">
+  <MroFigure
+    chain={['Dog', 'Animal', 'object']}
+    lookup="speak()"
+    foundIn="Animal"
+    startLabel="d = Dog('Rex')"
+    title="Method lookup along the inheritance chain"
+  />
+</Figure>
+
+`object` is the last link of every chain: every Python class implicitly inherits from it. If the search reaches the end and finds nothing, you get an `AttributeError`.
+
+<MarginNote label="object">Even `class A: pass` inherits from `object` - that is where the default `__repr__`, `__eq__`, and friends come from.</MarginNote>
+
+That this is a lookup at call time, not a copy at class-creation time, is easy to prove: add a method to `Animal` after `Dog` is already defined and an instance already exists.
 
 ```python
-d = Dog("Rex")
-print(d.speak())   # Rex barks
+def eat(self):
+    return f"{self.name} eats"
+
+Animal.eat = eat
+print(d.eat())
 ```
 
-## Calling the parent with super()
+It prints `Rex eats`. Nothing was rebuilt: the next walk along the chain simply found a new name in `Animal`.
 
-`super()` returns a proxy to the parent class. Use it when you want to extend, not replace, parent behavior.
+<PullQuote>Inheritance is not copied code; it is the route along which a name is looked up.</PullQuote>
+
+## Overriding: the subclass answers first
+
+Since the search runs from the subclass upward, a subclass can intercept any method - just define one with the same name. This is called overriding.
+
+```python
+class Dog(Animal):
+    def speak(self):
+        return f"{self.name} barks"
+
+print(Dog("Rex").speak())
+```
+
+Now the `speak` lookup stops at `Dog`, and it prints `Rex barks`. The `Animal` version has not gone anywhere - its turn simply never comes.
+
+## super(): extend, don't replace
+
+Often you do not want to replace parent behavior but to build on it. That is what `super()` is for: it returns a proxy object whose lookups start not at the instance's class but at the next link of the chain.
 
 ```python
 class LoudDog(Dog):
     def speak(self):
         return super().speak().upper()
 
-print(LoudDog("Rex").speak())   # REX BARKS
+print(LoudDog("Rex").speak())
 ```
 
-`super()` also matters in `__init__` — without it, the parent's setup is skipped and instance attributes may be missing.
+`super().speak()` skips `LoudDog`, finds `speak` in `Dog`, gets `Rex barks`, and uppercases it: the program prints `REX BARKS`. That is the difference between "replace" and "extend": a replacing method ignores the parent, an extending method calls `super()` and builds on the result.
+
+The modern call form is the empty parentheses: `super().speak()`, not `super(self).speak()` and not `Dog.speak(self)`. Hardcoding the parent's name inside a method breaks the moment the hierarchy is restructured.
+
+## The most important special case: super().__init__
+
+`__init__` is an ordinary method, and the same lookup rules apply to it. Hence the biggest pitfall of inheritance: as soon as a subclass defines its own `__init__`, the parent's stops being called automatically.
 
 ```python
-class TimedCounter(Counter):
-    def __init__(self, start=0):
-        super().__init__(start)
-        self.created_at = "today"
+class Robot(Animal):
+    def __init__(self, serial):
+        self.serial = serial
+
+r = Robot("R2-D2")
+print(r.speak())
 ```
 
-## Method resolution order
+This code crashes with `AttributeError: 'Robot' object has no attribute 'name'`. `Animal`'s constructor, the one that created `self.name`, never ran: the `__init__` lookup found the version in `Robot` and stopped. The attribute did not "break" - it never existed.
 
-When you call `obj.method()`, Python walks the class chain looking for the first match. For single inheritance the chain is obvious: subclass → base → `object`. For multiple bases Python uses the **MRO** (method resolution order), which you can inspect with `Class.__mro__`.
+The cure is to hand the work to the parent explicitly, as the first line of the constructor.
 
-Click any call on the right and watch Python climb the chain until it finds the method — or gives up with `AttributeError`.
+```python
+class Robot(Animal):
+    def __init__(self, name, serial):
+        super().__init__(name)
+        self.serial = serial
+```
+
+Now `Animal.__init__` creates `name`, after which `Robot` adds its own state. The rule is simple: if you override `__init__`, call `super().__init__(...)` with the arguments the parent expects.
+
+## Walk the chain with your hands
+
+The figure above is static, but lookup is a process. Click any call on the right and watch Python climb from `LoudDog` to `Animal` until it finds the method - or gives up with an `AttributeError` on the nonexistent `fetch()`.
 
 <InheritanceTree
   nodes={[
@@ -69,12 +129,122 @@ Click any call on the right and watch Python climb the chain until it finds the 
   phantomMethod="fetch()"
 />
 
+Now the live code. Run it as is - you get `REX BARKS`. Then delete the `speak` method from `Dog` (leave `pass` in the class body) and run again: `super().speak()` inside `LoudDog` now finds the `Animal` version, and the output changes. Finally, delete `speak` from `LoudDog` too - whose method runs now, and why?
+
+<PyDemo
+  title="Whose speak runs?"
+  code={`class Animal:
+    def __init__(self, name):
+        self.name = name
+
+    def speak(self):
+        return f"{self.name} makes a sound"
+
+class Dog(Animal):
+    def speak(self):
+        return f"{self.name} barks"
+
+class LoudDog(Dog):
+    def speak(self):
+        return super().speak().upper()
+
+print(LoudDog("Rex").speak())`}
+/>
+
+## isinstance and issubclass
+
+The is-a relationship can be checked at runtime. `isinstance(obj, Cls)` answers whether an object is an instance of a class or any of its subclasses; `issubclass(Sub, Base)` answers whether `Base` appears in `Sub`'s inheritance chain.
+
+```python
+d = Dog("Rex")
+print(isinstance(d, Dog), isinstance(d, Animal))
+print(issubclass(Dog, Animal), issubclass(Animal, Dog))
+```
+
+The first line prints `True True`: an instance of a subclass is a full instance of the base class. The second prints `True False`: inheritance points one way. Prefer `isinstance` to comparing `type(d) == Dog` - exact type comparison breaks the central promise of inheritance: a subclass can stand in anywhere the parent is expected.
+
+In practice both checks mostly appear at system boundaries: a function accepts "anything animal-like" and wants to make sure it was not handed a number, or a framework decides how to treat an object based on its place in a hierarchy. Frequent `isinstance` calls inside your own code are a warning sign: that type switch can often be replaced by an overridden method, letting the chain lookup pick the right branch for you.
+
+## The surprise: parent code calls your method
+
+Lookup always starts at the instance's class - even when the call is written inside the parent. This surprises almost everyone the first time.
+
+```python
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+    def speak(self):
+        return f"{self.name} makes a sound"
+
+    def introduce(self):
+        return f"This is {self.name}. {self.speak()}"
+
+class Dog(Animal):
+    def speak(self):
+        return f"{self.name} barks"
+
+print(Dog("Rex").introduce())
+```
+
+`introduce` is defined in `Animal` and not overridden in `Dog`, yet it prints `This is Rex. Rex barks`. Inside `introduce` there is a `self.speak()`, and `self` here is a `Dog` instance, so the lookup starts at `Dog` and finds the overridden version. Parent code called a child method even though `Dog` did not exist when `Animal` was written.
+
+The same mechanism imposes an obligation: when you override a method, preserve its contract - same arguments, compatible result. The parent's code counts on `self.speak()` returning a string, and a subclass has no right to return a list instead.
+
 ## Common mistakes
 
-- Forgetting `super().__init__(...)` in the subclass constructor. The parent's attributes never get set; later code crashes with `AttributeError`.
-- Calling `super(self).method()` instead of `super().method()` — the empty form is the modern, correct one.
-- Overriding a method and breaking its contract. Subclasses should accept the same arguments and return a compatible value.
+- **Forgetting `super().__init__(...)`.** The symptom is an `AttributeError` on an attribute that the parent constructor sets. The cause: the overriding `__init__` completely shadows the parent's; fix it with `super().__init__(...)` as the first line.
+- **Overriding `__init__` with an incompatible signature.** If `Animal("Rex")` works but `Dog("Rex")` crashes with a `TypeError` because `Dog.__init__` expects different arguments, instances stop being interchangeable. Add new parameters after the parent's and forward the parent's share upward.
+- **Growing deep hierarchies.** Every level is one more place where a method can be intercepted and one more class you must read to understand behavior. Two levels read easily; five turn every call into an investigation. If levels keep multiplying, revisit the model.
+
+<Detail summary="Multiple parents, the diamond, and the real MRO">
+
+Python lets you list several base classes: `class D(B, C)`. The "chain" then becomes a linearized list - the **MRO** (method resolution order), built by the C3 algorithm and available as `D.__mro__`.
+
+```python
+class A:
+    def hello(self):
+        return "A"
+
+class B(A):
+    pass
+
+class C(A):
+    def hello(self):
+        return "C"
+
+class D(B, C):
+    pass
+
+print(D().hello())
+print([cls.__name__ for cls in D.__mro__])
+```
+
+It prints `C` and `['D', 'B', 'C', 'A', 'object']`. This is a diamond hierarchy: `B` and `C` both inherit from `A`. A naive depth-first search would peek into `A` before `C` and return `"A"`. C3 guarantees otherwise: each class appears in the list exactly once, descendants always precede ancestors, and the order of the bases in the parentheses is preserved.
+
+`super()` also walks the MRO rather than going "to the parent": it hands control to the next class in the list, whoever that is. This is why in multi-parent hierarchies every `__init__` should call `super().__init__()` - the chain then visits everyone exactly once. The details are in the [official C3 write-up](https://docs.python.org/3/howto/mro.html); for everyday code, single inheritance, where the MRO matches the obvious chain, is all you need.
+
+</Detail>
+
+## When not to inherit
+
+Inheritance is the tightest coupling between two classes: a subclass sees every change to its parent and forever promises to be its special case. Before writing parentheses after a class name, say the relationship out loud. "A dog is an animal" sounds honest. "An order is a list of items" does not: an order *has* a list of items, plus an address and a status. A "X has a Y" relationship is a signal to store `Y` as an attribute, that is, to use composition; the [[composition]] section is devoted to it.
+
+A quick test for a broken hierarchy: if a subclass is forced to silence a parent method with a stub or a `raise NotImplementedError`, the model is wrong - the parent promised something the special case cannot deliver.
+
+<KeyTakeaways
+  items={[
+    "class Dog(Animal) copies no methods: every call is a lookup along the Dog → Animal → object chain, stopping at the first match.",
+    "Overriding works because lookup starts at the instance's class - even when the call is written in parent code.",
+    "super() continues the lookup from the next link of the chain: that is how you extend behavior instead of replacing it.",
+    "If you override __init__, call super().__init__(...) as the first line, or the parent's attributes will never be created.",
+    "isinstance and issubclass check is-a along the whole chain; comparing type(x) == Cls breaks substitutability.",
+    "If the relationship sounds like 'X has a Y', choose composition over inheritance.",
+  ]}
+/>
 
 ## References
 
-- [Python docs — Inheritance](https://docs.python.org/3/tutorial/classes.html#inheritance)
+- [Python docs - Inheritance](https://docs.python.org/3/tutorial/classes.html#inheritance)
+- [Python docs - super()](https://docs.python.org/3/library/functions.html#super)
+- [The Python 2.3 Method Resolution Order (C3)](https://docs.python.org/3/howto/mro.html)

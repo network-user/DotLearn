@@ -25,9 +25,14 @@ const config: Config = {
         accent: withAlpha('--accent-1'),
         'accent-2': withAlpha('--accent-2'),
         'accent-3': withAlpha('--accent-3'),
+        ok: withAlpha('--ok'),
+        warn: withAlpha('--warn'),
+        err: withAlpha('--err'),
+        info: withAlpha('--info'),
       },
       fontFamily: {
         sans: ['var(--font-stack-system)'],
+        serif: ['var(--font-stack-serif)'],
         mono: ['var(--font-stack-mono)'],
         display: ['var(--font-stack-display)'],
       },
@@ -50,8 +55,6 @@ const config: Config = {
         card: 'var(--shadow-card)',
         float: 'var(--shadow-float)',
         sheet: 'var(--shadow-sheet)',
-        glow: 'var(--shadow-glow-sm)',
-        'glow-lg': 'var(--shadow-glow-md)',
         press: 'var(--shadow-press)',
       },
       transitionTimingFunction: {
@@ -81,6 +84,9 @@ const config: Config = {
         display: 'var(--ls-display)',
         tightish: 'var(--ls-tight)',
         snug: 'var(--ls-snug)',
+      },
+      backdropBlur: {
+        glass: '22px',
       },
       maxWidth: {
         prose: '68ch',

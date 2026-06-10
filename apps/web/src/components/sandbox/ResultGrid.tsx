@@ -21,8 +21,8 @@ const cellIsNumeric = (value: unknown): boolean =>
   typeof value === 'number' || (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value));
 
 const highlightHeader: Record<NonNullable<ResultGridProps['highlight']>, string> = {
-  pass: 'bg-emerald-500/8 text-emerald-300 border-emerald-500/20',
-  fail: 'bg-rose-500/8 text-rose-300 border-rose-500/20',
+  pass: 'bg-ok/8 text-ok border-ok/20',
+  fail: 'bg-err/8 text-err border-err/20',
   expected: 'bg-accent/8 text-accent border-accent/20',
 };
 
@@ -59,7 +59,7 @@ export const ResultGrid = ({
                     'px-3 py-1.5 text-left text-[10.5px] uppercase tracking-widest font-semibold',
                     highlight
                       ? cx('border-b', highlightHeader[highlight])
-                      : 'bg-surface/60 text-fg-muted border-b border-border-base',
+                      : 'bg-surface-2 text-fg-muted border-b border-border-base',
                   )}
                 >
                   {column}
@@ -100,7 +100,7 @@ export const ResultGrid = ({
         </table>
       </div>
       {truncated && (
-        <div className="px-3 py-1.5 text-[11px] text-fg-subtle bg-surface/40 border-t border-border-base">
+        <div className="px-3 py-1.5 text-[11px] text-fg-subtle bg-surface-2 border-t border-border-base">
           showing {visible.length} / {rows.length}
         </div>
       )}

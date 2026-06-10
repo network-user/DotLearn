@@ -73,7 +73,7 @@ export const ClassFactory = ({
       footer={atLimit ? t('factory.limit') : instances.length === 0 ? t('factory.empty') : null}
     >
       <div className="grid grid-cols-1 sm:grid-cols-[max-content_1fr] gap-4 items-start">
-        <div className="rounded-xl border-2 border-dashed border-accent/40 bg-accent/5 px-4 py-3 sm:min-w-[180px]">
+        <div className="rounded-lg border-2 border-dashed border-accent/40 bg-accent/5 px-4 py-3 sm:min-w-[180px]">
           <div className="text-[10px] uppercase tracking-widest text-accent/80 mb-1.5">
             class · {t('factory.blueprint')}
           </div>
@@ -108,7 +108,7 @@ export const ClassFactory = ({
                 }
                 exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.85, y: 8 }}
                 transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-                className="group relative rounded-xl border border-border-base bg-surface-2/50 px-3.5 py-2.5 shadow-card"
+                className="group relative rounded-lg border border-border-base bg-surface-2 px-3.5 py-2.5 shadow-card"
               >
                 <button
                   type="button"

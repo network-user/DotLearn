@@ -73,7 +73,7 @@ export const AggregateViz = ({
       label={label ?? t('aggregate.label')}
       actions={
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center rounded-lg border border-border-base bg-surface/50 p-0.5">
+          <div className="flex items-center rounded-lg border border-border-base bg-surface p-0.5">
             {aggs.map((kind) => (
               <button
                 key={kind}
@@ -82,7 +82,7 @@ export const AggregateViz = ({
                 className={cx(
                   'rounded-md px-2 h-6 font-mono text-[11px] transition-colors duration-fast',
                   agg === kind
-                    ? 'bg-accent text-white shadow-glow-sm'
+                    ? 'bg-accent text-surface dark:text-canvas'
                     : 'text-fg-muted hover:text-fg',
                 )}
               >
@@ -117,9 +117,9 @@ export const AggregateViz = ({
                 reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.7, filter: 'blur(4px)' }
               }
               transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-              className="w-full max-w-[420px] rounded-xl border border-border-base bg-surface-2/30 overflow-hidden"
+              className="w-full max-w-[420px] rounded-lg border border-border-base bg-surface overflow-hidden"
             >
-              <li className="grid grid-cols-[1fr_max-content] gap-2 px-3 py-1.5 border-b border-border-base/60 bg-surface-2/50 font-mono text-[11px] text-fg-subtle">
+              <li className="grid grid-cols-[1fr_max-content] gap-2 px-3 py-1.5 border-b border-border-base/60 bg-surface-2 font-mono text-[11px] text-fg-subtle">
                 <span>title</span>
                 <span>{valueKeyName}</span>
               </li>
@@ -150,7 +150,7 @@ export const AggregateViz = ({
               <div className="font-mono text-[11px] uppercase tracking-widest text-fg-subtle mb-2">
                 {aggSql(agg, valueKeyName)}
               </div>
-              <div className="inline-grid place-items-center rounded-2xl border border-accent/40 bg-accent/8 px-8 py-4 shadow-glow-sm">
+              <div className="inline-grid place-items-center rounded-lg border border-accent/40 bg-accent/8 px-8 py-4">
                 <span className="font-display text-[40px] leading-none text-accent tabular-nums">
                   {result}
                 </span>

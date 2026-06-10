@@ -1,0 +1,22 @@
+export { Figure, FigureProvider } from './Figure';
+export { PullQuote } from './PullQuote';
+export { MarginNote } from './MarginNote';
+export { Footnotes, FootnoteProvider, Ref } from './Footnotes';
+export { Compare } from './Compare';
+export { Sketch, sketchCategory, useSketchRefs } from './illustration/Sketch';
+export {
+  SketchArrow,
+  SketchBox,
+  SketchHighlight,
+  SketchLabel,
+} from './illustration/primitives';
+export { PipelineFigure } from './illustration/PipelineFigure';
+export { RowFilterFigure } from './illustration/RowFilterFigure';
+export { SortLimitFigure } from './illustration/SortLimitFigure';
+export { NestedQueryFigure } from './illustration/NestedQueryFigure';
+export { ObjectMemoryFigure } from './illustration/ObjectMemoryFigure';
+export { MroFigure } from './illustration/MroFigure';
+export { BarChart } from './charts/BarChart';
+export { LineChart } from './charts/LineChart';
+export { AreaChart } from './charts/AreaChart';
+export { DistributionChart } from './charts/DistributionChart';

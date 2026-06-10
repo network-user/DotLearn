@@ -1,19 +1,38 @@
 ---
-title: Dataclasses
-summary: Reach for @dataclass when a class is mostly state. It generates __init__, __repr__, and __eq__ for you.
+conceptId: dataclasses
+title: "Dataclasses - a class as a data container"
+estimatedMinutes: 45
 ---
 
-# Dataclasses
+# Dataclasses - a class as a data container
 
-A class that mostly carries data — coordinates, configurations, records —
-usually means writing the same `__init__`, `__repr__`, and `__eq__` over
-and over. The `@dataclass` decorator generates them.
+Most classes in real code are not clever logic but just a tidy package of data: a point with coordinates, a configuration line, a user record, a line item in a cart. For each such class you write the same thing: an `__init__` that spreads arguments across attributes, a `__repr__` so the object reads well in logs, and an `__eq__` so that two identical objects count as equal. That is dozens of lines of boilerplate that are easy to get wrong and that say nothing about your actual task. By the end of this article you will replace all that boilerplate with a single `@dataclass` line and understand exactly what it generates, where its traps are, and when you are better off without it.
 
-## The pattern
+## What the decorator generates
 
-<PyDemo
-  title="Hand-rolled vs @dataclass"
-  code={`from dataclasses import dataclass
+The `@dataclass` decorator looks at the class's annotated fields and synthesizes three methods for you: `__init__`, `__repr__`, and `__eq__`. Fields are class variables with a type annotation; it is the annotation that turns a name into a field. Compare a hand-written class with its dataclass equivalent: on the right all the boilerplate disappears, while the behavior stays the same.
+
+<Compare
+  leftTitle="By hand"
+  rightTitle="@dataclass"
+  left={`class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __repr__(self):
+        return f"Point(x={self.x}, y={self.y})"
+
+    def __eq__(self, other):
+        if not isinstance(other, Point):
+            return NotImplemented
+        return (self.x, self.y) == (other.x, other.y)
+
+p = Point(3, 4)
+q = Point(3, 4)
+print(p)
+print(p == q)`}
+  right={`from dataclasses import dataclass
 
 @dataclass
 class Point:
@@ -24,21 +43,33 @@ p = Point(3, 4)
 q = Point(3, 4)
 print(p)
 print(p == q)`}
+  verdict="Both print Point(x=3, y=4) and True. On the right, twenty lines of boilerplate shrink to five, and the shape of the data is visible at a glance."
 />
 
-You get `Point(x=3, y=4)` from `__repr__` and `True` from `__eq__`, all
-without writing them.
+Note: `__repr__` builds the string strictly as `Point(x=3, y=4)` - the class name, then the fields in parentheses in declaration order. `__eq__` compares instances **by value**: two different objects with the same `x` and `y` are equal. Without dataclass, `Point(3, 4) == Point(3, 4)` would return `False`, because by default Python compares objects by identity.
 
-## Defaults and `field`
+You can see how much code the decorator saves if you count the lines per generated method. The hand-written version above spends about seven lines each on `__init__`, `__repr__`, and `__eq__`; add ordering and the list of dunder methods grows further.
 
-Inline defaults work like regular function arguments. For **mutable
-defaults** (lists, dicts), use `field(default_factory=...)` — otherwise
-all instances will share one object.
+<Figure caption="Lines of code per feature: by hand versus @dataclass. The decorator takes all of this work off your hands.">
+  <BarChart
+    title="Lines of code: by hand versus dataclass"
+    unit="lines"
+    data={[
+      { label: "__init__", value: 5 },
+      { label: "__repr__", value: 3 },
+      { label: "__eq__", value: 4 },
+      { label: "order=True", value: 8 },
+      { label: "@dataclass all", value: 1 },
+    ]}
+    highlight={["@dataclass all"]}
+  />
+</Figure>
 
-<Callout type="warning" title="Mutable defaults">
-This is a Python footgun, not a dataclass-specific one. `field(default_factory=list)`
-gives every instance its own fresh list.
-</Callout>
+## Default values and the mutable-field trap
+
+A field can be given a default value right in the declaration - it works like a function argument with a default value: `quantity: int = 1`. Fields without a default must come before fields with a default, exactly as in a regular function.
+
+The danger starts with **mutable** default values - lists, dicts, sets. You cannot write `items: list = []`: dataclass will not even allow it and raises a `ValueError`. The reason is the classic Python trap: a default value is evaluated once when the class is defined, so all instances would share the same list. The fix is `field(default_factory=...)`: the factory is called anew when each instance is created.
 
 ```python
 from dataclasses import dataclass, field
@@ -49,9 +80,9 @@ class Cart:
     items: list = field(default_factory=list)
 ```
 
-Step through it and confirm every cart gets its own list:
+Here it helps to confirm by hand that the lists really are independent. Run the code below, then change `field(default_factory=list)` to `field(default_factory=dict)` (and `append` to assignment by key) and check that dicts are not shared between instances either.
 
-<PyStepper
+<PyDemo
   title="Each instance gets its own list"
   code={`from dataclasses import dataclass, field
 
@@ -63,34 +94,85 @@ class Cart:
 a = Cart(1)
 b = Cart(2)
 a.items.append("book")
-print(a.items, b.items)`}
+print(a.items)
+print(b.items)`}
 />
 
-## Frozen — make it hashable
+You will see `['book']` and `[]`: list `a` gained an item, list `b` stayed empty, because each instance has its own fresh factory.
 
-`@dataclass(frozen=True)` makes instances immutable. This also makes them
-**hashable**, so you can put them in `set`s and use them as `dict` keys.
+## frozen, order, and checks in __post_init__
 
-<PyDemo
-  title="Frozen dataclass"
+The decorator has parameters that enable additional behavior.
+
+`@dataclass(frozen=True)` forbids changing fields after creation: trying to assign a new value raises `FrozenInstanceError`. At the same time, an immutable dataclass becomes **hashable** - you can put it in a `set` and use it as a `dict` key.
+
+<Detail summary="Why frozen is needed for hashability">
+An object's hash must stay constant the whole time the object lives in a set or a dict. If an object is mutable and is compared by value, its hash could change along with its fields - and the object would get "lost" in its hash-table bucket. That is why an ordinary `@dataclass` (mutable, with `__eq__`) sets `__hash__ = None`, making instances unhashable. `frozen=True` removes the contradiction: fields cannot change, so the hash is stable, and Python synthesizes `__hash__`.
+</Detail>
+
+`@dataclass(order=True)` adds the comparison methods `<`, `<=`, `>`, `>=`. The comparison is lexicographic over the tuple of fields in declaration order - just like comparing tuples. This gives you sorting for free: a list of dataclass objects can be passed to `sorted()` without `key=`.
+
+For checking invariants there is the `__post_init__` method: the generated `__init__` calls it at the very end, after it has already spread arguments across attributes. This is a convenient place to validate data or compute derived fields.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Temperature:
+    celsius: float
+
+    def __post_init__(self):
+        if self.celsius < -273.15:
+            raise ValueError("below absolute zero")
+```
+
+<Callout type="tip" title="__post_init__ sees a fully built object">
+By the time `__post_init__` is called, all fields are already assigned, so you access them through `self`. This is the right place for validation that does not reduce to a simple default value.
+</Callout>
+
+## When a dataclass is not a good fit
+
+A dataclass is good as long as the class is mostly data. Skip it if:
+
+- The constructor has heavy invariants or complex assembly that cannot be expressed through fields and `__post_init__`.
+- The class is primarily behavior: many methods, behind which the shape of the data is barely visible.
+- You need full control over `__init__`, or you are building a mutable object that must not be compared by value.
+
+## Common mistakes
+
+- **Mutable default without `field`.** `items: list = []` raises a `ValueError` when the class is declared. Use `field(default_factory=list)` - its own factory per instance.
+- **Forgetting the type annotation.** `count = 0` without `: int` is **not a field** but an ordinary class variable: dataclass ignores it, it will not be in `__init__`, nor in `__repr__`. It is the annotation that creates a field.
+- **Comparing with an ordinary class.** The generated `__eq__` first checks that the other object is the same class. A dataclass `Point` will never equal an instance of an ordinary class with the same `x` and `y` - the comparison returns `False`.
+
+Step through how the comparison detects the type mismatch:
+
+<PyStepper
+  title="A dataclass does not equal an ordinary class"
   code={`from dataclasses import dataclass
 
-@dataclass(frozen=True)
-class Color:
-    r: int
-    g: int
-    b: int
+@dataclass
+class Point:
+    x: int
+    y: int
 
-palette = {Color(255, 0, 0), Color(0, 255, 0), Color(255, 0, 0)}
-print(len(palette))`}
+class Pair:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+print(Point(1, 2) == Point(1, 2))
+print(Point(1, 2) == Pair(1, 2))`}
 />
 
-Two `Color(255, 0, 0)` collapse to one entry — equality + hashability
-working together.
+<KeyTakeaways items={[
+  "@dataclass generates __init__, __repr__, and __eq__ from annotated fields; the shape of the data stays visible.",
+  "A field is created by a type annotation: without it, the name is an ordinary class variable, not a field.",
+  "For mutable defaults use field(default_factory=...) - a fresh copy for each instance.",
+  "frozen=True makes instances immutable and hashable; order=True adds comparison and sorting.",
+  "__post_init__ is called at the end of __init__ - the right place for validation.",
+  "A dataclass is compared by value, but only against the same class: there will be no equality with an ordinary class.",
+]} />
 
-## When *not* to use a dataclass
+## References
 
-- Heavy invariants in `__init__` that don't map to simple defaults.
-- Lots of derived methods that overshadow the data shape.
-- Performance-critical inner loops where attribute access overhead matters
-  (rare, but real).
+- [dataclasses - Python documentation](https://docs.python.org/3/library/dataclasses.html)
+- [PEP 557 - Data Classes](https://peps.python.org/pep-0557/)

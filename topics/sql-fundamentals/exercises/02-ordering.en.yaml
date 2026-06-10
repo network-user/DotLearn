@@ -1,4 +1,42 @@
 exercises:
+  - id: order-quiz-unordered-001
+    concept: ordering
+    type: theory-quiz
+    difficulty: 1
+    prompt: "A query `SELECT * FROM users` without ORDER BY has returned rows in insertion order for weeks. Which conclusion is correct?"
+    choices:
+      - id: a
+        text: "SQLite guarantees insertion order, so it is safe to rely on."
+      - id: b
+        text: "The order is a detail of the current execution plan; without ORDER BY it may change at any moment."
+      - id: c
+        text: "Rows without ORDER BY are always returned in ascending primary key order."
+    correct: [b]
+    explanation: "A table is an unordered set of rows. Stable order without ORDER BY is a coincidence that breaks when the query plan, an index, or the engine version changes."
+    hints:
+      - "A table is a set: a set has members, but no first or last element."
+    variants:
+      - prompt: "Which query is guaranteed to return the three most expensive products?"
+        choices:
+          - id: a
+            text: "SELECT * FROM products LIMIT 3;"
+          - id: b
+            text: "SELECT * FROM products ORDER BY price DESC LIMIT 3;"
+          - id: c
+            text: "SELECT * FROM products WHERE price > 100 LIMIT 3;"
+        correct: [b]
+        explanation: "LIMIT slices an already-sorted result. Without ORDER BY it cuts three arbitrary rows, and WHERE filters but does not order."
+      - prompt: "In a query with ORDER BY country ASC, age DESC, when is the age key considered?"
+        choices:
+          - id: a
+            text: "Always: rows are sorted by age first, then by country."
+          - id: b
+            text: "Only for rows with the same country value."
+          - id: c
+            text: "Never: only the first key in the list works."
+        correct: [b]
+        explanation: "Each next sort key applies only where all previous keys tied."
+
   - id: order-by-asc-001
     concept: ordering
     type: sql-query
@@ -15,9 +53,34 @@ exercises:
         - { id: 2, name: 'Bob' }
         - { id: 3, name: 'Carol' }
     hints:
-      - "ORDER BY column ASC."
+      - "The result has no order until you declare one: which column should drive it?"
+      - "You need a single sort key; the ascending direction is the default."
     solution: |
       SELECT id, name FROM users ORDER BY name ASC;
+    variants:
+      - prompt: "Return id and name from `users`, sorted by `name` descending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 3, name: 'Carol' }
+            - { id: 2, name: 'Bob' }
+            - { id: 1, name: 'Alice' }
+        solution: |
+          SELECT id, name FROM users ORDER BY name DESC;
+      - prompt: "Return id and name from `users`, sorted by `name` ascending."
+        fixture: |
+          CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT);
+          INSERT INTO users(id, name) VALUES (1, 'Maya'), (2, 'Ivan'), (3, 'Lena');
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 2, name: 'Ivan' }
+            - { id: 3, name: 'Lena' }
+            - { id: 1, name: 'Maya' }
+        solution: |
+          SELECT id, name FROM users ORDER BY name ASC;
 
   - id: order-by-desc-limit-001
     concept: ordering
@@ -34,10 +97,110 @@ exercises:
         - { id: 3, name: 'Eva', age: 41 }
         - { id: 2, name: 'Bob', age: 33 }
     hints:
-      - "Sort age DESC."
-      - "LIMIT 2."
+      - "First mentally build the full list by age, and only then think about trimming - the query does the same."
+      - "\"Oldest first\" means descending; the slice of the finished list is set by a separate clause after the sort."
     solution: |
       SELECT id, name, age FROM users ORDER BY age DESC LIMIT 2;
+    variants:
+      - prompt: "Return the two youngest users (id, name, age), youngest first."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 4, name: 'Ian', age: 18 }
+            - { id: 1, name: 'Anna', age: 25 }
+        solution: |
+          SELECT id, name, age FROM users ORDER BY age ASC LIMIT 2;
+      - prompt: "Return the three oldest users (id, name, age), oldest first."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 3, name: 'Eva', age: 41 }
+            - { id: 2, name: 'Bob', age: 33 }
+            - { id: 1, name: 'Anna', age: 25 }
+        solution: |
+          SELECT id, name, age FROM users ORDER BY age DESC LIMIT 3;
+
+  - id: order-predict-first-row-001
+    concept: ordering
+    type: predict-output
+    difficulty: 2
+    prompt: "Which name value does this query return?"
+    snippet: |
+      SELECT name FROM cities ORDER BY population DESC LIMIT 1 OFFSET 1;
+    fixture: |
+      CREATE TABLE cities(id INTEGER PRIMARY KEY, name TEXT, population INTEGER);
+      INSERT INTO cities(id, name, population) VALUES
+        (1, 'Praha', 1309000),
+        (2, 'Brno', 379000),
+        (3, 'Ostrava', 284000),
+        (4, 'Plzen', 175000);
+    expected:
+      kind: scalar
+      value: 'Brno'
+    hints:
+      - "Execute the steps mentally in order: full sort first, then the skip, then the slice."
+      - "OFFSET skips rows of the already-sorted result; LIMIT takes the ones right after."
+    variants:
+      - prompt: "Which name value does this query return?"
+        snippet: |
+          SELECT name FROM cities ORDER BY name DESC LIMIT 1;
+        expected:
+          kind: scalar
+          value: 'Praha'
+      - prompt: "Which name value does this query return?"
+        snippet: |
+          SELECT name FROM cities ORDER BY population ASC LIMIT 1 OFFSET 1;
+        expected:
+          kind: scalar
+          value: 'Ostrava'
+
+  - id: limit-offset-page-001
+    concept: ordering
+    type: sql-query
+    difficulty: 2
+    prompt: "The book list is sorted by `year` ascending, page size is 2. Return the second page (title, year)."
+    fixture: |
+      CREATE TABLE books(id INTEGER PRIMARY KEY, title TEXT, year INTEGER);
+      INSERT INTO books(id, title, year) VALUES
+        (1, 'Dune', 1965),
+        (2, 'Neuromancer', 1984),
+        (3, 'Hyperion', 1989),
+        (4, 'Snow Crash', 1992),
+        (5, 'Blindsight', 2006),
+        (6, 'Exhalation', 2019);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { title: 'Hyperion', year: 1989 }
+        - { title: 'Snow Crash', year: 1992 }
+    hints:
+      - "A page is a window into the sorted list: fix the order first, then count how many rows sit before the window."
+      - "With a page size of 2, the second page starts after the first two rows."
+      - "LIMIT sets the window size, OFFSET sets how many rows to skip."
+    solution: |
+      SELECT title, year FROM books ORDER BY year ASC LIMIT 2 OFFSET 2;
+    variants:
+      - prompt: "The book list is sorted by `year` ascending, page size is 2. Return the third page (title, year)."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { title: 'Blindsight', year: 2006 }
+            - { title: 'Exhalation', year: 2019 }
+        solution: |
+          SELECT title, year FROM books ORDER BY year ASC LIMIT 2 OFFSET 4;
+      - prompt: "The book list is sorted by `year` descending, page size is 2. Return the second page (title, year)."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { title: 'Snow Crash', year: 1992 }
+            - { title: 'Hyperion', year: 1989 }
+        solution: |
+          SELECT title, year FROM books ORDER BY year DESC LIMIT 2 OFFSET 2;
 
   - id: order-by-two-keys-001
     concept: ordering
@@ -56,7 +219,61 @@ exercises:
         - { id: 2, country: 'US', age: 33 }
         - { id: 4, country: 'US', age: 18 }
     hints:
-      - "Two ORDER BY keys, separated by a comma."
-      - "First key ascending, second descending."
+      - "Picture the result grouped by country: first the countries get ordered, then the people inside each one."
+      - "Keys are listed comma-separated, each with its own direction; the second fires only when the first ties."
     solution: |
       SELECT id, country, age FROM users ORDER BY country ASC, age DESC;
+    variants:
+      - prompt: "Return id, country and age from `users`, sorted by country descending and within each country by age ascending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 4, country: 'US', age: 18 }
+            - { id: 2, country: 'US', age: 33 }
+            - { id: 1, country: 'PL', age: 25 }
+            - { id: 3, country: 'PL', age: 41 }
+        solution: |
+          SELECT id, country, age FROM users ORDER BY country DESC, age ASC;
+
+  - id: order-nulls-last-001
+    concept: ordering
+    type: sql-query
+    difficulty: 4
+    prompt: "Return title and rating from `tracks`, sorted by rating ascending with NULL rows at the end; break rating ties by title ascending."
+    fixture: |
+      CREATE TABLE tracks(id INTEGER PRIMARY KEY, title TEXT, rating REAL);
+      INSERT INTO tracks(id, title, rating) VALUES
+        (1, 'Ember', 4.9),
+        (2, 'Paper Planes', NULL),
+        (3, 'Afterglow', 3.8),
+        (4, 'Low Orbit', NULL),
+        (5, 'Cold Static', 4.1);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { title: 'Afterglow', rating: 3.8 }
+        - { title: 'Cold Static', rating: 4.1 }
+        - { title: 'Ember', rating: 4.9 }
+        - { title: 'Low Orbit', rating: null }
+        - { title: 'Paper Planes', rating: null }
+    hints:
+      - "SQLite treats NULL as smaller than any value, so under ascending order the unknown ratings float up first - you need to override that behavior."
+      - "NULL placement and sort direction are set independently; rows with equal rating will need a second key."
+      - "Look for the NULLS LAST (or NULLS FIRST) modifier; it goes after the key's direction."
+    solution: |
+      SELECT title, rating FROM tracks ORDER BY rating ASC NULLS LAST, title ASC;
+    variants:
+      - prompt: "Return title and rating from `tracks`, sorted by rating descending with NULL rows at the beginning; break rating ties by title ascending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { title: 'Low Orbit', rating: null }
+            - { title: 'Paper Planes', rating: null }
+            - { title: 'Ember', rating: 4.9 }
+            - { title: 'Cold Static', rating: 4.1 }
+            - { title: 'Afterglow', rating: 3.8 }
+        solution: |
+          SELECT title, rating FROM tracks ORDER BY rating DESC NULLS FIRST, title ASC;

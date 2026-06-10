@@ -94,7 +94,7 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
       pulse={pulse}
     >
       <div className="space-y-3">
-        <pre className="rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
+        <pre className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
           {exercise.snippet}
         </pre>
         {exercise.expected.kind === 'stdout' ? (
@@ -103,14 +103,14 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
             onChange={(event) => setDraft(event.target.value)}
             placeholder={inputHint}
             rows={3}
-            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-lg border border-border-base bg-code-bg px-3 py-2 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
           />
         ) : (
           <input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder={inputHint}
-            className="w-full rounded-lg border border-border-base bg-canvas/60 px-3 py-2 min-h-[var(--tap)] sm:min-h-0 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-lg border border-border-base bg-code-bg px-3 py-2 min-h-[var(--tap)] sm:min-h-0 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
           />
         )}
 
@@ -128,24 +128,24 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
         </div>
 
         {state.kind === 'pass' && (
-          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-700 dark:text-emerald-200">
+          <div className="rounded-lg border border-ok/30 bg-ok/8 px-4 py-3 text-[13.5px] text-ok">
             {t('predict.correct')}
           </div>
         )}
 
         {state.kind === 'fail' && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-700 dark:text-rose-200 space-y-1">
+          <div className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-1">
             <p className="font-medium">{t('predict.wrong', { reason: failureMessage(state.failure) })}</p>
             {state.expected !== undefined && (
-              <p className="text-[12px] text-rose-700/80 dark:text-rose-100/80 font-mono">
+              <p className="text-[12px] text-err/80 font-mono">
                 {t('predict.expected')}:{' '}
-                <code className="text-emerald-700 dark:text-emerald-300">{JSON.stringify(state.expected)}</code>
+                <code className="text-ok">{JSON.stringify(state.expected)}</code>
               </p>
             )}
             {state.actual !== undefined && (
-              <p className="text-[12px] text-rose-700/80 dark:text-rose-100/80 font-mono">
+              <p className="text-[12px] text-err/80 font-mono">
                 {t('predict.got')}:{' '}
-                <code className="text-rose-700 dark:text-rose-300">{JSON.stringify(state.actual)}</code>
+                <code className="text-err">{JSON.stringify(state.actual)}</code>
               </p>
             )}
           </div>

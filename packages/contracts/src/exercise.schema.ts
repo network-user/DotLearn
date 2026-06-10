@@ -18,11 +18,20 @@ const TheoryQuizChoice = z.object({
   text: z.string().min(1),
 });
 
+export const TheoryQuizVariant = z.object({
+  prompt: z.string().min(5).optional(),
+  choices: z.array(TheoryQuizChoice).min(2),
+  correct: z.array(z.string()).min(1),
+  explanation: z.string().optional(),
+});
+export type TheoryQuizVariant = z.infer<typeof TheoryQuizVariant>;
+
 export const TheoryQuizExercise = BaseExercise.extend({
   type: z.literal('theory-quiz'),
   choices: z.array(TheoryQuizChoice).min(2),
   correct: z.array(z.string()).min(1),
   explanation: z.string().optional(),
+  variants: z.array(TheoryQuizVariant).min(1).optional(),
 });
 export type TheoryQuizExercise = z.infer<typeof TheoryQuizExercise>;
 
@@ -42,11 +51,20 @@ export const StdoutExpected = z.object({
   value: z.string(),
 });
 
+export const SqlQueryVariant = z.object({
+  prompt: z.string().min(5).optional(),
+  fixture: z.string().min(1).optional(),
+  expected: z.discriminatedUnion('kind', [ResultSetExpected, ScalarExpected]),
+  solution: z.string().min(1),
+});
+export type SqlQueryVariant = z.infer<typeof SqlQueryVariant>;
+
 export const SqlQueryExercise = BaseExercise.extend({
   type: z.literal('sql-query'),
   fixture: z.string().min(1),
   expected: z.discriminatedUnion('kind', [ResultSetExpected, ScalarExpected]),
   solution: z.string().min(1),
+  variants: z.array(SqlQueryVariant).min(1).optional(),
 });
 export type SqlQueryExercise = z.infer<typeof SqlQueryExercise>;
 
@@ -56,11 +74,20 @@ export const FunctionCase = z.object({
   expect_approx: z.number().optional(),
 });
 
+export const FunctionVariant = z.object({
+  prompt: z.string().min(5).optional(),
+  starter: z.string().min(1).optional(),
+  cases: z.array(FunctionCase).min(1),
+  solution: z.string().min(1),
+});
+export type FunctionVariant = z.infer<typeof FunctionVariant>;
+
 export const PythonFunctionExercise = BaseExercise.extend({
   type: z.literal('python-function'),
   starter: z.string().min(1),
   cases: z.array(FunctionCase).min(1),
   solution: z.string().min(1),
+  variants: z.array(FunctionVariant).min(1).optional(),
 });
 export type PythonFunctionExercise = z.infer<typeof PythonFunctionExercise>;
 
@@ -69,6 +96,7 @@ export const JavascriptFunctionExercise = BaseExercise.extend({
   starter: z.string().min(1),
   cases: z.array(FunctionCase).min(1),
   solution: z.string().min(1),
+  variants: z.array(FunctionVariant).min(1).optional(),
 });
 export type JavascriptFunctionExercise = z.infer<typeof JavascriptFunctionExercise>;
 
@@ -77,18 +105,35 @@ const BlankSpec = z.object({
   accept_regex: z.string().optional(),
 });
 
+export const FillInBlanksVariant = z.object({
+  prompt: z.string().min(5).optional(),
+  template: z.string().min(1),
+  blanks: z.record(z.string(), BlankSpec),
+});
+export type FillInBlanksVariant = z.infer<typeof FillInBlanksVariant>;
+
 export const FillInBlanksExercise = BaseExercise.extend({
   type: z.literal('fill-in-blanks'),
   template: z.string().min(1),
   blanks: z.record(z.string(), BlankSpec),
+  variants: z.array(FillInBlanksVariant).min(1).optional(),
 });
 export type FillInBlanksExercise = z.infer<typeof FillInBlanksExercise>;
+
+export const PredictOutputVariant = z.object({
+  prompt: z.string().min(5).optional(),
+  snippet: z.string().min(1),
+  fixture: z.string().optional(),
+  expected: z.discriminatedUnion('kind', [ResultSetExpected, ScalarExpected, StdoutExpected]),
+});
+export type PredictOutputVariant = z.infer<typeof PredictOutputVariant>;
 
 export const PredictOutputExercise = BaseExercise.extend({
   type: z.literal('predict-output'),
   snippet: z.string().min(1),
   fixture: z.string().optional(),
   expected: z.discriminatedUnion('kind', [ResultSetExpected, ScalarExpected, StdoutExpected]),
+  variants: z.array(PredictOutputVariant).min(1).optional(),
 });
 export type PredictOutputExercise = z.infer<typeof PredictOutputExercise>;
 
@@ -115,3 +160,28 @@ export const isInteractiveExercise = (
   exercise.type === 'sql-query' ||
   exercise.type === 'python-function' ||
   exercise.type === 'javascript-function';
+
+export const exerciseVariantCount = (exercise: Exercise): number =>
+  1 + (exercise.variants?.length ?? 0);
+
+const stripUndefined = <T extends Record<string, unknown>>(value: T): Partial<T> => {
+  const result: Partial<T> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) {
+      (result as Record<string, unknown>)[key] = entry;
+    }
+  }
+  return result;
+};
+
+export const resolveExerciseVariant = (exercise: Exercise, variantIndex: number): Exercise => {
+  const { variants, ...base } = exercise;
+  if (variantIndex <= 0 || !variants || variants.length === 0) {
+    return base as Exercise;
+  }
+  const variant = variants[Math.min(variantIndex, variants.length) - 1];
+  if (!variant) {
+    return base as Exercise;
+  }
+  return { ...base, ...stripUndefined(variant) } as Exercise;
+};

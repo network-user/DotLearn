@@ -77,15 +77,15 @@ export const CompositionViz = ({
   };
 
   const footer = rippled ? (
-    <span className="text-amber-600 dark:text-amber-300">{t('compose.rippled')}</span>
+    <span className="text-warn">{t('compose.rippled')}</span>
   ) : swapped ? (
-    <span className="text-emerald-600 dark:text-emerald-300">{t('compose.swapped')}</span>
+    <span className="text-ok">{t('compose.swapped')}</span>
   ) : null;
 
   return (
     <VizShell label={label ?? `${t('compose.isA')} / ${t('compose.hasA')}`} footer={footer}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-xl border border-border-base bg-surface-2/30 p-3.5">
+        <div className="rounded-lg border border-border-base bg-surface-2 p-3.5">
           <div className="flex items-center justify-between gap-2 mb-3">
             <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
               {t('compose.isA')}
@@ -109,8 +109,8 @@ export const CompositionViz = ({
                   className={cx(
                     'w-full max-w-[200px] rounded-lg border px-3 py-2 text-center font-mono text-[12.5px] transition-colors',
                     rippleStep === index || (rippled && rippleStep === null)
-                      ? 'border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                      : 'border-border-base bg-surface/50 text-fg',
+                      ? 'border-warn/60 bg-warn/10 text-warn'
+                      : 'border-border-base bg-surface text-fg',
                   )}
                 >
                   {name}
@@ -120,7 +120,7 @@ export const CompositionViz = ({
           </div>
         </div>
 
-        <div className="rounded-xl border border-border-base bg-surface-2/30 p-3.5">
+        <div className="rounded-lg border border-border-base bg-surface-2 p-3.5">
           <div className="flex items-center justify-between gap-2 mb-3">
             <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
               {t('compose.hasA')}
@@ -130,7 +130,7 @@ export const CompositionViz = ({
               {t('compose.swapPart')}
             </VizButton>
           </div>
-          <div className="rounded-lg border border-border-base bg-surface/50 px-3 py-2.5">
+          <div className="rounded-lg border border-border-base bg-surface px-3 py-2.5">
             <div className="font-mono text-[12.5px] font-semibold text-fg mb-2">{hostName}</div>
             <ul className="space-y-1.5">
               {parts.map((part, partIndex) => {
@@ -154,8 +154,8 @@ export const CompositionViz = ({
                           className={cx(
                             'rounded px-1.5 py-0.5',
                             partIndex === 0 && swapped
-                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-surface-2/70 text-fg',
+                              ? 'bg-ok/15 text-ok'
+                              : 'bg-surface-2 text-fg',
                           )}
                         >
                           {variant}()

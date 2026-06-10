@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
-import { GlassSurface } from '@/components/ui/GlassSurface';
+import { Surface } from '@/components/ui/Surface';
 
 export type ExerciseCardStatus = 'idle' | 'pass' | 'fail';
 
@@ -52,22 +52,21 @@ export const ExerciseCard = ({
         effect === 'fail' && 'dl-anim-fail-shake',
       )}
     >
-      <GlassSurface
-        intensity="medium"
-        bordered
+      <Surface
+        variant="paper"
         className={cx(
-          'rounded-2xl transition-shadow duration-med',
-          status === 'pass' && 'shadow-[0_0_0_1px_rgba(16,185,129,0.35),0_0_28px_rgba(16,185,129,0.18)]',
-          status === 'fail' && 'shadow-[0_0_0_1px_rgba(244,63,94,0.35),0_0_24px_rgba(244,63,94,0.14)]',
+          'transition-colors duration-med',
+          status === 'pass' && 'border-l-2 border-l-ok',
+          status === 'fail' && 'border-l-2 border-l-err',
         )}
       >
         <div className="p-5 space-y-4">
           <header className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-2">
-              <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-widest text-fg-subtle">
-                <span className="font-mono">{type}</span>
+              <div className="flex items-center gap-2">
+                <span className="eyebrow font-mono">{type}</span>
                 {status !== 'idle' && (
-                  <Badge tone={statusTone} variant="soft">
+                  <Badge tone={statusTone} variant="outline">
                     {t(`exercise.status.${status === 'pass' ? 'pass' : 'fail'}` as const)}
                   </Badge>
                 )}
@@ -83,7 +82,7 @@ export const ExerciseCard = ({
           </header>
           {children}
         </div>
-      </GlassSurface>
+      </Surface>
     </div>
   );
 };

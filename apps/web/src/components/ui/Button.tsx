@@ -2,7 +2,7 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 import { cx } from './cx';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'glass';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
 type Size = 'sm' | 'md' | 'lg';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -14,19 +14,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClass: Record<Variant, string> = {
-  primary:
-    'bg-gradient-to-b from-accent to-[rgb(79_82_221)] text-white shadow-glow ' +
-    'hover:from-[rgb(112_115_252)] hover:to-accent ' +
-    'active:from-[rgb(79_82_221)] active:to-[rgb(67_70_198)]',
+  primary: 'bg-accent text-surface hover:bg-accent/90 active:bg-accent/85 dark:text-canvas',
   secondary:
     'bg-surface-2/80 text-fg border border-border-strong/80 ' +
     'hover:bg-surface-3/80 hover:border-border-strong',
-  ghost:
-    'bg-transparent text-fg-muted hover:text-fg hover:bg-surface-2/60',
-  danger:
-    'bg-rose-500/90 text-white shadow-[0_0_18px_rgba(244,63,94,0.32)] hover:bg-rose-500',
-  glass:
-    'glass glass--medium glass--bordered text-fg hover:bg-surface-2/60',
+  ghost: 'bg-transparent text-fg-muted hover:text-fg hover:bg-surface-2/60',
+  danger: 'bg-err text-surface hover:bg-err/90 dark:text-canvas',
+  outline: 'bg-surface text-fg border border-border-strong hover:bg-surface-2/60',
 };
 
 const sizeClass: Record<Size, string> = {

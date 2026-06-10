@@ -1,4 +1,4 @@
-export { GlassSurface } from './GlassSurface';
+export { Surface } from './Surface';
 export { Press } from './Press';
 export { Button } from './Button';
 export { Badge } from './Badge';

@@ -90,7 +90,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
       pulse={pulse}
     >
       <div className="space-y-3">
-        <pre className="rounded-xl border border-border-base bg-canvas/80 backdrop-blur-soft p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed">
+        <pre className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed">
           {segments.map((segment, index) =>
             segment.kind === 'text' ? (
               <Fragment key={index}>{segment.value}</Fragment>
@@ -100,7 +100,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
                 value={values[segment.value] ?? ''}
                 onChange={(event) => update(segment.value, event.target.value)}
                 placeholder={segment.value}
-                className="inline-block min-w-[6ch] bg-surface-2/60 border-b-2 border-accent/60 px-1.5 py-1 sm:py-0 sm:px-1 text-[16px] sm:text-[12.5px] text-accent rounded-sm focus:outline-none focus:border-accent focus:bg-accent/8 transition-colors"
+                className="inline-block min-w-[6ch] bg-surface-2 border-b-2 border-accent/60 px-1.5 py-1 sm:py-0 sm:px-1 text-[16px] sm:text-[12.5px] text-accent rounded-sm focus:outline-none focus:border-accent focus:bg-accent/8 transition-colors"
                 style={{ width: `${Math.max(8, (values[segment.value]?.length ?? 0) + 2)}ch` }}
               />
             ),
@@ -120,26 +120,26 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
         </div>
 
         {state.kind === 'pass' && (
-          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 text-[13.5px] text-emerald-700 dark:text-emerald-200">
+          <div className="rounded-lg border border-ok/30 bg-ok/8 px-4 py-3 text-[13.5px] text-ok">
             {t('fillIn.correct')}
           </div>
         )}
 
         {state.kind === 'fail' && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3 text-[13.5px] text-rose-700 dark:text-rose-200 space-y-1.5">
+          <div className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-1.5">
             <p className="font-medium">
               {t('fillIn.wrongHeader', { count: state.failures.length })}
             </p>
-            <ul className="text-[12.5px] text-rose-700/80 dark:text-rose-100/80 space-y-1 font-mono">
+            <ul className="text-[12.5px] text-err/80 space-y-1 font-mono">
               {state.failures.map((failure) => (
                 <li key={failure.blank}>
-                  <code className="text-rose-700 dark:text-rose-300">{failure.blank}</code>:{' '}
+                  <code className="text-err">{failure.blank}</code>:{' '}
                   {t(`fillIn.reason.${failure.reason}` as const, { defaultValue: failure.reason })}
                   {failure.got !== undefined && (
                     <>
                       {' · '}
                       {t('fillIn.got')}{' '}
-                      <code className="text-rose-700 dark:text-rose-300">{failure.got}</code>
+                      <code className="text-err">{failure.got}</code>
                     </>
                   )}
                 </li>

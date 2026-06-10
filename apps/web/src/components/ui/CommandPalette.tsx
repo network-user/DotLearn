@@ -124,11 +124,9 @@ export const CommandPalette = () => {
           <Command
             label="Command palette"
             shouldFilter
-            className="glass glass--strong glass--bordered rounded-2xl overflow-hidden shadow-float animate-rise"
+            className="bg-surface border border-border-base rounded-xl overflow-hidden shadow-float animate-rise"
           >
-            <span aria-hidden className="glass__highlight" />
-            <span aria-hidden className="glass__shine" />
-            <div className="glass__content">
+            <div>
               <div className="flex items-center gap-2 px-4 h-12 border-b border-border-base/50">
                 <Sparkles size={14} className="text-accent shrink-0" />
                 <Command.Input
@@ -250,7 +248,7 @@ const PaletteItem = ({ value, onSelect, icon, title, meta }: PaletteItemProps) =
     onSelect={onSelect}
     className={cx(
       'flex items-center justify-between gap-3 rounded-lg px-2.5 py-2 cursor-pointer outline-none',
-      'data-[selected=true]:bg-accent/12 data-[selected=true]:text-fg',
+      'data-[selected=true]:bg-accent/10 data-[selected=true]:text-fg',
       'text-fg-muted transition-colors duration-fast',
     )}
   >

@@ -1,129 +1,206 @@
 ---
-title: JOINs
-summary: Combine rows from two tables on a key. INNER drops misses; LEFT keeps the left side and fills NULLs.
+conceptId: joins
+title: "JOIN: putting data from several tables back together"
+estimatedMinutes: 50
 ---
 
-# JOINs
+# JOIN: putting data from several tables back together
 
-A `JOIN` glues two tables together row by row, using a condition you
-specify. The shape of the result depends on which join you pick.
+In a real database, the answer to almost any question is scattered across several tables. An order stores the customer's number, not their name. A sale row knows only the book's id, and the book knows only the author's id. Ask "which books sold this week and who wrote them" - and you have to assemble the answer from three tables, like a kit.
 
-Switch the join type and watch which rows make it into the result and which
-end up without a match. The colored dot is the join-key value.
+The assembly tool is called `JOIN`. By the end of this section you will combine tables with INNER and LEFT JOIN, understand where NULLs and "extra" duplicate rows in the result come from, and learn the classic beginner trap: an innocent-looking filter that quietly turns a LEFT JOIN back into an INNER one.
 
-<JoinViz
-  leftTitle="author"
-  rightTitle="book"
-  leftKeyName="id"
-  rightKeyName="author_id"
-  left={[
-    { key: 1, label: 'Ada' },
-    { key: 2, label: 'Linus' },
-    { key: 3, label: 'Grace' },
-  ]}
-  right={[
-    { key: 1, label: 'Analytical engine' },
-    { key: 2, label: 'Kernel notes' },
-    { key: 4, label: 'Loose pages' },
-  ]}
-/>
+## Why the data is cut into pieces in the first place
 
-## The setup
+Imagine a library database made of a single table, where every book row carries the author's name. While there are few records, everything works. Then an author changes their last name - and you have to update fifty rows. You miss one, you mistype another, and the database now holds two "different" authors with almost identical names. The same information written down many times eventually disagrees with itself.
+
+That is why relational databases store every fact once. The author's name lives in the `author` table, in a single row. A book does not copy the name - it stores a reference: an `author_id` column holding a key value from `author`. Cutting data into tables like this is called normalization.
+
+<MarginNote label="Term">A column whose values reference another table's key is called a foreign key. `book.author_id` is a foreign key to `author.id`.</MarginNote>
+
+This discipline has a price: to show a book together with its author's name, the separated tables have to be glued back together. That is exactly what JOIN does. Storage is optimized for change - every fact is updated in one place; reading reassembles the facts on every query. The trade is almost always worth it: a typical application runs thousands of JOIN queries, while data that has drifted apart cannot be repaired by any query.
+
+## The mental model: all pairs, then a filter
+
+The most honest way to think about JOIN is this: the engine takes every row of the left table and lays every row of the right table next to it. Three authors and three books make nine pairs - the Cartesian product. Then the `ON` condition walks the pairs and keeps only those where the keys matched. Real engines compute this more cleverly, but the result is always as if exactly that happened: all pairs, then a filter.
+
+Most of the time `ON` holds an equality of the form "foreign key = primary key", but the language does not require that: any boolean condition over columns of both sides will do. A pair "left row plus right row" survives if the condition is true for it - that is the whole mechanism.
+
+Play with the diagram below. Authors are on the left, books on the right; the colored dot is the join-key value. Switch the join type and watch the pair counter at the bottom: INNER keeps only matched pairs, LEFT adds back the left-side rows that found no match, RIGHT does the same for the right side.
+
+<Figure caption="INNER keeps only matched pairs; LEFT and RIGHT add back the unmatched rows from their side, filling the other side with NULL.">
+  <JoinViz
+    leftTitle="author"
+    rightTitle="book"
+    leftKeyName="id"
+    rightKeyName="author_id"
+    left={[
+      { key: 1, label: 'Ada' },
+      { key: 2, label: 'Linus' },
+      { key: 3, label: 'Grace' },
+    ]}
+    right={[
+      { key: 1, label: 'Analytical engine' },
+      { key: 2, label: 'Kernel notes' },
+      { key: 4, label: 'Loose pages' },
+    ]}
+  />
+</Figure>
+
+Ada and Linus found their matches. Grace is left without a book, and "Loose pages" without an author - the fate of those rows depends on which JOIN you pick.
+
+## The data we work with
+
+From here on we use this pair of tables. Note the `book.author_id` column: "Loose pages" has NULL there.
 
 <SideSql
   title="Two related tables"
-  fixture={`
-    CREATE TABLE author (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL
-    );
-    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+  fixture={`CREATE TABLE author (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
 
-    CREATE TABLE book (
-      id INTEGER PRIMARY KEY,
-      title TEXT NOT NULL,
-      author_id INTEGER REFERENCES author(id)
-    );
-    INSERT INTO book VALUES
-      (1, 'Analytical engine', 1),
-      (2, 'Kernel notes', 2),
-      (3, 'Loose pages', NULL);
-  `}
+CREATE TABLE book (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  author_id INTEGER REFERENCES author(id)
+);
+INSERT INTO book VALUES
+  (1, 'Analytical engine', 1),
+  (2, 'Kernel notes', 2),
+  (3, 'Loose pages', NULL);`}
 />
 
-## INNER JOIN — only matches
+## INNER JOIN: matched pairs only
 
-`INNER JOIN` keeps only the rows where the condition is true on both sides.
-A book with no author and an author with no books both disappear.
+`INNER JOIN ... ON` keeps the pairs where the condition is true. Anything that found no match silently disappears.
 
 <SideSql
   title="INNER JOIN"
-  fixture={`
-    CREATE TABLE author (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL
-    );
-    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+  fixture={`CREATE TABLE author (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
 
-    CREATE TABLE book (
-      id INTEGER PRIMARY KEY,
-      title TEXT NOT NULL,
-      author_id INTEGER REFERENCES author(id)
-    );
-    INSERT INTO book VALUES
-      (1, 'Analytical engine', 1),
-      (2, 'Kernel notes', 2),
-      (3, 'Loose pages', NULL);
-  `}
-  query={`
-    SELECT a.name, b.title
-    FROM author a
-    INNER JOIN book b ON b.author_id = a.id
-    ORDER BY a.name;
-  `}
+CREATE TABLE book (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  author_id INTEGER REFERENCES author(id)
+);
+INSERT INTO book VALUES
+  (1, 'Analytical engine', 1),
+  (2, 'Kernel notes', 2),
+  (3, 'Loose pages', NULL);`}
+  query={`SELECT a.name, b.title
+FROM author a
+INNER JOIN book b ON b.author_id = a.id
+ORDER BY a.name;`}
 />
 
-Grace and "Loose pages" are absent — Grace has no book, and "Loose pages"
-has no author.
+Two pieces of syntax to notice. First, `author a` and `book b` are aliases: short names you use to refer to the tables in the rest of the query. Second, `ON b.author_id = a.id` is the gluing rule: a pair survives when the reference in the book matches the author's key.
 
-## LEFT JOIN — keep the left side, NULL on the right
+The result contains neither Grace nor "Loose pages". INNER JOIN does not report losses - it simply returns fewer rows than you might have expected.
 
-`LEFT JOIN` keeps every row from the left table even when no match exists,
-filling the right-side columns with `NULL`.
+## LEFT JOIN: the left side never gets lost
+
+Often you cannot afford to lose rows. "Show all authors and their books" means all of them, including those who have no books. That is what `LEFT JOIN` is for: every row of the left table makes it into the result no matter what, and when no match is found on the right, the right-side columns are filled with NULL.
 
 <SideSql
   title="LEFT JOIN"
-  fixture={`
-    CREATE TABLE author (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL
-    );
-    INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+  fixture={`CREATE TABLE author (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
 
-    CREATE TABLE book (
-      id INTEGER PRIMARY KEY,
-      title TEXT NOT NULL,
-      author_id INTEGER REFERENCES author(id)
-    );
-    INSERT INTO book VALUES
-      (1, 'Analytical engine', 1),
-      (2, 'Kernel notes', 2),
-      (3, 'Loose pages', NULL);
-  `}
-  query={`
-    SELECT a.name, b.title
-    FROM author a
-    LEFT JOIN book b ON b.author_id = a.id
-    ORDER BY a.name;
-  `}
+CREATE TABLE book (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  author_id INTEGER REFERENCES author(id)
+);
+INSERT INTO book VALUES
+  (1, 'Analytical engine', 1),
+  (2, 'Kernel notes', 2),
+  (3, 'Loose pages', NULL);`}
+  query={`SELECT a.name, b.title
+FROM author a
+LEFT JOIN book b ON b.author_id = a.id
+ORDER BY a.name;`}
 />
 
-Grace is back — with `NULL` for the title.
+Grace is back - with NULL instead of a title. The side-picking rule is simple: put the table whose rows must not be lost on the left. "All authors and their books" makes `author` the left table; "all books and their authors" makes it `book`.
 
-## Anti-join: "left without right"
+There is also `RIGHT JOIN` - the mirror image that preserves the right side. In practice it is rare: a LEFT JOIN with the tables swapped gives the same result, and a query where the "surviving" table sits on the left is easier to read. When choosing between the two, restructure the query to use LEFT.
 
-Combine `LEFT JOIN` with `WHERE right.col IS NULL` to get rows from the
-left side that have **no match** on the right. Authors without books:
+## Try breaking the join yourself
+
+Below is an editable query over slightly extended data: Ada now has two books, and "Loose pages" still has no author. Run it as is and remember the row count. Then change `INNER` to `LEFT` and watch how the counter changes and whose row appears. Finally, delete the entire `ON` line and count how many rows you get now.
+
+<SideSql
+  title="Sandbox: INNER vs LEFT"
+  editable
+  live
+  fixture={`CREATE TABLE author (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+INSERT INTO author VALUES (1, 'Ada'), (2, 'Linus'), (3, 'Grace');
+
+CREATE TABLE book (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  author_id INTEGER REFERENCES author(id)
+);
+INSERT INTO book VALUES
+  (1, 'Analytical engine', 1),
+  (2, 'Notes on engines', 1),
+  (3, 'Kernel notes', 2),
+  (4, 'Loose pages', NULL);`}
+  query={`SELECT a.name, b.title
+FROM author a
+INNER JOIN book b ON b.author_id = a.id
+ORDER BY a.name, b.title;`}
+/>
+
+The last experiment shows what happens when `ON` is forgotten: every row on the left joins with every row on the right. On toy tables that is 12 rows; on two million-row tables it is a trillion. The database will not warn you: from its point of view you asked for exactly that Cartesian product.
+
+Take one habit away from this sandbox: the result's row count is your first diagnostic signal. Estimate in advance how many rows you expect and compare with what came back. Fewer than expected - INNER dropped unmatched rows; more - duplicate keys multiplied rows or a join condition went missing.
+
+## Duplicate keys multiply rows
+
+In the sandbox Ada appeared twice - once per book of hers. That is not a bug but the definition of JOIN: a left-table row is repeated for every matching right-table row.
+
+<Figure caption="One author and her two books produce two result rows: the left-table row is repeated for every match on the right.">
+  <Sketch viewBox="0 0 520 220" title="Row multiplication on duplicate keys">
+    <SketchBox x={30} y={88} width={100} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={106} mono>Ada</SketchLabel>
+    <SketchLabel x={80} y={122} size={10.5} muted>id = 1</SketchLabel>
+    <SketchBox x={210} y={28} width={130} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={46} mono>book A</SketchLabel>
+    <SketchLabel x={275} y={62} size={10.5} muted>author_id = 1</SketchLabel>
+    <SketchBox x={210} y={148} width={130} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={166} mono>book B</SketchLabel>
+    <SketchLabel x={275} y={182} size={10.5} muted>author_id = 1</SketchLabel>
+    <SketchArrow from={[132, 110]} to={[205, 55]} />
+    <SketchArrow from={[132, 110]} to={[205, 165]} />
+    <SketchBox x={400} y={28} width={90} height={44} accent />
+    <SketchLabel x={445} y={54} mono accent>Ada + A</SketchLabel>
+    <SketchBox x={400} y={148} width={90} height={44} accent />
+    <SketchLabel x={445} y={174} mono accent>Ada + B</SketchLabel>
+    <SketchArrow from={[342, 50]} to={[395, 50]} accent />
+    <SketchArrow from={[342, 170]} to={[395, 170]} accent />
+  </Sketch>
+</Figure>
+
+The general rule: if a key value occurs m times on the left and n times on the right, the result holds m × n rows with that value. This gets treacherous next to aggregates: compute a `SUM` over a joined table and the total "doubles", because the rows have multiplied. Whenever a JOIN returns more rows than you expected, look for duplicate keys first.
+
+## NULL in the join key, and the anti-join
+
+NULL equals nothing, not even another NULL - you have already run into this with filters. So a row with NULL in its join key never finds a match: the condition `b.author_id = a.id` is not true for it against any row. "Loose pages" will not attach to any author.
+
+This property has a useful application - the anti-join, meaning "left-side rows that have no match on the right":
 
 ```sql
 SELECT a.name
@@ -132,16 +209,96 @@ LEFT JOIN book b ON b.author_id = a.id
 WHERE b.id IS NULL;
 ```
 
-<Callout type="tip" title="Pick the smaller side as left">
-Anti-joins read clearly when the side you care about ("which authors are
-missing books?") is on the left. The shape of the result then mirrors the
-question.
-</Callout>
+LEFT JOIN preserved all the authors, and NULL in `b.id` remained only for those who found no match. The `IS NULL` filter keeps exactly them: authors without books. For the check, pick a column that is never NULL in the right table on its own - a primary key is ideal. If you test a column where NULL also appears in ordinary rows, the anti-join will catch too much.
 
-## Pitfalls
+The extreme case of the same logic is an empty right table. An INNER JOIN against it returns zero rows: there is nothing to build pairs from. A LEFT JOIN returns every left-table row, each with NULL on the right side. This behavior often surprises people, but it follows directly from the definition: the left side is never lost.
 
-- `JOIN` without `ON` is a cross join and produces a Cartesian product. Big.
-- Putting filters in `ON` vs `WHERE` matters with `LEFT JOIN` — `WHERE`
-  fires after the join and can turn it back into an inner join by accident.
-- `SELECT *` after a join collides on duplicate column names. Qualify with
-  aliases.
+## The trap: WHERE turns a LEFT JOIN into an INNER one
+
+Now the main catch. Look at the logical execution order of the query:
+
+<Figure caption="WHERE runs after the join and sees the already-glued rows - including the NULLs standing in for the unmatched right side.">
+  <PipelineFigure
+    title="Logical execution order of a JOIN query"
+    stages={[
+      { label: "FROM author" },
+      { label: "LEFT JOIN book ON ...", note: "builds pairs; no match - NULL on the right" },
+      { label: "WHERE", note: "filters the glued rows", active: true },
+      { label: "SELECT" },
+      { label: "ORDER BY" },
+    ]}
+  />
+</Figure>
+
+`ON` works during the join; `WHERE` works after it, on the already-glued rows. Say you want "all authors, and next to each their books starting with K, if any". The obvious attempt is:
+
+```sql
+SELECT a.name, b.title
+FROM author a
+LEFT JOIN book b ON b.author_id = a.id
+WHERE b.title LIKE 'K%';
+```
+
+For authors with no qualifying books `b.title` is NULL, and comparing NULL against a pattern is not true - so WHERE throws their rows away. Only Linus remains: the LEFT JOIN formally ran, but the result is indistinguishable from INNER. The right place for a condition on the right table is inside `ON`:
+
+```sql
+SELECT a.name, b.title
+FROM author a
+LEFT JOIN book b
+  ON b.author_id = a.id AND b.title LIKE 'K%';
+```
+
+Now the condition takes part in matchmaking: books not starting with K simply do not count as matches, and every author stays in the result - some with a book, some with NULL. Verify both versions in the sandbox above. The only right-table filter that belongs in WHERE after a LEFT JOIN is the anti-join's `IS NULL`: it is designed to catch the unmatched.
+
+## Three tables, and meeting yourself
+
+JOIN is not limited to two tables - joins chain, each with its own `ON`:
+
+```sql
+SELECT a.name, b.title, s.price
+FROM sale s
+INNER JOIN book b ON b.id = s.book_id
+INNER JOIN author a ON a.id = b.author_id
+ORDER BY s.price DESC;
+```
+
+Read it top to bottom: books were attached to the sales, then authors to that result. Each `ON` ties the new table to what has been assembled so far. Build such queries incrementally: write the first join, run a `SELECT *`, make sure the row count stays sane, and only then attach the next table. Assemble a four-JOIN chain in one go and get a strange result, and you will be hunting the culprit in every link at once.
+
+Aliases stop being a convenience and become a necessity when the same table appears in a query twice. The classic example is an employees table where `manager_id` references the very same table:
+
+```sql
+SELECT e.name, m.name AS manager
+FROM employee e
+LEFT JOIN employee m ON m.id = e.manager_id;
+```
+
+This is a self-join: `e` and `m` are two independent "copies" of one table, and without aliases the engine could not tell them apart. The technique is the same JOIN, only both sides are one table; you will meet it again in more advanced queries.
+
+## Common mistakes
+
+The three mistakes below account for nearly the entire stream of JOIN questions on forums. Each comes not from missing syntax but from a fuzzy mental model - and each is cured by going back to the "all pairs, then a filter" picture.
+
+- Forgetting `ON`. SQLite silently performs a cross join and returns the Cartesian product. If the result is suddenly huge, check that every JOIN has its condition.
+- Filtering the right table of a LEFT JOIN in `WHERE`. The NULL comparison is not true, unmatched rows vanish, and the join behaves like INNER. Move right-side conditions into `ON`.
+- Ambiguous column names. If `id` exists in both tables, `SELECT id` fails with "ambiguous column name". Always qualify: `a.id`, `b.id`.
+
+<Detail summary="How the engine actually executes a JOIN">
+The Cartesian product is a model of the result, not an algorithm. The simplest real strategy is a nested loop: for every left-table row, scan the right table. If the right table's key has an index, the inner scan becomes a fast lookup, and joining million-row tables stops being scary. SQLite executes joins exactly as nested loops with indexes; bigger engines add hash joins (build a hash table over the smaller side) and merge joins (zip two sorted sides together). The strategy never changes the result - only the speed.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "JOIN conceptually builds every pair of rows from two tables, and ON keeps the matches.",
+    "INNER JOIN silently drops unmatched rows; LEFT JOIN preserves the left side and fills the right with NULL.",
+    "A key occurring m times on the left and n times on the right yields m × n rows - watch for duplicates near aggregates.",
+    "Put right-table filters of a LEFT JOIN into ON; in WHERE they turn the join into INNER.",
+    "LEFT JOIN plus WHERE right.column IS NULL is the anti-join recipe: rows with no match.",
+    "Table aliases save you from ambiguous names and are mandatory in self-joins.",
+  ]}
+/>
+
+## References
+
+- [SQLite documentation on SELECT and JOIN](https://www.sqlite.org/lang_select.html)
+- [SQLite: how the planner executes joins](https://www.sqlite.org/optoverview.html)
+- [PostgreSQL tutorial: joins between tables](https://www.postgresql.org/docs/current/tutorial-join.html)
