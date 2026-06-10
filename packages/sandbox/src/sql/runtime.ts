@@ -3,8 +3,9 @@ import { SqlExecutionError, type SqlExecution, type SqlRuntime } from '@dotlearn
 import type { SqlWorkerRequest, SqlWorkerResponse } from './protocol';
 
 export interface SqlJsRuntimeOptions {
-  worker: Worker;
+  createWorker: () => Worker;
   wasmUrl?: string;
+  timeoutMs?: number;
 }
 
 export interface SqlJsRuntime extends SqlRuntime {
@@ -15,7 +16,10 @@ export interface SqlJsRuntime extends SqlRuntime {
 interface PendingResolver {
   resolve(response: SqlWorkerResponse): void;
   reject(error: Error): void;
+  timer?: ReturnType<typeof setTimeout>;
 }
+
+const DEFAULT_TIMEOUT_MS = 5_000;
 
 let idCounter = 0;
 const nextId = (): string => {
@@ -24,8 +28,11 @@ const nextId = (): string => {
 };
 
 export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime => {
-  const { worker } = options;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const pending = new Map<string, PendingResolver>();
+
+  let worker: Worker | undefined;
+  let initPromise: Promise<void> | undefined;
 
   const onMessage = (event: MessageEvent<SqlWorkerResponse>): void => {
     const response = event.data;
@@ -34,27 +41,60 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
       return;
     }
     pending.delete(response.id);
+    if (resolver.timer !== undefined) {
+      clearTimeout(resolver.timer);
+    }
     resolver.resolve(response);
   };
 
-  const onError = (event: ErrorEvent): void => {
-    const error = new Error(event.message || 'sql worker crashed');
+  const disposeWorker = (error: Error): void => {
+    if (worker) {
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      worker.terminate();
+      worker = undefined;
+    }
+    initPromise = undefined;
     for (const resolver of pending.values()) {
+      if (resolver.timer !== undefined) {
+        clearTimeout(resolver.timer);
+      }
       resolver.reject(error);
     }
     pending.clear();
   };
 
-  worker.addEventListener('message', onMessage);
-  worker.addEventListener('error', onError);
+  function onError(event: ErrorEvent): void {
+    disposeWorker(new SqlExecutionError(event.message || 'sql worker crashed', ''));
+  }
 
-  const send = (request: SqlWorkerRequest): Promise<SqlWorkerResponse> =>
+  const ensureWorker = (): Worker => {
+    if (!worker) {
+      worker = options.createWorker();
+      worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
+    }
+    return worker;
+  };
+
+  const send = (
+    request: SqlWorkerRequest,
+    timeout: number | undefined,
+  ): Promise<SqlWorkerResponse> =>
     new Promise<SqlWorkerResponse>((resolve, reject) => {
-      pending.set(request.id, { resolve, reject });
-      worker.postMessage(request);
+      const activeWorker = ensureWorker();
+      const resolver: PendingResolver = { resolve, reject };
+      if (timeout !== undefined) {
+        resolver.timer = setTimeout(() => {
+          pending.delete(request.id);
+          disposeWorker(
+            new SqlExecutionError(`sql execution exceeded ${timeout}ms and was terminated`, ''),
+          );
+        }, timeout);
+      }
+      pending.set(request.id, resolver);
+      activeWorker.postMessage(request);
     });
-
-  let initPromise: Promise<void> | undefined;
 
   const buildInitRequest = (): SqlWorkerRequest =>
     options.wasmUrl !== undefined
@@ -63,7 +103,7 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
 
   const init = (): Promise<void> => {
     if (!initPromise) {
-      initPromise = send(buildInitRequest()).then((response) => {
+      initPromise = send(buildInitRequest(), undefined).then((response) => {
         if (response.type === 'error') {
           throw new SqlExecutionError(response.message, '');
         }
@@ -78,7 +118,7 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
       fixture !== undefined
         ? { id: nextId(), type: 'execute', sql, fixture }
         : { id: nextId(), type: 'execute', sql };
-    const response = await send(request);
+    const response = await send(request, timeoutMs);
     if (response.type === 'error') {
       throw new SqlExecutionError(response.message, sql);
     }
@@ -89,11 +129,7 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
   };
 
   const terminate = (): void => {
-    worker.removeEventListener('message', onMessage);
-    worker.removeEventListener('error', onError);
-    worker.terminate();
-    pending.clear();
-    initPromise = undefined;
+    disposeWorker(new SqlExecutionError('sql runtime terminated', ''));
   };
 
   return { init, execute, terminate };

@@ -1,0 +1,57 @@
+---
+id: 1262
+title: "Why is a Kafka topic split into partitions and what does it give the system?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why is a Kafka topic split into partitions and what does it give the system?
+
+## In short
+
+A partition is a separate, ordered stream of records within a topic. Splitting a topic into partitions enables horizontal scaling, parallel processing, and replication across brokers, but strict message ordering is guaranteed only within a single partition, not across the topic as a whole.
+
+## How to answer in an interview
+
+A topic in Kafka is a logical stream of events, and a partition is its physical unit of parallelism. Each partition is an ordered, append-only log that lives entirely on one broker and is replicated to others. By splitting a topic into N partitions, we get N independent streams that can be spread across different brokers and read by N consumers simultaneously. The price for this is ordering: it's preserved within a partition, but there's no global ordering across partitions. That's why the message key is chosen so that events whose sequence matters land in the same partition.
+
+## How it works
+
+When a topic is created, the number of partitions is set. For each message the producer computes the target partition: if a key is given, the hash of the key modulo the number of partitions is taken, and identical keys always go to the same partition. If there's no key, the partition is picked by a balancing strategy.
+
+Within a partition each message is assigned a monotonically increasing offset. The consumer stores its own offset and reads strictly in order. A consumer group splits the partitions among its members: one partition is read by exactly one consumer in the group at any moment, so the number of partitions sets the ceiling on parallelism for the group.
+
+```python
+from kafka import KafkaProducer
+
+producer = KafkaProducer(bootstrap_servers="localhost:9092")
+
+producer.send("logs", key=b"serverA", value=b"log from A")
+producer.send("logs", key=b"serverB", value=b"log from B")
+producer.send("logs", key=b"serverA", value=b"another log from A")
+
+producer.flush()
+producer.close()
+```
+
+Here both messages with the key `serverA` will land in the same partition and preserve their mutual order, while `serverB` goes to its own. We don't set the partition manually - Kafka picks it by the hash of the key, and that's the right approach for production.
+
+<svg viewBox="0 0 220 90" width="220" height="90" role="img" aria-label="A topic of three partitions">
+  <rect x="4" y="8" width="200" height="20" fill="none" stroke="currentColor" />
+  <rect x="4" y="34" width="200" height="20" fill="none" stroke="currentColor" />
+  <rect x="4" y="60" width="200" height="20" fill="none" stroke="currentColor" />
+  <text x="10" y="22" fontSize="9" fill="currentColor">P0  →  →  →</text>
+  <text x="10" y="48" fontSize="9" fill="currentColor">P1  →  →  →</text>
+  <text x="10" y="74" fontSize="9" fill="currentColor">P2  →  →  →</text>
+</svg>
+
+## Pitfalls
+
+- There's no global ordering across the topic. If a task requires strict sequence, either use a single key or a single partition (losing parallelism).
+- The number of partitions can be increased, but not decreased. Increasing it breaks the key→partition mapping: old keys start hashing into different partitions.
+- More partitions than consumers in a group - some consumers will be loaded more heavily. More consumers than partitions - the extras sit idle.
+- Too many partitions are expensive: load on the controller grows, as does recovery time and file descriptor consumption.
+- A partition fits entirely on a broker: one giant partition doesn't scale and bumps into that broker's disk.

@@ -1,0 +1,54 @@
+---
+id: 1286
+title: "Which PostgreSQL index to choose for the job: B-tree, Hash, GIN or GiST"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which PostgreSQL index to choose for the job: B-tree, Hash, GIN or GiST
+
+## In short
+
+In PostgreSQL you pick the index to fit the shape of your data and queries. B-tree covers equality and ranges and is the default choice, Hash works only on equality, GIN lives on composite values (arrays, JSONB, full-text search), and GiST takes care of geometry, ranges and approximate search.
+
+## How to answer in an interview
+
+Baseline answer: "By default I reach for B-tree - it handles both `=` and comparisons with `<`/`>`, plus sorting. I rarely touch Hash, only when I need strict equality and nothing else. If a column holds arrays, JSONB or text for full-text search, I use GIN - it's built as an inverted index and quickly answers the question 'which rows contain this value'. And I use GiST for geometry, range types and tasks like nearest-neighbor search, where an ordinary tree doesn't fit." Such an answer shows that you choose an index deliberately rather than adding one at random.
+
+## How it works
+
+An index is a separate structure that lets you find rows without a full table scan. Each type is optimized for its own class of queries.
+
+**B-tree** stores keys in a balanced tree, so it's equally good for exact lookups, ranges and `ORDER BY`.
+
+```sql
+CREATE INDEX idx_orders_created ON orders (created_at);
+```
+
+**Hash** keeps hash codes of keys and answers only `=`. It doesn't support ranges or sorting, so its advantage over B-tree is usually small.
+
+```sql
+CREATE INDEX idx_users_email_hash ON users USING HASH (email);
+```
+
+**GIN** (Generalized Inverted Index) stores, for every element of a value, the list of rows where it occurs. This is ideal for arrays, JSONB and full-text search via `tsvector`.
+
+```sql
+CREATE INDEX idx_articles_search ON articles USING GIN (to_tsvector('russian', body));
+```
+
+**GiST** (Generalized Search Tree) is a framework on which indexes for geometry, range types and hierarchies are built. Through an extension the same type is used for nearest-neighbor search.
+
+```sql
+CREATE INDEX idx_places_geom ON places USING GiST (location);
+```
+
+## Pitfalls
+
+- A Hash index almost always loses out: it doesn't speed up ranges or sorting, so a B-tree on the same column is more versatile. Before PostgreSQL 10, Hash additionally wasn't written to the WAL and was lost on a crash.
+- GIN reads great but writes expensively: inserts and updates are noticeably heavier because many lists have to be touched. Under write load, look at the `fastupdate` parameter and, if needed, at GiST as a compromise.
+- An index isn't used if the condition contains a function or a type cast it wasn't built for. For case-insensitive search you need an index on `lower(col)`, not on the column itself.
+- An index by itself doesn't guarantee that the planner will choose it: on a small table, or when selecting a large fraction of rows, a full scan is cheaper.

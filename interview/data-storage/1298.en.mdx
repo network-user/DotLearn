@@ -1,0 +1,65 @@
+---
+id: 1298
+title: "Database sharding: how horizontal data splitting removes bottlenecks"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Database sharding: how horizontal data splitting removes bottlenecks
+
+## In short
+
+Sharding is splitting one large database into independent pieces (shards), each living on its own node and holding only a subset of rows. The goal is to spread the load across servers once a single one can no longer keep up.
+
+## How to answer in an interview
+
+Sharding is horizontal scaling of storage: instead of beefing up a single server, we split the data by a sharding key across several independent databases. Each shard serves its own range or hash of keys, so queries and writes are distributed across nodes. This gives us higher throughput and resilience: one shard going down doesn't take the whole system with it. We pay for it with added complexity: queries that touch several shards, and maintaining consistency.
+
+## How it works
+
+The key choice is the function that distributes rows across shards. There are two basic approaches:
+
+- **By range**: for example, `user_id` 1–1M on the first shard, 1M–2M on the second. Simple, but it's easy to get skew if new records all pour into one range.
+- **By hash**: `hash(user_id) % N` gives even placement, but complicates adding new shards (you have to redistribute data).
+
+Separately, distinguish horizontal splitting (splitting rows) from vertical splitting (moving some columns into a separate store). Sharding is usually about the former.
+
+A minimal example — two tables for one logical set of users, split by id range:
+
+```sql
+CREATE TABLE users_shard_1 (
+    user_id INT PRIMARY KEY,
+    name VARCHAR(100),
+    email VARCHAR(100)
+);
+
+CREATE TABLE users_shard_2 (
+    user_id INT PRIMARY KEY,
+    name VARCHAR(100),
+    email VARCHAR(100)
+);
+```
+
+The application or a proxy layer decides, based on `user_id`, which shard to write to and read from.
+
+<svg viewBox="0 0 220 80" width="220" height="80" fill="none" stroke="currentColor" strokeWidth="1.5" role="img" aria-label="Router distributes rows across two shards">
+  <rect x="90" y="6" width="40" height="20" rx="3" />
+  <text x="110" y="20" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">router</text>
+  <line x1="105" y1="26" x2="50" y2="50" />
+  <line x1="115" y1="26" x2="170" y2="50" />
+  <rect x="20" y="50" width="60" height="22" rx="3" />
+  <text x="50" y="64" fontSize="8" textAnchor="middle" stroke="none" fill="currentColor">shard 1</text>
+  <rect x="140" y="50" width="60" height="22" rx="3" />
+  <text x="170" y="64" fontSize="8" textAnchor="middle" stroke="none" fill="currentColor">shard 2</text>
+</svg>
+
+## Pitfalls
+
+- **Skew (hot shard)**: a poor sharding key dumps most of the load onto one shard, and scaling stops working.
+- **Cross-shard queries**: `JOIN`s and aggregates across all shards are expensive and have to be assembled at the application level.
+- **Resharding**: adding a shard under hash distribution requires redistributing data — a painful operation, which is why consistent hashing is often used.
+- **Uniqueness and transactions**: auto-increment ids and transactions across several shards stop working "for free".
+- Sharding is a last resort. First you exhaust indexes, caching, and read replicas.

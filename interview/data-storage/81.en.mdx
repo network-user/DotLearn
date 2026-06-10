@@ -1,0 +1,82 @@
+---
+id: 81
+title: "Redis in production systems: which problems it solves and why teams pick it"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Redis in production systems: which problems it solves and why teams pick it
+
+## In short
+
+Redis is a key-value store that keeps data in RAM, so it serves it in microseconds. In real systems it sits in front of the primary database as a cache, and also backs sessions, task queues, and online metrics.
+
+## How to answer in an interview
+
+I reach for Redis where speed and low latency matter, not durable, reliable storage. The classic set of scenarios: caching hot data to offload PostgreSQL; a shared session store for a horizontally scaled web app; lightweight task queues on lists; counters and rate limiting on atomic operations. Its real strength is not just being a "fast cache" but offering ready-made data structures (lists, sets, hashes, sorted sets) that let you solve the problem on the storage side instead of pulling everything into the application.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 600 220" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="13">
+<rect x="20" y="90" width="110" height="50" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="75" y="120" textAnchor="middle">Application</text>
+<rect x="245" y="90" width="110" height="50" rx="6" fill="#6366f1" fillOpacity="0.1" stroke="#6366f1" />
+<text x="300" y="113" textAnchor="middle">Redis</text>
+<text x="300" y="131" textAnchor="middle" fontSize="11">RAM, µs</text>
+<rect x="470" y="90" width="110" height="50" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="525" y="120" textAnchor="middle">Primary DB</text>
+<line x1="130" y1="115" x2="245" y2="115" strokeWidth="2" />
+<text x="187" y="105" textAnchor="middle" fontSize="11">1. GET</text>
+<path d="M245 100 Q187 60 130 100" strokeWidth="2" />
+<text x="187" y="58" textAnchor="middle" fontSize="11">2a. hit</text>
+<line x1="355" y1="130" x2="470" y2="130" strokeWidth="2" strokeDasharray="5 4" />
+<text x="412" y="155" textAnchor="middle" fontSize="11">2b. miss → SQL</text>
+<path d="M470 145 Q412 195 130 145" strokeWidth="2" strokeDasharray="5 4" />
+<text x="300" y="190" textAnchor="middle" fontSize="11">3. SET key with TTL</text>
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion dur="2.4s" repeatCount="indefinite" path="M130 115 L245 115" />
+</circle>
+</svg>
+
+</figure>
+
+All values live in RAM, which is where the speed comes from. The key difference from a "dumb" memcached is typed structures:
+
+- **Strings (String)** - text, numbers, or binary data; they also back atomic counters via `INCR`.
+- **Lists (List)** - a double-ended queue; pushing and popping from both ends turns them into a simple task queue.
+- **Sets (Set)** - unique unordered elements; handy for tags and unique visitors.
+- **Hashes (Hash)** - a set of fields inside a single key; they map well onto an object (a user profile).
+- **Sorted Set** - a set where each element has a score; used for rankings and leaderboards.
+
+A caching example: we put the result into Redis and check it first before hitting the primary database.
+
+```python
+import redis
+
+cache = redis.Redis(host="localhost", port=6379, db=0)
+
+
+def get_user_name(user_id: int) -> str:
+    key = f"user:{user_id}:name"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached.decode("utf-8")
+
+    name = load_name_from_db(user_id)
+    cache.set(key, name, ex=300)
+    return name
+```
+
+Here `ex=300` sets the TTL: the entry disappears on its own after 5 minutes, so the cache won't hold stale data forever.
+
+## Pitfalls
+
+- **Memory is not infinite.** Redis keeps everything in RAM; without `maxmemory` and an eviction policy (`allkeys-lru` and others) it will hit the limit and start returning errors on writes.
+- **It is not a replacement for the primary database.** By default data can be lost on restart; for durable storage you need persistence configured (RDB/AOF), and even then it is not a transactional DBMS.
+- **Cache invalidation.** Forgetting a TTL or not clearing a key when data is updated is the classic source of "the app shows old values".
+- **Single thread for commands.** The Redis core processes commands in a single thread, so one heavy operation (for example `KEYS *` on a large database) blocks all other clients.

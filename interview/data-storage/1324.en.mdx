@@ -1,0 +1,100 @@
+---
+id: 1324
+title: "What are the main challenges of PostgreSQL replication and what should you keep in mind?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What are the main challenges of PostgreSQL replication and what should you keep in mind?
+
+## In short
+
+The main pain of replication is keeping the copies in sync with the master: tracking replica lag, choosing between speed and consistency, configuring automatic failover, and continuously monitoring the load that replication adds to the primary server.
+
+## How to answer in an interview
+
+PostgreSQL replication copies data from the master to replicas for fault tolerance, read scaling, and availability. The main trade-off is between asynchronous mode (the master doesn't wait for acknowledgment, replicas may lag, but writes are fast) and synchronous mode (the master waits for acknowledgment, data is consistent, but writes are slower). In an interview it's worth naming the key problems: replica lag, data consistency, the absence of built-in automatic failover (it's set up via Patroni or pgpool), overhead on the master, and the need for constant monitoring via `pg_stat_replication`. Separately - upgrades and migrations: without planning, you can easily end up with downtime or desynchronization.
+
+## How it works
+
+Replication in PostgreSQL is built on the WAL - the write-ahead log. The master ships WAL records to the replicas, and they replay them locally. In asynchronous mode the master does not wait for the replicas; in synchronous mode it waits for acknowledgment from at least one (`synchronous_standby_names`).
+
+<figure>
+<svg viewBox="0 0 560 190" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+<rect x="30" y="70" width="120" height="50" rx="8" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" />
+<text x="90" y="92" textAnchor="middle" stroke="none" fill="#6366f1">Primary</text>
+<text x="90" y="108" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6">WAL</text>
+<rect x="410" y="20" width="120" height="46" rx="8" fill="currentColor" fillOpacity="0.08" />
+<text x="470" y="40" textAnchor="middle" stroke="none" fill="currentColor">Replica 1</text>
+<text x="470" y="56" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6">replay WAL</text>
+<rect x="410" y="124" width="120" height="46" rx="8" fill="currentColor" fillOpacity="0.08" />
+<text x="470" y="144" textAnchor="middle" stroke="none" fill="currentColor">Replica 2</text>
+<text x="470" y="160" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6">replay WAL</text>
+<path d="M150 88 C 260 60, 320 45, 405 43" strokeLinecap="round" markerEnd="url(#a1324)" />
+<path d="M150 102 C 260 130, 320 145, 405 147" strokeLinecap="round" markerEnd="url(#a1324)" />
+<text x="285" y="38" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.7">WAL stream</text>
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion path="M150 88 C 260 60, 320 45, 405 43" dur="2.4s" repeatCount="indefinite" />
+</circle>
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion path="M150 102 C 260 130, 320 145, 405 147" dur="2.4s" begin="0.6s" repeatCount="indefinite" />
+</circle>
+<defs>
+<marker id="a1324" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+<path d="M1 1 L7 4 L1 7" fill="none" stroke="currentColor" />
+</marker>
+</defs>
+</svg>
+</figure>
+
+An example of configuring streaming replication on the master side:
+
+```sql
+-- On the primary server
+ALTER SYSTEM SET wal_level = 'replica';
+ALTER SYSTEM SET archive_mode = 'on';
+ALTER SYSTEM SET archive_command = 'cp %p /var/lib/postgresql/archive/%f';
+ALTER SYSTEM SET max_wal_senders = 3;
+ALTER SYSTEM SET wal_keep_size = '1GB';
+SELECT pg_reload_conf();
+
+-- Role for replica connections
+CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'password';
+```
+
+On the replica side you specify the connection to the master and hot standby mode (in modern versions - via `standby.signal` and `postgresql.conf`):
+
+```ini
+# postgresql.conf on the replica
+primary_conninfo = 'host=primary_host port=5432 user=replicator password=password'
+restore_command = 'cp /var/lib/postgresql/archive/%f %p'
+hot_standby = on
+```
+
+What the key parameters mean:
+
+- `wal_level = 'replica'` - the WAL logging level sufficient for replication.
+- `max_wal_senders` - how many processes can send WAL to replicas simultaneously.
+- `wal_keep_size` - the volume of WAL the master retains for lagging replicas (in older versions - `wal_keep_segments`).
+- `primary_conninfo` - the replica's connection string to the master.
+- `hot_standby = on` - allows reading from the replica while it applies WAL.
+
+Replica lag is tracked via a system view:
+
+```sql
+SELECT client_addr, state, sent_lsn, replay_lsn,
+       sent_lsn - replay_lsn AS lag_bytes
+FROM pg_stat_replication;
+```
+
+## Pitfalls
+
+- In asynchronous mode, after the master fails, the last few transactions may be lost - the replica was lagging. If loss is unacceptable, you need synchronous mode.
+- Synchronous replication with a single replica is dangerous: if the replica is unavailable, the master blocks writes while waiting for acknowledgment. Keep at least a quorum of standbys.
+- PostgreSQL has no automatic failover out of the box - without Patroni/pgpool, the switchover is done by hand, and that lengthens downtime.
+- Long queries on a replica conflict with WAL application; the parameters `max_standby_streaming_delay` and `hot_standby_feedback` govern who yields to whom.
+- If `wal_keep_size` is too small, a lagging replica loses the WAL segments it needs and drops out of replication; a replication slot (`pg_create_physical_replication_slot`) helps here.
+- Reading from a replica is convenient for scaling, but because of lag you can see stale data - it's not suitable where strict freshness is required right after a write.

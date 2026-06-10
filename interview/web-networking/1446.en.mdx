@@ -1,0 +1,59 @@
+---
+id: 1446
+title: "What techniques speed up a service under a flood of HTTP requests?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What techniques speed up a service under a flood of HTTP requests?
+
+## In short
+
+Performance under load is gained with a combination of techniques: asynchronous I/O handling, HTTP/2 with multiplexing, caching, compressing response bodies, and load balancing across servers. Each one targets its own bottleneck — from a blocked thread to traffic volume.
+
+## How to answer in an interview
+
+I'd go layer by layer. At the application level, for I/O-bound load I take async (`asyncio` plus `aiohttp`): a single thread serves thousands of connections without idling on network waits. At the transport level — HTTP/2: multiplexing sends many requests over one connection and removes the head-of-line blocking from HTTP/1.1. Next is caching: frequently requested data is served from a cache (client, server, CDN/proxy) without bothering the backend. Compression (Gzip/Brotli) reduces the response size and delivery time. And horizontally — a balancer (Nginx, HAProxy) spreads requests across several instances, adding both throughput and fault tolerance.
+
+## How it works
+
+Asynchronous code does not block the thread while waiting on the network — while one request waits for a response, others are being handled.
+
+```python
+import asyncio
+import aiohttp
+
+async def fetch(session, url):
+    async with session.get(url) as response:
+        return await response.text()
+
+async def main():
+    urls = ["http://example.com", "http://example.org"]
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, url) for url in urls]
+        results = await asyncio.gather(*tasks)
+    print(len(results))
+
+asyncio.run(main())
+```
+
+Here a single `ClientSession` reuses connections, `await` hands control back to the event loop during the wait, and `asyncio.gather` runs the coroutines concurrently.
+
+The remaining layers:
+
+- **HTTP/2:** multiplexing, header compression, server push — several requests over one TCP connection with lower latency.
+- **Cache:** on the client (static assets in the browser), on the server (computation results), and on a proxy/CDN (repeat responses closer to the user).
+- **Compression:** Gzip or Brotli shrink the response body; the server compresses, the client decompresses based on `Accept-Encoding`.
+- **Load balancing:** Nginx or HAProxy distribute traffic across instances, raising both throughput and resilience to failures.
+
+## Pitfalls
+
+- Async speeds up I/O-bound tasks, but not CPU-bound ones. Heavy computation will block the event loop — it is moved to processes or a thread pool.
+- Creating a `ClientSession` per request is an antipattern: connection reuse is lost. One session per batch of requests.
+- HTTP/2 removes HOL blocking at the HTTP level, but not at the TCP level on packet loss — that is solved by HTTP/3 (QUIC).
+- A cache without well-thought-out invalidation serves stale data. Consistency is the main pain of caching.
+- Compression spends CPU. For tiny responses or already-compressed content (images, video) it can only hurt.
+- A balancer won't fix a shared bottleneck: if all instances hit the same database, multiplying servers won't help.

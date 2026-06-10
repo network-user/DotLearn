@@ -1,0 +1,94 @@
+---
+id: 1232
+title: "How do you control access to endpoints in DRF through permission classes?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you control access to endpoints in DRF through permission classes?
+
+## In short
+
+A permission in DRF is a class with a check method that, for each request, returns `True` (allow) or `False` (deny). A set of such classes is attached to a view and decides who is allowed to perform the requested action.
+
+## How to answer in an interview
+
+DRF factors access checks out into separate permission classes, which are listed in the view's `permission_classes` attribute. For every request the framework runs them one by one; if even one returns `False`, the client gets a 403 (or 401, if they aren't authenticated at all). Out of the box there are `AllowAny`, `IsAuthenticated`, `IsAdminUser`, `IsAuthenticatedOrReadOnly`. For non-standard logic I subclass `BasePermission` and override `has_permission` (access to the resource as a whole) or `has_object_permission` (access to a specific object). This way the access rules live separately from the view's business logic.
+
+## How it works
+
+Permissions are declared at the view level. Before calling the handler, DRF checks all the classes; each returns a boolean value:
+
+<figure>
+
+<svg viewBox="0 0 560 110" width="560" height="110" role="img" aria-label="A request passes through the chain of permission classes to the handler" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="8" y="40" width="78" height="30" rx="5" />
+  <text x="47" y="59" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">Request</text>
+  <line x1="86" y1="55" x2="118" y2="55" />
+  <polygon points="118,55 110,51 110,59" fill="currentColor" stroke="none" />
+  <rect x="120" y="40" width="100" height="30" rx="5" />
+  <text x="170" y="59" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">permission 1</text>
+  <line x1="220" y1="55" x2="252" y2="55" />
+  <polygon points="252,55 244,51 244,59" fill="currentColor" stroke="none" />
+  <rect x="254" y="40" width="100" height="30" rx="5" />
+  <text x="304" y="59" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">permission N</text>
+  <line x1="354" y1="55" x2="386" y2="55" />
+  <polygon points="386,55 378,51 378,59" fill="currentColor" stroke="none" />
+  <rect x="388" y="40" width="92" height="30" rx="5" stroke="#6366f1" />
+  <text x="434" y="59" textAnchor="middle" fontSize="10" stroke="none" fill="#6366f1">handler</text>
+  <line x1="304" y1="70" x2="304" y2="96" strokeDasharray="4 3" />
+  <polygon points="304,96 300,88 308,88" fill="currentColor" stroke="none" />
+  <text x="304" y="106" textAnchor="middle" fontSize="9" stroke="none" fill="currentColor">False → 403 / 401</text>
+</svg>
+
+</figure>
+
+```python
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework.response import Response
+
+class MyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"message": "Authenticated users only"})
+```
+
+The built-in classes cover the typical cases:
+
+- `AllowAny` — open to everyone.
+- `IsAuthenticated` — authenticated users only.
+- `IsAdminUser` — only users with `is_staff`.
+- `IsAuthenticatedOrReadOnly` — anyone can read, only logged-in users can modify.
+
+Your own rule is a subclass of `BasePermission`. The `has_permission` method decides access to the endpoint as a whole, `has_object_permission` — to an individual object (it's only called after `get_object`):
+
+```python
+from rest_framework.permissions import BasePermission
+
+class IsEmailDomainAllowed(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return user.is_authenticated and user.email.endswith('@example.com')
+```
+
+It's plugged in the same way, through a list:
+
+```python
+class MyCustomView(APIView):
+    permission_classes = [IsEmailDomainAllowed]
+
+    def get(self, request):
+        return Response({"message": "Hello, example.com employee"})
+```
+
+## Pitfalls
+
+- The `permission_classes` list is combined with AND: all classes must return `True`. "Or" logic has to be assembled manually (in newer DRF versions — with the `|`, `&`, `~` operators over classes).
+- `has_object_permission` fires only when accessing a specific object through `get_object()`. At the list level (`list`/`create`) the object-level check isn't called — filter the `QuerySet` separately.
+- Permissions check access but don't replace authentication: an unauthenticated user hitting the `IsAuthenticated` class gets a 401, not a 403.
+- An empty `permission_classes = []` removes all restrictions, including the global ones from `DEFAULT_PERMISSION_CLASSES`. That's an easy way to accidentally open an endpoint to everyone.

@@ -1,0 +1,64 @@
+---
+id: 1210
+title: "How does fetching with get() differ from filter() and exclude()?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does fetching with get() differ from filter() and exclude()?
+
+## In short
+
+`get()` returns a single object and fails with an exception if zero records match or more than one. `filter()` and `exclude()` return a QuerySet (a set), where `filter()` keeps the matches for a condition and `exclude()` does the opposite, keeping everything that does not match the condition.
+
+## How to answer in an interview
+
+The key difference is what the method returns and how it reacts to "the wrong count". `get()` is designed strictly for one record: zero matches yields `DoesNotExist`, two or more yields `MultipleObjectsReturned`. That is why it is used only on unique fields (`pk`, `id`, a unique field). `filter()` and `exclude()` return a lazy QuerySet and throw no exceptions: when there are no matches they simply return an empty set. `filter` selects records that satisfy the condition, `exclude` returns the logically opposite set. In practice this is `WHERE condition` versus `WHERE NOT condition`.
+
+## How it works
+
+The Django ORM translates method calls into SQL. `get()` builds a `SELECT ... WHERE`, executes it immediately, and checks that there is exactly one row:
+
+```python
+from myapp.models import Person
+
+try:
+    person = Person.objects.get(id=1)
+    print(person.name)
+except Person.DoesNotExist:
+    print("No record found")
+except Person.MultipleObjectsReturned:
+    print("More than one record found")
+```
+
+`filter()` returns a QuerySet and does not touch the database until it starts being iterated over (laziness):
+
+```python
+from myapp.models import Person
+
+adults = Person.objects.filter(age__gte=18)  # SQL is not executed yet
+for person in adults:                          # the query goes out here
+    print(person.name)
+```
+
+`exclude()` builds the same query but with the condition negated:
+
+```python
+from myapp.models import Person
+
+minors = Person.objects.exclude(age__gte=18)  # WHERE NOT (age >= 18)
+for person in minors:
+    print(person.name)
+```
+
+`filter()` and `exclude()` can be chained: `Person.objects.filter(age__gte=18).exclude(name='Bob')`.
+
+## Pitfalls
+
+- `get()` without a `try/except` wrapper will crash the request on missing or duplicate data. For the web, `get_object_or_404` is more convenient; for "it might not exist", use `filter(...).first()`.
+- `exclude(age__gte=18)` and `filter(age__lt=18)` are not always equivalent: with `NULL` in the field, the SQL `NOT` logic behaves unintuitively, and `exclude` may not return rows with `NULL`.
+- A QuerySet is lazy: `qs = filter(...)` by itself does not go to the database. The query goes out on iteration, slicing, `len()`, `list()`. Extra touches of the QuerySet inside a loop multiply duplicate queries.
+- `get()` always hits the database immediately and returns an object, not a QuerySet - the result has no `.filter()` or slicing.

@@ -1,0 +1,85 @@
+---
+id: 1320
+title: "Database cursor: row-by-row access to a query result"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Database cursor: row-by-row access to a query result
+
+## In short
+
+A cursor is a pointer object over a query's result set, through which rows are read one at a time. It lets you traverse the result, process each row individually, and avoid holding the entire result set in memory at once.
+
+## How to answer in an interview
+
+A cursor is useful wherever a query result cannot or should not be loaded in full. A query might return millions of rows - the cursor hands them over in portions as you iterate, so memory is spent only on the current block. The lifecycle is simple: create the cursor, execute the query, read rows (`fetchone`/`fetchmany`/iteration), close it. In Python drivers (DB-API), the `cursor` is also the entry point for running SQL: `cursor.execute(...)` followed by reading. It's important to distinguish client-side and server-side cursors: a server-side cursor (for example, a named cursor in psycopg2) really does not pull the whole result to the client, whereas an ordinary buffered cursor may.
+
+## How it works
+
+The stages of working with a cursor: create, execute the query, read, close. Releasing resources on close is mandatory.
+
+<figure>
+<svg viewBox="0 0 560 150" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+<rect x="20" y="50" width="110" height="50" rx="6" fill="currentColor" fillOpacity="0.08" />
+<text x="75" y="72" textAnchor="middle" stroke="none" fill="currentColor">Result set</text>
+<text x="75" y="88" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6">N rows</text>
+<rect x="230" y="55" width="70" height="40" rx="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" />
+<text x="265" y="79" textAnchor="middle" stroke="none" fill="#6366f1">cursor</text>
+<rect x="400" y="30" width="140" height="22" rx="4" fill="currentColor" fillOpacity="0.06" />
+<rect x="400" y="64" width="140" height="22" rx="4" fill="currentColor" fillOpacity="0.06" />
+<rect x="400" y="98" width="140" height="22" rx="4" fill="currentColor" fillOpacity="0.06" />
+<text x="470" y="45" textAnchor="middle" stroke="none" fill="currentColor">fetch row 1</text>
+<text x="470" y="79" textAnchor="middle" stroke="none" fill="currentColor">fetch row 2</text>
+<text x="470" y="113" textAnchor="middle" stroke="none" fill="currentColor">fetch row 3</text>
+<path d="M130 75 H225" strokeLinecap="round" markerEnd="url(#a1320)" />
+<path d="M300 75 H395" strokeLinecap="round" strokeDasharray="4 4" markerEnd="url(#a1320)" />
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion path="M305 75 H395" dur="2s" repeatCount="indefinite" />
+</circle>
+<defs>
+<marker id="a1320" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+<path d="M1 1 L7 4 L1 7" fill="none" stroke="currentColor" />
+</marker>
+</defs>
+</svg>
+</figure>
+
+```python
+import sqlite3
+
+connection = sqlite3.connect("example.db")
+cursor = connection.cursor()
+
+cursor.execute("SELECT id, name FROM users")
+
+for row in cursor:
+    print(f"User ID: {row[0]}, Name: {row[1]}")
+
+cursor.close()
+connection.close()
+```
+
+Here `connection.cursor()` creates the cursor, `cursor.execute(...)` runs the query, the `for row in cursor` iteration pulls rows one at a time (each is a tuple), and `close()` releases resources.
+
+To control reading explicitly, use the fetch methods:
+
+```python
+cursor.execute("SELECT id, name FROM users")
+first = cursor.fetchone()
+batch = cursor.fetchmany(100)
+rest = cursor.fetchall()
+```
+
+`fetchone()` returns a single row or `None`, `fetchmany(n)` returns a list of up to n rows, and `fetchall()` returns all remaining rows. On large result sets, `fetchmany` in a loop is safer than `fetchall`. A convenient way to guarantee closing is the context manager: `with connection.cursor() as cursor:`.
+
+## Pitfalls
+
+- `fetchall()` on a huge table negates all the memory savings - it materializes the entire result. For streaming processing, use iteration or `fetchmany`.
+- An unclosed cursor holds resources and locks. Always close it (ideally via `with`), especially on long-lived connections.
+- In sqlite3, a cursor does not isolate data: a concurrent write to the same connection during iteration can produce unexpected results.
+- The default cursor of many drivers buffers the whole response on the client. For genuine streaming output you need a server-side / named cursor.
+- A cursor is tied to its connection: once the connection is closed, the cursor is no longer valid.

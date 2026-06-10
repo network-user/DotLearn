@@ -1,0 +1,107 @@
+---
+id: 459
+title: "Своя модель пользователя в Django: с чего начать и что прописать"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Своя модель пользователя в Django: с чего начать и что прописать
+
+## Суть
+
+Кастомная аутентификация в Django строится вокруг собственной модели пользователя: её наследуют от `AbstractBaseUser` (полный контроль) либо `AbstractUser` (стандартный набор плюс пара своих полей), привязывают менеджер и регистрируют через `AUTH_USER_MODEL`.
+
+## Что ответить на собесе
+
+Я завожу собственную модель пользователя ещё до первой миграции проекта, потому что сменить её потом крайне болезненно. Беру `AbstractBaseUser`, если нужен вход по email и полный контроль над полями, или `AbstractUser`, когда достаточно дополнить готовую модель. К модели обязательно цепляю свой `BaseUserManager` с методами `create_user` и `create_superuser`, указываю `USERNAME_FIELD` и `REQUIRED_FIELDS`, после чего прописываю модель в `AUTH_USER_MODEL`. Так Django подхватывает мою модель везде: в админке, в `request.user`, в формах.
+
+## Как это работает
+
+Django хранит модель пользователя за константой `AUTH_USER_MODEL`, и весь фреймворк обращается к ней через `get_user_model()`, а не напрямую. Поэтому замена сводится к трём вещам: своя модель, свой менеджер, одна строка в настройках.
+
+Своя модель и менеджер:
+
+```python
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.db import models
+
+class CustomUserManager(BaseUserManager):
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError('The Email field must be set')
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        return self.create_user(email, password, **extra_fields)
+
+class CustomUser(AbstractBaseUser):
+    email = models.EmailField(unique=True)
+    first_name = models.CharField(max_length=30)
+    last_name = models.CharField(max_length=30)
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+
+    objects = CustomUserManager()
+
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['first_name', 'last_name']
+
+    def __str__(self):
+        return self.email
+```
+
+Регистрация модели в настройках:
+
+```python
+AUTH_USER_MODEL = 'myapp.CustomUser'
+```
+
+Если используете админку, модель туда нужно завести отдельно, подсунув свои наборы полей:
+
+```python
+from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin
+from .models import CustomUser
+
+class CustomUserAdmin(UserAdmin):
+    model = CustomUser
+    list_display = ['email', 'first_name', 'last_name', 'is_staff']
+    fieldsets = (
+        (None, {'fields': ('email', 'password')}),
+        ('Personal info', {'fields': ('first_name', 'last_name')}),
+        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser')}),
+    )
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('email', 'first_name', 'last_name', 'password1', 'password2'),
+        }),
+    )
+    ordering = ('email',)
+
+admin.site.register(CustomUser, CustomUserAdmin)
+```
+
+Останется создать и накатить миграции:
+
+```bash
+python manage.py makemigrations
+python manage.py migrate
+```
+
+## Подводные камни
+
+- `AUTH_USER_MODEL` нужно задавать в самом начале проекта. Менять его после первой миграции - значит переписывать схему БД и все внешние ключи, это почти всегда означает пересоздание базы.
+- Пароль никогда не пишут в поле напрямую. Только `set_password()` (он хеширует) и `check_password()` для проверки; присваивание `user.password = '...'` сохранит plaintext.
+- `REQUIRED_FIELDS` не должен содержать `USERNAME_FIELD` и поле пароля - Django запросит их отдельно, дубликат вызовет ошибку.
+- При `AbstractBaseUser` вы не получаете права и группы автоматически: для них добавляют `PermissionsMixin`, иначе `is_superuser`, `groups` и проверки прав работать не будут.
+- В коде ссылайтесь на пользователя через `settings.AUTH_USER_MODEL` (в моделях) и `get_user_model()` (в остальном), а не импортом конкретного класса - иначе ломается переносимость.

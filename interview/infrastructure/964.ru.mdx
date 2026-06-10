@@ -1,0 +1,93 @@
+---
+id: 964
+title: "Слои и кеш сборки: почему порядок инструкций в Dockerfile решает всё"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Слои и кеш сборки: почему порядок инструкций в Dockerfile решает всё
+
+## Суть
+
+Каждая инструкция Dockerfile создаёт отдельный слой образа, и Docker кеширует эти слои. При повторной сборке неизменённые слои берутся из кеша, а как только один слой меняется, он и все идущие за ним пересобираются заново.
+
+## Что ответить на собесе
+
+Образ — это стопка слоёв, по слою на инструкцию (`FROM`, `COPY`, `RUN`). Docker считает по каждой инструкции ключ кеша: для `RUN` это сам текст команды, для `COPY`/`ADD` — ещё и контрольная сумма копируемых файлов. Если ключ совпал с предыдущей сборкой — слой переиспользуется. Важный момент: кеш цепочечный. Изменился слой N — инвалидируются N и все слои после него, потому что каждый следующий слой строится поверх предыдущего. Отсюда практическое правило: размещать инструкции от самых редко меняющихся к самым частым. Сначала копируем манифест зависимостей и ставим их, и только потом копируем исходники, которые правятся на каждом коммите.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 250" role="img" aria-label="Стек слоёв образа: изменение слоя инвалидирует его и все слои выше" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <text x="30" y="24" fill="currentColor" fontSize="13">Стек слоёв (снизу вверх)</text>
+  <text x="350" y="24" fill="currentColor" fontSize="13">После правки исходника</text>
+
+  <g stroke="currentColor" strokeWidth="1.5">
+    <rect x="30" y="200" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="30" y="160" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="30" y="120" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="30" y="80" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+  </g>
+  <text x="140" y="222" textAnchor="middle" fill="currentColor">FROM python</text>
+  <text x="140" y="182" textAnchor="middle" fill="currentColor">COPY requirements.txt</text>
+  <text x="140" y="142" textAnchor="middle" fill="currentColor">RUN pip install</text>
+  <text x="140" y="102" textAnchor="middle" fill="currentColor">COPY . .</text>
+
+  <g stroke="currentColor" strokeWidth="1.5">
+    <rect x="350" y="200" width="180" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="350" y="160" width="180" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="350" y="120" width="180" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="350" y="80" width="180" height="34" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+  </g>
+  <text x="440" y="222" textAnchor="middle" fill="currentColor" fillOpacity="0.7">cache</text>
+  <text x="440" y="182" textAnchor="middle" fill="currentColor" fillOpacity="0.7">cache</text>
+  <text x="440" y="142" textAnchor="middle" fill="currentColor" fillOpacity="0.7">cache</text>
+  <text x="440" y="102" textAnchor="middle" fill="#6366f1">пересборка</text>
+
+  <path d="M 545 97 L 545 56 L 360 56" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 4" />
+  <text x="350" y="50" fill="#6366f1" fontSize="11">меняется только верх</text>
+</svg>
+
+</figure>
+
+Возьмём типичный Dockerfile и разберём, что попадёт в кеш:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+CMD ["python", "app.py"]
+```
+
+- **FROM** — базовый образ. Есть локально — берётся из кеша.
+- **COPY requirements.txt .** — слой кешируется, пока хеш `requirements.txt` не меняется.
+- **RUN pip install ...** — самый дорогой шаг; пока предыдущий слой из кеша, и этот из кеша.
+- **COPY . .** — копирует весь проект. Любая правка исходника меняет хеш контекста и инвалидирует этот слой.
+
+Хитрость в порядке. Исходники меняются часто, зависимости — редко. Скопировав сначала только `requirements.txt`, мы держим дорогой `pip install` в кеше при обычных правках кода. Если бы первым шёл `COPY . .`, любая правка сбрасывала бы и установку зависимостей.
+
+А вот анти-паттерн:
+
+```dockerfile
+COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
+```
+
+Здесь каждое изменение любого файла инвалидирует `COPY`, а за ним и `pip install` — кеш зависимостей теряется на каждой сборке.
+
+## Подводные камни
+
+- **Цепочка инвалидации.** Меняется не только проблемный слой, а он и всё, что ниже. Поэтому частоменяющиеся шаги держат в самом низу.
+- **`COPY . .` слишком рано — убийца кеша.** Копирование всего контекста до установки зависимостей сбрасывает кеш на каждый коммит. Используйте `.dockerignore`, чтобы лишние файлы не ломали хеш.
+- **`apt-get update` отдельной строкой.** Кешированный `update` устаревает, и `install` ставит старые версии. Объединяйте: `RUN apt-get update && apt-get install -y ...`.
+- **Кеш можно обойти специально.** Флаг `--no-cache` у `docker build` форсирует полную пересборку, когда нужно подтянуть свежие внешние пакеты.
+- **Кеш локален.** На чистом CI-агенте кеша слоёв нет; для CI это решают `--cache-from` и BuildKit-кеш.

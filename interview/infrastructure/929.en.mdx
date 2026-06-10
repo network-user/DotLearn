@@ -1,0 +1,98 @@
+---
+id: 929
+title: "Static typing in CI: how to make the pipeline check types automatically?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Static typing in CI: how to make the pipeline check types automatically?
+
+## In short
+
+Type checking is wired in as a separate pipeline step that runs a static analyzer (for Python, mypy) on every push and pull request. If the types don't line up, the step fails and the offending code never reaches merge.
+
+## How to answer in an interview
+
+I add type annotations to the code and, in CI, a dedicated job that installs mypy and runs it over the project. The real value isn't the check itself but the fact that it's mandatory and automatic: a developer can't "forget" to run the analyzer locally, because a red pipeline blocks the merge. This catches a whole class of errors (wrong argument type, a None where an object was expected) before the code runs and before code review, saving the reviewer's time.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 600 130" width="600" height="130" role="img" aria-label="CI pipeline: a push or PR triggers the checkout, setup-python, and mypy steps; the result blocks the merge on error" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+  <text x="55" y="30" textAnchor="middle" stroke="none" fill="currentColor">push / PR</text>
+  <rect x="105" y="40" width="100" height="40" rx="6" />
+  <text x="155" y="64" textAnchor="middle" stroke="none" fill="currentColor">checkout</text>
+  <rect x="225" y="40" width="100" height="40" rx="6" />
+  <text x="275" y="64" textAnchor="middle" stroke="none" fill="currentColor">setup-python</text>
+  <rect x="345" y="40" width="100" height="40" rx="6" stroke="#6366f1" />
+  <text x="395" y="64" textAnchor="middle" stroke="none" fill="#6366f1">mypy src/</text>
+  <rect x="465" y="40" width="120" height="40" rx="6" />
+  <text x="525" y="58" textAnchor="middle" stroke="none" fill="currentColor">merge?</text>
+  <text x="525" y="73" textAnchor="middle" stroke="none" fill="currentColor">red = blocked</text>
+  <line x1="10" y1="60" x2="105" y2="60" />
+  <line x1="205" y1="60" x2="225" y2="60" />
+  <line x1="325" y1="60" x2="345" y2="60" />
+  <line x1="445" y1="60" x2="465" y2="60" />
+  <polygon points="105,56 113,60 105,64" fill="currentColor" stroke="none" />
+  <polygon points="225,56 233,60 225,64" fill="currentColor" stroke="none" />
+  <polygon points="345,56 353,60 345,64" fill="currentColor" stroke="none" />
+  <polygon points="465,56 473,60 465,64" fill="currentColor" stroke="none" />
+  <circle r="5" fill="#6366f1" stroke="none">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M10,60 H465" />
+  </circle>
+</svg>
+
+</figure>
+
+Annotations are a contract that mypy checks for consistency without executing the program:
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+```
+
+Next we add a job to the pipeline. For GitHub Actions we drop in the file `.github/workflows/mypy.yml`:
+
+```yaml
+name: Type Check
+
+on: [push, pull_request]
+
+jobs:
+  type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install mypy
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy
+
+      - name: Run mypy
+        run: mypy src/
+```
+
+Line by line:
+
+- `on: [push, pull_request]` - triggers: every commit and every PR.
+- `runs-on: ubuntu-latest` - a clean runner for reproducibility.
+- the `checkout` step pulls the code, `setup-python` pins the interpreter version.
+- `mypy src/` returns a non-zero exit code on error, and the job turns red.
+
+For GitLab it's the same idea - adding a stage to `.gitlab-ci.yml` with the same `mypy src/`.
+
+## Pitfalls
+
+- **Green mypy doesn't mean "no bugs".** Static checking catches only type mismatches, not logic; it complements tests, it doesn't replace them.
+- **Third-party libraries without annotations.** Many packages aren't typed; mypy will complain until you install stub packages (`types-...`) or configure `ignore_missing_imports`.
+- **Python version.** The check's behavior depends on the target version; if it differs between CI and local, the results will diverge - pin it explicitly.
+- **Rolling it out on legacy code.** Turning on strict mode at once on a large untyped project is painful; usually you start with lenient settings and tighten gradually, otherwise the pipeline drowns in errors.

@@ -1,0 +1,93 @@
+---
+id: 964
+title: "Layers and the build cache: why instruction order in a Dockerfile decides everything"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Layers and the build cache: why instruction order in a Dockerfile decides everything
+
+## In short
+
+Each Dockerfile instruction creates a separate image layer, and Docker caches these layers. On a rebuild, unchanged layers are taken from the cache, and as soon as one layer changes, it and every layer after it are rebuilt from scratch.
+
+## How to answer in an interview
+
+An image is a stack of layers, one layer per instruction (`FROM`, `COPY`, `RUN`). Docker computes a cache key for each instruction: for `RUN` it's the command text itself, for `COPY`/`ADD` it's also the checksum of the copied files. If the key matches the previous build - the layer is reused. The important point: the cache is chained. If layer N changes, N and every layer after it are invalidated, because each subsequent layer is built on top of the previous one. Hence the practical rule: place instructions from the least frequently changing to the most frequent. First copy the dependency manifest and install them, and only then copy the source code, which gets edited on every commit.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 560 250" role="img" aria-label="Image layer stack: changing a layer invalidates it and every layer above" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <text x="30" y="24" fill="currentColor" fontSize="13">Layer stack (bottom to top)</text>
+  <text x="350" y="24" fill="currentColor" fontSize="13">After editing a source file</text>
+
+  <g stroke="currentColor" strokeWidth="1.5">
+    <rect x="30" y="200" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="30" y="160" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="30" y="120" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="30" y="80" width="220" height="34" fill="currentColor" fillOpacity="0.06" />
+  </g>
+  <text x="140" y="222" textAnchor="middle" fill="currentColor">FROM python</text>
+  <text x="140" y="182" textAnchor="middle" fill="currentColor">COPY requirements.txt</text>
+  <text x="140" y="142" textAnchor="middle" fill="currentColor">RUN pip install</text>
+  <text x="140" y="102" textAnchor="middle" fill="currentColor">COPY . .</text>
+
+  <g stroke="currentColor" strokeWidth="1.5">
+    <rect x="350" y="200" width="180" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="350" y="160" width="180" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="350" y="120" width="180" height="34" fill="currentColor" fillOpacity="0.06" />
+    <rect x="350" y="80" width="180" height="34" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+  </g>
+  <text x="440" y="222" textAnchor="middle" fill="currentColor" fillOpacity="0.7">cache</text>
+  <text x="440" y="182" textAnchor="middle" fill="currentColor" fillOpacity="0.7">cache</text>
+  <text x="440" y="142" textAnchor="middle" fill="currentColor" fillOpacity="0.7">cache</text>
+  <text x="440" y="102" textAnchor="middle" fill="#6366f1">rebuild</text>
+
+  <path d="M 545 97 L 545 56 L 360 56" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 4" />
+  <text x="350" y="50" fill="#6366f1" fontSize="11">only the top changes</text>
+</svg>
+
+</figure>
+
+Let's take a typical Dockerfile and work out what ends up in the cache:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+CMD ["python", "app.py"]
+```
+
+- **FROM** - the base image. If it's local, it's taken from cache.
+- **COPY requirements.txt .** - the layer is cached as long as the hash of `requirements.txt` doesn't change.
+- **RUN pip install ...** - the most expensive step; as long as the previous layer is from cache, this one is too.
+- **COPY . .** - copies the whole project. Any source edit changes the context hash and invalidates this layer.
+
+The trick is in the order. Source files change often, dependencies rarely. By copying only `requirements.txt` first, we keep the expensive `pip install` in cache during ordinary code edits. If `COPY . .` came first, any edit would also reset the dependency installation.
+
+And here's the anti-pattern:
+
+```dockerfile
+COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
+```
+
+Here any change to any file invalidates `COPY`, and after it `pip install` - the dependency cache is lost on every build.
+
+## Pitfalls
+
+- **The invalidation chain.** It's not only the problem layer that changes, but it and everything above it. That's why frequently changing steps are kept right at the top.
+- **`COPY . .` too early is a cache killer.** Copying the whole context before installing dependencies resets the cache on every commit. Use `.dockerignore` so unnecessary files don't break the hash.
+- **`apt-get update` on a separate line.** A cached `update` goes stale, and `install` pulls old versions. Combine them: `RUN apt-get update && apt-get install -y ...`.
+- **The cache can be bypassed on purpose.** The `--no-cache` flag on `docker build` forces a full rebuild when you need to pull fresh external packages.
+- **The cache is local.** A clean CI agent has no layer cache; for CI this is solved with `--cache-from` and the BuildKit cache.

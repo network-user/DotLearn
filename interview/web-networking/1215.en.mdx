@@ -1,0 +1,111 @@
+---
+id: 1215
+title: "How do you organize calls to third-party HTTP APIs from a Django app?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you organize calls to third-party HTTP APIs from a Django app?
+
+## In short
+
+Calling someone else's service over HTTP is just an ordinary network request, and it should not live directly in the view. I move all work with an external API into a separate client layer: it gathers the URL, headers, authorization, response parsing, and failure handling. The view simply calls a client function and gets ready-made data. For the requests themselves I use `requests`, and on top of it I add timeouts, status checks, and Django's cache, so I don't hit the service on every little thing.
+
+## How to answer in an interview
+
+A short answer that closes the question:
+
+- I keep HTTP request logic in a separate client module rather than in views - that makes it easier to test and reuse.
+- I make requests through `requests` with a mandatory `timeout` and `raise_for_status()`, so I don't hang on an unavailable service and catch errors explicitly.
+- I pass keys and tokens through headers, and I take the secrets themselves from settings/environment rather than from the code.
+- I cache frequent and slow responses through `django.core.cache`, setting a reasonable TTL.
+
+This set is enough to show that you think about reliability and structure, not just that you can call `requests.get`.
+
+## How it works
+
+You need an external API so that your app can take data or functionality from someone else's service: weather, currency rates, payments, social-network profiles. Instead of writing this yourself, you make a network request and get a response, usually in JSON.
+
+The basic flow looks like this:
+
+1. Install the requests library:
+
+```bash
+pip install requests
+```
+
+2. Create a separate module, for example `api_client.py`, and gather all the code that talks to the service there.
+
+3. Make the request. A simple GET with a timeout and JSON parsing:
+
+```python
+import requests
+
+def fetch_weather(city):
+    api_key = "your_api_key"
+    url = "http://api.weatherapi.com/v1/current.json"
+    params = {"key": api_key, "q": city}
+    response = requests.get(url, params=params, timeout=5)
+
+    if response.status_code == 200:
+        return response.json()
+    return None
+```
+
+4. If the service requires authorization, pass the token in a header:
+
+```python
+headers = {"Authorization": "Bearer your_access_token"}
+response = requests.get(url, headers=headers, timeout=5)
+```
+
+5. To go to the network less often, wrap the call with Django's cache:
+
+```python
+from django.core.cache import cache
+
+def fetch_cached_weather(city):
+    cache_key = f"weather_{city}"
+    data = cache.get(cache_key)
+
+    if data is None:
+        data = fetch_weather(city)
+        cache.set(cache_key, data, timeout=60 * 15)
+
+    return data
+```
+
+Here is what the call-the-service scheme looks like at the layer level:
+
+<svg viewBox="0 0 360 70" width="100%" role="img" aria-label="Request flow from the view through the client to the external API">
+  <rect x="4" y="22" width="80" height="26" rx="6" fill="none" stroke="currentColor" />
+  <text x="44" y="39" fontSize="11" textAnchor="middle" fill="currentColor">View</text>
+  <rect x="130" y="22" width="90" height="26" rx="6" fill="none" stroke="currentColor" />
+  <text x="175" y="39" fontSize="11" textAnchor="middle" fill="currentColor">API client</text>
+  <rect x="268" y="22" width="88" height="26" rx="6" fill="none" stroke="currentColor" />
+  <text x="312" y="39" fontSize="11" textAnchor="middle" fill="currentColor">Service</text>
+  <line x1="84" y1="35" x2="130" y2="35" stroke="currentColor" />
+  <line x1="220" y1="35" x2="268" y2="35" stroke="currentColor" />
+</svg>
+
+## Pitfalls
+
+- **No timeout.** Without `timeout` a request can hang forever and block a worker. Always set a timeout.
+- **Checking only the status manually.** It's more convenient to use `response.raise_for_status()` so that an HTTP error becomes an exception, and to catch it via `requests.exceptions.HTTPError`. Other network failures are caught by a more general `except`.
+
+```python
+try:
+    response = requests.get(url, timeout=5)
+    response.raise_for_status()
+except requests.exceptions.HTTPError as err:
+    print(f"HTTP error occurred: {err}")
+except Exception as err:
+    print(f"Other error occurred: {err}")
+```
+
+- **Secrets in code.** Don't hardcode API keys and tokens; take them from settings or environment variables.
+- **Blindly caching errors.** If you put an empty/erroneous response into the cache with a long TTL, the app will serve garbage for a long time. Cache only valid data and choose the TTL based on how often the data changes.
+- **Logic in the view.** When requests are smeared across views, they are hard to test and reuse - keep them in the client.

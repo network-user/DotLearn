@@ -1,0 +1,70 @@
+---
+id: 1230
+title: "How does annotate differ from aggregate in the Django ORM, and which to use when?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does annotate differ from aggregate in the Django ORM, and which to use when?
+
+## In short
+
+Both methods compute aggregates right in the database, but they return different things. `annotate` attaches a computed field to each object (or each group) in the QuerySet — a count, sum, or average per row. `aggregate` collapses the entire QuerySet into a single dictionary with the final numbers. Roughly: `annotate` is "per each," `aggregate` is "over all at once."
+
+## How to answer in an interview
+
+`annotate` returns a QuerySet with an added field and stays lazy: the query hasn't run yet, and you can filter and order it further. `aggregate` is a terminal operation: it hits the database immediately and returns a `dict`. The main benefit of both is that summing and grouping happen on the database side (via `GROUP BY` and aggregate SQL functions), not in Python after pulling all the rows into memory.
+
+## How it works
+
+`annotate` adds a field computed by an aggregate function to each object in the QuerySet. Combined with `values()` it forms a grouping: the fields listed in `values()` go into `GROUP BY`, and the aggregate is computed within each group.
+
+A `Book` model with `author` and `price` fields. How many books each author has:
+
+```python
+from django.db.models import Count
+from .models import Book
+
+authors_with_book_count = Book.objects.values('author').annotate(book_count=Count('id'))
+
+for row in authors_with_book_count:
+    print(f"Author: {row['author']}, Number of Books: {row['book_count']}")
+```
+
+Here each author-row gets a `book_count` field with the number of their books.
+
+`aggregate` takes the whole QuerySet and reduces it to a single result — a dictionary. The total cost of all books:
+
+```python
+from django.db.models import Sum
+from .models import Book
+
+total_price = Book.objects.aggregate(total=Sum('price'))
+
+print(f"Total price of all books: {total_price['total']}")
+```
+
+The dictionary key is the argument name (`total`), the value is the sum of prices across the whole table.
+
+<svg viewBox="0 0 320 120" width="320" height="120" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="10" y="20" width="120" height="80" rx="6" />
+  <text x="70" y="14" fontSize="11" textAnchor="middle" stroke="none" fill="currentColor">annotate</text>
+  <line x1="10" y1="45" x2="130" y2="45" />
+  <line x1="10" y1="70" x2="130" y2="70" />
+  <text x="70" y="38" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">row + field</text>
+  <text x="70" y="63" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">row + field</text>
+  <text x="70" y="90" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">row + field</text>
+  <rect x="200" y="50" width="110" height="30" rx="6" />
+  <text x="255" y="44" fontSize="11" textAnchor="middle" stroke="none" fill="currentColor">aggregate</text>
+  <text x="255" y="69" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">one dict</text>
+</svg>
+
+## Pitfalls
+
+- **`annotate` is lazy, `aggregate` is not.** After `annotate` you can chain `filter`, `order_by`, a slice; `aggregate` runs the query immediately and returns a plain `dict` that you can't filter further through the ORM.
+- **The grouping is set by `values()` before `annotate`.** If you put `values()` after `annotate`, the composition of `GROUP BY` changes and the numbers go wrong. Order matters: first `values('author')`, then `annotate(...)`.
+- **A double `JOIN` inflates the counts.** Annotations across several related tables at once (`Count` over two different `ForeignKey`s) produce a Cartesian product and overstated sums. Cure it with `distinct=True` in `Count` or separate queries.
+- **`Count('id')` and `Count('field')` aren't the same.** The second form doesn't count rows with `NULL` in that field, which is sometimes exactly what you want and sometimes a surprise.

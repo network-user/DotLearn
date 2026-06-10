@@ -1,0 +1,46 @@
+---
+id: 1292
+title: "Adding a column to a loaded table without downtime"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Adding a column to a loaded table without downtime
+
+## In short
+
+A column is added with `ALTER TABLE ADD COLUMN`, but on a hot table the main thing is to avoid a long lock. The key to safety: add the column without a default value (or rely on the "instant" DEFAULT of modern DBMSs) and don't mix it with a heavy data rewrite.
+
+## How to answer in an interview
+
+The command itself is trivial - `ALTER TABLE orders ADD COLUMN delivery_date DATE`. The danger lies in the lock and in rewriting the table. In older engines, `ADD COLUMN ... DEFAULT <value>` could rewrite every row under an exclusive lock and stall writes to the table. So the safe scenario is: add a nullable column without a DEFAULT (a fast metadata operation), then, if needed, backfill the values in batches, and only after that, as a separate step, add `NOT NULL`/the index. In PostgreSQL 11+ and MySQL 8 a constant DEFAULT is already added instantly, but checking the behavior of the specific version is a must.
+
+## How it works
+
+The basic operation:
+
+```sql
+ALTER TABLE orders ADD COLUMN delivery_date DATE;
+```
+
+Without a DEFAULT and without `NOT NULL`, the DBMS simply edits the table's metadata - the rows on disk aren't touched, and the lock is short.
+
+Filling in existing rows is done in batches, so as not to hold a long transaction and not bloat the log:
+
+```sql
+UPDATE orders SET delivery_date = '1970-01-01'
+WHERE delivery_date IS NULL AND id BETWEEN 1 AND 10000;
+```
+
+The range is shifted and the step repeated until the whole table is covered. The `NOT NULL` constraint and indexes are added as the last step, once the data is already in place (in PostgreSQL - via `CREATE INDEX CONCURRENTLY`).
+
+## Pitfalls
+
+- `ADD COLUMN ... DEFAULT` with a volatile expression (for example, `now()`) still rewrites the table - only a constant DEFAULT stays instant.
+- Wrapping `ALTER TABLE` in a transaction doesn't make it safe: the transaction holds the lock until `COMMIT`, and a long DDL can build up a queue of waiting queries.
+- A large `UPDATE` in a single command bloats the WAL/undo and holds long row locks - that's exactly why you backfill in batches.
+- In PostgreSQL even a short `ALTER` needs an `ACCESS EXCLUSIVE` lock; if a long query holds it up, new queries will line up behind it. `lock_timeout` and retrying help.
+- "Run it at night" is a stopgap, not a solution: for systems without a maintenance window you need precisely the metadata-plus-batches approach.

@@ -1,0 +1,73 @@
+---
+id: 1175
+title: "Kafka vs. RabbitMQ: when to reach for an event log and when for a queue broker"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Kafka vs. RabbitMQ: when to reach for an event log and when for a queue broker
+
+## In short
+
+Kafka and RabbitMQ both shuttle messages between services, but they solve different problems. Kafka is a distributed log: events are appended to the end, stored on disk, and available for re-reading, which gives high throughput and a solid foundation for stream processing. RabbitMQ is a queue broker: its strength is flexible routing through exchanges and strict guarantees for delivering a specific message to a specific consumer.
+
+A rough rule: need a stream of events with the ability to replay history - Kafka; need smart task delivery with acknowledgments and complex routing - RabbitMQ.
+
+## How to answer in an interview
+
+Frame the difference through the data model, not through a feature list:
+
+- **Kafka stores a log.** A message is not deleted after being read - it is read by offset, and retention is defined by time or size. Several consumer groups read one topic independently. This gives replay, analytics, and high throughput.
+- **RabbitMQ delivers to a queue.** A message lives until it is taken and acknowledged (ack), after which it disappears. The route is set by the exchange (direct, fanout, topic, headers) and queue bindings.
+- **Scaling.** In Kafka parallelism is bounded by the number of topic partitions. In RabbitMQ - by the number of consumers on a queue and the sharding scheme.
+- **When to use which.** Kafka - streaming of logs, metrics, event sourcing, real-time analytics. RabbitMQ - task queues, RPC, integrating systems with fine-grained routing and priorities.
+
+A short takeaway for the interviewer: "Kafka is a replayable log built for high load, RabbitMQ is a broker with rich routing and per-message delivery."
+
+## How it works
+
+**Kafka.** The producer writes to a topic, the topic is split into partitions, and the partitions are spread across the cluster's brokers - this is how throughput and availability grow. Within a partition the order is strict; across partitions it is not. The consumer remembers its offset, so it can re-read the stream from any point.
+
+```python
+from kafka import KafkaProducer
+
+producer = KafkaProducer(bootstrap_servers="localhost:9092")
+producer.send("events", b"order-created")
+producer.flush()
+producer.close()
+```
+
+**RabbitMQ.** The producer publishes to an exchange, and the exchange, based on the routing key and bindings, decides which queues to put the message into. The consumer takes it from the queue and sends an ack; until acknowledged, the message is considered undelivered.
+
+```python
+import pika
+
+connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+channel = connection.channel()
+channel.queue_declare(queue="tasks")
+channel.basic_publish(exchange="", routing_key="tasks", body="resize-image")
+connection.close()
+```
+
+<svg viewBox="0 0 320 90" width="320" height="90" fill="none" stroke="currentColor" strokeWidth="2" aria-label="Log vs. queue">
+  <text x="8" y="16" fill="currentColor" stroke="none" fontSize="11">Kafka: log with offsets</text>
+  <rect x="8" y="24" width="40" height="22" />
+  <rect x="48" y="24" width="40" height="22" />
+  <rect x="88" y="24" width="40" height="22" />
+  <rect x="128" y="24" width="40" height="22" />
+  <text x="200" y="40" fill="currentColor" stroke="none" fontSize="10">offset -&gt; many read</text>
+  <text x="8" y="68" fill="currentColor" stroke="none" fontSize="11">RabbitMQ: queue</text>
+  <rect x="8" y="74" width="120" height="14" />
+  <text x="200" y="85" fill="currentColor" stroke="none" fontSize="10">ack -&gt; message leaves</text>
+</svg>
+
+## Pitfalls
+
+- **"Kafka is a queue."** No, it's a log. A message does not disappear after being read, so the consumption model (offsets, groups) is fundamentally different.
+- **Message ordering.** In Kafka it is guaranteed only within a partition. If global order by key matters - use a single partitioning key, otherwise ordering will drift apart.
+- **Deletion after reading.** In RabbitMQ, forget to ack and the message returns to the queue and is processed again. Consumer logic must be idempotent.
+- **Mixed-up scenarios.** Running short-lived tasks with priorities through Kafka is awkward; building replay analytics on RabbitMQ is painful. For load and replay you pick Kafka; for routing and per-message guarantees you pick RabbitMQ.
+- **Retention in Kafka.** Data is not eternal: it is cleaned up by time or size. Plan for "re-reading" only within the storage window.

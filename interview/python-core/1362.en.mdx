@@ -1,0 +1,95 @@
+---
+id: 1362
+title: "How does the interpreter reclaim unused memory on its own?"
+category: python-core
+categoryLabel: "Python: язык и идиомы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does the interpreter reclaim unused memory on its own?
+
+## In short
+
+CPython manages memory automatically with two mechanisms: reference counting (frees an object as soon as no references to it remain) and the cyclic garbage collector (finds and removes groups of objects that reference each other).
+
+## How to answer in an interview
+
+The base mechanism in CPython is reference counting: every object has a counter, and as soon as it drops to zero, the memory is freed immediately. But reference counting can't handle cycles - two objects that hold references to each other. For that, a cyclic garbage collector from the `gc` module works on top: it periodically walks container objects, finds unreachable cycles, and frees them. It runs on a generational heuristic, not on every operation.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 640 220" role="img" aria-label="Reference counting versus the cyclic garbage collector" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+  <text x="150" y="24" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Reference counting</text>
+  <rect x="60" y="60" width="180" height="50" rx="6" />
+  <text x="150" y="82" textAnchor="middle" stroke="none" fill="currentColor">object</text>
+  <text x="150" y="100" textAnchor="middle" stroke="none" fill="#6366f1">refcount = 0</text>
+  <text x="150" y="150" textAnchor="middle" stroke="none" fill="currentColor">no references left -</text>
+  <text x="150" y="168" textAnchor="middle" stroke="none" fill="currentColor">memory freed immediately</text>
+
+  <line x1="300" y1="40" x2="300" y2="190" strokeDasharray="4 4" strokeOpacity="0.4" />
+
+  <text x="470" y="24" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Cycle: references to each other</text>
+  <rect x="360" y="55" width="90" height="44" rx="6" />
+  <text x="405" y="82" textAnchor="middle" stroke="none" fill="currentColor">node1</text>
+  <rect x="510" y="55" width="90" height="44" rx="6" />
+  <text x="555" y="82" textAnchor="middle" stroke="none" fill="currentColor">node2</text>
+  <path d="M450 68 H510" stroke="#6366f1" markerEnd="url(#arrow)" />
+  <path d="M510 88 H450" stroke="#6366f1" markerEnd="url(#arrow)" />
+  <text x="480" y="140" textAnchor="middle" stroke="none" fill="currentColor">refcount never drops to 0 -</text>
+  <text x="480" y="158" textAnchor="middle" stroke="none" fill="currentColor">broken by the cyclic GC (gc)</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 Z" fill="#6366f1" stroke="none" />
+    </marker>
+  </defs>
+</svg>
+
+</figure>
+
+### Reference counting
+
+The counter grows when a new reference appears and falls when a reference is removed or goes out of scope. Once it reaches zero, the object is destroyed right away.
+
+```python
+a = []   # reference count for the list = 1
+b = a    # one more reference, count = 2
+del a    # count = 1
+del b    # count = 0, memory is freed immediately
+```
+
+### Cyclic garbage collector
+
+If two objects reference each other, their counters won't reach zero even after all external references are lost:
+
+```python
+class Node:
+    def __init__(self):
+        self.reference = None
+
+
+node1 = Node()
+node2 = Node()
+node1.reference = node2
+node2.reference = node1
+```
+
+Reference counting won't break such a cycle. The garbage collector walks reachability from the roots, marks the unreachable objects, and frees them. It works by generations (young objects are checked more often) and can be controlled through `gc`:
+
+```python
+import gc
+
+gc.collect()   # run collection immediately
+```
+
+## Pitfalls
+
+- There is no "compaction"/heap defragmentation in CPython - objects don't move in memory. Freed blocks are returned to the allocator (pymalloc), not necessarily to the OS.
+- The GC tracks only container objects (lists, dicts, instances). Cycles made of immutable scalars are impossible, so they aren't tracked.
+- `__del__` on objects in a cycle used to prevent their collection; in modern versions this is fixed, but it's still worth avoiding finalization logic inside cycles.
+- Reference counting requires updating the counter on every operation and is tied to the GIL - this is part of the reason why removing the GIL is so hard.
+- The behavior is a CPython implementation detail. PyPy has no reference counting; it uses a different collector.

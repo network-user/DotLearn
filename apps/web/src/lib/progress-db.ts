@@ -24,6 +24,7 @@ export interface ActivityRecord {
   day: string;
   exercisesAttempted: number;
   exercisesPassed: number;
+  interviewStudied?: number;
 }
 
 export interface FlashcardReviewRecord {
@@ -46,12 +47,18 @@ export interface InterviewStudiedRecord {
   studiedAt: string;
 }
 
+export interface CryptoKeyRecord {
+  id: string;
+  key: CryptoKey;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
   flashcardReviews!: Table<FlashcardReviewRecord, string>;
   providerCredentials!: Table<ProviderCredentialsRecord, string>;
   interviewStudied!: Table<InterviewStudiedRecord, number>;
+  cryptoKeys!: Table<CryptoKeyRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -73,20 +80,43 @@ class ProgressDb extends Dexie {
       providerCredentials: 'providerId',
       interviewStudied: 'id',
     });
+    this.version(4).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+    });
   }
 }
 
 export const db = new ProgressDb();
 
+export const INTERVIEW_TOPIC_SLUG = 'interview';
+
 export const setInterviewStudied = async (
   id: number,
   studied: boolean,
 ): Promise<void> => {
-  if (studied) {
-    await db.interviewStudied.put({ id, studiedAt: new Date().toISOString() });
-  } else {
-    await db.interviewStudied.delete(id);
-  }
+  await db.transaction('rw', db.interviewStudied, db.activity, async () => {
+    const existing = await db.interviewStudied.get(id);
+    if (studied) {
+      if (existing) return;
+      const now = new Date();
+      await db.interviewStudied.put({ id, studiedAt: now.toISOString() });
+      const day = now.toISOString().slice(0, 10);
+      const activity = await db.activity.get(day);
+      await db.activity.put({
+        day,
+        exercisesAttempted: activity?.exercisesAttempted ?? 0,
+        exercisesPassed: activity?.exercisesPassed ?? 0,
+        interviewStudied: (activity?.interviewStudied ?? 0) + 1,
+      });
+    } else {
+      await db.interviewStudied.delete(id);
+    }
+  });
 };
 
 const todayUtc = (): string => new Date().toISOString().slice(0, 10);

@@ -1,0 +1,130 @@
+---
+id: 1427
+title: "Ограничение частоты запросов: для чего и какими алгоритмами реализуют?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Ограничение частоты запросов: для чего и какими алгоритмами реализуют?
+
+## Суть
+
+Rate limiting задаёт верхнюю границу на количество обращений к ресурсу в единицу времени. Это удерживает нагрузку в рамках, блокирует злоупотребления и делит пропускную способность между клиентами по-честному.
+
+## Что ответить на собесе
+
+Rate limiting нужен, чтобы сервис не захлёбывался под наплывом запросов и не страдал от перебора со стороны отдельных клиентов. Я бы назвал три причины: защита инфраструктуры от перегрузки, отражение паразитного и атакующего трафика, справедливое распределение квот. Классические алгоритмы — Fixed Window (счётчик в фиксированном интервале), Sliding Window (плавающее окно по меткам времени) и Token Bucket (ведро токенов, пополняемое с постоянной скоростью). Выбор зависит от того, насколько ровно нужно сглаживать всплески: Token Bucket допускает короткие пики, Sliding Window даёт более равномерный поток.
+
+## Как это работает
+
+Идея у всех вариантов одна — отслеживать, сколько запросов уже прошло, и отклонять лишние. Различается лишь способ учёта.
+
+<figure>
+
+<svg viewBox="0 0 480 200" width="100%" role="img" aria-label="Token Bucket: токены доливаются сверху с постоянной скоростью, каждый запрос тратит один токен" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <text x="90" y="24" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">долив с постоянной скоростью</text>
+  <line x1="90" y1="32" x2="90" y2="70" strokeDasharray="4 4" />
+  <circle cx="90" cy="40" r="6" stroke="none" fill="#6366f1">
+    <animate attributeName="cy" values="40;110;110" keyTimes="0;0.6;1" dur="2.4s" repeatCount="indefinite" />
+    <animate attributeName="opacity" values="1;1;0" keyTimes="0;0.55;0.6" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+  <path d="M55 70 L55 150 Q55 165 70 165 L110 165 Q125 165 125 150 L125 70" />
+  <circle cx="75" cy="148" r="6" stroke="none" fill="currentColor" fillOpacity="0.55" />
+  <circle cx="105" cy="148" r="6" stroke="none" fill="currentColor" fillOpacity="0.55" />
+  <circle cx="90" cy="128" r="6" stroke="none" fill="currentColor" fillOpacity="0.55" />
+  <text x="90" y="192" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">ведро токенов</text>
+  <line x1="125" y1="120" x2="300" y2="120" markerEnd="url(#rl-arr)" />
+  <text x="212" y="112" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">тратит 1 токен</text>
+  <rect x="305" y="100" width="120" height="40" rx="6" />
+  <text x="365" y="116" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">есть токен?</text>
+  <text x="365" y="130" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor">да → пропустить</text>
+  <text x="430" y="124" fontSize="10" stroke="none" fill="currentColor">нет → 429</text>
+  <defs>
+    <marker id="rl-arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6" />
+    </marker>
+  </defs>
+</svg>
+
+</figure>
+
+**Fixed Window.** Делим ось времени на равные интервалы; внутри каждого работает свой лимит. Просто, но на стыке двух окон возможен двойной всплеск.
+
+```python
+import time
+
+class FixedWindowRateLimiter:
+    def __init__(self, max_requests, window_size):
+        self.max_requests = max_requests
+        self.window_size = window_size
+        self.requests = 0
+        self.window_start = time.time()
+
+    def allow_request(self):
+        now = time.time()
+        if now - self.window_start >= self.window_size:
+            self.window_start = now
+            self.requests = 0
+        if self.requests < self.max_requests:
+            self.requests += 1
+            return True
+        return False
+```
+
+**Sliding Window.** Храним метки времени запросов в деке и выбрасываем те, что вышли за границу окна. Граница «едет» вместе с текущим моментом, поэтому распределение ровнее.
+
+```python
+from collections import deque
+import time
+
+class SlidingWindowRateLimiter:
+    def __init__(self, max_requests, window_size):
+        self.max_requests = max_requests
+        self.window_size = window_size
+        self.requests = deque()
+
+    def allow_request(self):
+        now = time.time()
+        while self.requests and self.requests[0] <= now - self.window_size:
+            self.requests.popleft()
+        if len(self.requests) < self.max_requests:
+            self.requests.append(now)
+            return True
+        return False
+```
+
+**Token Bucket.** В ведре лежат токены: каждый разрешённый запрос тратит один. Токены доливаются с постоянной скоростью, а вместимость ведра ограничивает размер допустимого всплеска.
+
+```python
+import time
+
+class TokenBucketRateLimiter:
+    def __init__(self, max_tokens, refill_rate):
+        self.max_tokens = max_tokens
+        self.refill_rate = refill_rate
+        self.tokens = max_tokens
+        self.last_refill = time.time()
+
+    def allow_request(self):
+        now = time.time()
+        self.tokens = min(
+            self.max_tokens,
+            self.tokens + (now - self.last_refill) * self.refill_rate,
+        )
+        self.last_refill = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        return False
+```
+
+## Подводные камни
+
+- **Граница окна в Fixed Window.** На стыке двух соседних интервалов клиент может уложить почти двойной лимит: пачку в конце первого окна и сразу пачку в начале второго.
+- **Память Sliding Window.** Дек хранит метку на каждый запрос, так что при больших лимитах расход памяти на клиента растёт линейно.
+- **Состояние при горизонтальном масштабировании.** Если инстансов несколько, локальные счётчики в памяти разъезжаются. Нужен общий стор (обычно Redis с атомарными операциями), иначе суммарный лимит превысит задуманный.
+- **Гонки.** `allow_request` должен быть атомарным; при конкурентном доступе проверка и инкремент без блокировки пропустят лишнее.
+- **Что отдавать клиенту.** Отклонённый запрос — это код `429 Too Many Requests`, желательно с заголовком `Retry-After` и счётчиками `X-RateLimit-*`, иначе клиент не поймёт, когда повторять.

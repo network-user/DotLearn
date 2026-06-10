@@ -1,0 +1,66 @@
+---
+id: 1303
+title: "Зачем в SQLAlchemy вызывают scalars() и что он меняет в результате?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в SQLAlchemy вызывают scalars() и что он меняет в результате?
+
+## Суть
+
+`scalars()` разворачивает результат запроса из строк-кортежей в плоский список одиночных значений. Когда каждая строка содержит ровно один столбец, метод избавляет от ручного доставания `row[0]`.
+
+## Что ответить на собесе
+
+По умолчанию `session.execute(stmt)` отдаёт объект `Result`, где каждая строка - это кортеж (`Row`), даже если выбран один столбец. Чтобы получить не `[('Alice',), ('Bob',)]`, а `['Alice', 'Bob']`, я вызываю `result.scalars()`. Он берёт первый элемент каждой строки и возвращает `ScalarResult`, по которому дальше идут `.all()`, `.first()`, `.one()` или итерация. Особенно это важно с ORM: при `select(User)` без `scalars()` я получу кортежи с объектами внутри, а со `scalars()` - сразу список экземпляров `User`. Есть и шорткат `session.scalars(stmt)`.
+
+## Как это работает
+
+```python
+from sqlalchemy import create_engine, select, MetaData, Table, Column, Integer, String
+from sqlalchemy.orm import Session
+
+engine = create_engine('sqlite:///:memory:')
+metadata = MetaData()
+
+users = Table('users', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String)
+)
+
+metadata.create_all(engine)
+
+with engine.connect() as connection:
+    connection.execute(users.insert(), [
+        {'name': 'Alice'},
+        {'name': 'Bob'},
+        {'name': 'Charlie'}
+    ])
+    connection.commit()
+
+with Session(engine) as session:
+    stmt = select(users.c.name)
+    result = session.execute(stmt)
+    names = result.scalars().all()
+    print(names)  # ['Alice', 'Bob', 'Charlie']
+```
+
+Шаги по порядку:
+
+1. `create_engine('sqlite:///:memory:')` поднимает временную базу в памяти.
+2. `Table('users', ...)` описывает структуру таблицы со столбцами `id` и `name`.
+3. `connection.execute(users.insert(), [...])` вставляет строки.
+4. `select(users.c.name)` формирует запрос на выборку одного столбца.
+5. `session.execute(stmt)` возвращает `Result` из строк-кортежей.
+6. `result.scalars().all()` берёт первый столбец каждой строки и собирает плоский список.
+
+## Подводные камни
+
+- `scalars()` берёт только **первый** столбец. Если в `select()` указано несколько колонок, остальные молча теряются - тогда нужен обычный `result.all()` с кортежами.
+- Не путайте методы: `.scalars()` (множество значений) против `.scalar()` (одно значение из первой строки или `None`) и `.scalar_one()` (ровно одно, иначе исключение).
+- Для одного объекта по первичному ключу часто проще `session.get(User, pk)`, а не запрос со `scalars().first()`.
+- На старом legacy-API (`Query`) метода `scalars()` нет - он часть стиля 2.0 с `select()`.

@@ -1,0 +1,84 @@
+---
+id: 1310
+title: "Пул соединений в SQLAlchemy: что это решает и из чего собрано"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Пул соединений в SQLAlchemy: что это решает и из чего собрано
+
+## Суть
+
+Пул держит наготове набор уже открытых подключений к базе и выдаёт их по запросу, вместо того чтобы каждый раз заново устанавливать соединение. Это убирает дорогой хендшейк из горячего пути и заодно ограничивает число одновременных коннектов к БД.
+
+## Что ответить на собесе
+
+Установка нового TCP- и аутентификационного соединения с базой стоит миллисекунд и ресурсов на обеих сторонах. Пул решает это так: при создании движка SQLAlchemy заводит набор переиспользуемых подключений (по умолчанию `QueuePool`). Когда коду нужно соединение, он берёт свободное из пула; когда работа закончена и соединение закрывается на уровне приложения, физический коннект не рвётся, а возвращается в пул. Параметрами `pool_size`, `max_overflow` и `pool_timeout` я регулирую базовый размер, допустимый перерасход и время ожидания свободного коннекта.
+
+## Как это работает
+
+В SQLAlchemy пул встроен в движок и работает прозрачно:
+
+<figure>
+<svg viewBox="0 0 600 170" role="img" aria-label="Приложение берёт соединение из пула и возвращает обратно, пул держит соединения к базе" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="20" y="60" width="110" height="50" rx="8" />
+  <text x="75" y="90" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Приложение</text>
+
+  <rect x="245" y="30" width="130" height="110" rx="8" />
+  <text x="310" y="22" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Пул (QueuePool)</text>
+  <rect x="265" y="48" width="90" height="18" rx="3" strokeOpacity="0.7" />
+  <rect x="265" y="74" width="90" height="18" rx="3" strokeOpacity="0.7" />
+  <rect x="265" y="100" width="90" height="18" rx="3" strokeOpacity="0.7" />
+
+  <rect x="490" y="60" width="90" height="50" rx="8" />
+  <text x="535" y="90" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">База</text>
+
+  <line x1="375" y1="85" x2="490" y2="85" strokeDasharray="4 4" strokeOpacity="0.7" />
+  <text x="432" y="78" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">TCP</text>
+
+  <line x1="130" y1="85" x2="245" y2="85" strokeOpacity="0.5" />
+  <text x="187" y="50" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">checkout</text>
+  <text x="187" y="124" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">return (close)</text>
+
+  <circle r="6" fill="#6366f1" stroke="none">
+    <animateMotion dur="4s" repeatCount="indefinite" path="M 245 85 L 130 85 L 245 85" keyPoints="0;0.5;1" keyTimes="0;0.5;1" calcMode="linear" />
+  </circle>
+</svg>
+</figure>
+
+
+- **Создание**: `create_engine` поднимает пул. По умолчанию это `QueuePool` поверх очереди готовых соединений.
+- **Выдача**: есть свободное - отдаётся оно; нет, но лимит `pool_size + max_overflow` не достигнут - открывается новое; иначе запрос ждёт до `pool_timeout` секунд и при истечении получает ошибку.
+- **Возврат**: `connection.close()` в коде не закрывает физический сокет, а кладёт его обратно в пул.
+- **Утилизация**: соединения сверх `pool_size` (overflow) после возврата закрываются; долгоживущие можно пересоздавать через `pool_recycle`.
+
+```python
+from sqlalchemy import create_engine, text
+
+engine = create_engine(
+    "postgresql://user:password@localhost/mydatabase",
+    pool_size=5,        # постоянный набор соединений
+    max_overflow=10,    # сколько ещё допускается сверх пула
+    pool_timeout=30,    # сколько секунд ждать свободный коннект
+    pool_recycle=1800,  # пересоздавать соединение старше 30 минут
+)
+
+with engine.connect() as connection:
+    result = connection.execute(text("SELECT id FROM my_table"))
+    for row in result:
+        print(row.id)
+# выход из with возвращает соединение в пул, а не рвёт его
+```
+
+`engine.connect()` берёт коннект из пула, контекстный менеджер гарантирует возврат, а `pool_recycle` спасает от мёртвых соединений, которые БД или файрвол молча закрыли.
+
+## Подводные камни
+
+- **Незакрытые соединения** утекают: если не использовать `with` или не звать `close()`, коннекты не возвращаются и пул быстро исчерпывается, вызывая `TimeoutError` по `pool_timeout`.
+- **Слишком большой пул × число воркеров** легко упирается в лимит `max_connections` PostgreSQL. Реальный потолок - это `(pool_size + max_overflow)` умноженное на количество процессов.
+- **Форк процесса** (gunicorn, multiprocessing) ломает унаследованные соединения. После форка нужен `engine.dispose()`, иначе несколько процессов делят один сокет.
+- **`max_overflow=-1`** снимает потолок overflow - пул будет открывать соединения без ограничения, что обнуляет защиту базы от перегрузки.
+- Overflow-соединения недолговечны: после возврата они закрываются, поэтому постоянная работа на overflow означает, что `pool_size` подобран слишком мал.

@@ -1,0 +1,143 @@
+---
+id: 1205
+title: "Microservice resilience patterns: Circuit Breaker, Retry, Fallback, and company"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: system-design
+stageLabel: "System Design"
+lang: en
+---
+
+# Microservice resilience patterns: Circuit Breaker, Retry, Fallback, and company
+
+## In short
+
+In microservices, the failure of one service must not bring down the whole system. For this there's a set of patterns: Timeout keeps a request from hanging, Retry repeats a transient failure, Circuit Breaker stops hammering an already-downed service, Fallback substitutes a backup option, and Bulkhead isolates resources so the problem doesn't spread further.
+
+## How to answer in an interview
+
+I'll name five core patterns. **Timeout** caps how long you wait for a response, otherwise a stuck call holds resources. **Retry** automatically repeats a request on a transient failure, ideally with exponential backoff and jitter. **Circuit Breaker** tracks errors and, when there are too many, "trips open": for some time calls fail immediately without reaching the sick service, then it tries to half-close and check for recovery. **Fallback** gives a degraded response on failure - a cache or a stub. **Bulkhead** isolates resources (for example, separate thread pools) so that overload of one integrated service doesn't eat the resources for everyone else. In practice they're combined: Timeout + Retry + Circuit Breaker + Fallback is a typical bundle for an outgoing call.
+
+## How it works
+
+### Circuit Breaker
+
+The most illustrative pattern. It has three states: **CLOSED** (calls go through), **OPEN** (calls fail immediately, we don't touch the service), **HALF-OPEN** (a probe call to check for recovery). This saves you from a cascading failure: a downed service isn't finished off by repeated requests.
+
+<figure>
+<svg viewBox="0 0 560 200" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+<circle cx="90" cy="100" r="46" />
+<text x="90" y="104" textAnchor="middle" stroke="none" fill="currentColor">CLOSED</text>
+<circle cx="470" cy="100" r="46" stroke="#6366f1" strokeWidth="2" />
+<text x="470" y="104" textAnchor="middle" stroke="none" fill="#6366f1">OPEN</text>
+<circle cx="280" cy="100" r="46" />
+<text x="280" y="96" textAnchor="middle" stroke="none" fill="currentColor">HALF-</text>
+<text x="280" y="112" textAnchor="middle" stroke="none" fill="currentColor">OPEN</text>
+<line x1="136" y1="92" x2="424" y2="92" strokeOpacity="0.4" />
+<line x1="424" y1="108" x2="326" y2="108" />
+<text x="375" y="128" textAnchor="middle" stroke="none" fill="currentColor">timeout</text>
+<text x="280" y="40" textAnchor="middle" stroke="none" fill="currentColor">many errors</text>
+<line x1="234" y1="100" x2="136" y2="100" />
+<text x="185" y="78" textAnchor="middle" stroke="none" fill="currentColor">success</text>
+<line x1="326" y1="100" x2="424" y2="100" strokeDasharray="4 4" />
+<text x="375" y="78" textAnchor="middle" stroke="none" fill="currentColor">failure</text>
+</svg>
+</figure>
+
+
+```python
+import time
+
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold, recovery_timeout):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.state = "CLOSED"
+        self.last_failure_time = None
+
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = "HALF-OPEN"
+            else:
+                raise RuntimeError("Circuit is open")
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = "CLOSED"
+            return result
+        except Exception:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            raise
+```
+
+### Retry
+
+Repeats the call on a transient failure. Important: you should only retry idempotent operations, and with a delay, otherwise retries finish off an already-overloaded service.
+
+```python
+import time
+
+
+def retry(func, retries=3, delay=2):
+    for attempt in range(retries):
+        try:
+            return func()
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(delay)
+            else:
+                raise
+```
+
+### Fallback
+
+When the primary source fails, we serve a backup - a cache, a default value, a trimmed-down response. The user gets a degraded but working service.
+
+```python
+def get_data_with_fallback():
+    try:
+        return get_data_from_service()
+    except Exception:
+        return get_cached_data()
+```
+
+### Bulkhead
+
+Divides resources into isolated sections, like the bulkheads on a ship: flooding one compartment doesn't sink the vessel. For example, a separate thread pool for each external service, so its hang-up doesn't drain all the workers.
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+payments_pool = ThreadPoolExecutor(max_workers=5)
+reports_pool = ThreadPoolExecutor(max_workers=5)
+```
+
+### Timeout
+
+Caps how long you wait for a response. Without a timeout a stuck call holds a connection and a thread, and such hang-ups pile up and bring the service down.
+
+```python
+import requests
+
+
+def fetch_data_with_timeout(url, timeout=5):
+    try:
+        response = requests.get(url, timeout=timeout)
+        return response.json()
+    except requests.Timeout:
+        return None
+```
+
+## Pitfalls
+
+- **Retry without delay and idempotency does harm.** Repeating a non-idempotent operation can debit money twice, and instant retries unleash a "request storm" on the failing service. Use exponential backoff with jitter.
+- **A Timeout is mandatory on every network call.** The most common cause of cascading failures is a call without a timeout: one slow service exhausts the caller's thread pool.
+- **The Circuit Breaker must be tuned by metrics.** Too sensitive a threshold trips the breaker on random spikes; too coarse a one fails to protect in time.
+- **A Fallback must not silently hide the problem.** When serving a cache or a stub, record it in metrics/logs, otherwise the degradation goes unnoticed.
+- **The patterns work as a bundle, not solo.** Timeout + Retry + Circuit Breaker + Fallback complement each other; one pattern in isolation covers only part of the failure scenarios.

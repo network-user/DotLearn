@@ -1,0 +1,85 @@
+---
+id: 1181
+title: "How to shrink a Docker image: working techniques against bloat"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to shrink a Docker image: working techniques against bloat
+
+## In short
+
+Image size is reduced on three levels: a lightweight base, fewer layers and less junk in them, and separating build tools from the runtime via a multi-stage build. The more compact the image, the faster it downloads and deploys, and the fewer potential vulnerabilities it carries.
+
+## How to answer in an interview
+
+I start with the base image: instead of `ubuntu`/`debian` I take `alpine` or a slim variant. Next I watch the layers — combining install and cleanup commands into a single `RUN`, so that cache and temporary files do not settle into a separate layer. For compiled languages I use a multi-stage build: in the first stage I build the binary with the full toolchain, in the second I copy only the finished artifact. On top of that I install packages with `--no-install-recommends` and do not drag dev dependencies into the final image.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 230" fontFamily="sans-serif" fontSize="13">
+  <text x="120" y="24" textAnchor="middle" fill="currentColor">stage 1: builder</text>
+  <rect x="30" y="36" width="180" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="120" y="58" textAnchor="middle" fill="currentColor">toolchain + sources</text>
+  <rect x="30" y="74" width="180" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="120" y="96" textAnchor="middle" fill="currentColor">build</text>
+  <rect x="30" y="112" width="180" height="34" rx="5" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="120" y="134" textAnchor="middle" fill="currentColor">binary</text>
+  <text x="120" y="172" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">the toolchain stays here</text>
+  <line x1="210" y1="129" x2="380" y2="129" stroke="#6366f1" strokeWidth="2" />
+  <polygon points="380,129 370,124 370,134" fill="#6366f1" />
+  <text x="295" y="120" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">COPY --from</text>
+  <text x="480" y="24" textAnchor="middle" fill="currentColor">stage 2: final</text>
+  <rect x="390" y="36" width="180" height="34" rx="5" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="480" y="58" textAnchor="middle" fill="currentColor">lightweight base (alpine)</text>
+  <rect x="390" y="112" width="180" height="34" rx="5" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="480" y="134" textAnchor="middle" fill="currentColor">binary only</text>
+  <text x="480" y="172" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">this is the resulting image</text>
+  <rect x="390" y="190" width="180" height="28" rx="5" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeDasharray="5 4" />
+  <text x="480" y="209" textAnchor="middle" fill="currentColor" fontSize="11">small, no toolchain</text>
+</svg>
+</figure>
+
+Each Dockerfile instruction adds a layer, and deleting a file in a later layer does not shrink the image — the data stays in the previous one. That is why install and cleanup are kept in a single `RUN`.
+
+```dockerfile
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+A lightweight base immediately removes dozens of unnecessary megabytes:
+
+```dockerfile
+# before
+FROM ubuntu:latest
+# after
+FROM alpine:latest
+```
+
+A multi-stage build separates "where we build" from "what we ship". The toolchain stays in the first stage and does not end up in the final image.
+
+```dockerfile
+FROM golang:alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o myapp
+
+FROM alpine
+WORKDIR /app
+COPY --from=builder /app/myapp .
+CMD ["./myapp"]
+```
+
+## Pitfalls
+
+- `rm -rf` in a separate `RUN` after installation does not help: the deleted files are already "baked" into the lower layer, and the total weight does not drop. Cleanup must happen in the same `RUN`.
+- `apt-get clean` without `rm -rf /var/lib/apt/lists/*` leaves package indexes behind — they take up space too.
+- Instruction order affects the cache: copy the dependency file and install it first, then the whole codebase. Otherwise any code edit invalidates the install layer.
+- `.dockerignore` is often forgotten — and `.git`, the host's `node_modules`, and local artifacts fly into the image.
+- The `latest` tag is unpredictable: it is better to pin a specific base version.

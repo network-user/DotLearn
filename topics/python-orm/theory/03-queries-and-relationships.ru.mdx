@@ -1,0 +1,157 @@
+---
+conceptId: queries-and-relationships
+title: "Запросы и связи: select(), join, relationship()"
+estimatedMinutes: 52
+---
+
+# Запросы как объекты и связи как атрибуты
+
+В предыдущем разделе модель научилась отображаться на таблицу. Теперь нужно её спрашивать: выбирать строки по условию, сортировать, соединять таблицы. В SQLAlchemy 2.x запрос строится не строкой SQL, а конструкцией `select(...)` - объектом, который Вы собираете по частям и который библиотека переводит в SQL. А связи между таблицами (внешние ключи) превращаются в обычные атрибуты объекта: у заказа появляется `.user`, у пользователя - список `.orders`. Это и есть та самая выгода ORM - навигация по связям как по полям объекта.
+
+К концу раздела Вы сможете собрать запрос через `select()` с условием и сортировкой, объявить связь `relationship()` между двумя моделями и понимать ключевую развилку - когда связанные данные подгружаются: лениво при первом обращении или заранее.
+
+## select(): запрос, который собирают по частям
+
+Запрос на выборку начинается с `select(Модель)` и уточняется методами `.where()`, `.order_by()` и другими. Результат - не строки, а объект-описание запроса; чтобы выполнить его и получить объекты, его передают в `session.scalars()` (или `session.execute()`).
+
+```python
+from sqlalchemy import select
+
+stmt = (
+    select(User)
+    .where(User.age >= 18)
+    .order_by(User.name)
+)
+adults = session.scalars(stmt).all()
+```
+
+Обратите внимание: условие - это не строка `"age >= 18"`, а выражение `User.age >= 18`. Атрибут `User.age` - не просто число, а объект-столбец, у которого оператор `>=` переопределён так, чтобы порождать кусок SQL. Поэтому редактор подсказывает имена полей, а опечатка в имени столбца становится ошибкой Python, а не загадочным ответом базы.
+
+<Figure caption="select(User).where(...).order_by(...) - это конструктор: каждый метод добавляет часть, а целое SQLAlchemy переводит в SQL при выполнении.">
+  <PipelineFigure
+    title="Сборка запроса"
+    stages={[
+      { label: "select(User)", note: "что выбираем" },
+      { label: ".where(User.age >= 18)", note: "условие WHERE", active: true },
+      { label: ".order_by(User.name)", note: "сортировка" },
+      { label: "session.scalars(stmt)", note: "выполнить → объекты User" },
+    ]}
+  />
+</Figure>
+
+## relationship(): связь становится атрибутом
+
+В базе таблицы связаны внешними ключами: у `orders` есть столбец `user_id`, указывающий на `users.id`. В ORM эту связь объявляют дважды - внешним ключом на уровне столбца и `relationship()` на уровне навигации, - и тогда по ней можно ходить как по обычному атрибуту.
+
+```python
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import relationship
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    orders: Mapped[list["Order"]] = relationship(back_populates="user")
+
+class Order(Base):
+    __tablename__ = "orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user: Mapped["User"] = relationship(back_populates="orders")
+```
+
+Теперь `order.user` вернёт объект `User`, а `user.orders` - список его заказов, хотя ни одного `JOIN` Вы не написали. Параметр `back_populates` связывает две стороны: добавили заказ в `user.orders` - и `order.user` автоматически указывает на этого пользователя. Связь двунаправленная и согласованная.
+
+<Figure caption="Внешний ключ orders.user_id связывает строки; relationship() превращает эту связь в атрибуты order.user и user.orders.">
+  <Sketch viewBox="0 0 460 170" title="relationship поверх внешнего ключа">
+    <SketchBox x={20} y={40} width={160} height={90} accent />
+    <SketchLabel x={100} y={60} mono accent>User</SketchLabel>
+    <SketchLabel x={100} y={84} size={11} muted>id = 1</SketchLabel>
+    <SketchLabel x={100} y={104} size={11} muted>.orders → [..]</SketchLabel>
+    <SketchBox x={280} y={40} width={160} height={90} />
+    <SketchLabel x={360} y={60} mono>Order</SketchLabel>
+    <SketchLabel x={360} y={84} size={11} muted>user_id = 1</SketchLabel>
+    <SketchLabel x={360} y={104} size={11} muted>.user → User</SketchLabel>
+    <SketchArrow from={[280, 100]} to={[180, 100]} />
+    <SketchArrow from={[180, 70]} to={[280, 70]} accent />
+    <SketchLabel x={230} y={58} size={11} muted accent>orders</SketchLabel>
+    <SketchLabel x={230} y={120} size={11} muted>user</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Под капотом - всё тот же JOIN
+
+`user.orders` кажется магией, но за ним стоит обычный SQL с соединением или отдельной выборкой по внешнему ключу. Полезно увидеть, какой SQL это порождает, на голом `sqlite3` - тогда поведение ORM перестаёт быть загадкой.
+
+<PyDemo
+  title="Связь user → orders - это JOIN по внешнему ключу"
+  code={`import sqlite3
+
+conn = sqlite3.connect(":memory:")
+cur = conn.cursor()
+cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+cur.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER)")
+cur.execute("INSERT INTO users VALUES (1, 'Анна'), (2, 'Борис')")
+cur.execute("INSERT INTO orders VALUES (10, 1, 500), (11, 1, 300), (12, 2, 200)")
+
+rows = cur.execute(
+    "SELECT u.name, o.amount FROM users u "
+    "JOIN orders o ON o.user_id = u.id "
+    "ORDER BY u.name, o.amount"
+).fetchall()
+print(rows)`}
+/>
+
+Тот же результат в ORM Вы получили бы навигацией `for order in user.orders`, не написав `JOIN` руками. ORM сгенерирует SQL за Вас - но какой именно и сколько запросов, зависит от стратегии загрузки.
+
+## Ленивая и жадная загрузка: ключевая развилка
+
+Вот развилка, от которой зависит производительность. Когда Вы обращаетесь к `user.orders`, связанные заказы можно подгрузить двумя способами:
+
+- **Ленивая (lazy) загрузка** - по умолчанию. Заказы не грузятся, пока Вы к ним не обратитесь. Первое обращение к `user.orders` выполняет отдельный `SELECT`. Удобно, но коварно: в цикле по многим пользователям это превращается в лавину запросов (об этом - следующий раздел).
+- **Жадная (eager) загрузка** - Вы заранее говорите «подгрузи заказы вместе с пользователями», и SQLAlchemy достаёт всё за один-два запроса через `selectinload` или `joinedload`.
+
+```python
+from sqlalchemy.orm import selectinload
+
+stmt = select(User).options(selectinload(User.orders))
+users = session.scalars(stmt).all()
+for user in users:
+    print(user.name, len(user.orders))
+```
+
+Здесь `selectinload(User.orders)` заранее догружает заказы всех выбранных пользователей одним дополнительным запросом, а не по запросу на каждого. Разница между ленивой и жадной загрузкой - это разница между «1 + N запросов» и «2 запроса», и на ней спотыкается большинство новичков в ORM.
+
+<Callout type="warning">
+По умолчанию связи загружаются лениво. Это удобно для одного объекта, но в цикле по многим объектам ведёт к проблеме N+1. Если Вы заранее знаете, что будете обращаться к связи у множества объектов, - просите жадную загрузку через `.options(selectinload(...))`.
+</Callout>
+
+## Типичные ошибки
+
+- **Писать условие строкой.** `.where("age >= 18")` - не то же самое, что `.where(User.age >= 18)`. Используйте выражения от атрибутов модели: они дают подсказки редактора и ловят опечатки в именах столбцов.
+- **Объявить только внешний ключ без `relationship()`.** Тогда `order.user` работать не будет - навигация по связи требует `relationship()`, а не только `ForeignKey`.
+- **Забыть `back_populates` на одной из сторон.** Связь станет односторонней или рассогласованной: добавление в одну коллекцию не отразится на встречной стороне.
+- **Полагаться на ленивую загрузку в цикле.** Обращение к связи внутри цикла по многим объектам - прямой путь к N+1. Планируйте загрузку заранее.
+
+<Detail summary="select() против устаревшего session.query()">
+
+В коде на SQLAlchemy 1.x Вы встретите запросы в стиле `session.query(User).filter(...).all()`. Это «легаси»-API: оно ещё работает, но в 2.x официально рекомендован конструкторный стиль `select(User).where(...)`, выполняемый через `session.scalars()` / `session.execute()`. Новый стиль единообразен для ORM и для Core (низкоуровневого слоя SQLAlchemy), лучше типизируется и яснее отражает, что запрос - это объект-описание, а не немедленное действие. Новые запросы пишите через `select()`. Детали миграции - в [гайде 1.4→2.0](https://docs.sqlalchemy.org/en/20/changelog/migration_20.html).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Запрос в SQLAlchemy 2.x - это объект select(Модель).where(...).order_by(...), который выполняется через session.scalars()/execute().",
+    "Условия пишут выражениями от атрибутов модели (User.age >= 18), а не строками - это даёт подсказки и ловит опечатки.",
+    "relationship() превращает внешний ключ в атрибут: order.user и user.orders доступны без ручного JOIN.",
+    "back_populates связывает две стороны отношения, делая его согласованным и двунаправленным.",
+    "По умолчанию связи грузятся лениво (отдельный SELECT при обращении); жадная загрузка через selectinload/joinedload берёт их заранее.",
+    "Выбор между ленивой и жадной загрузкой - это разница между 1+N и 2 запросами, ключевой фактор производительности ORM.",
+  ]}
+/>
+
+## Ссылки
+
+- [SQLAlchemy 2.0 - select() и выполнение запросов](https://docs.sqlalchemy.org/en/20/tutorial/data_select.html)
+- [SQLAlchemy - relationship() и back_populates](https://docs.sqlalchemy.org/en/20/orm/basic_relationships.html)
+- [SQLAlchemy - стратегии загрузки связей](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html)

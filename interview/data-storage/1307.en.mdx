@@ -1,0 +1,58 @@
+---
+id: 1307
+title: "How do you build a SELECT so it never touches restricted fields?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you build a SELECT so it never touches restricted fields?
+
+## In short
+
+List the columns you need explicitly in the query and forget about `SELECT *`. To make this a guarantee rather than mere discipline, hide the restricted fields behind a view or function that physically returns only the allowed columns.
+
+## How to answer in an interview
+
+The first rule is not to write `SELECT *`, but to list specific columns: that way the query doesn't pull in fields the user has no access to, and it transfers less data too. But relying on developer discipline alone is risky, so I lock access down on the database side. I create a view containing only the public fields and grant the user privileges on the view rather than the underlying table. For complex access rules I move the logic into a function that returns a table with the allowed set of columns. Then any `SELECT *` over that view or function returns only what's permitted.
+
+## How it works
+
+An explicit column list is the baseline. The query touches exactly the named fields and never the restricted ones.
+
+```sql
+SELECT name, email FROM employees;
+```
+
+A view fixes the allowed set of fields once. The user queries the view rather than the table, and through it the restricted columns are simply unavailable.
+
+```sql
+CREATE VIEW public_employees AS
+SELECT name, email
+FROM employees;
+
+SELECT * FROM public_employees;
+```
+
+`SELECT *` over a view is safe: the star expands to the view's own columns, that is, only `name` and `email`. For more flexible rules, access is wrapped in a function that returns a table.
+
+```sql
+CREATE FUNCTION get_public_employee_data()
+RETURNS TABLE(name VARCHAR, email VARCHAR) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT name, email FROM employees;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT * FROM get_public_employee_data();
+```
+
+## Pitfalls
+
+- `SELECT *` is dangerous beyond access: when a column is added to the table, the query silently starts returning new fields and may break client code that expects a fixed set.
+- A view and a function only protect if the user has no direct access to the base table. Without a `REVOKE` on `employees`, the restriction is bypassed with a single query against the table directly.
+- A function with `SECURITY DEFINER` runs with its owner's privileges - convenient for access control, but dangerous: bugs in such a function hand the user someone else's privileges.
+- Hiding a field from a result is not the same as encryption. The data still sits in the table in the clear, and anyone with access to it can read it.

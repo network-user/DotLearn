@@ -8,8 +8,10 @@ import { useTranslation } from 'react-i18next';
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { getCurrentLanguage } from '@/lib/i18n';
+import { interviewQuestions } from '@/lib/interview';
 import { db } from '@/lib/progress-db';
 import { effectiveLanguage, listManifests } from '@/lib/topics';
+import { useInterviewStudiedIds } from '@/lib/use-interview';
 import { useActivity, useStreak } from '@/lib/use-progress';
 import topicStats from 'virtual:topic-stats';
 
@@ -49,6 +51,7 @@ export const ProgressPage = () => {
   const activity = useActivity();
   const streak = useStreak();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
+  const studiedIds = useInterviewStudiedIds();
 
   useEffect(() => {
     let cancelled = false;
@@ -100,7 +103,11 @@ export const ProgressPage = () => {
     () => (progressRecords ?? []).filter((record) => record.status === 'pass').length,
     [progressRecords],
   );
-  const activeDays = activity.filter((entry) => entry.exercisesAttempted > 0).length;
+  const activeDays = activity.filter(
+    (entry) => entry.exercisesAttempted > 0 || (entry.interviewStudied ?? 0) > 0,
+  ).length;
+  const interviewStudied = studiedIds.size;
+  const interviewTotal = interviewQuestions.length;
 
   return (
     <div className="space-y-10">
@@ -131,6 +138,28 @@ export const ProgressPage = () => {
             <ActivityHeatmap activity={activity} weeks={14} />
           </div>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="eyebrow border-b border-border-base pb-2">
+          {t('interview.heading')}
+        </h2>
+        <Link
+          to="/interview"
+          className="block rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-5"
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-fg">{t('interview.heading')}</h3>
+            <span className="text-xs text-fg-subtle tabular-nums">
+              {interviewStudied}/{interviewTotal}
+            </span>
+          </div>
+          <ProgressBar passed={interviewStudied} total={interviewTotal} />
+          <p className="mt-2 text-xs text-fg-subtle">
+            {t('interview.studied', { studied: interviewStudied, total: interviewTotal })} ·{' '}
+            {t('interview.open')}
+          </p>
+        </Link>
       </section>
 
       <section className="space-y-3">

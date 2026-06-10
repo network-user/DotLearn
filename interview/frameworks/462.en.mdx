@@ -1,0 +1,64 @@
+---
+id: 462
+title: "Business logic versus presentation: the model or the DRF serializer"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Business logic versus presentation: the model or the DRF serializer
+
+## In short
+
+Domain rules and data invariants live in the model (or a service layer), while the serializer is responsible only for translating objects between Python and JSON and for validating the input format. Mixing these roles means tying business logic to a specific API.
+
+## How to answer in an interview
+
+I keep business logic close to the data - in the model or in a separate service layer, not in the serializer. The reason is simple: a serializer is tied to a specific API endpoint, and if a discount calculation or a stock check lives in it, then when called from the admin, a management command, or a background task that rule simply won't apply. The serializer is responsible for the shape of the data on the wire: which fields to return, how to transform them, how to validate the incoming format. The model is responsible for the data being correct regardless of who touches it.
+
+## How it works
+
+The model describes the data and the domain behavior over it - methods that compute something from the object's own fields:
+
+```python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    stock = models.IntegerField()
+
+    def discounted_price(self, percentage):
+        return self.price * (1 - percentage / 100)
+```
+
+The serializer doesn't duplicate the calculation but calls the model method, staying a thin presentation layer:
+
+```python
+from rest_framework import serializers
+
+class ProductSerializer(serializers.ModelSerializer):
+    discounted_price = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = ['name', 'price', 'discounted_price']
+
+    def get_discounted_price(self, obj):
+        return obj.discounted_price(10)
+```
+
+Division by role:
+
+- Invariants and domain rules (whether an item can be sold, how the price is computed) - the model or a service.
+- Validation of a specific request and the shape of the response (date format, joining fields, which fields are visible) - the serializer.
+
+## Pitfalls
+
+- Validation comes in two flavors. Checking that "this email is unique in this request" is appropriate in the serializer; the invariant "stock doesn't go negative" must live in the model/service, otherwise any code bypassing the API will skip it.
+- `Model.save()` in Django does not call `full_clean()` automatically, and DRF validation only fires when saving through the serializer. If you rely solely on the serializer, direct `objects.create()` calls will go through unvalidated.
+- Fat serializers with business logic are nearly impossible to reuse: for a second endpoint with a different set of fields the logic has to be copied.
+- When a rule involves several models or external services, it's cramped inside the model too - extract it into a separate service layer rather than smearing it across serializers.
+- `SerializerMethodField` fields are read-only; to write business values you need `create()`/`update()` or handling in the model.

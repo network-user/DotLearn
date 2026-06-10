@@ -36,21 +36,31 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
       start.setUTCDate(start.getUTCDate() - startDow);
     }
     const byDay = new Map(activity.map((record) => [record.day, record]));
+    const totalOf = (record: ActivityRecord): number =>
+      record.exercisesAttempted + (record.interviewStudied ?? 0);
     let max = 0;
     for (const record of activity) {
-      if (record.exercisesAttempted > max) {
-        max = record.exercisesAttempted;
+      const total = totalOf(record);
+      if (total > max) {
+        max = total;
       }
     }
-    const cells: Array<{ day: string; count: number; passed: number; inFuture: boolean }> = [];
+    const cells: Array<{
+      day: string;
+      count: number;
+      passed: number;
+      studied: number;
+      inFuture: boolean;
+    }> = [];
     const cursor = new Date(start);
     for (let index = 0; index < weeks * 7; index += 1) {
       const day = isoDay(cursor);
       const record = byDay.get(day);
       cells.push({
         day,
-        count: record?.exercisesAttempted ?? 0,
+        count: record ? totalOf(record) : 0,
         passed: record?.exercisesPassed ?? 0,
+        studied: record?.interviewStudied ?? 0,
         inFuture: cursor > today,
       });
       cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -79,6 +89,7 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
                     day: cell.day,
                     attempted: cell.count,
                     passed: cell.passed,
+                    studied: cell.studied,
                   })}
                 />
               );

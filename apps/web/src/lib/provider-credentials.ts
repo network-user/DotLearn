@@ -1,10 +1,16 @@
 import type { ProviderCredentials, ProviderId } from '@dotlearn/ai-providers';
 
+import { decryptSecret, encryptSecret } from './crypto-store';
 import { db, type ProviderCredentialsRecord } from './progress-db';
 
-const recordToCredentials = (record: ProviderCredentialsRecord): ProviderCredentials => {
+const recordToCredentials = async (
+  record: ProviderCredentialsRecord,
+): Promise<ProviderCredentials> => {
   const out: ProviderCredentials = {};
-  if (record.apiKey !== undefined) out.apiKey = record.apiKey;
+  if (record.apiKey !== undefined) {
+    const apiKey = await decryptSecret(record.apiKey);
+    if (apiKey !== undefined) out.apiKey = apiKey;
+  }
   if (record.baseUrl !== undefined) out.baseUrl = record.baseUrl;
   if (record.defaultModel !== undefined) out.defaultModel = record.defaultModel;
   return out;
@@ -31,7 +37,7 @@ export const saveCredentials = async (
   const apiKey = trimmed(credentials.apiKey);
   const baseUrl = trimmed(credentials.baseUrl);
   const defaultModel = trimmed(credentials.defaultModel);
-  if (apiKey !== undefined) record.apiKey = apiKey;
+  if (apiKey !== undefined) record.apiKey = await encryptSecret(apiKey);
   if (baseUrl !== undefined) record.baseUrl = baseUrl;
   if (defaultModel !== undefined) record.defaultModel = defaultModel;
   await db.providerCredentials.put(record);

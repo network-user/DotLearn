@@ -1,0 +1,93 @@
+---
+id: 1160
+title: "Что операционная система хранит про каждый процесс?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что операционная система хранит про каждый процесс?
+
+## Суть
+
+Про каждый процесс ОС держит блок управления (PCB): идентификатор PID, состояние, приоритет, контекст выполнения (регистры и стек), ссылку на родителя, таблицу открытых дескрипторов, занятую память и накопленное процессорное время. На эти атрибуты опирается планировщик при переключении задач.
+
+## Что ответить на собесе
+
+Процесс — это запущенный экземпляр программы, и ОС описывает его структурой Process Control Block. Минимальный набор, который ждут услышать: PID как уникальный идентификатор; состояние (running, ready, waiting, terminated); приоритет для планировщика; сохранённый контекст (регистры, счётчик команд, указатель стека) — он позволяет приостановить и возобновить процесс с того же места; PID родителя, задающий иерархию; таблицу файловых дескрипторов; сведения о выделенной памяти (код, данные, стек, куча); накопленное CPU-время. Именно контекст делает возможным вытесняющую многозадачность: при переключении ОС сохраняет контекст одного процесса и восстанавливает контекст другого.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 240" role="img" aria-label="Переключение контекста: регистры сохраняются в PCB одного процесса и восстанавливаются из PCB другого" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <rect x="20" y="40" width="170" height="170" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.04" />
+  <text x="105" y="62" textAnchor="middle" fill="currentColor" fontSize="13">PCB процесса A</text>
+  <text x="105" y="92" textAnchor="middle" fill="currentColor">PID, состояние</text>
+  <text x="105" y="116" textAnchor="middle" fill="currentColor">приоритет</text>
+  <text x="105" y="140" textAnchor="middle" fill="currentColor">регистры, PC, SP</text>
+  <text x="105" y="164" textAnchor="middle" fill="currentColor">дескрипторы</text>
+  <text x="105" y="188" textAnchor="middle" fill="currentColor">память, CPU-время</text>
+
+  <rect x="370" y="40" width="170" height="170" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.04" />
+  <text x="455" y="62" textAnchor="middle" fill="currentColor" fontSize="13">PCB процесса B</text>
+  <text x="455" y="92" textAnchor="middle" fill="currentColor">PID, состояние</text>
+  <text x="455" y="116" textAnchor="middle" fill="currentColor">приоритет</text>
+  <text x="455" y="140" textAnchor="middle" fill="currentColor">регистры, PC, SP</text>
+  <text x="455" y="164" textAnchor="middle" fill="currentColor">дескрипторы</text>
+  <text x="455" y="188" textAnchor="middle" fill="currentColor">память, CPU-время</text>
+
+  <rect x="240" y="100" width="80" height="50" rx="6" stroke="#6366f1" strokeWidth="1.5" fill="#6366f1" fillOpacity="0.12" />
+  <text x="280" y="123" textAnchor="middle" fill="#6366f1">CPU</text>
+  <text x="280" y="140" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">регистры</text>
+
+  <path d="M 240 115 L 192 115" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" markerEnd="" />
+  <text x="216" y="108" textAnchor="middle" fill="currentColor" fillOpacity="0.7" fontSize="11">save</text>
+  <path d="M 368 135 L 320 135" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  <text x="344" y="128" textAnchor="middle" fill="#6366f1" fontSize="11">restore</text>
+
+  <circle r="4" fill="#6366f1">
+    <animateMotion path="M 240 115 L 192 115" dur="2.6s" repeatCount="indefinite" />
+  </circle>
+</svg>
+
+</figure>
+
+ОС хранит атрибуты в PCB и при переключении контекста сбрасывает регистры текущего процесса в его PCB, а затем загружает регистры следующего. Часть этих атрибутов видна из пользовательского пространства, например через `psutil`.
+
+```python
+import psutil
+
+process = psutil.Process()
+
+print(f"PID: {process.pid}")
+print(f"Status: {process.status()}")
+print(f"Priority (nice): {process.nice()}")
+
+parent = process.parent()
+print(f"Parent PID: {parent.pid if parent else 'no parent'}")
+
+print(f"Open files: {len(process.open_files())}")
+print(f"RSS memory: {process.memory_info().rss} bytes")
+
+cpu = process.cpu_times()
+print(f"CPU time: {cpu.user + cpu.system} seconds")
+```
+
+- `pid` — идентификатор процесса;
+- `status()` — текущее состояние;
+- `nice()` — значение приоритета (чем меньше nice, тем выше приоритет);
+- `parent()` — родительский процесс;
+- `open_files()` — открытые файловые дескрипторы;
+- `memory_info().rss` — резидентная память;
+- `cpu_times()` — потраченное процессорное время.
+
+## Подводные камни
+
+- В Linux низкое значение nice означает высокий приоритет, а не низкий — частая путаница.
+- Состояние процесса не сводится к «работает/не работает»: есть отдельный зомби (terminated, но не reaped родителем) и состояние uninterruptible sleep, в котором процесс нельзя убить обычным сигналом.
+- Не путайте процесс и поток: потоки одного процесса делят память и дескрипторы, но имеют собственный контекст и стек.
+- `rss` показывает резидентную физическую память и из-за разделяемых страниц завышает реальное потребление при суммировании по процессам.
+- При завершении родителя его потомков усыновляет init/systemd (PID 1), а не «всегда останавливает» — поведение зависит от настроек и сигналов.

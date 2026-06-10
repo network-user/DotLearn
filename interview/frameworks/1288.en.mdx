@@ -1,0 +1,91 @@
+---
+id: 1288
+title: "select_related vs prefetch_related: one JOIN or a second query"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# select_related vs prefetch_related: one JOIN or a second query
+
+## In short
+
+Both Django ORM methods fight the N+1 problem, but through different mechanisms. `select_related` pulls in related objects with a single SQL query via a JOIN and suits `ForeignKey` and `OneToOne`. `prefetch_related` issues a separate query for the related rows and stitches them together in Python, so it covers `ManyToMany` and reverse "one-to-many" relations.
+
+## How to answer in an interview
+
+"The difference is who joins the data. `select_related` offloads the work to the database: one JOIN, one query, suitable for relations where exactly one object sits on one side - that is, `ForeignKey` and `OneToOneField`. `prefetch_related` runs two queries and joins the results on the Python side by a key field; you reach for it with `ManyToManyField` and reverse `FK`, where a JOIN would inflate the result set with duplicates. In practice I first catch the N+1, then pick the method by the relation type, and for nested relations I combine both and use `Prefetch` to fine-tune the nested query."
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 600 180" role="img" aria-label="select_related with one JOIN versus prefetch_related with two queries" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <text x="150" y="18" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">select_related</text>
+  <rect x="70" y="34" width="160" height="28" rx="5" />
+  <text x="150" y="52" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">1 query with JOIN</text>
+  <line x1="150" y1="62" x2="150" y2="84" />
+  <rect x="44" y="84" width="100" height="26" rx="5" />
+  <text x="94" y="101" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">Book ⋈ Author</text>
+  <rect x="156" y="84" width="100" height="26" rx="5" strokeDasharray="3 3" strokeOpacity="0.6" />
+  <text x="206" y="101" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">database</text>
+  <text x="150" y="140" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">FK / OneToOne</text>
+
+  <line x1="300" y1="20" x2="300" y2="150" strokeOpacity="0.3" />
+
+  <text x="450" y="18" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">prefetch_related</text>
+  <rect x="332" y="34" width="110" height="28" rx="5" stroke="#6366f1" />
+  <text x="387" y="52" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">query: books</text>
+  <rect x="462" y="34" width="110" height="28" rx="5" stroke="#6366f1" />
+  <text x="517" y="52" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">query: authors</text>
+  <line x1="387" y1="62" x2="450" y2="92" />
+  <line x1="517" y1="62" x2="450" y2="92" />
+  <rect x="380" y="92" width="140" height="26" rx="5" />
+  <text x="450" y="109" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">join in Python</text>
+  <text x="450" y="140" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">ManyToMany / reverse FK</text>
+</svg>
+
+</figure>
+
+Take authors and books. With a `ForeignKey`, a book references a single author - that's the `select_related` case.
+
+```python
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    author = models.ForeignKey(Author, on_delete=models.CASCADE)
+
+books = Book.objects.select_related("author").all()
+for book in books:
+    print(book.title, book.author.name)
+```
+
+Here the ORM builds a single SQL with a `JOIN` to `Author`, and accessing `book.author` no longer hits the database.
+
+For a "many-to-many" relation a single JOIN won't do - use `prefetch_related`.
+
+```python
+class Author(models.Model):
+    name = models.CharField(max_length=100)
+
+class Book(models.Model):
+    title = models.CharField(max_length=100)
+    authors = models.ManyToManyField(Author)
+
+books = Book.objects.prefetch_related("authors").all()
+for book in books:
+    print(book.title, [a.name for a in book.authors.all()])
+```
+
+Django runs a query for the books, then a separate query for all the needed authors, and assembles the relation in memory.
+
+## Pitfalls
+
+- `select_related` on a "many" relation via JOIN multiplies rows and bloats the result set, so it doesn't work for `ManyToMany` - there you use only `prefetch_related`.
+- `prefetch_related` is cached at the moment of the call. If after prefetching you apply a new filter to the relation (`book.authors.filter(...)`), Django issues an extra query and the whole point is lost - filter through a `Prefetch` object.
+- Both methods help only when you actually access the related objects. If the relation isn't used in the code, prefetching just adds an extra query.
+- Excessive `select_related` along a long chain of relations produces a heavy JOIN with many columns; sometimes `only()`/`defer()` or splitting into `prefetch_related` is better.

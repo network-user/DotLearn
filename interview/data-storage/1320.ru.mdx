@@ -1,0 +1,85 @@
+---
+id: 1320
+title: "Курсор базы данных: построчный доступ к результату запроса"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Курсор базы данных: построчный доступ к результату запроса
+
+## Суть
+
+Курсор — это объект-указатель на результирующую выборку запроса, через который строки читаются по одной. Он позволяет обходить результат, обрабатывать каждую строку отдельно и не держать всю выборку в памяти разом.
+
+## Что ответить на собесе
+
+Курсор нужен там, где результат запроса нельзя или не хочется загружать целиком. Запрос может вернуть миллионы строк — курсор отдаёт их порциями, по мере итерации, так что память расходуется ровно на текущий блок. Жизненный цикл простой: создаём курсор, выполняем запрос, читаем строки (`fetchone`/`fetchmany`/итерация), закрываем. В драйверах Python (DB-API) `cursor` — это ещё и точка входа для выполнения SQL: `cursor.execute(...)`, а затем чтение. Важно различать клиентские и серверные курсоры: серверный (например, named cursor в psycopg2) реально не тянет весь результат на клиент, а обычный буферизованный — может.
+
+## Как это работает
+
+Этапы работы с курсором: создание, выполнение запроса, чтение, закрытие. Освобождение ресурсов на закрытии обязательно.
+
+<figure>
+<svg viewBox="0 0 560 150" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+<rect x="20" y="50" width="110" height="50" rx="6" fill="currentColor" fillOpacity="0.08" />
+<text x="75" y="72" textAnchor="middle" stroke="none" fill="currentColor">Result set</text>
+<text x="75" y="88" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6">N строк</text>
+<rect x="230" y="55" width="70" height="40" rx="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" />
+<text x="265" y="79" textAnchor="middle" stroke="none" fill="#6366f1">cursor</text>
+<rect x="400" y="30" width="140" height="22" rx="4" fill="currentColor" fillOpacity="0.06" />
+<rect x="400" y="64" width="140" height="22" rx="4" fill="currentColor" fillOpacity="0.06" />
+<rect x="400" y="98" width="140" height="22" rx="4" fill="currentColor" fillOpacity="0.06" />
+<text x="470" y="45" textAnchor="middle" stroke="none" fill="currentColor">fetch строка 1</text>
+<text x="470" y="79" textAnchor="middle" stroke="none" fill="currentColor">fetch строка 2</text>
+<text x="470" y="113" textAnchor="middle" stroke="none" fill="currentColor">fetch строка 3</text>
+<path d="M130 75 H225" strokeLinecap="round" markerEnd="url(#a1320)" />
+<path d="M300 75 H395" strokeLinecap="round" strokeDasharray="4 4" markerEnd="url(#a1320)" />
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion path="M305 75 H395" dur="2s" repeatCount="indefinite" />
+</circle>
+<defs>
+<marker id="a1320" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+<path d="M1 1 L7 4 L1 7" fill="none" stroke="currentColor" />
+</marker>
+</defs>
+</svg>
+</figure>
+
+```python
+import sqlite3
+
+connection = sqlite3.connect("example.db")
+cursor = connection.cursor()
+
+cursor.execute("SELECT id, name FROM users")
+
+for row in cursor:
+    print(f"User ID: {row[0]}, Name: {row[1]}")
+
+cursor.close()
+connection.close()
+```
+
+Здесь `connection.cursor()` создаёт курсор, `cursor.execute(...)` выполняет запрос, итерация `for row in cursor` забирает строки по одной (каждая — кортеж), а `close()` освобождает ресурсы.
+
+Чтобы явно контролировать чтение, используют методы выборки:
+
+```python
+cursor.execute("SELECT id, name FROM users")
+first = cursor.fetchone()
+batch = cursor.fetchmany(100)
+rest = cursor.fetchall()
+```
+
+`fetchone()` возвращает одну строку или `None`, `fetchmany(n)` — список до n строк, `fetchall()` — все оставшиеся. На больших выборках безопаснее `fetchmany` в цикле, чем `fetchall`. Удобный способ гарантировать закрытие — контекстный менеджер: `with connection.cursor() as cursor:`.
+
+## Подводные камни
+
+- `fetchall()` на огромной таблице сводит на нет всю экономию памяти — он материализует весь результат. Для потоковой обработки используйте итерацию или `fetchmany`.
+- Незакрытый курсор удерживает ресурсы и блокировки. Всегда закрывайте его (лучше через `with`), особенно в долгоживущих соединениях.
+- В sqlite3 курсор не изолирует данные: параллельная запись в то же соединение во время итерации может привести к неожиданному результату.
+- Обычный курсор многих драйверов буферизует весь ответ на клиенте. Для реальной потоковой выгрузки нужен серверный/named-курсор.
+- Курсор связан со своим соединением: закрыли соединение — курсор больше невалиден.

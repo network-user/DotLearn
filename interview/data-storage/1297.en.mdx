@@ -1,0 +1,81 @@
+---
+id: 1297
+title: "The four transaction isolation levels and the anomalies they cut off"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# The four transaction isolation levels and the anomalies they cut off
+
+## In short
+
+The isolation level determines which intermediate results of neighboring transactions yours can see. The SQL standard defines four tiers — from Read Uncommitted to Serializable; each next one cuts off more read anomalies but costs more in performance.
+
+## How to answer in an interview
+
+Isolation is about which anomalies of concurrent transactions are allowed. There are three anomalies: dirty read (seeing uncommitted changes), non-repeatable read (the same row changes between two SELECTs), and phantoms (new rows appear in a range you've already read). The four levels close them off one by one: Read Uncommitted protects against nothing, Read Committed removes dirty reads, Repeatable Read removes non-repeatable reads too, and Serializable also excludes phantoms, giving behavior as if transactions ran one after another. The stricter the level, the more locks and rollbacks, so the default is usually Read Committed, and you raise the bar only where it's truly needed.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 200" fontFamily="sans-serif" fontSize="12" stroke="currentColor" fill="currentColor">
+<line x1="40" y1="40" x2="560" y2="40" strokeWidth="1" />
+<line x1="200" y1="20" x2="200" y2="190" strokeWidth="1" strokeDasharray="3 3" />
+<line x1="320" y1="20" x2="320" y2="190" strokeWidth="1" strokeDasharray="3 3" />
+<line x1="440" y1="20" x2="440" y2="190" strokeWidth="1" strokeDasharray="3 3" />
+<text x="45" y="34" fill="#6366f1">Level</text>
+<text x="225" y="34" fill="#6366f1">Dirty</text>
+<text x="335" y="34" fill="#6366f1">Non-rep.</text>
+<text x="455" y="34" fill="#6366f1">Phantom</text>
+<text x="45" y="70">Read Uncommitted</text>
+<text x="245" y="70">yes</text>
+<text x="365" y="70">yes</text>
+<text x="490" y="70">yes</text>
+<text x="45" y="100">Read Committed</text>
+<text x="245" y="100">no</text>
+<text x="365" y="100">yes</text>
+<text x="490" y="100">yes</text>
+<text x="45" y="130">Repeatable Read</text>
+<text x="245" y="130">no</text>
+<text x="365" y="130">no</text>
+<text x="490" y="130">yes</text>
+<text x="45" y="160">Serializable</text>
+<text x="245" y="160">no</text>
+<text x="365" y="160">no</text>
+<text x="490" y="160">no</text>
+</svg>
+</figure>
+
+Let's go through the tiers from the bottom up:
+
+1. **Read Uncommitted.** A transaction sees other transactions' not-yet-committed changes. Hence dirty reads: if the neighboring transaction rolls back, you're left with data that never existed. Rarely used, except perhaps for draft reports where garbage doesn't matter.
+2. **Read Committed.** Only committed changes are visible, so dirty reads are impossible. But between two SELECTs within the same transaction a row can change — that's a non-repeatable read. The most common level and the default in many DBMSs.
+3. **Repeatable Read.** Rows you've read don't change until the end of the transaction — no non-repeatable reads. Phantoms remain: new rows can be added to a range you've already read.
+4. **Serializable.** The strictest level: the result is as if transactions ran one at a time. It excludes all three anomalies at the cost of locks, waits, and rollbacks on conflicts.
+
+The level is set before the transaction begins:
+
+```sql
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+BEGIN;
+
+SELECT balance FROM accounts WHERE account_id = 1;
+
+UPDATE accounts SET balance = balance - 100 WHERE account_id = 1;
+
+COMMIT;
+```
+
+After `COMMIT`, the changes become visible to other transactions; before that, their visibility is governed by the chosen level.
+
+## Pitfalls
+
+- **The standard describes a minimum of guarantees, not an implementation.** Real DBMSs behave differently: in PostgreSQL, Repeatable Read is snapshot-based and already disallows phantoms, while Read Uncommitted effectively behaves like Read Committed.
+- **Repeatable Read in MySQL (InnoDB) and in the standard are different things.** At this level InnoDB suppresses phantoms for current queries via next-key locks, which goes beyond the standard's definition.
+- **Higher isolation means a higher risk of deadlocks and rollbacks.** At Serializable, transactions are cancelled more often due to serialization conflicts, and the application must be able to retry them.
+- **Isolation does not equal correctness.** Even without the classic anomalies, write skew and lost update are possible; only Serializable reliably protects against write skew.
+- **The level is set before the transaction starts working.** You can't change isolation in the middle of an already running transaction.

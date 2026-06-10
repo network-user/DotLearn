@@ -1,0 +1,60 @@
+---
+id: 1311
+title: "Where to keep a query cache: Redis or a table in PostgreSQL"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where to keep a query cache: Redis or a table in PostgreSQL
+
+## In short
+
+Redis is chosen for speed and low latency: data lives in memory, access takes microseconds, and keys easily get a TTL. PostgreSQL as a "cache" makes sense when you need it to survive restarts, transactional consistency with the main data, or complex queries over the cached data.
+
+## How to answer in an interview
+
+This isn't a question of "which is better," but a question of requirements. If the cache is hot, ephemeral, and must be served instantly - my choice is Redis: in-memory, key-value, built-in TTL, and memory-based eviction. But if the "cache" must be durable, read in a single transaction with the rest of the data, or take part in analytical queries - I keep it in PostgreSQL, because Redis doesn't provide the ACID guarantees of a relational DB. In practice a common pattern is both layers: PostgreSQL as the source of truth, Redis as a fast cache in front of it.
+
+## How it works
+
+**Redis** is an in-memory key-value store. Data lives in RAM, so reads are orders of magnitude faster than disk. A key is given a lifetime, and on expiry it deletes itself.
+
+```python
+import redis
+
+r = redis.Redis(host="localhost", port=6379, db=0)
+
+r.set("user:1000", "John Doe", ex=3600)  # ex=3600 - lives for 1 hour
+user = r.get("user:1000")
+print(user)  # b'John Doe'
+```
+
+**PostgreSQL** stores the cache as ordinary rows on disk - it survives a restart and supports SQL and ACID:
+
+```sql
+CREATE TABLE cache (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO cache (key, value) VALUES ('user:1000', 'John Doe');
+
+SELECT value FROM cache WHERE key = 'user:1000';
+```
+
+Choice summary:
+
+- **Redis** - hot, frequently read, temporary data; you need minimal latency and auto-deletion by TTL.
+- **PostgreSQL** - the cache must survive a restart, be consistent with the main data, or take part in complex queries and reports.
+
+## Pitfalls
+
+- **Redis is not a source of truth**. By default it's memory; on a crash without configured persistence (RDB/AOF), recent data is lost. Don't put into Redis anything that can't be recreated.
+- **Invalidation is the cache's main pain**. A TTL saves you from staleness, but if data changes before its time, you need an explicit key flush on write to the source, or the cache serves stale data.
+- **A "cache" in PostgreSQL loads the very database** you're trying to offload. If the goal is to take load off the DB, a cache table in the same DB doesn't relieve it.
+- **TTL in PostgreSQL is manual**. A table has no auto-deletion by expiry - you need a background process or a condition on `created_at`, or the cache grows without bound.
+- **Redis memory is finite**. Without a configured eviction policy (`maxmemory-policy`), writing into full memory leads to errors rather than silently dropping old data.

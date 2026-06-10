@@ -1,0 +1,71 @@
+---
+id: 1046
+title: "Почему CPU-heavy код внутри корутины душит весь event loop?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему CPU-heavy код внутри корутины душит весь event loop?
+
+## Суть
+
+Корутина выполняется в том же единственном потоке, что и `event loop`. Пока внутри неё крутятся тяжёлые вычисления, цикл событий не может переключиться на другие задачи, и вся асинхронная программа замирает.
+
+## Что ответить на собесе
+
+`asyncio` рассчитан на I/O-bound нагрузку: задачи добровольно отдают управление на `await`, и в эти паузы цикл событий продвигает соседей. Чистый счёт не содержит точек ожидания, поэтому одна корутина монополизирует поток и блокирует loop целиком. CPU-bound работу нужно выносить из цикла: лёгкое распараллеливание по ядрам даёт `loop.run_in_executor` с `ProcessPoolExecutor`, а если нагрузка содержит вызовы, отпускающие GIL, иногда хватает `ThreadPoolExecutor`.
+
+## Как это работает
+
+Цикл событий кооперативный: он переключает задачи только в моменты `await`. Если корутина уходит в долгий цикл без единого `await`, ей некуда уступить управление, и все остальные задачи стоят в очереди.
+
+Аналогия: единственный официант в зале. Если он сам встанет к плите готовить сложное блюдо, остальные столики будут ждать. Правильно - отдать заказ на кухню и продолжать обслуживать зал.
+
+Перенос счёта в пул процессов задействует несколько ядер и не трогает GIL основного процесса:
+
+```python
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+
+def heavy_computation(x):
+    total = 0
+    for i in range(x):
+        total += i * i
+    return total
+
+async def main():
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, heavy_computation, 1_000_000)
+        print(f"Result: {result}")
+
+asyncio.run(main())
+```
+
+Для нагрузки, которая периодически отпускает GIL (numpy, сжатие, часть стандартной библиотеки), дешевле обойтись потоками:
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+def io_bound_cpu(x):
+    return x * x
+
+async def main():
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, io_bound_cpu, 10)
+        print(f"Result: {result}")
+
+asyncio.run(main())
+```
+
+## Подводные камни
+
+- `ThreadPoolExecutor` не спасает чистый Python-счёт: из-за GIL потоки не считают параллельно, вы лишь убираете блокировку самого loop, но суммарное время не падает.
+- `ProcessPoolExecutor` сериализует аргументы и результат через `pickle` - неподходящие объекты (открытые сокеты, лямбды) не передадутся.
+- Накладные расходы на запуск процессов реальны: на мелких задачах пул процессов может оказаться медленнее прямого вызова.
+- Даже короткий синхронный участок (например, парсинг большого JSON) способен заметно увеличить задержку других корутин - блокирующим считается всё, что выполняется между двумя `await`.

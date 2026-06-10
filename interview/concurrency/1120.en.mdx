@@ -1,0 +1,53 @@
+---
+id: 1120
+title: "One coroutine failed with an exception - what happens to the other tasks?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# One coroutine failed with an exception - what happens to the other tasks?
+
+## In short
+
+An exception in one coroutine does not by itself kill the others or crash the event loop. But the group's behavior depends on how you launched them: `gather` without a flag propagates the first exception upward, while `TaskGroup` cancels the whole group.
+
+## How to answer in an interview
+
+"Coroutines are isolated: a failure in one does not run another one's code. The event loop keeps spinning. The rest depends on how they were launched. With `asyncio.gather()`, by default the first exception surfaces at the `await gather(...)` point, while the other tasks keep running but their results are lost. With `return_exceptions=True`, exceptions are returned as ordinary elements. And `asyncio.TaskGroup` (3.11+), when any task fails, cancels the rest and collects the errors into an `ExceptionGroup` - that is structured concurrency."
+
+## How it works
+
+An exception inside a coroutine behaves the same as in a regular function: if it is not caught internally, it surfaces at the place where the coroutine was awaited via `await`. The unfinished coroutine is interrupted at that point, but the neighboring coroutines are separate objects in the event loop and are not directly affected.
+
+```python
+import asyncio
+
+async def task1():
+    print("task1 start")
+    await asyncio.sleep(1)
+    raise ValueError("boom in task1")
+
+async def task2():
+    print("task2 start")
+    await asyncio.sleep(2)
+    print("task2 done")
+    return "ok"
+
+async def main():
+    results = await asyncio.gather(task1(), task2(), return_exceptions=True)
+    print(results)
+
+asyncio.run(main())
+```
+
+With `return_exceptions=True`, we see that `task2` calmly runs to the end, while the error from `task1` is returned as an exception object in the results list, without interrupting the wait.
+
+## Pitfalls
+
+- **`gather` without `return_exceptions` masks some problems.** The first exception surfaces, but the other tasks keep running in the background; their errors can show up as "Task exception was never retrieved".
+- **Indirect influence through shared resources.** If coroutines share a file, a connection, or shared state, a failure mid-operation in one can leave the resource in an incorrect state - and that does affect the others.
+- **A chain of `await`.** If coroutine A awaits coroutine B via `await`, an exception from B interrupts A as well. These are not "neighbors" but a direct dependency.
+- **TaskGroup changes the rules.** In `asyncio.TaskGroup`, the failure of one task cancels the others - do not confuse this behavior with how `gather` works.

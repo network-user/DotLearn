@@ -1,0 +1,79 @@
+---
+id: 1045
+title: "What makes asynchronous code win on time"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What makes asynchronous code win on time
+
+## In short
+
+The win comes not from a faster processor but from the absence of idle time: while one task waits for a response from the network or disk, the event loop runs others. It is not the operation times that add up - their waits overlap.
+
+## How to answer in an interview
+
+The key idea is that the speedup works only on I/O-bound workloads. In synchronous code a "network/file/DB" call blocks the thread: the processor sits idle waiting for a response. The async model is built on two things - non-blocking I/O and an event loop. The I/O operation goes to the background, the coroutine yields control at `await`, and the loop immediately starts the next ready task. If you launch many operations concurrently (via `gather`), their waits overlap and the total time approaches the longest single operation rather than the sum of all. On CPU-bound tasks there is no win: there the processor is already busy and has nothing to yield.
+
+## How it works
+
+In Python this is `asyncio`. A coroutine imitates slow I/O via `await asyncio.sleep(...)`, yielding control instead of blocking the thread.
+
+<figure>
+<svg viewBox="0 0 600 250" role="img" aria-label="Comparison of sequential and concurrent execution of three 2-second tasks" fontFamily="sans-serif" fontSize="12">
+  <text x="10" y="20" fill="currentColor" fontSize="13">Sequential: 6 seconds</text>
+  <line x1="60" y1="110" x2="540" y2="110" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <rect x="60" y="35" width="150" height="22" rx="3" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="135" y="50" fill="currentColor" textAnchor="middle">A · 2s</text>
+  <rect x="215" y="35" width="150" height="22" rx="3" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="290" y="50" fill="currentColor" textAnchor="middle">B · 2s</text>
+  <rect x="370" y="35" width="150" height="22" rx="3" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="445" y="50" fill="currentColor" textAnchor="middle">C · 2s</text>
+
+  <text x="10" y="90" fill="currentColor" fontSize="13">Concurrent via gather: ~2 seconds</text>
+  <rect x="60" y="120" width="150" height="22" rx="3" fill="#6366f1" fillOpacity="0.2" stroke="#6366f1" strokeOpacity="0.7" />
+  <text x="135" y="135" fill="currentColor" textAnchor="middle">A · 2s</text>
+  <rect x="60" y="148" width="150" height="22" rx="3" fill="#6366f1" fillOpacity="0.2" stroke="#6366f1" strokeOpacity="0.7" />
+  <text x="135" y="163" fill="currentColor" textAnchor="middle">B · 2s</text>
+  <rect x="60" y="176" width="150" height="22" rx="3" fill="#6366f1" fillOpacity="0.2" stroke="#6366f1" strokeOpacity="0.7" />
+  <text x="135" y="191" fill="currentColor" textAnchor="middle">C · 2s</text>
+
+  <line x1="60" y1="210" x2="540" y2="210" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1" />
+  <text x="60" y="228" fill="currentColor" textAnchor="middle">0s</text>
+  <text x="210" y="228" fill="currentColor" textAnchor="middle">2s</text>
+  <text x="365" y="228" fill="currentColor" textAnchor="middle">4s</text>
+  <text x="520" y="228" fill="currentColor" textAnchor="middle">6s</text>
+</svg>
+</figure>
+
+```python
+import asyncio
+
+async def fetch_data(name, delay):
+    print(f"{name}: start")
+    await asyncio.sleep(delay)  # non-blocking wait
+    print(f"{name}: done")
+    return name
+
+async def main():
+    results = await asyncio.gather(
+        fetch_data("A", 2),
+        fetch_data("B", 2),
+        fetch_data("C", 2),
+    )
+    print(results)
+
+asyncio.run(main())
+```
+
+Three 2-second tasks launched via `gather` finish in about 2 seconds, not 6: all three "sleep" at the same time and their waits overlap. Had they been called with sequential `await`s, the time would add up to 6 seconds. This is exactly why async dominates web servers (`aiohttp`, `FastAPI`) and services that reach out to external APIs and databases.
+
+## Pitfalls
+
+- Replacing `asyncio.sleep` with `time.sleep` breaks everything: the thread blocks, the waits do not overlap, and three tasks again take 6 seconds.
+- Sequential `await fetch(); await fetch()` gives no win - you must parallelize explicitly via `gather`/`create_task`.
+- For CPU-bound computation there is no effect: you need `multiprocessing` or offloading the computation to a thread pool.
+- "Faster" here means higher throughput and less idle time, not a speedup of a single individual operation.

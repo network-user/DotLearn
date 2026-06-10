@@ -1,0 +1,81 @@
+---
+id: 1183
+title: "Логи в Docker: stdout, драйверы логирования и централизованный сбор"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Логи в Docker: stdout, драйверы логирования и централизованный сбор
+
+## Суть
+
+Канонический подход - писать логи приложения в `stdout`/`stderr`, а как их хранить и куда отправлять, решает logging driver (`json-file`, `syslog`, `fluentd` и другие). Для масштаба логи стягивают в централизованные системы вроде ELK или Fluentd.
+
+## Что ответить на собесе
+
+Приложение в контейнере не должно само писать в файлы - оно пишет в стандартные потоки, а Docker их перехватывает. Дальше всё определяет драйвер логирования: по умолчанию это `json-file`, который кладёт логи на хост в JSON, и ему обязательно задают ротацию через `max-size`/`max-file`, иначе диск переполнится. Смотрю логи через `docker logs`, а в продакшене переключаю драйвер на `fluentd`/`syslog` или собираю всё в ELK для централизованного поиска и анализа.
+
+## Как это работает
+
+Самый надёжный путь - приложение печатает в `stdout` и `stderr`, ничего дополнительно настраивать не нужно: Docker сам подхватывает эти потоки и передаёт их драйверу логирования.
+
+<figure>
+<svg viewBox="0 0 600 120" fontFamily="sans-serif" fontSize="12" role="img" aria-label="Поток логов: приложение в stdout, Docker, драйвер логирования, назначение">
+  <rect x="10" y="40" width="120" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.5" />
+  <text x="70" y="58" textAnchor="middle" fill="currentColor">Приложение</text>
+  <text x="70" y="73" textAnchor="middle" fill="currentColor" fontSize="11">stdout / stderr</text>
+  <rect x="180" y="40" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.5" />
+  <text x="235" y="65" textAnchor="middle" fill="currentColor">Docker</text>
+  <rect x="340" y="40" width="120" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="400" y="58" textAnchor="middle" fill="currentColor">Драйвер</text>
+  <text x="400" y="73" textAnchor="middle" fill="currentColor" fontSize="11">json-file...</text>
+  <rect x="500" y="40" width="90" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.5" />
+  <text x="545" y="58" textAnchor="middle" fill="currentColor">Назначение</text>
+  <text x="545" y="73" textAnchor="middle" fill="currentColor" fontSize="11">файл / ELK</text>
+  <line x1="130" y1="60" x2="180" y2="60" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="290" y1="60" x2="340" y2="60" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="460" y1="60" x2="500" y2="60" stroke="currentColor" strokeWidth="1.5" />
+  <circle r="4" fill="#6366f1">
+    <animateMotion path="M 130 60 H 180 M 290 60 H 340 M 460 60 H 500" dur="3s" repeatCount="indefinite" />
+  </circle>
+</svg>
+</figure>
+
+Драйвер решает, куда уходят записи. Популярные варианты:
+
+- **json-file** - JSON-файлы на хосте (по умолчанию);
+- **syslog** - на системный лог-сервер;
+- **journald** - в журнал `systemd`;
+- **fluentd** - в Fluentd для дальнейшей обработки;
+- **awslogs** - в Amazon CloudWatch.
+
+Драйвер и его параметры задают в compose-файле. Здесь же настраивают ротацию:
+
+```yaml
+version: '3.8'
+services:
+  my_app:
+    image: my_app_image
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+`max-size` ограничивает один файл 10 мегабайтами, `max-file` держит максимум 3 файла - при превышении старые удаляются. Просмотр логов:
+
+```bash
+docker logs <container_id_or_name>
+```
+
+## Подводные камни
+
+- Без ротации `json-file` пишет бесконечно и однажды забивает весь диск хоста - `max-size`/`max-file` обязательны.
+- `docker logs` работает только с драйверами `json-file`, `journald` и `local`. С `syslog`/`fluentd`/`awslogs` команда вернёт ошибку - логи живут уже во внешней системе.
+- Не стоит писать логи в файл внутри контейнера: данные исчезнут при пересоздании и не попадут в `docker logs`.
+- Запись в `stdout` синхронна - очень «болтливое» приложение под нагрузкой может тормозить из-за блокировки на выводе.
+- Глобальный драйвер задаётся в `daemon.json`, и он применяется ко всем новым контейнерам; на старые уже запущенные он не действует.

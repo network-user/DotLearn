@@ -1,0 +1,55 @@
+---
+id: 1296
+title: "Counting rows in a table: exact COUNT and a fast estimate"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Counting rows in a table: exact COUNT and a fast estimate
+
+## In short
+
+The exact row count comes from `SELECT COUNT(*) FROM table_name;`, but on large tables it scans the data and gets slow. When an approximate figure is enough, it's taken from the optimizer's statistics without a full traversal.
+
+## How to answer in an interview
+
+If you need accuracy, that's `SELECT COUNT(*) FROM table;`. I understand that on millions of rows such a query has to walk every row (or the index), and in PostgreSQL it also has to check each row's visibility because of MVCC, so it isn't cheap. When precision isn't critical — say, for a dashboard or a rough size check — I take an estimate from system statistics: `reltuples` from `pg_class` in PostgreSQL, or a row from `information_schema.tables` in MySQL. It's nearly instant, at the cost of being approximate and dependent on how fresh the statistics are.
+
+## How it works
+
+The basic, exact approach is the `COUNT` aggregate:
+
+```sql
+SELECT COUNT(*) FROM employees;
+```
+
+`COUNT(*)` counts every row of the result. The query is exact, but its cost grows with table size: the engine walks the rows, and in PostgreSQL it additionally filters out row versions invisible to the current transaction.
+
+When an estimate is enough, it's read from the statistics the DBMS already collects for the planner. In PostgreSQL, the approximate row count is stored in the `reltuples` field of the `pg_class` system catalog:
+
+```sql
+SELECT reltuples::bigint AS approx_rows
+FROM pg_class
+WHERE relname = 'employees';
+```
+
+In MySQL, `information_schema` provides a similar estimate:
+
+```sql
+SELECT table_rows
+FROM information_schema.tables
+WHERE table_name = 'employees';
+```
+
+Both options return instantly because they don't touch the data itself, they read accumulated statistics.
+
+## Pitfalls
+
+- **`COUNT(*)` and `COUNT(col)` are not the same thing.** The first counts all rows; the second skips rows where `col IS NULL`. Substituting one for the other is a classic mistake.
+- **Estimates go stale.** `reltuples` and `table_rows` are updated on `ANALYZE`/`VACUUM` (or automatically), so after a bulk insert or delete the figure can be noticeably off.
+- **`reltuples` can be fractional and even -1.** In a freshly created or never-analyzed PostgreSQL table the value may be a placeholder; don't treat it as exact.
+- **An index doesn't make `COUNT(*)` free.** It can speed up the traversal via an index-only scan, but that's still a pass over every entry, not a ready-made counter. There's no materialized "row count" in a relational table.
+- **A `WHERE` kills the fast estimate.** The statistics trick works for the whole table; as soon as you need a `COUNT` with a condition, you're back to a real scan or estimates from the `EXPLAIN` plan.

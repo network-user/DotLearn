@@ -1,0 +1,92 @@
+---
+id: 1166
+title: "Message delivery semantics in Kafka: from at-most-once to exactly-once"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Message delivery semantics in Kafka: from at-most-once to exactly-once
+
+## In short
+
+Kafka supports three delivery semantics: at-most-once (no more than once, loss possible), at-least-once (at least once, duplicates possible), and exactly-once. The choice is a trade-off between reliability and throughput.
+
+## How to answer in an interview
+
+Delivery semantics are determined by the combination of producer settings and consumer behavior. At-most-once: the producer waits for no acknowledgments (`acks=0`), a message may be lost but it's fast - fine for metrics where losing some data isn't critical. At-least-once: the producer waits for an acknowledgment and retries on timeout, so duplicates are possible - this is the default for most tasks, and the receiver must be idempotent. Exactly-once: producer idempotence and transactions are added, duplicates are eliminated - this is for finance and similar critical scenarios, but at the cost of performance. The key thought: "exactly once" in Kafka is not magic, it's an idempotent producer plus a transactional write, not just a checkbox.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 200" fontFamily="sans-serif" fontSize="12">
+<text x="8" y="30" fill="currentColor" fillOpacity="0.7">at-most-once</text>
+<rect x="120" y="12" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="165" y="30" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="390" y="12" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="435" y="30" textAnchor="middle" fill="currentColor">Broker</text>
+<line x1="210" y1="26" x2="390" y2="26" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="390,26 382,22 382,30" fill="currentColor" />
+<text x="300" y="20" textAnchor="middle" fill="currentColor" fillOpacity="0.6">acks=0, no ACK</text>
+
+<text x="8" y="100" fill="currentColor" fillOpacity="0.7">at-least-once</text>
+<rect x="120" y="82" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="165" y="100" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="390" y="82" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="435" y="100" textAnchor="middle" fill="currentColor">Broker</text>
+<line x1="210" y1="93" x2="390" y2="93" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="390,93 382,89 382,97" fill="currentColor" />
+<line x1="390" y1="106" x2="210" y2="106" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+<polygon points="210,106 218,102 218,110" fill="currentColor" />
+<text x="300" y="124" textAnchor="middle" fill="currentColor" fillOpacity="0.6">ACK + retry → duplicates</text>
+
+<text x="8" y="172" fill="currentColor" fillOpacity="0.7">exactly-once</text>
+<rect x="120" y="154" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="165" y="172" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="390" y="154" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="435" y="172" textAnchor="middle" fill="currentColor">Broker</text>
+<line x1="210" y1="168" x2="390" y2="168" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="390,168 382,164 382,172" fill="currentColor" />
+<text x="300" y="162" textAnchor="middle" fill="currentColor" fillOpacity="0.6">idempotence + transactions</text>
+</svg>
+</figure>
+
+- **At-most-once** — the producer sends and does not wait for the broker's reply. A failure between sending and writing means the message is lost.
+- **At-least-once** — the producer waits for an ACK; not getting one, it retries. A retry after a write that already happened but was not acknowledged creates a duplicate.
+- **Exactly-once** — the idempotent producer numbers messages, the broker discards repeats, and transactions bind the write and the consumer's offset commit into an atomic operation.
+
+Producer configuration for each mode:
+
+```python
+from kafka import KafkaProducer
+
+# at most once: no waiting for acknowledgments
+producer_at_most_once = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    acks=0,
+)
+
+# at least once: wait for ACK from the partition leader
+producer_at_least_once = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    acks=1,
+)
+
+# exactly once: ACK from all replicas + idempotence
+producer_exactly_once = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    acks='all',
+    enable_idempotence=True,
+)
+```
+
+`acks=0` gives at-most-once; `acks=1` gives at-least-once; `acks='all'` together with `enable_idempotence=True` is the foundation of exactly-once.
+
+## Pitfalls
+
+- `enable_idempotence=True` guarantees no duplicates only on the producer→broker side. Full exactly-once across consumers also requires transactions and correct offset commits.
+- `acks=1` does not protect against loss: if the leader acknowledged the write and crashed before replication, the message is gone. For durability you need `acks='all'` plus `min.insync.replicas`.
+- At-least-once without an idempotent receiver leads to double processing - deduplicate by the message key.
+- Exactly-once is not free: transactions and waiting for all replicas reduce throughput and increase latency.

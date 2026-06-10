@@ -1,0 +1,79 @@
+---
+id: 1119
+title: "How do you start a batch of coroutines in asyncio with one call and collect their results?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you start a batch of coroutines in asyncio with one call and collect their results?
+
+## In short
+
+To run several coroutines and wait for all of them at once, use `asyncio.gather()`. It schedules the passed coroutines concurrently and, once they finish, returns their results as a list in the same order the coroutines were passed.
+
+## How to answer in an interview
+
+"The most common tool is `asyncio.gather(*coros)`. It wraps the coroutines into tasks, hands them to the event loop, and waits until they all complete. The result is a list of values in the order of the arguments, not in the order of completion. If you need more structured control over a group of tasks, Python 3.11+ has `asyncio.TaskGroup`, which is safer in terms of error handling and cancellation."
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 560 200" width="560" fill="none" stroke="currentColor" strokeWidth="1.5" role="img" aria-label="gather runs three coroutines concurrently, their intervals overlap and the total time is about two seconds">
+  <text x="20" y="22" fill="currentColor" stroke="none" fontSize="13" fontFamily="sans-serif">gather: three coroutines overlap in time</text>
+
+  <text x="20" y="58" fill="currentColor" stroke="none" fontSize="11" fontFamily="sans-serif">site1</text>
+  <rect x="90" y="46" width="380" height="20" rx="4" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+  <text x="20" y="92" fill="currentColor" stroke="none" fontSize="11" fontFamily="sans-serif">site2</text>
+  <rect x="90" y="80" width="380" height="20" rx="4" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+  <text x="20" y="126" fill="currentColor" stroke="none" fontSize="11" fontFamily="sans-serif">site3</text>
+  <rect x="90" y="114" width="380" height="20" rx="4" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+
+  <line x1="90" y1="40" x2="90" y2="150" strokeDasharray="3 3" strokeOpacity="0.5" />
+  <line x1="470" y1="40" x2="470" y2="150" strokeDasharray="3 3" strokeOpacity="0.5" />
+  <text x="90" y="166" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">0s</text>
+  <text x="470" y="166" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">~2s</text>
+
+  <line x1="90" y1="180" x2="490" y2="180" strokeOpacity="0.4" />
+  <text x="500" y="184" fill="currentColor" stroke="none" fontSize="10" fontFamily="sans-serif">time</text>
+
+  <line x1="90" y1="40" x2="90" y2="150" stroke="currentColor" strokeWidth="2">
+    <animate attributeName="x1" values="90;470;90" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="x2" values="90;470;90" dur="3s" repeatCount="indefinite" />
+  </line>
+</svg>
+
+</figure>
+
+`asyncio` lets you write concurrent code for I/O-bound tasks: while one coroutine waits for a network or disk response, the event loop switches to another. Important: this is concurrency within a single thread, not parallelism across multiple cores.
+
+`gather` does not start the coroutines "instantly and physically at the same time" - it hands them to the scheduler, which interleaves them at the `await` points. That is why the benefit shows up precisely when waiting on I/O.
+
+```python
+import asyncio
+
+async def fetch_data(site):
+    print(f"start {site}")
+    await asyncio.sleep(2)  # simulate a network request
+    print(f"done {site}")
+    return f"data:{site}"
+
+async def main():
+    sites = ["site1", "site2", "site3"]
+    results = await asyncio.gather(*(fetch_data(s) for s in sites))
+    print(results)
+
+asyncio.run(main())
+```
+
+All three `fetch_data` calls run concurrently, so the total time is about 2 seconds rather than 6. The order in `results` matches the order of `sites`, even if some coroutine finished earlier.
+
+## Pitfalls
+
+- **Order of results != order of completion.** `gather` preserves the order of arguments; do not assume the first result came from the fastest coroutine.
+- **The first exception interrupts the wait.** By default `gather` propagates the first raised exception upward, but the remaining tasks are not cancelled automatically and may leave "dangling" warnings. Use `return_exceptions=True` to collect exceptions as ordinary list elements.
+- **You must pass coroutines or futures, not the results of calling them in advance.** `gather(fetch_data())` is correct; `gather(fetch_data)` (without the call) is an error.
+- **This is not multithreading.** CPU-bound computations inside the coroutines still block the single thread and kill concurrency.

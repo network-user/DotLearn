@@ -1,0 +1,104 @@
+---
+id: 1137
+title: "Как Python решает, чей метод вызвать, когда родителей много?"
+category: oop-patterns
+categoryLabel: "ООП и паттерны"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как Python решает, чей метод вызвать, когда родителей много?
+
+## Суть
+
+MRO (Method Resolution Order) - это заранее посчитанный линейный список классов, по которому Python ищет метод или атрибут. При множественном наследовании он убирает любую двусмысленность: поиск всегда идёт по этому списку слева направо. Сам список строит алгоритм C3-линеаризации.
+
+## Что ответить на собесе
+
+MRO отвечает на вопрос "в каком порядке Python обходит классы при поиске атрибута". Для каждого класса этот порядок вычисляется один раз при его создании по алгоритму C3 и хранится в `__mro__`. C3 даёт три гарантии: класс идёт раньше своих предков, локально близкие классы приоритетнее дальних, а заданный порядок наследования не нарушается. Когда я зову метод на объекте, Python берёт MRO его класса и возвращает первую найденную реализацию. Посмотреть порядок можно через `Cls.mro()` или `Cls.__mro__`.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 170" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif">
+<rect x="40" y="10" width="44" height="26" rx="4" />
+<text x="62" y="27" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">A</text>
+<rect x="10" y="62" width="44" height="26" rx="4" />
+<text x="32" y="79" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">B</text>
+<rect x="70" y="62" width="44" height="26" rx="4" />
+<text x="92" y="79" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">C</text>
+<rect x="40" y="114" width="44" height="26" rx="4" />
+<text x="62" y="131" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">D</text>
+<line x1="52" y1="36" x2="32" y2="62" />
+<line x1="72" y1="36" x2="92" y2="62" />
+<line x1="32" y1="88" x2="58" y2="114" />
+<line x1="92" y1="88" x2="66" y2="114" />
+<line x1="130" y1="76" x2="168" y2="76" stroke="#6366f1" markerEnd="url(#a1137)" />
+<defs>
+<marker id="a1137" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0,0 L6,3 L0,6 Z" fill="#6366f1" stroke="none" />
+</marker>
+</defs>
+<text x="150" y="68" fontSize="11" textAnchor="middle" fill="#6366f1" stroke="none">C3</text>
+<rect x="190" y="63" width="40" height="26" rx="4" />
+<text x="210" y="80" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">D</text>
+<rect x="248" y="63" width="40" height="26" rx="4" />
+<text x="268" y="80" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">B</text>
+<rect x="306" y="63" width="40" height="26" rx="4" />
+<text x="326" y="80" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">C</text>
+<rect x="364" y="63" width="40" height="26" rx="4" />
+<text x="384" y="80" fontSize="12" textAnchor="middle" fill="currentColor" stroke="none">A</text>
+<rect x="422" y="63" width="64" height="26" rx="4" />
+<text x="454" y="80" fontSize="11" textAnchor="middle" fill="currentColor" stroke="none">object</text>
+<line x1="230" y1="76" x2="248" y2="76" />
+<line x1="288" y1="76" x2="306" y2="76" />
+<line x1="346" y1="76" x2="364" y2="76" />
+<line x1="404" y1="76" x2="422" y2="76" />
+<text x="338" y="116" fontSize="11" textAnchor="middle" fill="currentColor" stroke="none" fillOpacity="0.7">поиск идёт слева направо</text>
+</svg>
+</figure>
+
+C3 строит цепочку с тремя свойствами:
+
+- **Локальный приоритет**: классы, расположенные ближе в иерархии, идут раньше.
+- **Согласованность**: порядок перечисления родителей сохраняется.
+- **Монотонность**: если A наследуется от B, то A всегда стоит впереди B.
+
+Классический пример с ромбом:
+
+```python
+class A:
+    def method(self):
+        print("Method in A")
+
+class B(A):
+    def method(self):
+        print("Method in B")
+
+class C(A):
+    def method(self):
+        print("Method in C")
+
+class D(B, C):
+    pass
+
+D().method()  # Method in B
+```
+
+MRO для `D` получается `D -> B -> C -> A -> object`. Python идёт по списку, на `B` находит `method` и останавливается. Поэтому печатается "Method in B".
+
+Порядок доступен двумя способами:
+
+```python
+print(D.mro())
+print(D.__mro__)
+# [<class '__main__.D'>, <class '__main__.B'>, <class '__main__.C'>, <class '__main__.A'>, <class 'object'>]
+```
+
+## Подводные камни
+
+- `super()` не означает "родитель". Он означает "следующий класс в MRO текущего объекта". В ромбе `super()` внутри `B` может привести в `C`, а не в `A`, - это и делает кооперативное наследование возможным.
+- MRO зависит от конкретного объекта, а не только от класса, где написан вызов. Один и тот же `super().method()` в `B` пойдёт по-разному для экземпляра `B` и экземпляра `D`.
+- `object` всегда замыкает список последним: это общий предок всех классов.
+- Если C3 не может согласовать порядки родителей, класс просто не создастся - Python бросит `TypeError: Cannot create a consistent method resolution order`.

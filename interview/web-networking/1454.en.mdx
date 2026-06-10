@@ -1,0 +1,94 @@
+---
+id: 1454
+title: "HTTP caching: which headers let the browser decide when not to redownload a file"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTP caching: which headers let the browser decide when not to redownload a file
+
+## In short
+
+Caching at the HTTP level is controlled by response headers: `Cache-Control` and `Expires` set the freshness window, while `ETag` and `Last-Modified` let you cheaply check whether the resource has changed. Together they spare the client from re-downloading unchanged files and take load off the server.
+
+## How to answer in an interview
+
+There are two mechanisms. The first is freshness: `Cache-Control: max-age=N` (or the deprecated `Expires`) says how many seconds the copy may be served from the cache without contacting the server. The second is validation: when the freshness window has expired, the client does not download the file blindly but makes a conditional request with `If-None-Match` (based on `ETag`) or `If-Modified-Since` (based on `Last-Modified`). If the resource has not changed, the server replies `304 Not Modified` with an empty body, and the old copy is used. `Cache-Control` is more flexible than `Expires` because it sets a relative time and the directives `no-cache`, `no-store`, `public`, and `private`.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 620 220" role="img" aria-label="Diagram of the browser's decision: serve from cache, revalidate, or download again" fontFamily="sans-serif" fontSize="12">
+  <rect x="16" y="90" width="120" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="76" y="106" textAnchor="middle" fill="currentColor">Need a resource</text>
+  <text x="76" y="121" textAnchor="middle" fill="currentColor" fillOpacity="0.7">logo.png</text>
+
+  <rect x="200" y="20" width="160" height="44" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="280" y="38" textAnchor="middle" fill="currentColor">Still fresh?</text>
+  <text x="280" y="53" textAnchor="middle" fill="currentColor" fillOpacity="0.7">max-age / Expires</text>
+
+  <rect x="200" y="156" width="160" height="44" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="280" y="174" textAnchor="middle" fill="currentColor">Conditional request</text>
+  <text x="280" y="189" textAnchor="middle" fill="currentColor" fillOpacity="0.7">If-None-Match / If-Modified-Since</text>
+
+  <rect x="448" y="20" width="156" height="44" rx="6" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="526" y="38" textAnchor="middle" fill="currentColor">From cache</text>
+  <text x="526" y="53" textAnchor="middle" fill="currentColor" fillOpacity="0.7">no network</text>
+
+  <rect x="448" y="120" width="156" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="526" y="145" textAnchor="middle" fill="currentColor">304 → old copy</text>
+
+  <rect x="448" y="176" width="156" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="526" y="201" textAnchor="middle" fill="currentColor">200 → new body</text>
+
+  <path d="M136 104 L200 50" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <path d="M136 116 L200 174" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <path d="M360 42 L448 42" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <text x="404" y="34" textAnchor="middle" fill="currentColor" fillOpacity="0.7">yes</text>
+  <path d="M360 60 L420 140 L448 140" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="4 3" />
+  <text x="388" y="92" textAnchor="middle" fill="currentColor" fillOpacity="0.7">expired</text>
+  <path d="M360 184 L448 142" stroke="currentColor" strokeWidth="1.5" fill="none" />
+  <path d="M360 188 L448 196" stroke="currentColor" strokeWidth="1.5" fill="none" />
+</svg>
+</figure>
+
+The main headers and their roles:
+
+- **Cache-Control** - the primary mechanism. `max-age=3600` is freshness in seconds; `no-cache` means it may be cached but must be revalidated with the server before serving; `no-store` means do not store at all; `public` means it may be cached on proxies too; `private` means only in the specific user's browser.
+- **Expires** - an absolute expiration date. Less flexible and loses to `Cache-Control` in a conflict.
+- **ETag** - a fingerprint of the resource version; next time the client sends it in `If-None-Match`.
+- **Last-Modified** - the modification date; the client sends it back in `If-Modified-Since`.
+
+A server response with caching configured:
+
+```http
+HTTP/1.1 200 OK
+Cache-Control: max-age=3600, public
+ETag: "abc123"
+Last-Modified: Tue, 20 Oct 2026 07:28:00 GMT
+Content-Type: image/png
+Content-Length: 12345
+
+[binary file data]
+```
+
+Until the hour has passed, the browser serves the image from the cache silently. After that, it sends a conditional request:
+
+```http
+GET /logo.png HTTP/1.1
+Host: www.example.com
+If-None-Match: "abc123"
+```
+
+If the file is unchanged, a `304 Not Modified` with no body comes back, and the old copy is deemed current - traffic is nearly zero.
+
+## Pitfalls
+
+- `no-cache` does not forbid caching: it merely requires revalidation before use. Forbidding storage is `no-store`.
+- An aggressive `max-age` without versioning file names leads users to see an old version for weeks. The fix is a hash in the name (`app.4f2a.js`) plus a long cache.
+- Weak and strong `ETag`s behave differently, and an `ETag` mismatch between nodes behind a load balancer breaks conditional requests.
+- `Expires` depends on the client's and server's clocks being in sync; a skew gives incorrect freshness. That is why a relative `max-age` is preferred.
+- `Vary` is also part of caching: without it the cache may serve a compressed or wrong-language variant to the wrong client.

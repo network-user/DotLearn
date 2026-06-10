@@ -1,0 +1,73 @@
+---
+id: 1342
+title: "Global Interpreter Lock: почему потоки в CPython не считают параллельно"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Global Interpreter Lock: почему потоки в CPython не считают параллельно
+
+## Суть
+
+GIL — это глобальный замок интерпретатора CPython, который пускает к исполнению байт-кода только один поток за раз. Он упрощает управление памятью, но лишает чисто вычислительный многопоточный код параллелизма на нескольких ядрах.
+
+## Что ответить на собесе
+
+GIL (Global Interpreter Lock) — мьютекс уровня интерпретатора в CPython: чтобы выполнять байт-код, поток должен держать этот замок, поэтому в один момент времени активен ровно один поток. Сделано это ради безопасности подсчёта ссылок при сборке мусора. Следствие: CPU-bound задачи многопоточностью не ускоришь, для них берут `multiprocessing`. А вот I/O-bound нагрузка выигрывает, потому что на время ожидания ввода-вывода поток отпускает GIL.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 520 200" width="520" height="200" fill="none" stroke="currentColor" strokeWidth="1.5" role="img" aria-label="Несколько потоков ждут единственный GIL, исполнять байт-код может только держатель замка">
+  <text x="60" y="24" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">потоки</text>
+  <rect x="20" y="40" width="80" height="28" rx="4" />
+  <text x="60" y="59" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">T1</text>
+  <rect x="20" y="86" width="80" height="28" rx="4" />
+  <text x="60" y="105" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">T2</text>
+  <rect x="20" y="132" width="80" height="28" rx="4" />
+  <text x="60" y="151" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">T3</text>
+  <rect x="220" y="78" width="80" height="44" rx="6" stroke="#6366f1" />
+  <text x="260" y="104" textAnchor="middle" fontSize="12" stroke="none" fill="#6366f1">GIL</text>
+  <rect x="400" y="78" width="100" height="44" rx="6" />
+  <text x="450" y="104" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">CPU: байт-код</text>
+  <line x1="100" y1="54" x2="218" y2="92" strokeDasharray="4 4" />
+  <line x1="100" y1="100" x2="218" y2="100" strokeDasharray="4 4" />
+  <line x1="100" y1="146" x2="218" y2="108" strokeDasharray="4 4" />
+  <line x1="300" y1="100" x2="398" y2="100" />
+  <circle r="6" fill="#6366f1" stroke="none">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M60 54 L260 100 L60 100 L260 100 L60 146 L260 100" />
+  </circle>
+</svg>
+
+</figure>
+
+Замок завязан на счётчик ссылок: при изменении объекта обновляется его reference count, и без GIL два потока могли бы испортить этот счётчик одновременно. Поэтому поток захватывает GIL, исполняет порцию байт-кода, периодически отпускает замок и уступает очередь другому.
+
+```python
+import threading
+
+def increment(counter):
+    for _ in range(1_000_000):
+        counter[0] += 1
+
+counter = [0]
+t1 = threading.Thread(target=increment, args=(counter,))
+t2 = threading.Thread(target=increment, args=(counter,))
+
+t1.start(); t2.start()
+t1.join(); t2.join()
+
+print(counter[0])  # 2000000
+```
+
+Здесь два потока крутят одну и ту же CPU-bound работу, но GIL не даёт им считать одновременно — на многоядерной машине ускорения не будет, скорее наоборот, добавятся накладные расходы на переключение.
+
+## Подводные камни
+
+- GIL не делает операции атомарными «бесплатно»: `counter[0] += 1` — это чтение, инкремент и запись, и при отпускании замка между ними возможна гонка. Для надёжности нужен `Lock`.
+- «GIL мешает всегда» — миф. На I/O (сеть, диск) поток освобождает замок, и многопоточность реально помогает.
+- GIL — деталь CPython, а не самого языка. Jython, IronPython и сборки без GIL (free-threaded build) ведут себя иначе; для CPU-bound в CPython стандартный обходной путь — процессы.

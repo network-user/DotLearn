@@ -1,0 +1,84 @@
+---
+id: 1258
+title: "The process lifecycle in Linux: PID, states, and the scheduler"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# The process lifecycle in Linux: PID, states, and the scheduler
+
+## In short
+
+The kernel manages processes in Linux: the scheduler slices CPU time among tasks, and each process lives under a unique PID and moves between states (running, waiting, stopped, zombie). A process is created with a `fork()` call, changes its body via `exec()`, and the parent collects the result through `wait()`.
+
+## How to answer in an interview
+
+Process management is a core kernel function. A process is a running instance of a program with its own address space, code, data, and PID identifier. Through the scheduler the kernel distributes CPU among processes by a chosen algorithm, and the processes themselves move between states: running on a core, waiting for I/O, suspended, or having become a zombie after termination. Creation happens via `fork()`, replacing the image via `exec()`, synchronizing with a child via `wait()`. At the command level, `ps`, `top`, and `kill` stand behind observation and control.
+
+## How it works
+
+A process is an executing program in memory with its own state. Key elements:
+
+- **PID** - a unique identifier by which commands and signals address the process.
+- **Scheduler** - the part of the kernel that hands out CPU time. Algorithms (Round Robin, FIFO, CFS, and others) decide who gets a core next.
+- **Process states:**
+  - **Running** - the process is executing on a CPU right now or is ready to.
+  - **Waiting** - waiting for an event, for example the completion of I/O.
+  - **Stopped** - suspended by a signal and not executing.
+  - **Zombie** - has terminated, but its entry in the process table has not yet been cleared by the parent.
+
+<figure>
+<svg viewBox="0 0 560 130" fontFamily="sans-serif" fontSize="13">
+  <rect x="10" y="45" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.5" />
+  <text x="65" y="69" textAnchor="middle" fill="currentColor">fork()</text>
+  <rect x="170" y="45" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.5" />
+  <text x="225" y="69" textAnchor="middle" fill="currentColor">exec()</text>
+  <rect x="330" y="45" width="110" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+  <text x="385" y="63" textAnchor="middle" fill="currentColor">Running</text>
+  <text x="385" y="79" textAnchor="middle" fill="currentColor" fontSize="11">/ Waiting</text>
+  <rect x="470" y="45" width="80" height="40" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1.5" />
+  <text x="510" y="69" textAnchor="middle" fill="currentColor">wait()</text>
+  <line x1="120" y1="65" x2="170" y2="65" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="280" y1="65" x2="330" y2="65" stroke="currentColor" strokeWidth="1.5" />
+  <line x1="440" y1="65" x2="470" y2="65" stroke="currentColor" strokeWidth="1.5" />
+  <text x="280" y="115" textAnchor="middle" fill="currentColor" fontSize="11">create -> replace code -> execute -> terminate</text>
+</svg>
+</figure>
+
+**Creation via fork().** The new process is a copy of the current one. The call returns 0 to the child and the child's PID to the parent, and -1 to signal an error.
+
+```c
+pid_t pid = fork();
+if (pid == 0) {
+    // child process branch
+} else if (pid > 0) {
+    // parent process branch, pid = child's PID
+} else {
+    // fork() failed
+}
+```
+
+**Replacing the image via exec().** The `exec*()` family replaces the body of the current process with a new program, preserving the PID. After a successful call, the code below it no longer runs.
+
+```c
+execl("/bin/ls", "ls", NULL);
+```
+
+**Termination and synchronization via wait().** The parent blocks until the child terminates and reads its exit status; without this the child lingers as a zombie.
+
+```c
+int status;
+wait(&status);
+```
+
+The commands on top of this mechanism: `ps` - a snapshot of processes, `top` - live dynamics, `kill` - sending a signal (`SIGTERM` by default).
+
+## Pitfalls
+
+- **Zombie processes.** If the parent didn't call `wait()`, the child stays in the table as a zombie. It's cured by the parent collecting the status; if the parent dies, the orphan is reparented to `init`/`systemd` (PID 1), which reaps it.
+- **`kill` doesn't always kill.** It sends a signal, not a guaranteed termination. `SIGTERM` (15) can be caught and ignored, `SIGKILL` (9) cannot.
+- **`fork()` copies, but lazily.** The address space is shared via copy-on-write rather than duplicated immediately, otherwise spawning processes would be unbearable on memory.
+- **Priority via nice.** A low `nice` (down to -20) raises priority, a high one (up to 19) lowers it; only root can decrease nice below zero.

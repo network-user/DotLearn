@@ -1,0 +1,84 @@
+---
+id: 1227
+title: "How many coroutines to run at once: throttling concurrency with asyncio.Semaphore"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How many coroutines to run at once: throttling concurrency with asyncio.Semaphore
+
+## In short
+
+To avoid launching thousands of coroutines simultaneously, the number of active tasks is limited with a semaphore. `asyncio.Semaphore(n)` lets through no more than `n` tasks at a time; the rest wait for a slot to free up.
+
+## How to answer in an interview
+
+I take an `asyncio.Semaphore` and set it a limit on simultaneous tasks. Before doing its work, each coroutine acquires the semaphore via `async with sem:` - this occupies one of the `n` slots. When the slots run out, new coroutines asynchronously wait until someone leaves the block and frees up space. I still create all the tasks at once and pass them to `asyncio.gather`, but at most `n` will actually run. This is how you keep the load on an external API under control and stay within request limits.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 600 200" fill="none" stroke="currentColor" fontFamily="sans-serif">
+<text x="300" y="22" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Semaphore(3): at most 3 slots</text>
+<rect x="40" y="120" width="220" height="60" rx="8" strokeWidth="1.5" strokeDasharray="5 4" fill="none" />
+<text x="150" y="172" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor" fillOpacity="0.8">waiting queue</text>
+<rect x="60" y="135" width="34" height="28" rx="5" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06" />
+<rect x="104" y="135" width="34" height="28" rx="5" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06" />
+<rect x="148" y="135" width="34" height="28" rx="5" strokeWidth="1.5" fill="currentColor" fillOpacity="0.06" />
+<rect x="350" y="40" width="220" height="120" rx="8" strokeWidth="1.5" fill="currentColor" fillOpacity="0.04" />
+<text x="460" y="152" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor" fillOpacity="0.8">active slots</text>
+<rect x="370" y="55" width="50" height="34" rx="6" strokeWidth="2" stroke="#6366f1" fill="#6366f1" fillOpacity="0.1" />
+<rect x="435" y="55" width="50" height="34" rx="6" strokeWidth="2" stroke="#6366f1" fill="#6366f1" fillOpacity="0.1" />
+<rect x="500" y="55" width="50" height="34" rx="6" strokeWidth="2" strokeDasharray="4 4" fill="none" />
+<path d="M270 150 L345 120" strokeWidth="2" strokeLinecap="round" stroke="#6366f1" />
+<path d="M338 116 L345 120 L337 124" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" stroke="#6366f1" />
+<rect x="60" y="135" width="34" height="28" rx="5" strokeWidth="2" stroke="#6366f1" fill="#6366f1" fillOpacity="0.18">
+<animateMotion path="M0 0 L270 -85" dur="3s" repeatCount="indefinite" />
+<animate attributeName="fillOpacity" values="0.18;0.18;0" keyTimes="0;0.85;1" dur="3s" repeatCount="indefinite" />
+</rect>
+</svg>
+
+</figure>
+
+The semaphore keeps a counter of free slots. `async with sem` decrements it on entry and returns it on exit. While the counter is above zero, a coroutine passes through immediately; at zero, it falls asleep in the waiting queue and wakes up when another coroutine releases a slot. Unlike a blocking thread semaphore, the wait here does not block the event loop - it keeps spinning other tasks.
+
+Limiting the number of simultaneous HTTP requests:
+
+```python
+import asyncio
+import aiohttp
+
+async def fetch_url(sem, session, url):
+    async with sem:
+        async with session.get(url) as response:
+            return await response.text()
+
+async def main(urls):
+    sem = asyncio.Semaphore(3)
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_url(sem, session, url) for url in urls]
+        return await asyncio.gather(*tasks)
+
+urls = [
+    "http://example.com",
+    "http://example.org",
+    "http://example.net",
+]
+
+results = asyncio.run(main(urls))
+print(len(results))
+```
+
+Here a semaphore with 3 slots means that even out of a hundred URLs, no more than three requests are in flight at once; the rest wait their turn inside `async with sem`.
+
+## Pitfalls
+
+- **Acquire inside the coroutine, not outside.** `async with sem` should wrap the actual work. If you acquire the semaphore before `gather`, the limit will not work as expected.
+- **Create the session once.** Opening a `ClientSession` inside every task is inefficient: it is better to pass a shared session, otherwise the semaphore limits the requests but not the connection overhead.
+- **A semaphore limits, it does not balance.** It does not speed up slow tasks or distribute the load - it only prevents you from exceeding the ceiling.
+- **Do not confuse it with the number of threads.** This is concurrency within a single thread, not parallelism across cores: a semaphore will not offload heavy CPU-bound code.
+- **Choosing the limit.** Too small an `n` underutilizes the network, too large hits API limits or memory.

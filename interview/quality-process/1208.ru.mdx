@@ -1,0 +1,69 @@
+---
+id: 1208
+title: "Подмена зависимостей в тестах: для чего применяют patch из unittest.mock"
+category: quality-process
+categoryLabel: "Качество и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Подмена зависимостей в тестах: для чего применяют patch из unittest.mock
+
+## Суть
+
+`unittest.mock.patch` на время теста подставляет вместо реального объекта мок, а после теста возвращает оригинал. Это позволяет отрезать тестируемый код от внешних зависимостей и управлять их поведением.
+
+## Что ответить на собесе
+
+`patch` временно заменяет атрибут в указанном месте моком и автоматически откатывает подмену по завершении теста. Использую его, когда код ходит во внешний мир - API, БД, файлы, время - и я хочу проверять логику, а не сторонний сервис. Ключевой момент: патчить нужно там, где имя используется, а не там, где оно определено. Если функция делает `import requests; requests.get(...)`, я патчу `requests.get`, но если в модуле написано `from requests import get`, патчить надо `мой_модуль.get`. Применять `patch` можно как декоратор, как контекстный менеджер или вручную через `start()/stop()`.
+
+## Как это работает
+
+`patch` принимает строку-путь к объекту, на время теста подменяет его `MagicMock`-ом и восстанавливает оригинал в `finally`. Мок запоминает, как его вызывали, поэтому можно и задать ответ, и проверить факт вызова.
+
+```python
+import requests
+
+def fetch_data(url):
+    response = requests.get(url)
+    return response.json()
+```
+
+Тест без реального запроса:
+
+```python
+from unittest.mock import patch
+import unittest
+
+class TestFetchData(unittest.TestCase):
+    @patch("requests.get")
+    def test_fetch_data(self, mock_get):
+        mock_get.return_value.json.return_value = {"key": "value"}
+
+        result = fetch_data("http://example.com")
+
+        self.assertEqual(result, {"key": "value"})
+        mock_get.assert_called_once_with("http://example.com")
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+Декоратор передаёт мок в аргумент теста. Цепочка `return_value.json.return_value` настраивает результат `requests.get(...).json()`. То же самое контекстным менеджером, когда подмена нужна лишь в части теста:
+
+```python
+from unittest.mock import patch
+
+with patch("requests.get") as mock_get:
+    mock_get.return_value.json.return_value = {"key": "value"}
+    assert fetch_data("http://example.com") == {"key": "value"}
+```
+
+## Подводные камни
+
+- Главная ловушка - "patch where it's used". Патчат место определения, а тестируемый модуль уже импортировал имя к себе, и мок не срабатывает.
+- Несколько декораторов `@patch` подставляются в аргументы снизу вверх: ближайший к функции декоратор соответствует первому параметру.
+- `Mock` принимает любой вызов и любой атрибут и не падает на опечатках. Используйте `autospec=True` или `spec=`, чтобы мок повторял сигнатуру реального объекта.
+- Ручной `patcher.start()` без `patcher.stop()` (или без `addCleanup`) протекает в соседние тесты.
+- Чтобы менять не возврат, а исключение, задавайте `mock_get.side_effect = ConnectionError(...)`, а не `return_value`.

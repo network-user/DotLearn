@@ -10,6 +10,7 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 
 import {
   CreateSubmissionInput,
@@ -41,6 +42,7 @@ export class SubmissionsController {
   ) {}
 
   @Post()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Submit a topic proposal from the in-app form.' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created.' })

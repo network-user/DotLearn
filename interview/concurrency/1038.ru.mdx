@@ -1,0 +1,79 @@
+---
+id: 1038
+title: "Цикл событий: кто на самом деле исполняет корутины"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Цикл событий: кто на самом деле исполняет корутины
+
+## Суть
+
+Event loop (цикл событий) — это диспетчер асинхронной программы. Он по очереди исполняет готовые корутины, отслеживает завершение операций ввода-вывода и переключается между задачами в одном потоке без блокировки.
+
+## Что ответить на собесе
+
+Цикл событий — ядро `asyncio`. Сами по себе `async def` и `await` ничего не запускают: реально крутит корутины именно loop. Он держит очередь готовых к исполнению задач, по очереди передаёт каждой управление до ближайшего `await`, а в этот момент корутина отдаёт управление обратно. Параллельно loop через системные механизмы (`epoll`/`kqueue`/`select`) следит, какие сокеты и файлы готовы, и будит соответствующие корутины. Получается однопоточная кооперативная многозадачность: пока одна задача ждёт I/O, исполняются другие. `asyncio.run(main())` как раз создаёт цикл, прогоняет в нём корутину и корректно закрывает loop.
+
+## Как это работает
+
+Цикл работает по схеме «событие → реакция»: непрерывно проверяет, не появилось ли готовых задач или завершённых операций, и вызывает соответствующие продолжения корутин.
+
+<figure>
+<svg viewBox="0 0 560 260" role="img" aria-label="Цикл событий: очередь готовых задач, исполнение до await, ожидание ввода-вывода" fontFamily="sans-serif" fontSize="12">
+  <text x="280" y="22" fill="currentColor" textAnchor="middle" fontSize="14">Event loop</text>
+
+  <rect x="30" y="100" width="140" height="60" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="100" y="125" fill="currentColor" textAnchor="middle">Очередь</text>
+  <text x="100" y="143" fill="currentColor" textAnchor="middle">готовых задач</text>
+
+  <rect x="210" y="100" width="140" height="60" rx="6" fill="#6366f1" fillOpacity="0.12" stroke="#6366f1" strokeOpacity="0.6" />
+  <text x="280" y="125" fill="currentColor" textAnchor="middle">Исполнение</text>
+  <text x="280" y="143" fill="currentColor" textAnchor="middle">до await</text>
+
+  <rect x="390" y="100" width="140" height="60" rx="6" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="460" y="125" fill="currentColor" textAnchor="middle">Ожидание I/O</text>
+  <text x="460" y="143" fill="currentColor" textAnchor="middle">epoll / select</text>
+
+  <path d="M170 130 L205 130" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" />
+  <path d="M350 130 L385 130" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" />
+  <path d="M460 165 L460 210 L100 210 L100 165" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" fill="none" strokeDasharray="5 4" markerEnd="url(#arrow)" />
+  <text x="280" y="228" fill="currentColor" textAnchor="middle" fontSize="11">готово → снова в очередь</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 Z" fill="currentColor" fillOpacity="0.7" />
+    </marker>
+  </defs>
+
+  <circle r="6" fill="#6366f1">
+    <animateMotion dur="4s" repeatCount="indefinite" path="M100 130 L280 130 L460 130 L460 210 L100 210 Z" />
+  </circle>
+</svg>
+</figure>
+
+```python
+import asyncio
+
+async def say_hello():
+    print("Hello")
+    await asyncio.sleep(1)
+    print("World")
+
+async def main():
+    await asyncio.gather(say_hello(), say_hello())
+
+asyncio.run(main())
+```
+
+Здесь `asyncio.gather` ставит две корутины в работу одновременно. Обе печатают `Hello`, обе уходят в `await asyncio.sleep(1)` и уступают управление циклу. Через секунду loop будит их, и обе печатают `World`. Общее время — около одной секунды, а не двух: ожидания перекрылись, потому что ими управлял один цикл.
+
+## Подводные камни
+
+- В одном потоке активен только один цикл событий. Нельзя вызвать `asyncio.run` внутри уже работающего loop (например, в Jupyter) — будет `RuntimeError`.
+- Любой синхронный блокирующий вызов внутри корутины замораживает весь loop: пока он не вернётся, остальные задачи стоят.
+- `gather` даёт конкурентность только при двух и более `await`-точках. Чистый CPU-расчёт без `await` всё равно выполнится последовательно.
+- Не путать с потоками ОС: переключение здесь кооперативное и происходит только на `await`, а не вытесняется планировщиком.

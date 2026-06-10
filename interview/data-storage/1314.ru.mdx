@@ -1,0 +1,72 @@
+---
+id: 1314
+title: "Как реализовать отношение «один к одному» между таблицами?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как реализовать отношение «один к одному» между таблицами?
+
+## Суть
+
+Отношение 1:1 держится на уникальности ссылки. На уровне SQL это внешний ключ с ограничением `UNIQUE`, на уровне Django ORM - готовое поле `OneToOneField`, которое навешивает эту уникальность само.
+
+## Что ответить на собесе
+
+«Связь один-к-одному значит, что каждой строке в таблице A соответствует не больше одной строки в таблице B. В чистом SQL я кладу в подчинённую таблицу внешний ключ на родителя и ставлю на него `UNIQUE` - именно уникальность превращает обычный foreign key в 1:1. В Django для этого есть `OneToOneField`, он под капотом делает ровно то же самое: FK плюс уникальный индекс. Применяю такой подход, когда хочу вынести редко используемые или объёмные поля в отдельную таблицу, не разрывая логическую связь с основной записью.»
+
+## Как это работает
+
+Возьмём пользователя и его профиль: у каждого пользователя ровно один профиль, и каждый профиль принадлежит одному пользователю.
+
+```sql
+CREATE TABLE app_user (
+    id INT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE profile (
+    id INT PRIMARY KEY,
+    user_id INT UNIQUE,
+    bio TEXT,
+    FOREIGN KEY (user_id) REFERENCES app_user(id)
+);
+```
+
+Ключевой здесь столбец `user_id`: он ссылается на `app_user(id)`, а ограничение `UNIQUE` запрещает двум разным профилям указывать на одного и того же пользователя. Без `UNIQUE` это было бы обычное «один ко многим».
+
+В Django тот же контракт выражается одной строкой:
+
+```python
+from django.db import models
+
+
+class User(models.Model):
+    username = models.CharField(max_length=50)
+
+
+class Profile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    bio = models.TextField()
+```
+
+`OneToOneField` генерирует внешний ключ с уникальным индексом, а `on_delete=models.CASCADE` определяет поведение при удалении родителя: вместе с пользователем уйдёт и его профиль.
+
+<svg viewBox="0 0 220 60" width="220" height="60" role="img" aria-label="Схема связи один к одному">
+  <rect x="10" y="18" width="70" height="24" rx="4" fill="none" stroke="currentColor" />
+  <rect x="140" y="18" width="70" height="24" rx="4" fill="none" stroke="currentColor" />
+  <line x1="80" y1="30" x2="140" y2="30" stroke="currentColor" />
+  <text x="45" y="34" fontSize="10" textAnchor="middle" fill="currentColor">user</text>
+  <text x="175" y="34" fontSize="10" textAnchor="middle" fill="currentColor">profile</text>
+  <text x="110" y="22" fontSize="9" textAnchor="middle" fill="currentColor">1 — 1</text>
+</svg>
+
+## Подводные камни
+
+- Забыть `UNIQUE` на внешнем ключе - и схема молча превратится в «один ко многим»: база разрешит несколько профилей на одного пользователя.
+- Решить, на какой стороне держать ссылку. Обычно FK кладут на «зависимую» таблицу (профиль ссылается на пользователя), а не наоборот.
+- `on_delete` в Django нужно выбирать осознанно: `CASCADE` удалит связанную запись, `SET_NULL` потребует `null=True`, `PROTECT` запретит удаление родителя при наличии связи.
+- Не всякую 1:1 стоит выносить в отдельную таблицу: если поля нужны почти всегда, лишний JOIN только замедлит выборки.

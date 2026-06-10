@@ -1,0 +1,92 @@
+---
+id: 1166
+title: "Семантики доставки сообщений в Kafka: от at-most-once до exactly-once"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Семантики доставки сообщений в Kafka: от at-most-once до exactly-once
+
+## Суть
+
+Kafka поддерживает три семантики доставки: at-most-once (не более раза, возможна потеря), at-least-once (минимум раз, возможны дубли) и exactly-once (ровно раз). Выбор — это компромисс между надёжностью и пропускной способностью.
+
+## Что ответить на собесе
+
+Семантику доставки определяет связка настроек продюсера и поведения консьюмера. At-most-once: продюсер не ждёт подтверждений (`acks=0`), сообщение может потеряться, зато быстро — годится для метрик, где потеря части данных не критична. At-least-once: продюсер ждёт подтверждения и при таймауте повторяет отправку, поэтому возможны дубликаты — это дефолт для большинства задач, а получатель должен быть идемпотентным. Exactly-once: добавляется идемпотентность продюсера и транзакции, дубликаты исключаются — это для финансов и подобных критичных сценариев, но ценой производительности. Ключевая мысль: «строго один раз» в Kafka — это не магия, а идемпотентный продюсер плюс транзакционная запись, а не просто галочка.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 600 200" fontFamily="sans-serif" fontSize="12">
+<text x="8" y="30" fill="currentColor" fillOpacity="0.7">at-most-once</text>
+<rect x="120" y="12" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="165" y="30" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="390" y="12" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="435" y="30" textAnchor="middle" fill="currentColor">Broker</text>
+<line x1="210" y1="26" x2="390" y2="26" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="390,26 382,22 382,30" fill="currentColor" />
+<text x="300" y="20" textAnchor="middle" fill="currentColor" fillOpacity="0.6">acks=0, без ACK</text>
+
+<text x="8" y="100" fill="currentColor" fillOpacity="0.7">at-least-once</text>
+<rect x="120" y="82" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="165" y="100" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="390" y="82" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeWidth="1" />
+<text x="435" y="100" textAnchor="middle" fill="currentColor">Broker</text>
+<line x1="210" y1="93" x2="390" y2="93" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="390,93 382,89 382,97" fill="currentColor" />
+<line x1="390" y1="106" x2="210" y2="106" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+<polygon points="210,106 218,102 218,110" fill="currentColor" />
+<text x="300" y="124" textAnchor="middle" fill="currentColor" fillOpacity="0.6">ACK + ретрай → дубли</text>
+
+<text x="8" y="172" fill="currentColor" fillOpacity="0.7">exactly-once</text>
+<rect x="120" y="154" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="165" y="172" textAnchor="middle" fill="currentColor">Producer</text>
+<rect x="390" y="154" width="90" height="28" rx="5" fill="currentColor" fillOpacity="0.08" stroke="#6366f1" strokeWidth="1.5" />
+<text x="435" y="172" textAnchor="middle" fill="currentColor">Broker</text>
+<line x1="210" y1="168" x2="390" y2="168" stroke="currentColor" strokeWidth="1.5" />
+<polygon points="390,168 382,164 382,172" fill="currentColor" />
+<text x="300" y="162" textAnchor="middle" fill="currentColor" fillOpacity="0.6">идемпотентность + транзакции</text>
+</svg>
+</figure>
+
+- **At-most-once** — продюсер отправляет и не дожидается ответа брокера. Сбой между отправкой и записью означает потерю сообщения.
+- **At-least-once** — продюсер ждёт ACK; не дождавшись, ретраит. Повтор после уже состоявшейся, но не подтверждённой записи рождает дубликат.
+- **Exactly-once** — идемпотентный продюсер нумерует сообщения, брокер отбрасывает повторы, а транзакции связывают запись и сдвиг оффсета консьюмера в атомарную операцию.
+
+Настройка продюсера под каждый режим:
+
+```python
+from kafka import KafkaProducer
+
+# at most once: подтверждения не ждём
+producer_at_most_once = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    acks=0,
+)
+
+# at least once: ждём ACK от лидера партиции
+producer_at_least_once = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    acks=1,
+)
+
+# exactly once: ACK от всех реплик + идемпотентность
+producer_exactly_once = KafkaProducer(
+    bootstrap_servers='localhost:9092',
+    acks='all',
+    enable_idempotence=True,
+)
+```
+
+`acks=0` даёт at-most-once; `acks=1` — at-least-once; `acks='all'` вместе с `enable_idempotence=True` — основа exactly-once.
+
+## Подводные камни
+
+- `enable_idempotence=True` гарантирует отсутствие дублей только на стороне продюсер→брокер. Полноценный exactly-once между консьюмерами требует ещё транзакций и правильного коммита оффсетов.
+- `acks=1` не спасает от потери: если лидер подтвердил запись и упал до репликации, сообщение пропадёт. Для устойчивости нужен `acks='all'` плюс `min.insync.replicas`.
+- At-least-once без идемпотентного получателя приводит к двойной обработке — дедуплицируйте по ключу сообщения.
+- Exactly-once не бесплатен: транзакции и ожидание всех реплик снижают пропускную способность и растят задержку.

@@ -1,0 +1,81 @@
+---
+id: 1284
+title: "Когда хэш-индекс выигрывает, а когда проигрывает B-дереву?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда хэш-индекс выигрывает, а когда проигрывает B-дереву?
+
+## Суть
+
+Хэш-индекс хорош ровно для одного сценария - мгновенный поиск по точному равенству ключа. Для диапазонов и сортировки он бесполезен, потому что хэш-функция не сохраняет порядок ключей.
+
+## Что ответить на собесе
+
+Хэш-индекс беру, когда запросы - это исключительно проверки на равенство: выборка по `user_id`, по номеру заказа, по точному ключу. Хэш-функция превращает ключ в адрес ячейки, и доступ получается в среднем за константу. Но как только в запросах появляются `>`, `<`, `BETWEEN` или `ORDER BY` - хэш-индекс не поможет, тут нужно B-дерево, которое хранит ключи упорядоченно. На практике в большинстве СУБД дефолт - B-дерево именно из-за универсальности, а хэш применяют точечно.
+
+## Как это работает
+
+Хэш-индекс прогоняет ключ через хэш-функцию и получает адрес, где лежат данные:
+
+<figure>
+<svg viewBox="0 0 600 220" role="img" aria-label="Хэш-функция превращает ключ в адрес ячейки" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="92" width="120" height="36" rx="6" stroke="#6366f1" strokeWidth="2" fill="#6366f1" fillOpacity="0.1"/>
+  <text x="80" y="115" textAnchor="middle" fontSize="13" fill="currentColor">user_id_123</text>
+  <text x="80" y="80" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.7">ключ</text>
+  <rect x="220" y="86" width="110" height="48" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05"/>
+  <text x="275" y="108" textAnchor="middle" fontSize="12" fill="currentColor">hash()</text>
+  <text x="275" y="124" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.7">= 0x...4</text>
+  <text x="490" y="34" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.7">хэш-таблица</text>
+  <rect x="430" y="44" width="140" height="26" rx="3" stroke="currentColor" strokeWidth="1.2" fill="currentColor" fillOpacity="0.04"/>
+  <text x="442" y="61" fontSize="11" fill="currentColor" fillOpacity="0.6">[0]</text>
+  <rect x="430" y="74" width="140" height="26" rx="3" stroke="currentColor" strokeWidth="1.2" fill="currentColor" fillOpacity="0.04"/>
+  <text x="442" y="91" fontSize="11" fill="currentColor" fillOpacity="0.6">[1]</text>
+  <rect x="430" y="104" width="140" height="26" rx="3" stroke="currentColor" strokeWidth="1.2" fill="currentColor" fillOpacity="0.04"/>
+  <text x="442" y="121" fontSize="11" fill="currentColor" fillOpacity="0.6">[2]</text>
+  <rect x="430" y="134" width="140" height="26" rx="3" stroke="currentColor" strokeWidth="1.2" fill="currentColor" fillOpacity="0.04"/>
+  <text x="442" y="151" fontSize="11" fill="currentColor" fillOpacity="0.6">[3]</text>
+  <rect x="430" y="164" width="140" height="26" rx="3" stroke="#6366f1" strokeWidth="2" fill="#6366f1" fillOpacity="0.12"/>
+  <text x="442" y="181" fontSize="11" fill="currentColor" fillOpacity="0.6">[4]</text>
+  <text x="500" y="181" textAnchor="middle" fontSize="11" fill="currentColor">{`{name: Alice}`}</text>
+  <path d="M140 110 L218 110" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+  <path d="M330 110 L420 177" stroke="#6366f1" strokeWidth="2" strokeLinecap="round"/>
+  <circle cx="160" cy="110" r="4" fill="#6366f1">
+    <animate attributeName="cx" values="160;200;160" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+</svg>
+</figure>
+
+1. **Хэш-функция**: при добавлении записи ключ (например, идентификатор) превращается в число-адрес.
+2. **Хэш-таблица**: адрес указывает на ячейку, где хранится запись или ссылка на неё.
+3. **Поиск**: тот же ключ снова прогоняют через ту же функцию и сразу попадают в нужную ячейку.
+
+В Python ту же идею наглядно показывает словарь - он и есть хэш-таблица:
+
+```python
+hash_table = {}
+
+key = "user_id_123"
+value = {"name": "Alice", "age": 30}
+hash_table[key] = value
+
+search_key = "user_id_123"
+if search_key in hash_table:
+    result = hash_table[search_key]
+    print("Record found:", result)
+else:
+    print("Record not found")
+```
+
+Поиск `search_key in hash_table` - это одна хэш-операция, а не перебор всех ключей.
+
+## Подводные камни
+
+- Диапазонные запросы и сортировка хэш-индексу недоступны: порядок ключей он не хранит.
+- При большом числе коллизий (разные ключи дают один адрес) производительность деградирует к линейному поиску внутри корзины.
+- Составной поиск по части ключа невозможен - хэш считается от всего ключа целиком.
+- В PostgreSQL хэш-индексы исторически были менее надёжными, чем B-tree, поэтому по умолчанию выбирают B-дерево.

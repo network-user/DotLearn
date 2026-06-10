@@ -1,0 +1,76 @@
+---
+id: 1302
+title: "Combining data from two tables without the JOIN operator: what are the options?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Combining data from two tables without the JOIN operator: what are the options?
+
+## In short
+
+You can link rows of two tables without `JOIN`: either through a subquery that filters one table by values from the other, or by assembling the result in application code. Both approaches solve the same problem, they just move the join logic elsewhere.
+
+## How to answer in an interview
+
+Here's how I'd put it: `JOIN` is not the only tool. There's the subquery: an inner `SELECT` returns a set of keys from one table, and the outer query selects rows from the other by them via `IN` or `EXISTS`. The second route is to pull both result sets separately and stitch them together on the application side, for example through a dictionary keyed by the join key. The subquery keeps the logic in the database; assembling in code is handy when you need non-standard processing that's hard to express in SQL. The downside of manual assembly is two round trips to the database and the risk of leaving the join up to the application.
+
+## How it works
+
+### Subquery
+
+A subquery selects keys from one table, and the outer query uses them as a filter for the other. Let's take `orders` and `customers` and fetch the orders of customers from a specific city.
+
+```sql
+SELECT order_id, order_date
+FROM orders
+WHERE customer_id IN (
+    SELECT customer_id
+    FROM customers
+    WHERE city = 'New York'
+);
+```
+
+The inner `SELECT` returns the ids of customers from New York, and the outer one keeps only those orders whose `customer_id` is in that list.
+
+### Assembling in the application
+
+If the join logic is easier to describe in code, you select both tables separately and link the rows through a dictionary with O(1) key access.
+
+```python
+import sqlite3
+
+conn = sqlite3.connect('example.db')
+cursor = conn.cursor()
+
+cursor.execute("SELECT order_id, customer_id, order_date FROM orders")
+orders = cursor.fetchall()
+
+cursor.execute("SELECT customer_id, name, city FROM customers")
+customers = cursor.fetchall()
+
+customer_dict = {cid: (name, city) for cid, name, city in customers}
+
+combined_data = []
+for order_id, customer_id, order_date in orders:
+    if customer_id in customer_dict:
+        name, city = customer_dict[customer_id]
+        combined_data.append((order_id, customer_id, order_date, name, city))
+
+for row in combined_data:
+    print(row)
+
+conn.close()
+```
+
+The `customer_dict` dictionary turns looking up a customer by `customer_id` into a constant-time operation, so the overall assembly complexity is linear in the number of orders.
+
+## Pitfalls
+
+- A subquery with `IN` over a large list of keys can turn out slower than a plain `JOIN`: the planner doesn't always build an efficient plan for it, and sometimes `EXISTS` or the `JOIN` itself is better.
+- When assembling in the application, it's easy to get quadratic complexity if you look up a customer by linearly scanning the list instead of using a dictionary.
+- Manual joining pulls both tables into memory at once and makes several queries — on large volumes this hurts both the network and memory.
+- A correlated subquery (referencing the outer row) runs for every row and easily becomes a bottleneck.

@@ -1,0 +1,66 @@
+---
+id: 1303
+title: "Why call scalars() in SQLAlchemy and what does it change in the result?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why call scalars() in SQLAlchemy and what does it change in the result?
+
+## In short
+
+`scalars()` unwraps a query result from tuple rows into a flat list of single values. When each row contains exactly one column, the method spares you from manually pulling out `row[0]`.
+
+## How to answer in an interview
+
+By default `session.execute(stmt)` returns a `Result` object where each row is a tuple (`Row`), even when a single column is selected. To get `['Alice', 'Bob']` instead of `[('Alice',), ('Bob',)]`, I call `result.scalars()`. It takes the first element of each row and returns a `ScalarResult`, on which I can then chain `.all()`, `.first()`, `.one()`, or iteration. This matters especially with the ORM: with `select(User)` and no `scalars()` I get tuples with objects inside, whereas with `scalars()` I get a list of `User` instances directly. There's also a shortcut: `session.scalars(stmt)`.
+
+## How it works
+
+```python
+from sqlalchemy import create_engine, select, MetaData, Table, Column, Integer, String
+from sqlalchemy.orm import Session
+
+engine = create_engine('sqlite:///:memory:')
+metadata = MetaData()
+
+users = Table('users', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String)
+)
+
+metadata.create_all(engine)
+
+with engine.connect() as connection:
+    connection.execute(users.insert(), [
+        {'name': 'Alice'},
+        {'name': 'Bob'},
+        {'name': 'Charlie'}
+    ])
+    connection.commit()
+
+with Session(engine) as session:
+    stmt = select(users.c.name)
+    result = session.execute(stmt)
+    names = result.scalars().all()
+    print(names)  # ['Alice', 'Bob', 'Charlie']
+```
+
+Step by step:
+
+1. `create_engine('sqlite:///:memory:')` spins up a temporary in-memory database.
+2. `Table('users', ...)` describes the table structure with the `id` and `name` columns.
+3. `connection.execute(users.insert(), [...])` inserts the rows.
+4. `select(users.c.name)` builds a query selecting a single column.
+5. `session.execute(stmt)` returns a `Result` made of tuple rows.
+6. `result.scalars().all()` takes the first column of each row and gathers a flat list.
+
+## Pitfalls
+
+- `scalars()` takes only the **first** column. If `select()` lists multiple columns, the rest are silently dropped - then you need the regular `result.all()` with tuples.
+- Don't confuse the methods: `.scalars()` (many values) versus `.scalar()` (one value from the first row, or `None`) and `.scalar_one()` (exactly one, otherwise an exception).
+- For a single object by primary key it's often simpler to use `session.get(User, pk)` rather than a query with `scalars().first()`.
+- The legacy `Query` API has no `scalars()` method - it's part of the 2.0 style with `select()`.

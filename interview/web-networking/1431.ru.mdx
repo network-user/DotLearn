@@ -1,0 +1,93 @@
+---
+id: 1431
+title: "Когда стоит выбрать gRPC вместо REST для общения сервисов?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда стоит выбрать gRPC вместо REST для общения сервисов?
+
+## Суть
+
+gRPC берёт верх над REST в нагруженных межсервисных сценариях: он гоняет данные в бинарном виде через Protocol Buffers поверх HTTP/2, поэтому экономит трафик и режет задержку. Бонусом идут двунаправленные потоки и автоматически сгенерированные клиенты с серверами под любой язык.
+
+## Что ответить на собесе
+
+«gRPC я выбираю для внутреннего трафика между микросервисами, где критичны скорость и низкая задержка. Сообщения описываются в `.proto` и сериализуются в компактный бинарный формат, что экономнее JSON, а HTTP/2 даёт мультиплексирование и потоковую передачу в обе стороны. По одному контракту генерируется типобезопасный код для разных языков. REST же оставляю для публичных API, которые должны быть читаемы людьми и доступны прямо из браузера.»
+
+## Как это работает
+
+gRPC — фреймворк удалённого вызова процедур (Remote Procedure Call): метод на чужом сервере вызывается так, будто он локальный. Транспорт — HTTP/2, формат сообщений — Protocol Buffers.
+
+Сильные стороны относительно классического REST:
+
+- **Скорость**: бинарная упаковка через Protocol Buffers компактнее и быстрее парсится, чем текстовый JSON.
+- **Стриминг**: HTTP/2 позволяет клиенту и серверу обмениваться потоком сообщений по одному соединению — удобно для чатов, телеметрии, лайв-обновлений.
+- **Один контракт на все языки**: по `.proto`-файлу генерируются готовые клиентские и серверные заглушки.
+
+Сначала описываем сервис в `.proto`:
+
+```proto
+syntax = "proto3";
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply);
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloReply {
+  string message = 1;
+}
+```
+
+Здесь `service Greeter` объявляет сервис, `rpc SayHello` — метод с типами входа и выхода, а `message` описывает структуру передаваемых данных. Из этого файла кодогенератор делает заглушки.
+
+Реализация сервера на Python:
+
+```python
+from concurrent import futures
+import grpc
+import greeter_pb2
+import greeter_pb2_grpc
+
+
+class GreeterServicer(greeter_pb2_grpc.GreeterServicer):
+    def SayHello(self, request, context):
+        return greeter_pb2.HelloReply(message=f"Hello, {request.name}!")
+
+
+server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+greeter_pb2_grpc.add_GreeterServicer_to_server(GreeterServicer(), server)
+server.add_insecure_port("[::]:50051")
+server.start()
+server.wait_for_termination()
+```
+
+Клиент дёргает удалённый метод как обычную функцию:
+
+```python
+import grpc
+import greeter_pb2
+import greeter_pb2_grpc
+
+channel = grpc.insecure_channel("localhost:50051")
+stub = greeter_pb2_grpc.GreeterStub(channel)
+response = stub.SayHello(greeter_pb2.HelloRequest(name="World"))
+print("Client received:", response.message)
+```
+
+`insecure_channel` открывает соединение, `GreeterStub` — клиентский объект, через который вызовы превращаются в сетевые запросы.
+
+## Подводные камни
+
+- gRPC плохо живёт в браузере напрямую: нужен слой gRPC-Web и прокси, поэтому для публичного фронтенда чаще удобнее REST.
+- Бинарный формат не прочитаешь глазами в логах или curl — отладка требует своих инструментов.
+- `proto3` не различает «поле не задано» и «поле равно нулю/пустой строке» без обёрток, что ловит на бизнес-логике.
+- Менять контракт нужно аккуратно: номера полей в `.proto` — часть протокола, переиспользовать их нельзя, иначе ломается обратная совместимость.
+- `insecure_channel` годится только для локальной отладки; в проде обязательно TLS.

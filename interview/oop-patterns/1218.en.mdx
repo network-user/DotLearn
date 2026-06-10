@@ -1,0 +1,93 @@
+---
+id: 1218
+title: "Why super() exists and how it behaves under multiple inheritance"
+category: oop-patterns
+categoryLabel: "ООП и паттерны"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why super() exists and how it behaves under multiple inheritance
+
+## In short
+
+`super()` gives access to ancestor methods without naming their class explicitly. Under multiple inheritance it walks the hierarchy in method resolution order (MRO), so each class is initialized exactly once and without duplicates.
+
+## How to answer in an interview
+
+`super()` returns a proxy that looks for a method not in the current class but further down the MRO chain. This removes the hard dependency on the parent's name - the hierarchy can be rearranged without changing the calls. Under multiple inheritance the key point is that `super()` goes not "to the parent" but to the next class in the current object's linearized MRO. That's why a chain of cooperative `super().__init__()` calls visits every ancestor exactly once. The order itself is built by the C3 linearization algorithm.
+
+## How it works
+
+`super()` relies on the MRO - the list of classes Python searches for attributes and methods. Importantly: the next class is determined by the MRO of the concrete object, not by a static "parent" reference.
+
+<figure>
+
+<svg viewBox="0 0 460 200" width="460" height="200" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="100" y="10" width="60" height="30" rx="4" />
+  <text x="130" y="29" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">D</text>
+  <rect x="40" y="75" width="60" height="30" rx="4" />
+  <text x="70" y="94" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">B</text>
+  <rect x="160" y="75" width="60" height="30" rx="4" />
+  <text x="190" y="94" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">C</text>
+  <rect x="100" y="140" width="60" height="30" rx="4" />
+  <text x="130" y="159" textAnchor="middle" fontSize="12" stroke="none" fill="currentColor">A</text>
+  <line x1="120" y1="40" x2="80" y2="75" />
+  <line x1="140" y1="40" x2="180" y2="75" />
+  <line x1="80" y1="105" x2="120" y2="140" />
+  <line x1="180" y1="105" x2="140" y2="140" />
+  <text x="300" y="60" textAnchor="middle" fontSize="11" stroke="none" fill="currentColor">MRO (C3):</text>
+  <text x="300" y="85" textAnchor="middle" fontSize="13" stroke="none" fill="#6366f1">D → B → C → A</text>
+  <text x="300" y="110" textAnchor="middle" fontSize="10" stroke="none" fill="currentColor" fillOpacity="0.8">each class exactly once</text>
+</svg>
+
+</figure>
+
+```python
+class A:
+    def __init__(self):
+        print("Initializing A")
+
+class B(A):
+    def __init__(self):
+        super().__init__()
+        print("Initializing B")
+
+class C(A):
+    def __init__(self):
+        super().__init__()
+        print("Initializing C")
+
+class D(B, C):
+    def __init__(self):
+        super().__init__()
+        print("Initializing D")
+
+d = D()
+```
+
+Although `B.__init__` calls `super().__init__()`, for an object of type `D` this goes not to `A` but to `C` - the next class in the MRO. So the output is:
+
+```
+Initializing A
+Initializing C
+Initializing B
+Initializing D
+```
+
+The order is set by the MRO, which is visible through `mro()`:
+
+```python
+print([cls.__name__ for cls in D.mro()])
+# ['D', 'B', 'C', 'A', 'object']
+```
+
+Linearization guarantees that `A` is initialized once, despite two paths reaching it (through `B` and through `C`).
+
+## Pitfalls
+
+- A common mistake is to think `super()` always calls the "direct parent". In a diamond hierarchy it calls the next class in the object's MRO, which may be a "sibling" rather than an ancestor.
+- Cooperation requires discipline: if even one class in the chain fails to call `super().__init__()`, part of the initialization simply won't run.
+- Under multiple inheritance, incompatible `__init__` signatures break the chain. The fix is often `*args, **kwargs`, carefully passed along.
+- If C3 cannot build a consistent order (cycles, conflicting base classes), Python raises `TypeError` right at class declaration.

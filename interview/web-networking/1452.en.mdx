@@ -1,0 +1,85 @@
+---
+id: 1452
+title: "SSL and TLS: how an encrypted channel protects traffic and how they differ"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# SSL and TLS: how an encrypted channel protects traffic and how they differ
+
+## In short
+
+SSL and TLS are transport-layer cryptographic protocols that create a secure channel on top of ordinary TCP. TLS is the evolution of SSL: the old SSL has long been insecure and decommissioned, while the live protocol today is called TLS. Both provide the same trio: encryption, authentication, and integrity checking.
+
+## How to answer in an interview
+
+SSL (Secure Sockets Layer) is the historical protocol; its versions are compromised and no longer in use. TLS (Transport Layer Security) is its successor, and it is exactly what stands behind every HTTPS connection, even though people still say "SSL certificate" out of habit. The protocol solves three problems: confidentiality (the traffic is encrypted), authentication (the certificate confirms the server is who it claims to be), and integrity (tampering with data in transit shows up via a MAC/hash). The connection starts with a handshake: the parties agree on ciphers, the server presents a certificate, and a session key is negotiated for fast symmetric encryption.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 560 260" role="img" aria-label="TLS handshake: message exchange between client and server" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="90" y="24" textAnchor="middle" fontSize="13" fontFamily="sans-serif" fill="currentColor">Client</text>
+  <text x="470" y="24" textAnchor="middle" fontSize="13" fontFamily="sans-serif" fill="currentColor">Server</text>
+  <line x1="90" y1="36" x2="90" y2="240" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+  <line x1="470" y1="36" x2="470" y2="240" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+  <line x1="92" y1="60" x2="466" y2="60" stroke="currentColor" strokeWidth="1.5" />
+  <path d="M466 60 L456 55 L456 65 Z" fill="currentColor" />
+  <text x="280" y="54" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor">ClientHello: list of cipher suites</text>
+  <line x1="468" y1="100" x2="94" y2="100" stroke="currentColor" strokeWidth="1.5" />
+  <path d="M94 100 L104 95 L104 105 Z" fill="currentColor" />
+  <text x="280" y="94" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor">ServerHello + certificate</text>
+  <line x1="92" y1="140" x2="466" y2="140" stroke="#6366f1" strokeWidth="1.5" />
+  <path d="M466 140 L456 135 L456 145 Z" fill="#6366f1" />
+  <text x="280" y="134" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="#6366f1">key exchange (ephemeral DH)</text>
+  <text x="280" y="172" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor" fillOpacity="0.8">session key negotiated</text>
+  <rect x="92" y="184" width="376" height="34" rx="6" stroke="#6366f1" strokeWidth="2" fill="#6366f1" fillOpacity="0.06" />
+  <text x="280" y="205" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor">symmetric encryption + MAC for integrity</text>
+  <circle cx="90" cy="60" r="5" fill="#6366f1">
+    <animate attributeName="cx" values="90;470" dur="2.4s" repeatCount="indefinite" />
+    <animate attributeName="opacity" values="1;1;0" keyTimes="0;0.85;1" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+  <text x="280" y="244" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor" fillOpacity="0.7">after the handshake the channel is encrypted with a fast symmetric algorithm</text>
+</svg>
+</figure>
+
+Establishing a secure connection proceeds in steps:
+
+1. **Handshake:** the client sends a list of supported cipher suites, and the server picks a common one.
+2. **Authentication and key exchange:** the server sends a certificate with a public key, the client verifies the chain of trust and negotiates a session key (in modern TLS - via ephemeral Diffie-Hellman).
+3. **Symmetric encryption:** from then on the entire exchange is encrypted with a fast symmetric algorithm using the session key.
+4. **Integrity control:** an authentication code is added to each message, so tampering with bytes in the channel is immediately noticeable.
+
+In Python you obtain a secure socket through the standard `ssl` module:
+
+```python
+import socket
+import ssl
+
+hostname = "example.com"
+context = ssl.create_default_context()
+
+with socket.create_connection((hostname, 443)) as raw_sock:
+    with context.wrap_socket(raw_sock, server_hostname=hostname) as tls_sock:
+        tls_sock.sendall(b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+        chunks = []
+        while True:
+            data = tls_sock.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+
+print(b"".join(chunks).decode("utf-8", "replace")[:200])
+```
+
+`create_default_context()` immediately enables certificate and hostname verification, and `wrap_socket` wraps an ordinary TCP socket in a TLS layer. The `server_hostname` argument is needed both for SNI and for validation that the certificate names exactly this domain.
+
+## Pitfalls
+
+- "SSL" in speech usually means TLS: the old SSL 2.0/3.0 versions are vulnerable (POODLE and others) and disabled. Do not confuse the brand with the protocol that actually works.
+- Do not disable certificate verification (`context.check_hostname = False`, `CERT_NONE`) just "to make it work" - this kills authentication and opens the door to a MITM attack.
+- TLS encrypts the channel, but not the content after decryption and not metadata such as the domain name (historically SNI traveled as plaintext).
+- An expired or self-signed certificate breaks the connection by default - this is a feature, not a bug.

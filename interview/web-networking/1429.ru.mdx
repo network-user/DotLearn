@@ -1,0 +1,88 @@
+---
+id: 1429
+title: "Пара access/refresh: как обновить сессию без повторного логина?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Пара access/refresh: как обновить сессию без повторного логина?
+
+## Суть
+
+Refresh-токен — это долгоживущий секрет, по которому клиент выпрашивает новый короткоживущий access-токен, не вводя логин и пароль заново. Access носит права и живёт минуты, refresh лежит в защищённом хранилище и продлевает сессию.
+
+## Что ответить на собесе
+
+Access-токен делают короткоживущим (например, 15 минут), чтобы при утечке окно злоупотребления было маленьким. Но заставлять пользователя логиниться каждые 15 минут неудобно, поэтому при входе сервер выдаёт пару: access и refresh. Access ходит в каждый запрос к API; когда он протухает, клиент шлёт refresh на отдельный эндпоинт и получает свежий access. Refresh живёт дольше и поэтому хранится максимально надёжно — обычно в httpOnly-cookie, недоступной из JavaScript. Хороший ответ добавит: refresh стоит делать одноразовым с ротацией (каждое обновление выдаёт новый refresh и инвалидирует старый) и держать на сервере список отзыва, чтобы можно было погасить сессию.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 240" role="img" aria-label="Жизненный цикл пары access/refresh токенов" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="90" y="24" textAnchor="middle" fontSize="13" fill="currentColor">Клиент</text>
+  <text x="510" y="24" textAnchor="middle" fontSize="13" fill="currentColor">Сервер</text>
+  <line x1="90" y1="34" x2="90" y2="220" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+  <line x1="510" y1="34" x2="510" y2="220" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+
+  <line x1="90" y1="64" x2="510" y2="64" stroke="currentColor" strokeWidth="1.5" />
+  <polygon points="510,64 500,59 500,69" fill="currentColor" />
+  <text x="300" y="58" textAnchor="middle" fontSize="11" fill="currentColor">логин: логин + пароль</text>
+
+  <line x1="510" y1="98" x2="90" y2="98" stroke="#6366f1" strokeWidth="1.5" />
+  <polygon points="90,98 100,93 100,103" fill="#6366f1" />
+  <text x="300" y="92" textAnchor="middle" fontSize="11" fill="#6366f1">пара токенов: access + refresh</text>
+
+  <line x1="90" y1="132" x2="510" y2="132" stroke="currentColor" strokeWidth="1.5" />
+  <polygon points="510,132 500,127 500,137" fill="currentColor" />
+  <text x="300" y="126" textAnchor="middle" fontSize="11" fill="currentColor">запрос с access (протух)</text>
+
+  <line x1="510" y1="166" x2="90" y2="166" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" />
+  <polygon points="90,166 100,161 100,171" fill="currentColor" />
+  <text x="300" y="160" textAnchor="middle" fontSize="11" fill="currentColor">401 Unauthorized</text>
+
+  <line x1="90" y1="200" x2="510" y2="200" stroke="#6366f1" strokeWidth="1.5" />
+  <polygon points="510,200 500,195 500,205" fill="#6366f1" />
+  <text x="300" y="194" textAnchor="middle" fontSize="11" fill="#6366f1">refresh → новый access</text>
+
+  <circle r="4" fill="#6366f1">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M90,200 L510,200" />
+  </circle>
+</svg>
+
+</figure>
+
+1. **Логин.** Сервер проверяет учётные данные и возвращает два токена. Access уходит в память/заголовок клиента, refresh кладётся в защищённое хранилище.
+2. **Обычные запросы.** Клиент шлёт access в заголовке `Authorization`. Пока токен валиден, ресурс отдаётся.
+3. **Истечение.** Протухший access приводит к ответу `401`. Это сигнал клиенту обновиться.
+4. **Обновление.** Клиент отправляет refresh на эндпоинт обновления; сервер проверяет подпись и срок, сверяется со списком отзыва и выдаёт новый access (а при ротации — и новый refresh).
+
+```python
+import requests
+
+refresh_url = "https://example.com/api/token/refresh"
+refresh_token = "<refresh_token_из_защищённого_хранилища>"
+
+response = requests.post(
+    refresh_url,
+    headers={"Content-Type": "application/json"},
+    json={"refresh_token": refresh_token},
+)
+
+if response.status_code == 200:
+    new_access_token = response.json().get("access_token")
+    print("Новый access-токен получен")
+else:
+    print("Не удалось обновить токен:", response.status_code)
+```
+
+## Подводные камни
+
+- **Where to store.** Access можно держать в памяти приложения; refresh безопаснее всего в httpOnly + Secure cookie. localStorage уязвим к XSS — украденный оттуда refresh даёт злоумышленнику долгий доступ.
+- **Кража refresh.** Долгий срок жизни делает refresh лакомой целью. Защита — ротация при каждом использовании и детект повторного применения уже обменянного токена (признак кражи, на который реагируют отзывом всей цепочки).
+- **Отзыв.** JWT по умолчанию самодостаточен и не проверяется по базе, поэтому «выйти со всех устройств» без серверного списка отзыва (или короткого TTL у access) не получится.
+- **Гонка обновления.** Если у клиента несколько параллельных запросов словили `401` одновременно, они могут одновременно дёрнуть refresh. Нужно сериализовать обновление, иначе при ротации часть запросов получит уже инвалидированный токен.
+- **Состав payload.** В access кладут только то, что не страшно показать: тело JWT лишь base64url-кодировано, а не зашифровано, и легко читается.

@@ -1,0 +1,79 @@
+---
+id: 967
+title: "Docker volumes: surviving container removal without losing data"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Docker volumes: surviving container removal without losing data
+
+## In short
+
+A volume is data storage managed by Docker that lives separately from the container's filesystem. That is why the data survives restarting and removing the container, and a single volume can be attached to several containers at once.
+
+## How to answer in an interview
+
+A container's writable layer is ephemeral: remove the container and everything it wrote to its filesystem is gone. For data that must outlive the container (databases, uploads, logs), you use a volume. It is Docker-managed storage: its lifecycle is not tied to the container, it can be reattached to a new container after a rebuild, and it can be shared between several. A volume differs from a bind mount in that Docker itself is responsible for where it lives and how it is managed (`docker volume create/ls/rm`), whereas a bind mount is hard-wired to a specific path on the host. For production data, a volume is almost always preferable.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 560 220" role="img" aria-label="A volume lives separately from the container and survives its recreation" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <text x="30" y="24" fill="currentColor" fontSize="13">Containers (ephemeral)</text>
+  <text x="350" y="24" fill="currentColor" fontSize="13">Host</text>
+
+  <rect x="30" y="40" width="160" height="60" rx="6" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="110" y="66" textAnchor="middle" fill="currentColor">web (old)</text>
+  <text x="110" y="84" textAnchor="middle" fill="currentColor" fillOpacity="0.6">docker rm web</text>
+
+  <rect x="30" y="130" width="160" height="60" rx="6" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="110" y="156" textAnchor="middle" fill="currentColor">web (new)</text>
+  <text x="110" y="174" textAnchor="middle" fill="currentColor" fillOpacity="0.6">same -v</text>
+
+  <rect x="370" y="80" width="160" height="70" rx="6" stroke="#6366f1" strokeWidth="1.5" fill="#6366f1" fillOpacity="0.12" />
+  <text x="450" y="110" textAnchor="middle" fill="#6366f1">volume app_data</text>
+  <text x="450" y="130" textAnchor="middle" fill="currentColor" fillOpacity="0.7">/var/lib/docker</text>
+
+  <path d="M 190 70 L 370 100" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="4 4" strokeLinecap="round" />
+  <path d="M 190 160 L 370 130" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+  <text x="250" y="84" fill="currentColor" fillOpacity="0.6" fontSize="11">detached</text>
+
+  <circle r="4" fill="#6366f1">
+    <animateMotion path="M 190 160 L 370 130" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+</svg>
+
+</figure>
+
+When you create a volume, Docker provisions storage for it in its own area on the host (on Linux, usually under `/var/lib/docker/volumes/`). You mount the volume into a container by specifying a path inside the container, and everything written there lands in the volume.
+
+```bash
+# Create a named volume
+docker volume create app_data
+
+# Mount it into the container at /app/data
+docker run -d \
+  --name web \
+  -v app_data:/app/data \
+  my_image
+```
+
+Whatever the container writes to `/app/data` is stored in `app_data` and remains available after `docker rm web`. Start a new container with the same `-v app_data:/app/data` and you get the same data.
+
+It helps to distinguish three mount types:
+
+- **volume** (`-v name:/path`) — managed by Docker, the recommended way to store persistent data.
+- **bind mount** (`-v /host/path:/path`) — exposes a specific host directory; convenient for development.
+- **tmpfs** — kept in memory, not persisted to disk; for temporary secrets and caches.
+
+## Pitfalls
+
+- **Without a volume, data is ephemeral.** Writes to the container's normal layer are lost on `docker rm`. A database running in a container without a volume is easy to wipe with an accidental rebuild.
+- **Anonymous volumes pile up.** `-v /path` without a name creates an anonymous volume on every run; they accumulate as junk. Clean them up with `docker volume prune`.
+- **A volume is not removed with the container by default.** You need the `docker rm -v` flag or an explicit `docker volume rm`; otherwise the data keeps occupying space.
+- **A bind mount shadows existing content.** Mounting onto a non-empty container directory hides whatever was at that path in the image.
+- **A volume is not a backup.** It is storage, not a backup copy; a volume backup strategy must be set up separately.

@@ -1,0 +1,79 @@
+---
+id: 853
+title: "Как pre-commit хуки фильтруют код ещё до коммита?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как pre-commit хуки фильтруют код ещё до коммита?
+
+## Суть
+
+Pre-commit hook - это скрипт, который Git запускает локально перед созданием коммита. Если проверка падает, коммит не создаётся, и плохой код просто не попадает в историю.
+
+## Что ответить на собесе
+
+Pre-commit - это клиентский хук Git, срабатывающий в момент `git commit` до записи коммита. Обычно через него гоняют линтеры, форматтеры, быстрые тесты и сканеры секретов. Ненулевой код возврата любого хука отменяет коммит. На практике хуки редко пишут руками: ставят фреймворк `pre-commit` с декларативным `.pre-commit-config.yaml`, где перечислены готовые проверки. Важный нюанс: это локальная защита, её можно обойти флагом `--no-verify`, поэтому те же проверки дублируют в CI как обязательный барьер.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 150" width="600" height="150" role="img" aria-label="Поток git commit через pre-commit хук: успех создаёт коммит, ошибка отменяет" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+  <rect x="10" y="55" width="90" height="40" rx="6" />
+  <text x="55" y="79" textAnchor="middle" stroke="none" fill="currentColor">git commit</text>
+  <line x1="100" y1="75" x2="140" y2="75" />
+  <polygon points="140,71 148,75 140,79" fill="currentColor" stroke="none" />
+  <rect x="150" y="55" width="110" height="40" rx="6" stroke="#6366f1" />
+  <text x="205" y="79" textAnchor="middle" stroke="none" fill="#6366f1">pre-commit хук</text>
+  <line x1="260" y1="75" x2="300" y2="75" />
+  <polygon points="300,71 308,75 300,79" fill="currentColor" stroke="none" />
+  <polygon points="310,75 350,50 390,75 350,100" />
+  <text x="350" y="79" textAnchor="middle" stroke="none" fill="currentColor">exit?</text>
+  <line x1="390" y1="75" x2="470" y2="30" />
+  <polygon points="470,30 461,31 466,38" fill="currentColor" stroke="none" />
+  <text x="430" y="40" textAnchor="middle" stroke="none" fill="currentColor">0</text>
+  <rect x="470" y="12" width="120" height="36" rx="6" />
+  <text x="530" y="34" textAnchor="middle" stroke="none" fill="currentColor">коммит создан</text>
+  <line x1="390" y1="75" x2="470" y2="120" />
+  <polygon points="470,120 466,112 461,119" fill="currentColor" stroke="none" />
+  <text x="430" y="115" textAnchor="middle" stroke="none" fill="currentColor">!= 0</text>
+  <rect x="470" y="102" width="120" height="36" rx="6" />
+  <text x="530" y="124" textAnchor="middle" stroke="none" fill="currentColor">коммит отменён</text>
+</svg>
+
+</figure>
+
+Хуки лежат в `.git/hooks/`. Когда вы делаете `git commit`, Git вызывает исполняемый файл `pre-commit`. Возврат 0 - коммит создаётся, любое другое значение - отменяется.
+
+```bash
+pip install pre-commit
+```
+
+Конфигурация описывается декларативно. Пример для `flake8` (проверка PEP 8):
+
+```yaml
+repos:
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+```
+
+После `pre-commit install` фреймворк подменяет `.git/hooks/pre-commit` своим раннером:
+
+```bash
+pre-commit install
+```
+
+Теперь каждый коммит автоматически прогоняет `flake8` по изменённым файлам; при нарушениях вы получаете список проблем, а коммит блокируется до их исправления.
+
+## Подводные камни
+
+- Хук обходится через `git commit --no-verify` (`-n`), так что он не гарантия, а удобство. Жёсткий барьер делается в CI.
+- Pre-commit живёт в `.git/hooks/` и не клонируется вместе с репозиторием. Чтобы хуки были у всех, нужен фреймворк + `pre-commit install` (или общая команда настройки).
+- Тяжёлые проверки и полный прогон тестов в pre-commit раздражают: коммит начинает тормозить. Долгие проверки выносят в pre-push или CI.
+- По умолчанию многие хуки работают только по staged-файлам, а не по всему проекту - это и плюс по скорости, и источник пропусков.

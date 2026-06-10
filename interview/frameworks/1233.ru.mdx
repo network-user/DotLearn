@@ -1,0 +1,102 @@
+---
+id: 1233
+title: "Как сериализатор DRF проверяет входные данные на двух уровнях валидации?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как сериализатор DRF проверяет входные данные на двух уровнях валидации?
+
+## Суть
+
+Сериализатор проверяет данные в два прохода: сначала пополевая валидация через методы `validate_<поле>`, затем общая через метод `validate(self, data)`, которому доступны все поля сразу. Это позволяет отлавливать как ошибки в отдельном поле, так и противоречия между полями.
+
+## Что ответить на собесе
+
+Валидация запускается вызовом `serializer.is_valid()`. DRF сначала прогоняет встроенные проверки типов и ограничений полей (`EmailField`, `max_length` и т.д.), потом — мои методы `validate_<имя_поля>` для отдельных полей, и в конце — метод `validate(self, data)` для кросс-полевых правил. Каждый метод либо возвращает (возможно, изменённое) значение, либо бросает `serializers.ValidationError`. Все собранные ошибки оказываются в `serializer.errors`. Важно, что `validate(self, data)` видит только те поля, что прошли предыдущие этапы.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 120" role="img" aria-label="Два уровня валидации сериализатора DRF" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="8" y="46" width="96" height="30" rx="5" />
+  <text x="56" y="65" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">is_valid()</text>
+  <rect x="138" y="46" width="110" height="30" rx="5" />
+  <text x="193" y="61" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">типы полей</text>
+  <text x="193" y="73" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">EmailField…</text>
+  <rect x="282" y="46" width="120" height="30" rx="5" />
+  <text x="342" y="61" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">validate_&lt;поле&gt;</text>
+  <text x="342" y="73" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">по одному полю</text>
+  <rect x="436" y="46" width="120" height="30" rx="5" stroke="#6366f1" />
+  <text x="496" y="61" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">validate(data)</text>
+  <text x="496" y="73" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">все поля сразу</text>
+  <line x1="104" y1="61" x2="136" y2="61" />
+  <line x1="248" y1="61" x2="280" y2="61" />
+  <line x1="402" y1="61" x2="434" y2="61" />
+  <text x="282" y="30" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10" fillOpacity="0.7">ошибка → serializer.errors</text>
+  <line x1="193" y1="46" x2="193" y2="34" strokeDasharray="3 3" strokeOpacity="0.6" />
+  <line x1="342" y1="46" x2="342" y2="34" strokeDasharray="3 3" strokeOpacity="0.6" />
+  <line x1="496" y1="46" x2="496" y2="34" strokeDasharray="3 3" strokeOpacity="0.6" />
+</svg>
+
+</figure>
+
+Метод `validate_<поле>` отвечает за одно поле и получает уже его очищенное значение:
+
+```python
+from rest_framework import serializers
+
+class UserSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        if not value.endswith("@example.com"):
+            raise serializers.ValidationError("Допустим только домен example.com")
+        return value
+```
+
+Метод `validate(self, data)` видит весь набор и нужен для правил, завязанных на несколько полей:
+
+```python
+class UserSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+
+    def validate(self, data):
+        if data['username'] == data['email']:
+            raise serializers.ValidationError("Логин и email не должны совпадать")
+        return data
+```
+
+На практике оба уровня сочетаются — например, в регистрации: проверяем уникальность email и длину пароля по отдельности.
+
+```python
+from rest_framework import serializers
+
+class RegistrationSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=100)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Email уже занят")
+        return value
+
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError("Пароль короче 8 символов")
+        return value
+```
+
+## Подводные камни
+
+- Метод обязан называться `validate_<имя_поля>` точно как поле, иначе он просто не вызовется — опечатка в имени тихо отключает проверку.
+- Каждый `validate_<поле>` должен вернуть значение. Забудете `return` — поле станет `None` в `validated_data`.
+- В `validate(self, data)` поле может отсутствовать в `data`, если оно опциональное или не прошло раньше; обращайтесь через `data.get('field')`.
+- Валидация поля выполняется до `validate()`; если поле упало на своём уровне, до общей проверки оно не дойдёт.
+- Чтобы привязать ошибку к конкретному полю в общем `validate`, кидайте `ValidationError({'field': '...'})`, а не голую строку.

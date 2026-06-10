@@ -1,0 +1,81 @@
+---
+id: 1263
+title: "Load balancer: what problem does it solve and which algorithms spread traffic?"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Load balancer: what problem does it solve and which algorithms spread traffic?
+
+## In short
+
+A load balancer is an entry point that distributes incoming requests across a pool of identical servers so that none gets overloaded and the failure of one does not take the service down. It can be implemented in software (Nginx, HAProxy, Envoy) or on dedicated hardware appliances, and the server choice itself is made by an algorithm: round-robin, least connections, IP/consistent hash.
+
+## How to answer in an interview
+
+A load balancer solves three problems at once: availability, scalability, and performance. A single entry point sits in front of the server pool, distributes requests across the backends, and removes failed nodes from rotation via health checks. Thanks to this, the pool scales horizontally by adding nodes, and the failure of one server is invisible to the user. You pick the algorithm based on the load profile: round-robin for uniform short requests, least connections for requests of varying duration, and a hash by key when you need to pin a client to a specific server (sticky sessions).
+
+## How it works
+
+A software load balancer is a process on a server or in a container that accepts a connection and proxies it to the chosen backend. Nginx and HAProxy work as a reverse proxy: they keep a pool of upstream servers, poll their health, and apply the chosen algorithm. Hardware solutions (F5, Citrix ADC) do the same on a dedicated appliance and often take on SSL termination and DDoS protection.
+
+<figure>
+<svg viewBox="0 0 360 160" width="360" height="160" role="img" aria-label="Load balancer distributes requests across a pool of servers" fill="none" stroke="currentColor">
+  <rect x="12" y="64" width="64" height="32" rx="4" strokeWidth="1.5" />
+  <text x="44" y="84" textAnchor="middle" fill="currentColor" stroke="none" fontSize="11">clients</text>
+  <rect x="138" y="60" width="84" height="40" rx="6" strokeWidth="2" stroke="#6366f1" />
+  <text x="180" y="84" textAnchor="middle" fill="#6366f1" stroke="none" fontSize="11">LB</text>
+  <line x1="76" y1="80" x2="138" y2="80" strokeWidth="1.5" />
+  <rect x="288" y="14" width="60" height="28" rx="4" strokeWidth="1.5" />
+  <text x="318" y="32" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">srv 1</text>
+  <rect x="288" y="66" width="60" height="28" rx="4" strokeWidth="1.5" />
+  <text x="318" y="84" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">srv 2</text>
+  <rect x="288" y="118" width="60" height="28" rx="4" strokeWidth="1.5" />
+  <text x="318" y="136" textAnchor="middle" fill="currentColor" stroke="none" fontSize="10">srv 3</text>
+  <line x1="222" y1="76" x2="288" y2="28" strokeWidth="1.5" />
+  <line x1="222" y1="80" x2="288" y2="80" strokeWidth="1.5" />
+  <line x1="222" y1="84" x2="288" y2="132" strokeWidth="1.5" />
+  <circle r="4" fill="#6366f1" stroke="none">
+    <animateMotion dur="2.4s" repeatCount="indefinite" path="M 76 80 L 138 80" />
+  </circle>
+</svg>
+</figure>
+
+```nginx
+http {
+    upstream backend {
+        least_conn;
+        server backend1.example.com max_fails=3 fail_timeout=10s;
+        server backend2.example.com max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://backend;
+        }
+    }
+}
+```
+
+- `upstream backend` - the pool of backends across which traffic is shared.
+- `least_conn` - pick the server with the fewest active connections.
+- `max_fails` / `fail_timeout` - after how many failures, and for how long, a server is excluded from rotation.
+- `proxy_pass http://backend` - route the request into the pool.
+
+Main algorithms:
+
+1. **Round Robin** - servers receive requests in turn, evenly.
+2. **Least Connections** - the request goes where there are fewer active connections.
+3. **IP / consistent hash** - requests from the same client consistently land on the same server.
+
+## Pitfalls
+
+- The load balancer itself becomes a single point of failure. In production you run at least two with failover (keepalived / VRRP, DNS, anycast).
+- Round-robin ignores actual load: a long request on "its" server skews the distribution - least connections is more appropriate here.
+- IP-based sticky sessions break behind NAT and CGNAT: thousands of clients hide behind a single IP, and they all get glued to one server.
+- Without health checks the balancer keeps sending traffic to a downed node. You should check that the application actually works, not just that the port is open.
+- L4 (TCP) and L7 (HTTP) balancing are different things: routing by URL, headers, and cookies is only possible at L7.

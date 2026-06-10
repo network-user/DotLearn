@@ -1,0 +1,64 @@
+---
+id: 1224
+title: "Корутина против future: кто управляет ходом, а кто хранит результат?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Корутина против future: кто управляет ходом, а кто хранит результат?
+
+## Суть
+
+Корутина - это то, что выполняется и умеет приостанавливаться на `await`, описывая ход асинхронной логики. Future - это объект-контейнер под результат, который появится позже. Грубо: корутина «делает», future «хранит итог».
+
+## Что ответить на собесе
+
+«Корутина создаётся через `async def`, её исполнение можно поставить на паузу оператором `await`. Future - низкоуровневый объект-обещание результата: у него есть состояния pending/finished/cancelled, в него кто-то снаружи кладёт результат через `set_result()`. Корутину сам по себе цикл событий не планирует - её оборачивают в Task (подкласс Future), и именно Task выполняет корутину шаг за шагом. То есть Task - это мост: future-объект, управляющий жизнью корутины.»
+
+## Как это работает
+
+Корутина при вызове `async def`-функции не запускается, а возвращает объект корутины. Двигает её вперёд либо `await`, либо цикл событий через Task.
+
+```python
+import asyncio
+
+async def fetch_data():
+    await asyncio.sleep(1)
+    return "Data"
+
+async def main():
+    result = await fetch_data()  # ждём корутину
+    print(result)
+
+asyncio.run(main())
+```
+
+Future - это пустая «коробка» под результат, который кладут вручную или асинхронная операция:
+
+```python
+import asyncio
+
+async def producer(fut):
+    await asyncio.sleep(1)
+    fut.set_result("ready")
+
+async def main():
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    asyncio.create_task(producer(fut))
+    print(await fut)  # ждём, пока в future положат результат
+
+asyncio.run(main())
+```
+
+Ключевая связка: `asyncio.create_task(coro)` оборачивает корутину в Task, а Task - это Future. Поэтому `await` работает одинаково и для корутин, и для future - оба являются awaitable.
+
+## Подводные камни
+
+- **Вызов корутины ничего не запускает.** `fetch_data()` лишь создаёт объект корутины; без `await` или Task он так и не выполнится (и Python предупредит «coroutine was never awaited»).
+- **Future обычно не создают руками.** В прикладном коде `loop.create_future()` нужен редко - чаще достаточно корутин и `create_task`. Ручной future уместен при мосте с колбэками или низкоуровневым API.
+- **Task != голая корутина.** Только обёртывание в Task (или `gather`) отдаёт корутину циклу для конкурентного выполнения; просто иметь объект корутины недостаточно.
+- **`concurrent.futures.Future` - это другое.** Не путайте `asyncio.Future` с future из `concurrent.futures`: у них разный API и они не взаимозаменяемы напрямую.

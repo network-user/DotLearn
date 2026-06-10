@@ -1,0 +1,86 @@
+---
+id: 1291
+title: "Управление схемой через Alembic: revision, downgrade, heads"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Управление схемой через Alembic: revision, downgrade, heads
+
+## Суть
+
+Alembic версионирует схему базы данных: `revision` заводит новую миграцию, `downgrade` откатывает базу на шаг назад, `heads` показывает текущие вершины дерева ревизий. Эта тройка покрывает создание, откат и диагностику изменений.
+
+## Что ответить на собесе
+
+Alembic — штатный инструмент миграций для SQLAlchemy. Каждая миграция хранится отдельным файлом с функциями `upgrade()` и `downgrade()` и ссылкой на родительскую ревизию, образуя направленную цепочку. `revision` создаёт такой файл, `downgrade` применяет обратные изменения, а `heads` выводит ревизии без потомков. Если веток несколько и появляется больше одной головы, их сводят командой `merge`.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 200" role="img" aria-label="Дерево ревизий Alembic: линейная цепочка, ветвление на две головы и слияние" xmlns="http://www.w3.org/2000/svg" fontFamily="sans-serif" fontSize="12">
+  <g stroke="currentColor" strokeWidth="1.5" fill="none" strokeOpacity="0.6">
+    <line x1="70" y1="100" x2="150" y2="100" />
+    <line x1="170" y1="100" x2="250" y2="100" />
+    <path d="M 270 92 L 350 55" />
+    <path d="M 270 108 L 350 145" />
+    <path d="M 370 55 L 450 92" />
+    <path d="M 370 145 L 450 108" />
+  </g>
+  <g textAnchor="middle">
+    <circle cx="60" cy="100" r="12" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+    <text x="60" y="104" fill="currentColor">a1</text>
+    <circle cx="160" cy="100" r="12" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+    <text x="160" y="104" fill="currentColor">b2</text>
+    <circle cx="260" cy="100" r="12" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+    <text x="260" y="104" fill="currentColor">c3</text>
+    <circle cx="360" cy="55" r="12" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="360" y="59" fill="currentColor">d4</text>
+    <circle cx="360" cy="145" r="12" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="1.5" />
+    <text x="360" y="149" fill="currentColor">e5</text>
+    <circle cx="460" cy="100" r="12" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+    <text x="460" y="104" fill="currentColor">f6</text>
+  </g>
+  <g fontSize="11" textAnchor="middle" fill="currentColor" fillOpacity="0.7">
+    <text x="160" y="135">линейная цепочка</text>
+    <text x="360" y="30">две головы (heads)</text>
+    <text x="460" y="135">merge</text>
+  </g>
+</svg>
+
+</figure>
+
+`revision` генерирует новый файл миграции в каталоге `versions`:
+
+```bash
+alembic revision -m "add new table"
+```
+
+Флаг `-m` задаёт человекочитаемое имя. С `--autogenerate` Alembic сам сравнит модели SQLAlchemy с текущей схемой и предзаполнит изменения.
+
+`downgrade` выполняет функцию `downgrade()` нужных миграций:
+
+```bash
+alembic downgrade -1
+```
+
+Аргумент `-1` означает откат на одну ревизию относительно текущей; можно указать и конкретный идентификатор ревизии или `base`, чтобы откатить всё.
+
+`heads` показывает вершины — ревизии, на которые никто не ссылается как на родителя:
+
+```bash
+alembic heads
+```
+
+В норме голова одна. Несколько голов — признак разошедшихся веток после параллельной разработки.
+
+## Подводные камни
+
+- `revision` (без `--autogenerate`) создаёт пустую миграцию — тело `upgrade()`/`downgrade()` придётся писать руками. Это частая причина «миграции, которые ничего не делают».
+- Автогенерация видит не всё: смену типа колонки, серверные значения по умолчанию и переименования она часто пропускает или трактует как drop + add. Сгенерированное надо вычитывать.
+- Несколько `heads` ломают `upgrade head` неоднозначностью — ветки нужно слить через `alembic merge`.
+- `downgrade` хорош на dev-среде, но в продакшене обратная миграция нередко теряет данные (например, при удалении колонки). Откат — не бесплатная отмена.

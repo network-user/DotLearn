@@ -1,0 +1,58 @@
+---
+id: 465
+title: "Creating a record in the Django ORM: create() vs the constructor and save()"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Creating a record in the Django ORM: create() vs the constructor and save()
+
+## In short
+
+There are two ways to add a new row to a table through the Django ORM: `Model.objects.create(...)` builds the object and writes it to the database in one go, while `Model(...)` plus `save()` splits creating the in-memory object and persisting it into two separate steps.
+
+## How to answer in an interview
+
+If I need to create an object and save it immediately, I use `Model.objects.create(**fields)` - it's a single operation and a single INSERT query. When I need to do something with the object between creating and persisting it (compute a field, validate, set up relations), I create the instance with the constructor `Model(**fields)` and call `save()` later. One important nuance: `create()` always hits the database, whereas a bare `Model(...)` does not write the object to the database - until `save()`, it isn't there.
+
+## How it works
+
+Each model maps to a table, and an instance maps to a row. Under the hood, `create()` is just the constructor plus `save()` combined into a single manager call.
+
+Creating and persisting in one operation:
+
+```python
+from myapp.models import MyModel
+
+new_object = MyModel.objects.create(field1='value1', field2='value2')
+```
+
+Creating in memory with deferred saving:
+
+```python
+from myapp.models import MyModel
+
+new_object = MyModel(field1='value1', field2='value2')
+new_object.save()
+```
+
+The second approach is handy when the object needs to be tweaked before it's written:
+
+```python
+from library.models import Book
+
+book = Book(title='Two Scoops of Django', author='Daniel Roy Greenfeld')
+book.author = book.author.strip()
+book.save()
+```
+
+## Pitfalls
+
+- `Model(...)` without `save()` writes nothing to the database - a common beginner mistake: "I created the object, but the database is empty."
+- Don't do bulk inserts with a loop of `create()` calls: that's N queries. For a batch, use `Model.objects.bulk_create([...])` - one query, but it does not call `save()` or fire the `pre_save`/`post_save` signals.
+- `create()` always does an INSERT and will fail on a uniqueness violation. If you need "create or fetch the existing one," there's `get_or_create()`; for "create or update," there's `update_or_create()`.
+- By default, `save()` does not run `full_clean()`, so field validators and `clean()` don't fire - validation has to be invoked explicitly.
+- `create()` has no `update_fields`/`force_insert` arguments for fine-grained control - if you need to control which fields are written, use `save(update_fields=[...])`.

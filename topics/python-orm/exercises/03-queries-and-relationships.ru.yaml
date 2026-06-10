@@ -1,0 +1,153 @@
+exercises:
+  - id: select-what-001
+    concept: queries-and-relationships
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Что представляет собой `select(User).where(User.age >= 18)` в SQLAlchemy 2.x?"
+    choices:
+      - id: a
+        text: "Объект-описание запроса, который выполняется отдельно через session.scalars()/execute()."
+      - id: b
+        text: "Уже выполненный запрос со списком строк внутри."
+      - id: c
+        text: "Строку SQL, готовую к отправке."
+      - id: d
+        text: "Соединение с базой данных."
+    correct: [a]
+    explanation: "select() собирает объект-описание запроса по частям (.where, .order_by). Сам по себе он ничего не выполняет - в базу запрос уходит, когда его передают в session.scalars() или session.execute()."
+    variants:
+      - prompt: "Чем условие `User.age >= 18` отличается от строки `\"age >= 18\"`?"
+        choices:
+          - id: a
+            text: "Это выражение от атрибута-столбца: оператор >= порождает SQL, редактор подсказывает имена, а опечатка ловится как ошибка Python."
+          - id: b
+            text: "Ничем, это два способа написать одно и то же."
+          - id: c
+            text: "Строка быстрее выполняется."
+          - id: d
+            text: "Выражение работает только с числовыми столбцами."
+        correct: [a]
+        explanation: "User.age - объект-столбец с переопределённым >=, порождающим кусок SQL. Поэтому работают автодополнение и проверка имён: опечатка в имени поля - ошибка Python, а не молчаливо неверный ответ базы."
+      - prompt: "Через что выполняется собранный select() в SQLAlchemy 2.x, чтобы получить объекты модели?"
+        choices:
+          - id: a
+            text: "session.scalars(stmt) (или session.execute(stmt))."
+          - id: b
+            text: "select.run()."
+          - id: c
+            text: "stmt.fetchall() напрямую."
+          - id: d
+            text: "print(stmt)."
+        correct: [a]
+        explanation: "Объект запроса передают в сессию: session.scalars(stmt) возвращает объекты модели, session.execute(stmt) - строки результата. Сам select() лишь описывает запрос."
+
+  - id: join-count-predict-001
+    concept: queries-and-relationships
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Это тот SQL, что стоит за связью user.orders."
+    snippet: |
+      import sqlite3
+
+      conn = sqlite3.connect(":memory:")
+      cur = conn.cursor()
+      cur.execute("CREATE TABLE users (id INTEGER, name TEXT)")
+      cur.execute("CREATE TABLE orders (id INTEGER, user_id INTEGER, amount INTEGER)")
+      cur.execute("INSERT INTO users VALUES (1, 'Анна'), (2, 'Борис')")
+      cur.execute("INSERT INTO orders VALUES (10, 1, 500), (11, 1, 300), (12, 2, 200)")
+
+      rows = cur.execute(
+          "SELECT u.name, COUNT(o.id) FROM users u "
+          "JOIN orders o ON o.user_id = u.id "
+          "GROUP BY u.name ORDER BY u.name"
+      ).fetchall()
+      print(rows)
+    expected:
+      kind: stdout
+      value: "[('Анна', 2), ('Борис', 1)]"
+    hints:
+      - "JOIN сводит каждую строку orders с её пользователем по user_id, затем GROUP BY собирает заказы по имени пользователя."
+      - "У Анны (id=1) два заказа, у Бориса (id=2) один. ORDER BY u.name располагает их по алфавиту."
+    variants:
+      - snippet: |
+          import sqlite3
+
+          conn = sqlite3.connect(":memory:")
+          cur = conn.cursor()
+          cur.execute("CREATE TABLE users (id INTEGER, name TEXT)")
+          cur.execute("CREATE TABLE orders (id INTEGER, user_id INTEGER, amount INTEGER)")
+          cur.execute("INSERT INTO users VALUES (1, 'Анна'), (2, 'Борис')")
+          cur.execute("INSERT INTO orders VALUES (10, 1, 500), (11, 1, 300), (12, 2, 200)")
+
+          rows = cur.execute(
+              "SELECT u.name, SUM(o.amount) FROM users u "
+              "JOIN orders o ON o.user_id = u.id "
+              "GROUP BY u.name ORDER BY u.name"
+          ).fetchall()
+          print(rows)
+        expected:
+          kind: stdout
+          value: "[('Анна', 800), ('Борис', 200)]"
+
+  - id: select-blanks-001
+    concept: queries-and-relationships
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Заполните пропуски: выберите пользователей старше 18 лет, отсортированных по имени."
+    template: |
+      from sqlalchemy import select
+
+      stmt = (
+          select(User)
+          .{{filter}}(User.age >= 18)
+          .{{sort}}(User.name)
+      )
+      adults = session.scalars(stmt).all()
+    blanks:
+      filter:
+        accept: ["where"]
+      sort:
+        accept: ["order_by"]
+    hints:
+      - "В стиле 2.x условие отбора и сортировку добавляют методами конструктора select, а не ключевыми словами SQL."
+      - "Метод для условия отбора называется как соответствующее предложение SQL по-английски, а для сортировки - как ORDER BY одним идентификатором со знаком подчёркивания."
+    variants:
+      - prompt: "Заполните пропуск: объявите связь у User так, чтобы её обратная сторона на Order называлась user."
+        template: |
+          class User(Base):
+              __tablename__ = "users"
+              id: Mapped[int] = mapped_column(primary_key=True)
+              orders: Mapped[list["Order"]] = relationship({{back}}="user")
+        blanks:
+          back:
+            accept: ["back_populates"]
+
+  - id: lazy-eager-quiz-001
+    concept: queries-and-relationships
+    type: theory-quiz
+    difficulty: 3
+    prompt: "По умолчанию Вы перебираете список из 100 пользователей и у каждого читаете `user.orders`. Сколько запросов к базе это породит и почему?"
+    choices:
+      - id: a
+        text: "1 на выборку пользователей плюс по одному на каждого при первом обращении к orders - итого 101 (проблема N+1) из-за ленивой загрузки."
+      - id: b
+        text: "Ровно 1 запрос: ORM всегда грузит связи вместе с объектами."
+      - id: c
+        text: "Ровно 2 запроса независимо от числа пользователей."
+      - id: d
+        text: "100 запросов: на каждого пользователя по одному, выборка списка бесплатна."
+    correct: [a]
+    explanation: "Связи по умолчанию ленивые: orders не грузятся, пока к ним не обратятся. Один запрос достаёт 100 пользователей, а затем первое обращение к user.orders у каждого выполняет отдельный SELECT - 1 + 100 = 101. Это и есть N+1; лечится жадной загрузкой через selectinload/joinedload."
+    variants:
+      - prompt: "Что делает `select(User).options(selectinload(User.orders))`?"
+        choices:
+          - id: a
+            text: "Заранее (жадно) догружает заказы всех выбранных пользователей дополнительным запросом - вместо отдельного SELECT на каждого."
+          - id: b
+            text: "Отключает связь orders у пользователей."
+          - id: c
+            text: "Сортирует пользователей по числу заказов."
+          - id: d
+            text: "Удаляет заказы при выборке."
+        correct: [a]
+        explanation: "selectinload просит жадную загрузку: SQLAlchemy достаёт пользователей, а затем одним запросом подгружает заказы для всех них. Получается 2 запроса вместо 1+N - прямое лекарство от N+1."

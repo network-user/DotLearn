@@ -1,0 +1,94 @@
+---
+id: 1188
+title: "Как микросервисы договариваются между собой: синхронные вызовы против очередей"
+category: system-design
+categoryLabel: "Архитектура и системный дизайн"
+stage: system-design
+stageLabel: "System Design"
+lang: ru
+---
+
+# Как микросервисы договариваются между собой: синхронные вызовы против очередей
+
+## Суть
+
+Способы межсервисного общения сводятся к двум осям - синхронный или асинхронный обмен. Синхронно работают REST (поверх HTTP, простой и универсальный) и gRPC (поверх HTTP/2 с Protobuf, быстрый для нагруженных сценариев). Асинхронно - очереди сообщений, которые разносят отправку и обработку во времени и повышают устойчивость к сбоям.
+
+## Что ответить на собесе
+
+«Выбор способа связи я начинаю с вопроса: нужен ли мне ответ прямо сейчас. Если да - это синхронный вызов. REST поверх HTTP подходит почти везде: просто, читаемо, отлаживается из браузера, но многословно и медленнее. gRPC поверх HTTP/2 с Protocol Buffers даёт низкую задержку и компактные сообщения, типизированные контракты из .proto - беру его для внутренних высоконагруженных вызовов. Если ответ прямо сейчас не нужен или важна развязка сервисов - беру очередь сообщений: продюсер кладёт сообщение, консьюмер забирает его, когда готов. Это даёт буферизацию пиков, ретраи и отказоустойчивость, но платим за это сложностью и тем, что результат становится eventual, а не мгновенным.»
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 200" width="560" height="200" fill="none" stroke="currentColor" strokeWidth="1.5" aria-label="Синхронный вызов против асинхронной очереди">
+  <text x="14" y="20" fill="currentColor" stroke="none" fontSize="12">Синхронно (REST, gRPC): ответ прямо сейчас</text>
+  <rect x="14" y="32" width="92" height="38" rx="6" />
+  <text x="60" y="55" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Сервис A</text>
+  <rect x="380" y="32" width="92" height="38" rx="6" />
+  <text x="426" y="55" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Сервис B</text>
+  <line x1="106" y1="44" x2="380" y2="44" />
+  <polygon points="380,44 370,40 370,48" fill="currentColor" stroke="none" />
+  <text x="243" y="38" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">запрос</text>
+  <line x1="380" y1="60" x2="106" y2="60" strokeDasharray="4 3" />
+  <polygon points="106,60 116,56 116,64" fill="currentColor" stroke="none" />
+  <text x="243" y="74" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">ответ (A ждёт)</text>
+  <text x="14" y="118" fill="currentColor" stroke="none" fontSize="12">Асинхронно (очередь): развязка во времени</text>
+  <rect x="14" y="130" width="92" height="38" rx="6" />
+  <text x="60" y="153" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Producer</text>
+  <rect x="222" y="130" width="116" height="38" rx="6" />
+  <text x="280" y="153" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Очередь</text>
+  <rect x="454" y="130" width="92" height="38" rx="6" />
+  <text x="500" y="153" fill="currentColor" stroke="none" fontSize="11" textAnchor="middle">Consumer</text>
+  <line x1="106" y1="149" x2="222" y2="149" />
+  <line x1="338" y1="149" x2="454" y2="149" />
+  <circle cx="106" cy="149" r="5" fill="#6366f1" stroke="none">
+    <animate attributeName="cx" values="106;222" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+  <text x="500" y="186" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">забирает, когда готов</text>
+</svg>
+
+</figure>
+
+Микросервисы - это набор самостоятельных сервисов, каждый со своей зоной ответственности. Чтобы они вели себя как единая система, нужен канал обмена. Три рабочих варианта:
+
+**REST** - стиль поверх HTTP. Каждый ресурс адресуется URL, действия выражаются методами GET, POST, PUT, DELETE. Сервис заказов синхронно дёргает сервис пользователей, чтобы подтянуть профиль клиента:
+
+```python
+import urllib.request, json
+
+def fetch_user(user_id):
+    url = f"http://users-svc/users/{user_id}"
+    with urllib.request.urlopen(url) as resp:
+        return json.load(resp)
+```
+
+**gRPC** - RPC-фреймворк от Google. Контракт описывается в .proto, из него генерируется код клиента и сервера, поэтому удалённый метод вызывается как локальный. Транспорт HTTP/2 даёт мультиплексирование и стриминг, а Protobuf - компактную бинарную сериализацию. Это профиль для внутреннего общения, где важны скорость и строгий контракт.
+
+**Очередь сообщений** (RabbitMQ, Kafka) - асинхронный канал. Продюсер публикует сообщение в очередь, консьюмер забирает его в своём темпе:
+
+```python
+import queue
+
+orders = queue.Queue()
+
+def producer(order_id):
+    orders.put(order_id)
+
+def consumer():
+    while not orders.empty():
+        order_id = orders.get()
+        print(f"processing order {order_id}")
+
+producer(1)
+producer(2)
+consumer()
+```
+
+## Подводные камни
+
+- Синхронный вызов создаёт временную связанность: если вызываемый сервис лёг, падает и вызывающий. Без таймаутов, ретраев и circuit breaker один медленный сервис тормозит цепочку.
+- gRPC ускоряет внутренний обмен, но плохо живёт в браузере напрямую (нужен gRPC-Web/прокси) и тяжелее отлаживается, чем человекочитаемый JSON в REST.
+- Очередь не отменяет ошибки, а сдвигает их во времени: появляются дубликаты сообщений, порядок может нарушаться, нужна идемпотентность и dead-letter очередь.
+- Не путайте REST как стиль с «любым HTTP-API». GET, который меняет данные на сервере, - это уже нарушение семантики методов.

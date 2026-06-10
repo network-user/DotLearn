@@ -1,0 +1,89 @@
+---
+id: 1387
+title: "How Python frees memory on its own: the design of the garbage collector"
+category: python-core
+categoryLabel: "Python: язык и идиомы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How Python frees memory on its own: the design of the garbage collector
+
+## In short
+
+In Python memory is freed automatically. The foundation is reference counting: an object is destroyed as soon as no references to it remain. On top of that runs a separate cycle collector, which catches objects looped onto each other and therefore unreachable by the counter.
+
+## How to answer in an interview
+
+CPython has two levels of memory management. The first and main one is reference counting: every object has a reference count, and when it reaches zero the object is freed immediately. This mechanism is deterministic and fast, but it has a blind spot — circular references: two objects reference each other, their counts never drop to zero, even though they are unreachable from the outside. So there's a second level — the cyclic collector from the `gc` module, which periodically walks container objects, finds unreachable cycles and frees them. It can be controlled manually: run it, disable it, change the thresholds.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 560 220" role="img" aria-label="Two objects reference each other, forming an unreachable cycle" xmlns="http://www.w3.org/2000/svg">
+  <text x="20" y="30" fontSize="13" fill="currentColor" fillOpacity="0.7">external references removed (del)</text>
+  <line x1="30" y1="50" x2="150" y2="110" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 5" strokeOpacity="0.4" />
+  <text x="36" y="64" fontSize="12" fill="currentColor" fillOpacity="0.4">node1</text>
+  <rect x="150" y="80" width="120" height="60" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="210" y="106" fontSize="13" textAnchor="middle" fill="currentColor">Node A</text>
+  <text x="210" y="126" fontSize="11" textAnchor="middle" fill="currentColor" fillOpacity="0.6">refcount = 1</text>
+  <rect x="370" y="80" width="120" height="60" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+  <text x="430" y="106" fontSize="13" textAnchor="middle" fill="currentColor">Node B</text>
+  <text x="430" y="126" fontSize="11" textAnchor="middle" fill="currentColor" fillOpacity="0.6">refcount = 1</text>
+  <path d="M270 100 H370" fill="none" stroke="#6366f1" strokeWidth="2" markerEnd="url(#arrowGC)" />
+  <path d="M370 120 H270" fill="none" stroke="#6366f1" strokeWidth="2" markerEnd="url(#arrowGC)" />
+  <defs>
+    <marker id="arrowGC" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#6366f1" />
+    </marker>
+  </defs>
+  <text x="280" y="180" fontSize="12" fill="currentColor" fillOpacity="0.7">counts don't drop to zero -&gt; the gc collector finds the cycle</text>
+</svg>
+
+</figure>
+
+Reference counting: a new reference increments the count, its disappearance decrements it.
+
+```python
+a = []   # count = 1
+b = a    # count = 2
+del a    # count = 1
+del b    # count = 0 -> memory is freed
+```
+
+Reference counting can't untangle circular references:
+
+```python
+class Node:
+    def __init__(self):
+        self.reference = None
+
+node1 = Node()
+node2 = Node()
+node1.reference = node2
+node2.reference = node1
+
+del node1
+del node2
+# the counts stayed > 0; the cycle collector finds and frees them
+```
+
+From time to time the cycle collector walks the objects, builds a reachability graph, isolates unreachable cycles and frees them. Its runs are tied to thresholds on the number of allocations. You control it via `gc`:
+
+```python
+import gc
+
+gc.collect()   # force a collector pass
+gc.disable()   # disable automatic cycle collection
+gc.enable()    # turn it back on
+```
+
+## Pitfalls
+
+- Reference counting frees memory right away, while the cycle collector doesn't act instantly: some time passes between garbage being created and being collected.
+- `__del__` on objects in a cycle used to prevent them from being collected; in modern versions this is solved, but finalizers with side effects inside cycles are still risky.
+- Disabling with `gc.disable()` speeds up code without cycles, but when cycles are present it leads to memory growth - turn it back on.
+- The cycle collector only walks containers (lists, dicts, objects with `__dict__`); simple types like numbers and strings are collected exclusively by the reference counter.
+- Reference counting is a CPython detail. PyPy and Jython don't have it, and the order in which objects are freed differs, so don't rely on `__del__` being called immediately.

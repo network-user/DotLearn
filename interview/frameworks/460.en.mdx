@@ -1,0 +1,110 @@
+---
+id: 460
+title: "WebSockets in Django: why you need Channels and how to assemble the ASGI stack"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# WebSockets in Django: why you need Channels and how to assemble the ASGI stack
+
+## In short
+
+Django itself is built for HTTP and can't do WebSockets; bidirectional connections are added by the Django Channels library, which moves the project onto ASGI and handles persistent connections through consumers.
+
+## How to answer in an interview
+
+Plain Django is synchronous and works on a request-response model, so it can't hold a persistent WebSocket connection. For real-time I bring in Django Channels: it moves the application onto ASGI, runs under an async server like Daphne or Uvicorn, and shuttles messages between processes through a channel layer (usually Redis). I describe the connection logic in a consumer - a class with `connect`, `disconnect`, and `receive` methods. I declare WebSocket routes separately from ordinary URLs and gather everything in a `ProtocolTypeRouter`, which splits http and websocket into different branches.
+
+## How it works
+
+The key difference: HTTP is a one-off request-response cycle, while a WebSocket keeps the channel open, and the server can push data on its own, without the client polling. Channels extends Django to ASGI and introduces the consumer abstraction - an analog of a view, but for long-lived connections.
+
+<svg viewBox="0 0 320 80" width="320" height="80" role="img" aria-label="Protocol routing diagram">
+  <rect x="4" y="28" width="70" height="24" rx="4" fill="none" stroke="currentColor" />
+  <text x="39" y="44" fontSize="10" textAnchor="middle" fill="currentColor">Daphne</text>
+  <line x1="74" y1="40" x2="120" y2="40" stroke="currentColor" />
+  <rect x="120" y="20" width="90" height="40" rx="4" fill="none" stroke="currentColor" />
+  <text x="165" y="44" fontSize="9" textAnchor="middle" fill="currentColor">ProtocolRouter</text>
+  <line x1="210" y1="32" x2="250" y2="20" stroke="currentColor" />
+  <line x1="210" y1="48" x2="250" y2="60" stroke="currentColor" />
+  <text x="285" y="24" fontSize="9" textAnchor="middle" fill="currentColor">http</text>
+  <text x="285" y="64" fontSize="9" textAnchor="middle" fill="currentColor">websocket</text>
+</svg>
+
+Installation:
+
+```bash
+pip install channels
+```
+
+Registering the app and the ASGI entry point in `settings.py`:
+
+```python
+INSTALLED_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'channels',
+]
+
+ASGI_APPLICATION = 'myproject.asgi.application'
+```
+
+Assembling the ASGI application with protocol routing:
+
+```python
+import os
+from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+import myapp.routing
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
+
+application = ProtocolTypeRouter({
+    "http": get_asgi_application(),
+    "websocket": AuthMiddlewareStack(
+        URLRouter(myapp.routing.websocket_urlpatterns)
+    ),
+})
+```
+
+WebSocket routes in `routing.py`:
+
+```python
+from django.urls import re_path
+from . import consumers
+
+websocket_urlpatterns = [
+    re_path(r'ws/somepath/$', consumers.MyConsumer.as_asgi()),
+]
+```
+
+The consumer handles connection events:
+
+```python
+import json
+from channels.generic.websocket import AsyncWebsocketConsumer
+
+class MyConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        pass
+
+    async def receive(self, text_data):
+        data = json.loads(text_data)
+        message = data['message']
+        await self.send(text_data=json.dumps({'message': message}))
+```
+
+## Pitfalls
+
+- A WSGI server (gunicorn without ASGI workers) won't handle WebSockets. You need an ASGI server: Daphne or Uvicorn.
+- To broadcast a message to several clients (group chat), one consumer isn't enough - you need a channel layer (`channels_redis` on top of Redis) and groups; the in-memory `InMemoryChannelLayer` is only fit for development.
+- In an async consumer you can't call the synchronous Django ORM directly - that blocks the event loop. Use `database_sync_to_async`.
+- `AuthMiddlewareStack` gives access to the user in `scope['user']`, but only if the session/cookie arrived in the handshake; tokens you'll have to handle with your own middleware.
+- WebSockets don't go through ordinary Django middleware and decorators (CSRF, login_required) - their analogs live in the Channels stack.

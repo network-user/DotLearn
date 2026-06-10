@@ -1,0 +1,80 @@
+---
+id: 1235
+title: "How do you organize business-logic layers in a Django project?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you organize business-logic layers in a Django project?
+
+## In short
+
+Business logic is the code for your domain rules: calculating discounts, placing an order, charging penalties. In Django the convention is to distribute it across layers rather than dump it into views. The baseline guideline is "fat models, thin views": domain rules and data handling live in models, managers, and services, while the view only accepts an HTTP request and returns a response. This simplifies testing, reuse, and maintenance.
+
+## How to answer in an interview
+
+State the principle and list the layers where logic goes:
+
+1. **Models** - methods that compute and validate on top of an object's own data ("fat models").
+2. **Managers and QuerySets** - encapsulate common database queries so you don't duplicate filters all over the codebase.
+3. **Services and utilities** - operations spanning multiple models or external systems; not tied to a single model.
+4. **Views** - stay thin: parse the request, call a service/model, return the response.
+5. **Signals** - reacting to events (for example, an action after `save`), but without overuse: implicit links make debugging harder.
+
+The main argument is separation of concerns: each layer is easier to test and reuse.
+
+## How it works
+
+A model method keeps the rule next to the data it operates on:
+
+```python
+from django.db import models
+
+
+class Loan(models.Model):
+    book = models.ForeignKey("Book", on_delete=models.CASCADE)
+    due_date = models.DateField()
+    returned_at = models.DateField(null=True, blank=True)
+
+    def is_overdue(self, today):
+        return self.returned_at is None and today > self.due_date
+```
+
+An operation that touches several models is extracted into a service - an ordinary function or class not bound to a single object:
+
+```python
+def issue_book(member, book, today, due_in_days=14):
+    if book.available_copies <= 0:
+        raise NoCopiesAvailable(book.id)
+    book.available_copies -= 1
+    book.save(update_fields=["available_copies"])
+    return Loan.objects.create(
+        book=book,
+        due_date=today + timedelta(days=due_in_days),
+    )
+```
+
+The flow of data from the request to the logic layers:
+
+<svg viewBox="0 0 360 70" role="img" aria-label="View calls Service, which works with Model" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="6" y="22" width="80" height="26" rx="5" />
+  <text x="46" y="39" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">View</text>
+  <rect x="140" y="22" width="80" height="26" rx="5" />
+  <text x="180" y="39" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Service</text>
+  <rect x="274" y="22" width="80" height="26" rx="5" />
+  <text x="314" y="39" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">Model</text>
+  <line x1="86" y1="35" x2="138" y2="35" />
+  <line x1="220" y1="35" x2="272" y2="35" />
+</svg>
+
+The view stays short throughout: parse the input, call `issue_book`, return the response.
+
+## Pitfalls
+
+- **Logic in templates and views.** Calculations in a template or a bloated view are the first sign that a rule lives on the wrong layer; such code is hard to test.
+- **Fat models turn into a "god object".** If a model pulls in external services, payments, and email sending, the rule belongs in a service.
+- **Signals as hidden logic.** They're convenient but create implicit links: it's easy to "lose" an operation because it fires somewhere off to the side of the explicit call. For key processes, prefer an explicit service.
+- **Duplicated queries.** The same `filter(...)` repeated across the project is a signal to introduce a manager method or a custom QuerySet.

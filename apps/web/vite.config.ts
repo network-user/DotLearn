@@ -1,4 +1,6 @@
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
 
 import mdx from '@mdx-js/rollup';
 import rehypeShiki from '@shikijs/rehype';
@@ -6,13 +8,103 @@ import react from '@vitejs/plugin-react';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 import { topicStatsPlugin } from './vite-plugin-topic-stats';
 
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "manifest-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
+  "connect-src 'self' https: http://localhost:* ws://localhost:* wss://localhost:*",
+].join('; ');
+
+const PYODIDE_RUNTIME_FILES = [
+  'pyodide.asm.js',
+  'pyodide.asm.wasm',
+  'python_stdlib.zip',
+  'pyodide-lock.json',
+] as const;
+
+const pyodideContentType = (name: string): string => {
+  if (name.endsWith('.wasm')) return 'application/wasm';
+  if (name.endsWith('.js')) return 'text/javascript';
+  if (name.endsWith('.json')) return 'application/json';
+  if (name.endsWith('.zip')) return 'application/zip';
+  return 'application/octet-stream';
+};
+
+const pyodideAssetsPlugin = (): Plugin => {
+  const require = createRequire(import.meta.url);
+  const pyodideDir = dirname(require.resolve('pyodide/package.json'));
+  const filePath = (name: string): string => join(pyodideDir, name);
+  return {
+    name: 'dotlearn-pyodide-assets',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const path = (req.url ?? '').split('?')[0];
+        const match = /\/pyodide\/([^/]+)$/.exec(path);
+        const name = match?.[1];
+        if (!name || !PYODIDE_RUNTIME_FILES.includes(name as (typeof PYODIDE_RUNTIME_FILES)[number])) {
+          next();
+          return;
+        }
+        try {
+          const body = readFileSync(filePath(name));
+          res.setHeader('Content-Type', pyodideContentType(name));
+          res.setHeader('Cache-Control', 'no-cache');
+          res.end(body);
+        } catch {
+          next();
+        }
+      });
+    },
+    generateBundle() {
+      for (const name of PYODIDE_RUNTIME_FILES) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `pyodide/${name}`,
+          source: readFileSync(filePath(name)),
+        });
+      }
+    },
+  };
+};
+
+const cspPlugin = (): Plugin => ({
+  name: 'dotlearn-csp',
+  apply: 'build',
+  transformIndexHtml(html) {
+    return {
+      html,
+      tags: [
+        {
+          tag: 'meta',
+          attrs: {
+            'http-equiv': 'Content-Security-Policy',
+            content: CONTENT_SECURITY_POLICY,
+          },
+          injectTo: 'head-prepend',
+        },
+      ],
+    };
+  },
+});
+
 export default defineConfig({
   plugins: [
+    cspPlugin(),
+    pyodideAssetsPlugin(),
     topicStatsPlugin(),
     {
       enforce: 'pre',
@@ -55,11 +147,13 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,woff2,wasm}'],
+        globIgnores: ['**/pyodide/**'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/pyodide\//],
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/pyodide\//,
+            urlPattern: ({ url }) => url.pathname.startsWith('/pyodide/'),
             handler: 'CacheFirst',
             options: {
               cacheName: 'pyodide-runtime',

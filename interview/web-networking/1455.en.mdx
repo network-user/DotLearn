@@ -1,0 +1,81 @@
+---
+id: 1455
+title: "WebSocket vs a raw TCP/UDP socket: where the line is drawn"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# WebSocket vs a raw TCP/UDP socket: where the line is drawn
+
+## In short
+
+WebSocket is an application-layer protocol that, over a single persistent TCP connection, provides full-duplex message exchange with small overhead. A "plain" socket is a transport-layer system primitive (TCP or UDP), where framing, the protocol on top, and the connection logic are all written by hand.
+
+## How to answer in an interview
+
+These are different levels of abstraction, not competitors. A socket is an operating-system file descriptor through which you send bytes over TCP or UDP; everything else (where one message ends and another begins, the handshake, reconnection) is your responsibility. WebSocket sits above it: it starts as an ordinary HTTP request with `Upgrade: websocket`, and after a successful upgrade the same TCP connection switches into a mode of exchanging discrete message frames in both directions. So WebSocket almost always runs on top of a TCP socket, but it adds a handshake, message framing, and compatibility with web infrastructure (ports 80/443, proxies, the browser). A raw socket is chosen when you need full control or UDP; WebSocket - when you need a cheap two-way real-time channel from the browser.
+
+## How it works
+
+A transport-layer socket comes in two kinds:
+
+- **TCP (`SOCK_STREAM`)** - a connection with guarantees: acknowledgements, retransmission of losses, byte ordering. But it is exactly a stream of bytes: there are no message boundaries in it, and splitting the stream into messages is up to you.
+- **UDP (`SOCK_DGRAM`)** - connectionless datagrams with no delivery/ordering guarantees. Faster, suitable for streaming and games where a late packet is no longer needed.
+
+A raw TCP server in Python:
+
+```python
+import socket
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("localhost", 8080))
+server.listen()
+
+conn, addr = server.accept()
+data = conn.recv(1024)
+conn.sendall(b"Hello, client!")
+
+conn.close()
+server.close()
+```
+
+Here `accept()` returns a separate socket for each client, `recv(1024)` reads up to 1024 bytes of the stream (not "one message"), and `sendall` guarantees that the whole buffer is sent.
+
+WebSocket hides this fuss behind a handshake and frames. A server using the `websockets` library already operates on whole messages:
+
+```python
+import asyncio
+import websockets
+
+async def echo(websocket):
+    async for message in websocket:
+        await websocket.send(f"Echo: {message}")
+
+async def main():
+    async with websockets.serve(echo, "localhost", 8765):
+        await asyncio.Future()
+
+asyncio.run(main())
+```
+
+`async for message in websocket` yields already-assembled messages - the framing was done by the library, not by you. The difference in the stack, schematically:
+
+```text
+WebSocket messages   ──┐
+HTTP Upgrade handshake │  application layer
+                       ▼
+        TCP socket (byte stream)   transport layer
+```
+
+## Pitfalls
+
+- **"WebSocket = socket" is wrong.** WebSocket almost always lives on top of a TCP socket; it is a layer with a handshake and frames, not an alternative to the transport.
+- **TCP knows nothing about message boundaries.** `recv()` may return half a message or two glued together - you need your own delimiter or length prefix. WebSocket already solves this problem with frames.
+- **The WebSocket handshake goes over HTTP.** That is why it gets along with ports 80/443 and proxies, unlike an arbitrary TCP port that a corporate firewall may cut off.
+- **`recv(1024)` is a read limit, not a message size.** A common beginner mistake is to assume that one `recv` equals one logical packet.
+- **UDP guarantees nothing.** If you chose `SOCK_DGRAM`, you implement delivery, ordering, and deduplication yourself; WebSocket does not offer such a mode at all (it is tied to TCP).
+- **The old event loop API is deprecated.** `asyncio.get_event_loop().run_forever()` from older examples is replaced by `asyncio.run()`; on recent versions the former code emits a DeprecationWarning.

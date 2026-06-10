@@ -1,0 +1,88 @@
+---
+id: 1265
+title: "PID процесса: что за число и какую роль оно играет в ОС?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# PID процесса: что за число и какую роль оно играет в ОС?
+
+## Суть
+
+PID (Process Identifier) - уникальное целое число, которое ядро присваивает процессу при создании. Через PID операционная система и пользователь адресуют процесс: следят за ним, читают его параметры и шлют ему сигналы.
+
+## Что ответить на собесе
+
+PID - это идентификатор процесса, выдаваемый ядром в момент его запуска. Он уникален среди живых процессов и закреплён за процессом до его завершения. Когда процесс умирает, его PID освобождается и со временем может достаться новому процессу - поэтому PID нельзя считать вечной ссылкой. Практически PID нужен, чтобы адресовать процесс: посмотреть его статус через `ps` или `/proc/<pid>`, послать сигнал через `kill`, ограничить ресурсы. В Linux первый процесс (init/systemd) всегда имеет PID 1 и является предком всех остальных.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 620 170" role="img" aria-label="Жизненный цикл PID: выделение, работа, зомби, освобождение" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+  <rect x="20" y="60" width="120" height="50" rx="8" />
+  <text x="80" y="82" textAnchor="middle" stroke="none" fill="currentColor">fork</text>
+  <text x="80" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">ядро даёт PID</text>
+
+  <rect x="190" y="60" width="120" height="50" rx="8" stroke="#6366f1" />
+  <text x="250" y="82" textAnchor="middle" stroke="none" fill="#6366f1">Running</text>
+  <text x="250" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">PID занят</text>
+
+  <rect x="360" y="60" width="120" height="50" rx="8" />
+  <text x="420" y="82" textAnchor="middle" stroke="none" fill="currentColor">Zombie</text>
+  <text x="420" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">ждёт wait()</text>
+
+  <rect x="500" y="60" width="100" height="50" rx="8" strokeDasharray="5 4" />
+  <text x="550" y="82" textAnchor="middle" stroke="none" fill="currentColor">Свободен</text>
+  <text x="550" y="99" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.6" fontSize="10">PID можно переиспользовать</text>
+
+  <line x1="140" y1="85" x2="185" y2="85" />
+  <polygon points="185,85 177,81 177,89" fill="currentColor" stroke="none" />
+  <line x1="310" y1="85" x2="355" y2="85" />
+  <polygon points="355,85 347,81 347,89" fill="currentColor" stroke="none" />
+  <line x1="480" y1="85" x2="498" y2="85" />
+  <polygon points="498,85 490,81 490,89" fill="currentColor" stroke="none" />
+
+  <text x="332" y="48" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">exit</text>
+  <text x="489" y="48" textAnchor="middle" stroke="none" fill="currentColor" fontSize="11">parent wait()</text>
+  <text x="250" y="140" textAnchor="middle" stroke="none" fill="currentColor" fillOpacity="0.7" fontSize="11">kill шлёт сигнал по PID, пока процесс жив</text>
+</svg>
+
+</figure>
+
+При создании процесса (через `fork`) ядро выделяет ему свободный PID и заводит структуру с его состоянием. Этот номер живёт до завершения процесса; после выхода запись остаётся в виде «зомби», пока родитель не заберёт код возврата через `wait`, и только тогда PID окончательно освобождается.
+
+Список процессов и их PID в Linux показывает `ps`:
+
+```bash
+ps aux
+```
+
+- `ps` - вывести информацию о процессах.
+- `aux` - показать все процессы всех пользователей с подробностями.
+
+Пример вывода:
+
+```
+USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root         1  0.0  0.1  22528  4100 ?        Ss   10:00   0:01 /sbin/init
+user      1234  0.1  0.3 123456  7890 pts/0    S+   10:05   0:02 python3 script.py
+```
+
+Колонка `PID` - тот самый идентификатор. Чтобы воздействовать на процесс, по PID посылают сигнал:
+
+```bash
+kill 1234        # послать SIGTERM процессу 1234 (мягкое завершение)
+kill -9 1234     # SIGKILL: принудительно, без шанса на обработку
+```
+
+## Подводные камни
+
+- PID переиспользуется. Если процесс завершился, а вы шлёте сигнал по старому PID, можно попасть в чужой процесс, занявший этот номер. Перед `kill` стоит сверить, что это тот процесс (по имени/времени запуска).
+- `kill` - это «послать сигнал», а не обязательно «убить». По умолчанию это SIGTERM, который процесс может перехватить и проигнорировать; жёсткое завершение - `kill -9` (SIGKILL), но оно не даёт процессу корректно закрыть ресурсы.
+- PID 1 особенный: в обычной системе это init/systemd, а в контейнере им становится главный процесс. Если PID 1 не пересылает сигналы и не собирает зомби, дочерние процессы накапливаются - отсюда минимальные init вроде `tini`.
+- Зомби-процесс (`STAT Z`) уже мёртв и не занимает ресурсов, кроме записи в таблице; убить его `kill` нельзя - нужно, чтобы родитель сделал `wait`, либо завершить самого родителя.
+- PID процесса и идентификаторы его потоков - разные вещи: у потоков свои TID, видимые в `/proc/<pid>/task`.

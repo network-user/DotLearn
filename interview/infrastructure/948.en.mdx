@@ -1,0 +1,80 @@
+---
+id: 948
+title: "Networking in Docker: what comes up on its own and what you have to set up by hand"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Networking in Docker: what comes up on its own and what you have to set up by hand
+
+## In short
+
+Docker creates a default `bridge` network on its own and attaches containers to it unless told otherwise. For isolation, access control, and convenient communication between containers by name, you spin up your own user-defined networks.
+
+## How to answer in an interview
+
+Out of the box a network already exists: on installation Docker creates several networks, and a container without an explicit `--network` lands in the default `bridge`. That's enough for simple cases - containers on the host can see each other and reach the internet. But in real projects I almost always create my own network via `docker network create`: it provides isolation of container groups and, crucially, built-in DNS - containers address each other by service name rather than by IP. So the answer is: the basic network appears automatically, but a meaningful topology you set up by hand.
+
+## How it works
+
+A network in Docker is the layer through which containers communicate with each other and the outside world, and at the same time it's an isolation boundary.
+
+<figure>
+<svg viewBox="0 0 560 220" fontFamily="sans-serif" fontSize="11" role="img">
+<rect x="20" y="30" width="240" height="120" stroke="currentColor" fill="currentColor" fillOpacity="0.04" rx="6" />
+<text x="140" y="50" textAnchor="middle" fill="currentColor">frontend_net</text>
+<rect x="45" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="85" y="99" textAnchor="middle" fill="currentColor">web</text>
+<rect x="155" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="195" y="99" textAnchor="middle" fill="currentColor">proxy</text>
+<line x1="125" y1="95" x2="155" y2="95" stroke="currentColor" strokeWidth="1.5" />
+<rect x="300" y="30" width="240" height="120" stroke="currentColor" fill="currentColor" fillOpacity="0.04" rx="6" />
+<text x="420" y="50" textAnchor="middle" fill="currentColor">backend_net</text>
+<rect x="325" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="365" y="99" textAnchor="middle" fill="currentColor">api</text>
+<rect x="435" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="475" y="99" textAnchor="middle" fill="currentColor">db</text>
+<line x1="405" y1="95" x2="435" y2="95" stroke="currentColor" strokeWidth="1.5" />
+<line x1="260" y1="90" x2="300" y2="90" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="4 4" />
+<text x="280" y="80" textAnchor="middle" fill="#6366f1">✕</text>
+<text x="280" y="175" textAnchor="middle" fill="currentColor" fillOpacity="0.7">networks are isolated by default</text>
+<text x="280" y="195" textAnchor="middle" fill="currentColor" fillOpacity="0.7">within a network — name resolution via DNS</text>
+</svg>
+</figure>
+
+Without specifying a network, a container goes into the default `bridge`:
+
+```bash
+docker run -d --name web nginx
+```
+
+The key nuance: in the default `bridge` containers see each other only by IP, while in a user-defined network they also see each other by name, thanks to built-in DNS. That's why people almost always create their own network:
+
+```bash
+docker network create app_net
+docker run -d --name db  --network app_net postgres:16
+docker run -d --name web --network app_net nginx
+```
+
+Now `web` reaches the database simply by the host `db` - without knowing its IP.
+
+The isolation scheme for two service groups:
+
+```
++----------------------------+      +----------------------------+
+|        frontend_net        |      |        backend_net         |
+|   [web]  <----->  [proxy]  |      |   [api]  <----->  [db]     |
++----------------------------+      +----------------------------+
+```
+
+Containers in `frontend_net` won't reach `db` until they're explicitly attached to `backend_net`.
+
+## Pitfalls
+
+- The default `bridge` network has no automatic DNS by container name - communication is only by IP, and it changes when a container is recreated. Name resolution works specifically in USER-DEFINED networks.
+- Publishing a port (`-p 8080:80`) and the network are different things. Attaching to a network provides communication between containers; for a service to be reachable from outside the host, you need a port mapping.
+- Containers in different user-defined networks are isolated from each other by default - that's a feature, not a bug. For them to communicate, you attach a container to several networks at once.
+- In Docker Compose a network for the project is created automatically, and all services see each other by name without a manual `network create` - people often forget this and breed extra networks by hand.

@@ -1,0 +1,73 @@
+---
+id: 64
+title: "Why a middleware layer exists and how it intercepts a request"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why a middleware layer exists and how it intercepts a request
+
+## In short
+
+Middleware is an interceptor wired in between receiving an HTTP request and producing a response. It lets you pull cross-cutting logic (authentication, logging, error handling) out of views and into a single shared layer, so you don't duplicate it in every handler.
+
+## How to answer in an interview
+
+In Django, middleware are components that every request passes through on the way to a view and every response passes through on the way back. They are arranged in a stack (`MIDDLEWARE` in settings), and order matters: on the way in the request flows top to bottom, on the way out the response flows bottom to top. I use middleware for tasks common to all views: checking the session, adding security headers, measuring timing, unified exception handling. This keeps views focused on business logic, while cross-functional concerns are handled centrally.
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 200" fontFamily="sans-serif" fontSize="12">
+<rect x="40" y="30" width="520" height="140" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeWidth="1.5" />
+<text x="300" y="22" textAnchor="middle" fill="currentColor" fontSize="11">SessionMiddleware</text>
+<rect x="90" y="55" width="420" height="90" rx="8" fill="currentColor" fillOpacity="0.05" stroke="currentColor" strokeWidth="1.5" />
+<text x="300" y="48" textAnchor="middle" fill="currentColor" fontSize="11">AuthenticationMiddleware</text>
+<rect x="150" y="80" width="300" height="40" rx="6" fill="currentColor" fillOpacity="0.06" stroke="#6366f1" strokeWidth="1.5" />
+<text x="300" y="104" textAnchor="middle" fill="currentColor">view (business logic)</text>
+<text x="105" y="100" textAnchor="middle" fill="currentColor" fontSize="11">request</text>
+<text x="495" y="100" textAnchor="middle" fill="currentColor" fontSize="11">response</text>
+<path d="M20 100 L60 100" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arrowIn)" />
+<path d="M540 100 L580 100" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#arrowIn)" />
+<defs>
+<marker id="arrowIn" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0 0 L6 3 L0 6 Z" fill="currentColor" />
+</marker>
+</defs>
+<circle r="5" fill="#6366f1">
+<animateMotion dur="3s" repeatCount="indefinite" path="M20 100 L150 100 L450 100 L580 100" />
+</circle>
+</svg>
+</figure>
+
+Modern Django middleware is a callable that receives `get_response` on initialization and is invoked for each request. The code "on the way in" runs before `self.get_response(request)`, and the code "on the way out" runs after.
+
+```python
+import time
+
+
+class TimingMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        started = time.monotonic()
+
+        response = self.get_response(request)
+
+        elapsed_ms = (time.monotonic() - started) * 1000
+        response["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
+        return response
+```
+
+Here the code before the `get_response` call starts the timer, and the code after it appends a header with the duration. Each layer of the stack wraps the next, forming an "onion": the request descends inward toward the view, and the response bubbles back out. You can additionally declare the `process_view`, `process_exception`, and `process_template_response` hooks.
+
+## Pitfalls
+
+- **Order in `MIDDLEWARE` is critical.** For example, `AuthenticationMiddleware` must come after `SessionMiddleware`, otherwise `request.user` won't be available.
+- **Short-circuiting the chain.** If a middleware returns a response without calling `get_response`, the lower layers and the view won't run - handy for redirects, but easy to shoot yourself in the foot.
+- **Exceptions and exit order.** The response is processed by the layers in reverse order; `process_exception` fires only if the view raised an exception, and it is checked bottom to top.
+- **Performance.** Heavy logic in middleware runs for every request, including static files and health checks, so keep it lightweight.

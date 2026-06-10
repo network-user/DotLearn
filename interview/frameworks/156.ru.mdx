@@ -1,0 +1,95 @@
+---
+id: 156
+title: "Путь HTTP-запроса внутри Django: от URL до ответа"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Путь HTTP-запроса внутри Django: от URL до ответа
+
+## Суть
+
+Получив запрос, Django сопоставляет его URL с правилами в URLconf, находит нужное представление и вызывает его. Представление выполняет логику, при необходимости тянет данные через модели и возвращает `HttpResponse` - HTML, JSON или другой формат, который уходит обратно клиенту.
+
+## Что ответить на собесе
+
+Жизненный цикл запроса в Django такой: запрос сначала проходит стек middleware на входе, затем URL-резолвер по URLconf подбирает view, сверяя путь с `urlpatterns`. View - это функция или класс, где живёт прикладная логика: при необходимости она обращается к моделям, которые через ORM делают запросы к БД. View формирует `HttpResponse`, обычно рендеря шаблон с данными. На обратном пути ответ снова проходит middleware и отправляется клиенту. Главное - понимать, что URLconf маршрутизирует, view содержит логику, модель отвечает за данные, а шаблон за разметку.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 620 130" fontFamily="sans-serif" fontSize="11">
+<defs>
+<marker id="reqArrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0 0 L6 3 L0 6 Z" fill="currentColor" />
+</marker>
+</defs>
+<rect x="8" y="45" width="78" height="36" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="47" y="67" textAnchor="middle" fill="currentColor">request</text>
+<rect x="110" y="45" width="86" height="36" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="153" y="67" textAnchor="middle" fill="currentColor">middleware</text>
+<rect x="220" y="45" width="78" height="36" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="259" y="67" textAnchor="middle" fill="currentColor">URLconf</text>
+<rect x="322" y="45" width="70" height="36" rx="6" fill="currentColor" fillOpacity="0.06" stroke="#6366f1" strokeWidth="1.5" />
+<text x="357" y="67" textAnchor="middle" fill="currentColor">view</text>
+<rect x="416" y="45" width="96" height="36" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="464" y="67" textAnchor="middle" fill="currentColor">model / ORM</text>
+<rect x="536" y="45" width="76" height="36" rx="6" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeWidth="1.5" />
+<text x="574" y="61" textAnchor="middle" fill="currentColor">template</text>
+<text x="574" y="75" textAnchor="middle" fill="currentColor">response</text>
+<line x1="86" y1="63" x2="110" y2="63" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#reqArrow)" />
+<line x1="196" y1="63" x2="220" y2="63" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#reqArrow)" />
+<line x1="298" y1="63" x2="322" y2="63" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#reqArrow)" />
+<line x1="392" y1="63" x2="416" y2="63" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#reqArrow)" />
+<line x1="512" y1="63" x2="536" y2="63" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#reqArrow)" />
+<circle r="4" fill="#6366f1">
+<animateMotion dur="3s" repeatCount="indefinite" path="M47 30 L153 30 L259 30 L357 30 L464 30 L574 30" />
+</circle>
+</svg>
+</figure>
+
+**Маршрутизация.** Django сверяет путь запроса со списком шаблонов и выбирает первое совпадение.
+
+```python
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("home/", views.home, name="home"),
+    path("articles/", views.article_list, name="article-list"),
+]
+```
+
+**Простое представление** может вернуть ответ напрямую.
+
+```python
+from django.http import HttpResponse
+
+
+def home(request):
+    return HttpResponse("Добро пожаловать на главную!")
+```
+
+**Обращение к данным** идёт через модели и ORM, а результат отдаётся в шаблон.
+
+```python
+from django.shortcuts import render
+from .models import Article
+
+
+def article_list(request):
+    articles = Article.objects.all()
+    return render(request, "articles/list.html", {"articles": articles})
+```
+
+Итог: запрос -> middleware -> URLconf -> view -> (модели через ORM) -> шаблон -> `HttpResponse` -> middleware -> клиент.
+
+## Подводные камни
+
+- **Порядок в `urlpatterns` важен.** Django берёт первое совпадение сверху вниз; слишком общий паттерн выше «затенит» более конкретный ниже.
+- **Middleware - часть цикла.** Запрос доходит до view не сразу: сначала отрабатывает стек middleware, и любой из них может вернуть ответ раньше.
+- **Ленивость QuerySet.** `Article.objects.all()` не бьёт в базу сразу - запрос выполнится при итерации в шаблоне. Это влияет и на момент возникновения ошибок, и на N+1.
+- **View обязан вернуть `HttpResponse`.** Забытый `return` или возврат «голых» данных вместо `HttpResponse`/`render` приведёт к ошибке.

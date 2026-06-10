@@ -1,0 +1,79 @@
+---
+id: 1119
+title: "Как одним вызовом стартовать пачку корутин в asyncio и собрать их результаты?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как одним вызовом стартовать пачку корутин в asyncio и собрать их результаты?
+
+## Суть
+
+Чтобы запустить несколько корутин и дождаться их всех разом, берут `asyncio.gather()`. Он планирует переданные корутины конкурентно и по завершении возвращает их результаты списком в том же порядке, в каком корутины были переданы.
+
+## Что ответить на собесе
+
+«Самый частый инструмент - `asyncio.gather(*coros)`. Он оборачивает корутины в задачи, отдаёт их циклу событий и ждёт, пока завершатся все. Результат - список значений в порядке аргументов, а не в порядке завершения. Если нужен более структурированный контроль над группой задач, в Python 3.11+ есть `asyncio.TaskGroup`, который безопаснее по обработке ошибок и отмене.»
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 560 200" width="560" fill="none" stroke="currentColor" strokeWidth="1.5" role="img" aria-label="gather запускает три корутины конкурентно, их интервалы перекрываются и общее время около двух секунд">
+  <text x="20" y="22" fill="currentColor" stroke="none" fontSize="13" fontFamily="sans-serif">gather: три корутины перекрываются во времени</text>
+
+  <text x="20" y="58" fill="currentColor" stroke="none" fontSize="11" fontFamily="sans-serif">site1</text>
+  <rect x="90" y="46" width="380" height="20" rx="4" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+  <text x="20" y="92" fill="currentColor" stroke="none" fontSize="11" fontFamily="sans-serif">site2</text>
+  <rect x="90" y="80" width="380" height="20" rx="4" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+  <text x="20" y="126" fill="currentColor" stroke="none" fontSize="11" fontFamily="sans-serif">site3</text>
+  <rect x="90" y="114" width="380" height="20" rx="4" fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" />
+
+  <line x1="90" y1="40" x2="90" y2="150" strokeDasharray="3 3" strokeOpacity="0.5" />
+  <line x1="470" y1="40" x2="470" y2="150" strokeDasharray="3 3" strokeOpacity="0.5" />
+  <text x="90" y="166" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">0s</text>
+  <text x="470" y="166" fill="currentColor" stroke="none" fontSize="10" textAnchor="middle">~2s</text>
+
+  <line x1="90" y1="180" x2="490" y2="180" strokeOpacity="0.4" />
+  <text x="500" y="184" fill="currentColor" stroke="none" fontSize="10" fontFamily="sans-serif">время</text>
+
+  <line x1="90" y1="40" x2="90" y2="150" stroke="currentColor" strokeWidth="2">
+    <animate attributeName="x1" values="90;470;90" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="x2" values="90;470;90" dur="3s" repeatCount="indefinite" />
+  </line>
+</svg>
+
+</figure>
+
+`asyncio` даёт писать конкурентный код для задач ввода-вывода: пока одна корутина ждёт ответа сети или диска, цикл событий переключается на другую. Важно: это конкурентность в одном потоке, а не параллелизм на нескольких ядрах.
+
+`gather` не запускает корутины «сразу и физически одновременно» - он отдаёт их планировщику, который чередует их на точках `await`. Поэтому выигрыш появляется именно на ожидании ввода-вывода.
+
+```python
+import asyncio
+
+async def fetch_data(site):
+    print(f"start {site}")
+    await asyncio.sleep(2)  # имитация сетевого запроса
+    print(f"done {site}")
+    return f"data:{site}"
+
+async def main():
+    sites = ["site1", "site2", "site3"]
+    results = await asyncio.gather(*(fetch_data(s) for s in sites))
+    print(results)
+
+asyncio.run(main())
+```
+
+Все три `fetch_data` запускаются конкурентно, поэтому общее время около 2 секунд, а не 6. Порядок в `results` совпадает с порядком `sites`, даже если какая-то корутина финишировала раньше.
+
+## Подводные камни
+
+- **Порядок результатов != порядок завершения.** `gather` сохраняет порядок аргументов; не полагайтесь на то, что первый результат пришёл от самой быстрой корутины.
+- **Первое исключение прерывает ожидание.** По умолчанию `gather` пробрасывает первое возникшее исключение наверх, но остальные задачи при этом не отменяются автоматически и могут оставить «висящие» предупреждения. Используйте `return_exceptions=True`, чтобы собрать исключения как обычные элементы списка.
+- **Передавать нужно корутины или future, а не результаты их вызова заранее.** `gather(fetch_data())` - корректно; `gather(fetch_data)` (без вызова) - ошибка.
+- **Это не многопоточность.** CPU-bound вычисления внутри корутин всё равно блокируют единственный поток и убивают конкурентность.

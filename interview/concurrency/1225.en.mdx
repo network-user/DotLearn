@@ -1,0 +1,60 @@
+---
+id: 1225
+title: "What asyncio.run() actually does: three steps under the hood"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What asyncio.run() actually does: three steps under the hood
+
+## In short
+
+`asyncio.run(coro)` is the entry point of an asynchronous program. It creates a new event loop, runs the passed coroutine to completion in it, and reliably closes the loop, cleaning up resources after itself.
+
+## How to answer in an interview
+
+"`asyncio.run()` appeared in 3.7 as a convenient wrapper over manual work with the loop. Internally it does roughly three things: it spins up a fresh event loop via `new_event_loop()`, runs the coroutine to completion (`run_until_complete`), and in a `finally` block it cancels the remaining tasks, finishes async generators, and closes the loop. An important detail: it requires that no active loop already exists, so you cannot call it nested from an already running loop."
+
+## How it works
+
+<figure>
+<svg viewBox="0 0 600 120" fill="none" stroke="currentColor" fontFamily="sans-serif">
+<rect x="20" y="35" width="150" height="50" rx="8" strokeWidth="2" fill="currentColor" fillOpacity="0.06" />
+<text x="95" y="64" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Create loop</text>
+<rect x="225" y="35" width="150" height="50" rx="8" strokeWidth="2" fill="currentColor" fillOpacity="0.06" />
+<text x="300" y="64" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Run coroutine</text>
+<rect x="430" y="35" width="150" height="50" rx="8" strokeWidth="2" fill="currentColor" fillOpacity="0.06" />
+<text x="505" y="64" textAnchor="middle" fontSize="13" stroke="none" fill="currentColor">Close loop</text>
+<path d="M170 60 L225 60" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+<path d="M375 60 L430 60" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" />
+<path d="M218 55 L225 60 L218 65" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+<path d="M423 55 L430 60 L423 65" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+</svg>
+</figure>
+
+1. **Creating the loop.** A new event loop is spun up - the mechanism that tracks which tasks are ready to run and switches between them at the `await` points.
+2. **Running the coroutine.** The passed coroutine is started in this loop and runs until fully complete.
+3. **Closing and cleanup.** After completion, the loop cancels the remaining tasks, finishes async generators, and closes - so that resources do not leak.
+
+```python
+import asyncio
+
+async def main():
+    print("Hello")
+    await asyncio.sleep(1)
+    print("World")
+
+asyncio.run(main())
+```
+
+Here `asyncio.run(main())` itself spins up the loop, prints "Hello", pauses for a second, then prints "World", after which it closes the loop.
+
+## Pitfalls
+
+- **Cannot be called nested.** If a loop is already running (for example, inside another coroutine or in Jupyter), `asyncio.run()` will raise `RuntimeError: asyncio.run() cannot be called from a running event loop`. Inside a coroutine, use `await`, not another `run`.
+- **Each call is a new loop.** Two `asyncio.run()` calls in a row create and close two different loops; no state carries over between them.
+- **The argument is a coroutine.** Pass `main()` (the call that produces a coroutine object), not the function `main` itself.
+- **Top level only.** This is the entry point for a script/program, not a way to "run a coroutine from anywhere". For subtasks inside an already running loop, use `create_task` or `gather`.

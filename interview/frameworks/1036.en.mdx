@@ -1,0 +1,75 @@
+---
+id: 1036
+title: "When to use @task and when @shared_task to declare Celery tasks?"
+category: frameworks
+categoryLabel: "Фреймворки (Django)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When to use @task and when @shared_task to declare Celery tasks?
+
+## In short
+
+`@task` binds a task to a specific Celery application instance, while `@shared_task` creates a task without a hard binding, which is why it's safe to declare in reusable modules and pluggable applications.
+
+## How to answer in an interview
+
+Both decorators register a function as an asynchronous task. The difference is in the binding to the `Celery` instance. `@task` is taken straight off a specific app object and registers the task in that one, so it fits when the task lives inside a single project and doesn't need to be reused. `@shared_task` returns a proxy that finds the right application at call time rather than at declaration time. That's critical for libraries and Django apps that get plugged into different projects: at import time a specific app may not exist yet. The practical rule: inside a reusable app or package always use `@shared_task`; for tasks hard-bound to a single app you can use `@task`.
+
+## How it works
+
+`@task` is usually taken off an application instance: `app.task`. The task is registered in that particular application's registry.
+
+```python
+from myproject.celery import app
+
+@app.task
+def add(x, y):
+    return x + y
+```
+
+`@shared_task` doesn't require a reference to a specific app. It returns a proxy that resolves the currently active Celery application at call time. That's why such a task can be declared in a module that's imported before the app is created.
+
+```python
+from celery import shared_task
+
+@shared_task
+def multiply(x, y):
+    return x * y
+```
+
+Both are launched the same way: the call doesn't run the function immediately but puts a message into the broker; a worker picks it up and executes it.
+
+```python
+add.delay(2, 3)
+multiply.apply_async(args=[4, 5])
+```
+
+<figure>
+
+<svg viewBox="0 0 560 100" width="560" height="100" fill="none" stroke="currentColor" strokeWidth="1.5">
+  <rect x="10" y="38" width="120" height="30" rx="4" />
+  <text x="70" y="57" fontSize="10" textAnchor="middle" stroke="none" fill="currentColor">.delay() call</text>
+  <rect x="220" y="38" width="120" height="30" rx="4" stroke="#6366f1" />
+  <text x="280" y="57" fontSize="10" textAnchor="middle" stroke="none" fill="currentColor">broker (queue)</text>
+  <rect x="430" y="38" width="120" height="30" rx="4" />
+  <text x="490" y="57" fontSize="10" textAnchor="middle" stroke="none" fill="currentColor">worker</text>
+  <line x1="130" y1="53" x2="220" y2="53" />
+  <line x1="340" y1="53" x2="430" y2="53" />
+  <text x="175" y="30" fontSize="8" textAnchor="middle" stroke="none" fill="currentColor">message</text>
+  <text x="385" y="30" fontSize="8" textAnchor="middle" stroke="none" fill="currentColor">picks up and runs</text>
+  <circle cx="130" cy="53" r="4" fill="#6366f1" stroke="none">
+    <animateMotion dur="2.5s" repeatCount="indefinite" path="M0,0 L90,0 L300,0" />
+  </circle>
+</svg>
+
+</figure>
+
+## Pitfalls
+
+- In a reusable Django app, `app.task` can break: at the time `tasks.py` is imported, the needed app doesn't exist yet. `@shared_task` solves this with deferred resolution of the application.
+- `@shared_task` isn't "magically global": it binds to the active instance via `autodiscover_tasks()` or an explicit import. If no application is configured, the task won't be registered.
+- The bare `from celery import task` is deprecated; in modern versions, bound tasks use `app.task` rather than importing `task`.
+- The decorator itself doesn't make the function parallel. Parallelism comes from queuing and workers; a direct call `add(2, 3)` runs the function synchronously, bypassing the broker.

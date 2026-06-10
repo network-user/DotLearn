@@ -1,0 +1,102 @@
+---
+id: 1406
+title: "Два ключа попали в одну ячейку: как хеш-таблица выходит из положения?"
+category: data-structures
+categoryLabel: "Структуры данных и алгоритмы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Два ключа попали в одну ячейку: как хеш-таблица выходит из положения?
+
+## Суть
+
+Когда разные ключи дают один индекс, это коллизия. Решают её двумя семействами методов: цепочками (chaining) - складывают всё в список внутри ячейки, и открытой адресацией (open addressing) - ищут другую свободную ячейку в самой таблице.
+
+## Что ответить на собесе
+
+Коллизия - это ситуация, когда хеш-функция для двух разных ключей выдаёт один и тот же индекс. Полностью избежать коллизий нельзя, потому что входов бесконечно много, а ячеек конечное число, поэтому таблица должна уметь их разрешать. Два классических подхода. Первый - метод цепочек: каждая ячейка хранит коллекцию (обычно связный список) всех элементов с этим индексом, и при коллизии мы просто дописываем туда новую пару. Второй - открытая адресация: все элементы живут прямо в массиве, и при занятой ячейке мы по определённому правилу (линейное, квадратичное пробирование или двойное хеширование) ищем следующую свободную. CPython, кстати, для своих `dict` использует именно открытую адресацию.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 560 180" fontFamily="sans-serif" fontSize="13">
+<text x="20" y="24" fill="currentColor">Цепочки:</text>
+<rect x="20" y="36" width="40" height="28" fill="currentColor" fillOpacity="0.1" stroke="currentColor" />
+<text x="32" y="55" fill="currentColor">i</text>
+<line x1="60" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="2" />
+<rect x="100" y="36" width="70" height="28" fill="none" stroke="currentColor" />
+<text x="112" y="55" fill="currentColor">k1,v1</text>
+<line x1="170" y1="50" x2="200" y2="50" stroke="currentColor" strokeWidth="2" />
+<rect x="200" y="36" width="70" height="28" fill="none" stroke="currentColor" />
+<text x="212" y="55" fill="currentColor">k2,v2</text>
+<text x="20" y="110" fill="currentColor">Открытая адресация:</text>
+<rect x="20" y="122" width="60" height="28" fill="currentColor" fillOpacity="0.1" stroke="currentColor" />
+<rect x="80" y="122" width="60" height="28" fill="none" stroke="currentColor" strokeDasharray="4 3" />
+<rect x="140" y="122" width="60" height="28" fill="none" stroke="currentColor" />
+<text x="34" y="141" fill="currentColor">занято</text>
+<text x="92" y="141" fill="currentColor">+1</text>
+<text x="150" y="141" fill="currentColor">свободно</text>
+</svg>
+</figure>
+
+**Цепочки.** Каждая ячейка - это маленькая коллекция. Вставка дописывает пару в конец, поиск проходит по коллекции и сравнивает ключи.
+
+```python
+class ChainedHashTable:
+    def __init__(self, size):
+        self.size = size
+        self.table = [[] for _ in range(size)]
+
+    def _index(self, key):
+        return hash(key) % self.size
+
+    def insert(self, key, value):
+        bucket = self.table[self._index(key)]
+        for pair in bucket:
+            if pair[0] == key:
+                bucket.remove(pair)
+                break
+        bucket.append((key, value))
+
+    def get(self, key):
+        for k, v in self.table[self._index(key)]:
+            if k == key:
+                return v
+        return None
+```
+
+**Открытая адресация.** Элементы лежат в самом массиве. При коллизии линейно шагаем вперёд, пока не найдём пустую ячейку (это линейное пробирование).
+
+```python
+class OpenAddressingTable:
+    def __init__(self, size):
+        self.size = size
+        self.table = [None] * size
+
+    def _index(self, key):
+        return hash(key) % self.size
+
+    def insert(self, key, value):
+        index = self._index(key)
+        while self.table[index] is not None and self.table[index][0] != key:
+            index = (index + 1) % self.size
+        self.table[index] = (key, value)
+
+    def get(self, key):
+        index = self._index(key)
+        while self.table[index] is not None:
+            k, v = self.table[index]
+            if k == key:
+                return v
+            index = (index + 1) % self.size
+        return None
+```
+
+## Подводные камни
+
+- В цепочках при множестве коллизий ячейка вырождается в длинный список, и поиск деградирует с O(1) до O(n). Защита - хорошая хеш-функция и контроль фактора загрузки.
+- В открытой адресации удаление элемента ломает цепочку поиска: нельзя просто поставить `None`, иначе следующий за ним элемент станет «невидим». Используют надгробия (tombstones) - специальные метки удалённых ячеек.
+- Открытая адресация плохо себя ведёт при высоком факторе загрузки: чем плотнее таблица, тем длиннее пробирование. Около 70-75% заполнения её обычно расширяют (rehash).
+- Линейное пробирование страдает от кластеризации - занятые ячейки слипаются в длинные группы. Квадратичное пробирование и двойное хеширование разбивают такие кластеры.

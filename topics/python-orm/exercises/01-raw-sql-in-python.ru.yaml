@@ -1,0 +1,216 @@
+exercises:
+  - id: why-params-001
+    concept: raw-sql-in-python
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Почему пользовательские данные передают через плейсхолдер `?`, а не вклеивают в текст запроса f-строкой?"
+    choices:
+      - id: a
+        text: "Так запрос короче и быстрее печатается."
+      - id: b
+        text: "Чтобы данные не могли стать частью кода запроса - это защищает от SQL-инъекции."
+      - id: c
+        text: "f-строки запрещены синтаксисом Python внутри `execute`."
+      - id: d
+        text: "Плейсхолдер `?` автоматически сортирует результат."
+    correct: [b]
+    explanation: "С параметром текст SQL и значение идут к базе раздельно: значение не может изменить структуру запроса, какими бы кавычками и точками с запятой оно ни было. f-строка же вклеивает данные прямо в текст, и враждебное значение становится кодом."
+    variants:
+      - prompt: "Что произойдёт при `cur.execute(f\"SELECT * FROM users WHERE name = '{name}'\")`, если `name` равно `\"'; DROP TABLE users; --\"`?"
+        choices:
+          - id: a
+            text: "База вернёт пустой результат, таблица цела."
+          - id: b
+            text: "Python выбросит SyntaxError ещё до запроса."
+          - id: c
+            text: "В тексте соберётся два запроса, и таблица users может быть удалена - это SQL-инъекция."
+          - id: d
+            text: "Запрос выполнится как поиск пользователя с таким именем."
+        correct: [c]
+        explanation: "f-строка вклеивает кавычку и точку с запятой в текст, превращая данные в дополнительную команду. База выполнит и SELECT, и DROP TABLE. Через параметр такая строка осталась бы безобидным искомым значением."
+      - prompt: "Имя пользователя - `O'Brien` (с апострофом). Какой способ передать его в запрос корректен?"
+        choices:
+          - id: a
+            text: "f-строка: `f\"... name = '{name}'\"` - апостроф внутри безопасен."
+          - id: b
+            text: "Параметр: `execute(\"... name = ?\", (name,))` - драйвер передаёт значение отдельно."
+          - id: c
+            text: "Никак: имена с апострофом нельзя хранить в SQL-базе."
+          - id: d
+            text: "Только вручную удвоив апостроф в Python-коде."
+        correct: [b]
+        explanation: "Через параметр апостроф внутри значения не ломает синтаксис: текст запроса и значение разделены. f-строка же закрыла бы строковый литерал на апострофе и сломала запрос."
+
+  - id: select-fetch-output-001
+    concept: raw-sql-in-python
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет эта программа?"
+    snippet: |
+      import sqlite3
+
+      conn = sqlite3.connect(":memory:")
+      cur = conn.cursor()
+      cur.execute("CREATE TABLE t (id INTEGER, name TEXT)")
+      cur.execute("INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+      rows = cur.execute("SELECT name FROM t WHERE id >= 2 ORDER BY id").fetchall()
+      print(rows)
+    expected:
+      kind: stdout
+      value: "[('b',), ('c',)]"
+    hints:
+      - "fetchall собирает строки результата в список; каждая строка - это кортеж, даже если в ней один столбец."
+      - "Проследите, какие строки проходят условие id >= 2, и помните, что одностолбцовая строка всё равно печатается как кортеж с запятой."
+    variants:
+      - snippet: |
+          import sqlite3
+
+          conn = sqlite3.connect(":memory:")
+          cur = conn.cursor()
+          cur.execute("CREATE TABLE t (id INTEGER, name TEXT)")
+          cur.execute("INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+          row = cur.execute("SELECT id, name FROM t WHERE name = 'b'").fetchone()
+          print(row)
+        expected:
+          kind: stdout
+          value: "(2, 'b')"
+      - snippet: |
+          import sqlite3
+
+          conn = sqlite3.connect(":memory:")
+          cur = conn.cursor()
+          cur.execute("CREATE TABLE t (id INTEGER, name TEXT)")
+          cur.execute("INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b')")
+          row = cur.execute("SELECT name FROM t WHERE id = 99").fetchone()
+          print(row)
+        expected:
+          kind: stdout
+          value: "None"
+
+  - id: param-blanks-001
+    concept: raw-sql-in-python
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Дополните вызов так, чтобы значение `name` передавалось безопасным параметром, а не вклеивалось в текст."
+    template: |
+      name = "Анна"
+      rows = cur.execute(
+          "SELECT * FROM users WHERE name = {{placeholder}}",
+          {{args}},
+      ).fetchall()
+    blanks:
+      placeholder:
+        accept: ["?"]
+      args:
+        accept: ["(name,)"]
+        accept_regex: '^\(name,\)$'
+    hints:
+      - "Текст запроса не должен зависеть от содержимого name: оставьте на месте значения метку-плейсхолдер, а само значение отдайте отдельным аргументом."
+      - "В sqlite3 плейсхолдер - знак вопроса, а одно значение передаётся кортежем из одного элемента (не забудьте запятую)."
+    variants:
+      - prompt: "Дополните вызов с именованным плейсхолдером `:age`, передав значение словарём."
+        template: |
+          age = 18
+          rows = cur.execute(
+              "SELECT * FROM users WHERE age > {{placeholder}}",
+              {{args}},
+          ).fetchall()
+        blanks:
+          placeholder:
+            accept: [":age"]
+          args:
+            accept: ['{"age": age}']
+            accept_regex: '^\{\s*"age"\s*:\s*age\s*\}$'
+      - prompt: "Дополните INSERT так, чтобы оба значения передавались параметрами."
+        template: |
+          cur.execute(
+              "INSERT INTO users (name, age) VALUES ({{p1}}, {{p2}})",
+              ("Вера", 29),
+          )
+        blanks:
+          p1:
+            accept: ["?"]
+          p2:
+            accept: ["?"]
+
+  - id: transaction-output-001
+    concept: raw-sql-in-python
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет эта программа? Обратите внимание на rollback."
+    snippet: |
+      import sqlite3
+
+      conn = sqlite3.connect(":memory:")
+      cur = conn.cursor()
+      cur.execute("CREATE TABLE acc (id INTEGER, balance INTEGER)")
+      cur.execute("INSERT INTO acc VALUES (1, 100)")
+      conn.commit()
+
+      cur.execute("UPDATE acc SET balance = balance - 50 WHERE id = 1")
+      conn.rollback()
+
+      print(cur.execute("SELECT balance FROM acc WHERE id = 1").fetchone()[0])
+    expected:
+      kind: stdout
+      value: "100"
+    hints:
+      - "commit фиксирует состояние; всё, что сделано после него, живёт в открытой транзакции, пока её не зафиксируют."
+      - "rollback отменяет все изменения с момента последнего commit. Какой баланс был зафиксирован последним commit?"
+    variants:
+      - snippet: |
+          import sqlite3
+
+          conn = sqlite3.connect(":memory:")
+          cur = conn.cursor()
+          cur.execute("CREATE TABLE acc (id INTEGER, balance INTEGER)")
+          cur.execute("INSERT INTO acc VALUES (1, 100)")
+          conn.commit()
+
+          cur.execute("UPDATE acc SET balance = balance - 50 WHERE id = 1")
+          conn.commit()
+          cur.execute("UPDATE acc SET balance = balance - 30 WHERE id = 1")
+          conn.rollback()
+
+          print(cur.execute("SELECT balance FROM acc WHERE id = 1").fetchone()[0])
+        expected:
+          kind: stdout
+          value: "50"
+
+  - id: safe-find-user-001
+    concept: raw-sql-in-python
+    type: python-function
+    difficulty: 4
+    prompt: "Реализуйте `find_user(conn, name)`: верните возраст пользователя с данным `name` из таблицы `users(name, age)`, или `-1`, если такого нет. Запрос обязан быть параметризованным."
+    starter: |
+      def find_user(conn, name):
+          ...
+
+      def make_conn():
+          import sqlite3
+          conn = sqlite3.connect(":memory:")
+          conn.execute("CREATE TABLE users (name TEXT, age INTEGER)")
+          conn.execute("INSERT INTO users VALUES ('Анна', 30), ('Борис', 17)")
+          conn.commit()
+          return conn
+    cases:
+      - call: "find_user(make_conn(), 'Анна')"
+        expect: 30
+      - call: "find_user(make_conn(), 'Борис')"
+        expect: 17
+      - call: "find_user(make_conn(), 'Глеб')"
+        expect: -1
+      - call: "find_user(make_conn(), \"'; DROP TABLE users; --\")"
+        expect: -1
+    hints:
+      - "Подумайте, что должно вернуться, когда строки нет: fetchone в этом случае отдаёт None, и его нельзя индексировать вслепую."
+      - "Соберите курсор, выполните SELECT с плейсхолдером ? и кортежем (name,), возьмите fetchone и аккуратно разберите случай None."
+      - "fetchone вернёт либо кортеж из одного элемента, либо None - проверьте на None до обращения по индексу [0]."
+    solution: |
+      def find_user(conn, name):
+          cur = conn.cursor()
+          row = cur.execute(
+              "SELECT age FROM users WHERE name = ?",
+              (name,),
+          ).fetchone()
+          return row[0] if row is not None else -1

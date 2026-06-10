@@ -1,0 +1,59 @@
+---
+id: 1301
+title: "A slow SQL query: how to catch the culprit and read the execution plan"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# A slow SQL query: how to catch the culprit and read the execution plan
+
+## In short
+
+A query is slow when it runs longer than expected. To find the cause, you look at the execution plan via `EXPLAIN`, hunt for full scans and missing indexes, and then cut down I/O and the volume of returned data.
+
+## How to answer in an interview
+
+First you need to find the problem query: through monitoring (`pg_stat_statements` in PostgreSQL, `Performance Schema` in MySQL) or the slow query log. Next is `EXPLAIN` (or `EXPLAIN ANALYZE`), which shows the plan: which indexes are used, how many rows are planned to be processed, and where a full table scan happens. Typical causes: no index on the columns in `WHERE`/`JOIN`/`ORDER BY`, the query pulls extra rows or columns, or stale statistics throw off the optimizer. Fixes: add a suitable index, rewrite the query (`JOIN` instead of a subquery, `LIMIT`), refresh statistics via `ANALYZE`.
+
+## How it works
+
+The order of operations when troubleshooting:
+
+1. **Find the query.** Turn on the slow query log with a time threshold, or look at aggregated statistics from monitoring extensions.
+2. **Read the plan.** `EXPLAIN` shows what the planner intends to do; `EXPLAIN ANALYZE` additionally runs the query for real and gives the actual time.
+
+```sql
+EXPLAIN SELECT * FROM orders WHERE customer_id = 123;
+```
+
+3. **Find the bottleneck.** In the plan, look for `Seq Scan` (a full scan) where an `Index Scan` was expected, and operations with a large number of rows.
+4. **Add an index.** If the filter runs over two columns at once, a composite index helps:
+
+```sql
+CREATE INDEX idx_customer_order_date ON orders (customer_id, order_date);
+```
+
+After this, a query like
+
+```sql
+SELECT * FROM orders WHERE customer_id = 123 AND order_date > '2023-01-01';
+```
+
+will go through the index instead of walking the whole table.
+
+5. **Refresh statistics.** The optimizer relies on estimates of the data distribution; after bulk changes, refresh them:
+
+```sql
+ANALYZE orders;
+```
+
+## Pitfalls
+
+- **`EXPLAIN` without `ANALYZE` lies about timing**: it shows the planner's estimate, not the real duration. Real numbers come from `EXPLAIN ANALYZE` (but it runs the query).
+- **The index isn't used**: a function over a column or a type mismatch in the condition makes the planner ignore the index.
+- **`SELECT *` gets in the way**: extra columns inflate the read volume and prevent an index-only scan.
+- **Stale statistics**: after a large data load without `ANALYZE`, the optimizer may pick a bad plan.
+- **Optimizing the wrong thing**: it's worth speeding up queries that actually drive the load, not the first slow one you find that runs once a day.

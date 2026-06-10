@@ -1,0 +1,95 @@
+---
+id: 1051
+title: "Базовый инструментарий asyncio: run, sleep, create_task, gather, wait - кто за что отвечает?"
+category: concurrency
+categoryLabel: "Параллелизм и async"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Базовый инструментарий asyncio: run, sleep, create_task, gather, wait - кто за что отвечает?
+
+## Суть
+
+Пять функций закрывают почти все повседневные сценарии `asyncio`: `run` входит в асинхронный мир, `sleep` отдаёт управление, `create_task` запускает корутину в фоне, `gather` собирает результаты группы корутин, `wait` ждёт группу задач с гибким условием остановки.
+
+## Что ответить на собесе
+
+`asyncio.run(coro)` - точка входа: создаёт цикл событий, выполняет корутину и закрывает loop. `asyncio.sleep(t)` - неблокирующая пауза, на которой цикл переключается на другие задачи. `create_task(coro)` планирует корутину как `Task` и сразу возвращает управление, не дожидаясь её. `gather(*coros)` запускает несколько корутин конкурентно и возвращает их результаты списком в порядке аргументов. `wait(tasks)` ждёт набор уже созданных задач и отдаёт два множества - `done` и `pending`, позволяя остановиться по первому завершению или по таймауту.
+
+## Как это работает
+
+`run` нужен ровно один раз на программу - вложенный вызов внутри работающего loop кинет ошибку.
+
+```python
+import asyncio
+
+async def main():
+    print("Hello")
+
+asyncio.run(main())
+```
+
+`sleep` - главный демонстрационный «await»: пока одна корутина спит, loop двигает остальных.
+
+`create_task` отличается от прямого `await`: задача стартует в фоне сразу, а дождаться её можно позже.
+
+```python
+import asyncio
+
+async def work(name, delay):
+    await asyncio.sleep(delay)
+    return f"{name} done"
+
+async def main():
+    task = asyncio.create_task(work("A", 1))
+    print("Task scheduled")
+    result = await task
+    print(result)
+
+asyncio.run(main())
+```
+
+`gather` - самый частый способ выполнить группу корутин и забрать результаты по порядку аргументов, а не завершения:
+
+```python
+import asyncio
+
+async def work(name, delay):
+    await asyncio.sleep(delay)
+    return f"{name} done"
+
+async def main():
+    results = await asyncio.gather(work("A", 2), work("B", 1))
+    print(results)
+
+asyncio.run(main())
+```
+
+`wait` гибче: принимает уже созданные задачи и условие `return_when` (`ALL_COMPLETED`, `FIRST_COMPLETED`), а результаты достаются вручную из множества `done`:
+
+```python
+import asyncio
+
+async def work(name, delay):
+    await asyncio.sleep(delay)
+    return f"{name} done"
+
+async def main():
+    tasks = [asyncio.create_task(work("A", 2)),
+             asyncio.create_task(work("B", 1))]
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for t in done:
+        print(t.result())
+
+asyncio.run(main())
+```
+
+## Подводные камни
+
+- `gather` сохраняет порядок аргументов в результате, а не порядок завершения - частая путаница на собесе.
+- По умолчанию `gather` при исключении в одной корутине прокидывает его наружу и не ждёт остальных; флаг `return_exceptions=True` меняет поведение - ошибки возвращаются как объекты в списке.
+- `wait` (в отличие от `gather`) не разворачивает исключения автоматически: они «спят» в объектах задач, пока вы не вызовете `result()`.
+- `wait` в свежих версиях не принимает голые корутины - их нужно сначала обернуть в `create_task`.
+- Задачу, созданную `create_task`, надо где-то дождаться или сохранить ссылку: иначе её могут собрать сборщиком мусора, и предупреждение «task was destroyed» легко пропустить.

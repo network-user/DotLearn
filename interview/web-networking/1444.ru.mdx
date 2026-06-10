@@ -1,0 +1,62 @@
+---
+id: 1444
+title: "Зачем браузер посылает предварительный OPTIONS перед основным запросом?"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем браузер посылает предварительный OPTIONS перед основным запросом?
+
+## Суть
+
+Браузер шлёт OPTIONS как preflight-проверку CORS: он спрашивает у чужого домена, разрешено ли там обращение с данным методом и заголовками. Сам OPTIONS ничего не меняет на сервере - это разведка перед основным GET или POST.
+
+## Что ответить на собесе
+
+OPTIONS перед основным запросом - это CORS preflight. Браузер делает его автоматически, когда запрос идёт на другой origin и не считается "простым" (например, POST с `Content-Type: application/json` или с кастомными заголовками). В preflight браузер кладёт `Access-Control-Request-Method` и `Access-Control-Request-Headers`, а сервер в ответ должен вернуть `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` и `Access-Control-Allow-Headers`. Если ответ разрешает - браузер выполняет настоящий запрос; если нет - блокирует его ещё до отправки. Это механизм безопасности самого браузера, а не сервера.
+
+## Как это работает
+
+Браузер отправляет OPTIONS, описывая, что он собирается сделать:
+
+```http
+OPTIONS /api/resource HTTP/1.1
+Host: example.com
+Origin: http://client.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type
+```
+
+Сервер отвечает, какие origin, методы и заголовки он допускает:
+
+```http
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: http://client.com
+Access-Control-Allow-Methods: GET, POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type
+Access-Control-Max-Age: 600
+```
+
+Браузер сверяет намерение с разрешением. Совпало - идёт реальный POST. `Access-Control-Max-Age` подсказывает, сколько секунд можно кэшировать этот ответ, чтобы не делать preflight перед каждым запросом.
+
+<svg viewBox="0 0 320 90" width="320" height="90" fill="none" stroke="currentColor" strokeWidth="1.5" role="img" aria-label="Схема preflight">
+  <rect x="8" y="30" width="70" height="30" rx="4" />
+  <text x="43" y="49" fontSize="11" textAnchor="middle" stroke="none" fill="currentColor">Браузер</text>
+  <rect x="242" y="30" width="70" height="30" rx="4" />
+  <text x="277" y="49" fontSize="11" textAnchor="middle" stroke="none" fill="currentColor">Сервер</text>
+  <line x1="78" y1="38" x2="242" y2="38" />
+  <text x="160" y="32" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">OPTIONS (preflight)</text>
+  <line x1="242" y1="52" x2="78" y2="52" />
+  <text x="160" y="66" fontSize="9" textAnchor="middle" stroke="none" fill="currentColor">Allow-* заголовки</text>
+</svg>
+
+## Подводные камни
+
+- Preflight отправляется не всегда. На "простые" запросы (GET/HEAD/POST со стандартными заголовками и `Content-Type` вроде `text/plain` или `application/x-www-form-urlencoded`) браузер OPTIONS не шлёт.
+- CORS - защита на стороне браузера. curl, Postman и сервер-сервер вызовы preflight игнорируют, поэтому "у меня в Postman работает" не значит, что в браузере тоже.
+- Сервер обязан явно отвечать на OPTIONS нужными заголовками. Забытый `Access-Control-Allow-Headers` для кастомного заголовка - и запрос упадёт ещё на preflight.
+- Лишние preflight бьют по производительности. Используйте `Access-Control-Max-Age`, чтобы браузер кэшировал разрешение и не дёргал OPTIONS перед каждым обращением.
+- `Access-Control-Allow-Origin: *` несовместим с отправкой credentials (cookie). Для них нужен конкретный origin плюс `Access-Control-Allow-Credentials: true`.

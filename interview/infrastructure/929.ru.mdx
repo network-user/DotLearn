@@ -1,0 +1,98 @@
+---
+id: 929
+title: "Статическая типизация в CI: как заставить пайплайн проверять типы автоматически?"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Статическая типизация в CI: как заставить пайплайн проверять типы автоматически?
+
+## Суть
+
+Проверку типов встраивают как отдельный шаг пайплайна, который запускает статический анализатор (для Python - mypy) на каждый push и pull request. Если типы не сходятся, шаг падает, и проблемный код не доезжает до merge.
+
+## Что ответить на собесе
+
+Добавляю в код аннотации типов, а в CI - отдельную job, которая ставит mypy и прогоняет его по проекту. Главная ценность не в самой проверке, а в том, что она обязательна и автоматическая: разработчик не может «забыть» прогнать анализатор локально, потому что красный пайплайн блокирует слияние. Это ловит целый класс ошибок (неверный тип аргумента, None там, где ждали объект) до запуска кода и до code review, экономя время ревьюера.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 600 130" width="600" height="130" role="img" aria-label="Пайплайн CI: push или PR запускает шаги checkout, setup-python, mypy; результат блокирует merge при ошибке" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="11">
+  <text x="55" y="30" textAnchor="middle" stroke="none" fill="currentColor">push / PR</text>
+  <rect x="105" y="40" width="100" height="40" rx="6" />
+  <text x="155" y="64" textAnchor="middle" stroke="none" fill="currentColor">checkout</text>
+  <rect x="225" y="40" width="100" height="40" rx="6" />
+  <text x="275" y="64" textAnchor="middle" stroke="none" fill="currentColor">setup-python</text>
+  <rect x="345" y="40" width="100" height="40" rx="6" stroke="#6366f1" />
+  <text x="395" y="64" textAnchor="middle" stroke="none" fill="#6366f1">mypy src/</text>
+  <rect x="465" y="40" width="120" height="40" rx="6" />
+  <text x="525" y="58" textAnchor="middle" stroke="none" fill="currentColor">merge?</text>
+  <text x="525" y="73" textAnchor="middle" stroke="none" fill="currentColor">красный = блок</text>
+  <line x1="10" y1="60" x2="105" y2="60" />
+  <line x1="205" y1="60" x2="225" y2="60" />
+  <line x1="325" y1="60" x2="345" y2="60" />
+  <line x1="445" y1="60" x2="465" y2="60" />
+  <polygon points="105,56 113,60 105,64" fill="currentColor" stroke="none" />
+  <polygon points="225,56 233,60 225,64" fill="currentColor" stroke="none" />
+  <polygon points="345,56 353,60 345,64" fill="currentColor" stroke="none" />
+  <polygon points="465,56 473,60 465,64" fill="currentColor" stroke="none" />
+  <circle r="5" fill="#6366f1" stroke="none">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M10,60 H465" />
+  </circle>
+</svg>
+
+</figure>
+
+Аннотации - это контракт, который mypy проверяет на согласованность без выполнения программы:
+
+```python
+def add(a: int, b: int) -> int:
+    return a + b
+```
+
+Дальше заводим job в пайплайне. Для GitHub Actions кладём файл `.github/workflows/mypy.yml`:
+
+```yaml
+name: Type Check
+
+on: [push, pull_request]
+
+jobs:
+  type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install mypy
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy
+
+      - name: Run mypy
+        run: mypy src/
+```
+
+Разбор по строкам:
+
+- `on: [push, pull_request]` - триггеры: каждый коммит и каждый PR.
+- `runs-on: ubuntu-latest` - чистый раннер для воспроизводимости.
+- шаг `checkout` забирает код, `setup-python` фиксирует версию интерпретатора.
+- `mypy src/` возвращает ненулевой код выхода при ошибке, и job становится красной.
+
+Аналогично для GitLab это добавление stage в `.gitlab-ci.yml` с тем же `mypy src/`.
+
+## Подводные камни
+
+- **Зелёный mypy не значит «нет багов».** Статическая проверка ловит только несоответствия типов, а не логику; она дополняет тесты, а не заменяет их.
+- **Внешние библиотеки без аннотаций.** Многие пакеты не типизированы; mypy будет ругаться, пока не поставите stub-пакеты (`types-...`) или не настроите `ignore_missing_imports`.
+- **Версия Python.** Поведение проверки зависит от целевой версии; если в CI и локально она разная, результаты разойдутся - фиксируйте её явно.
+- **Внедрение на старом коде.** Сразу включить строгий режим на большом нетипизированном проекте больно; обычно начинают с мягких настроек и постепенно ужесточают, иначе пайплайн утонет в ошибках.

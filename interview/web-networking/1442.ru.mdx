@@ -1,0 +1,86 @@
+---
+id: 1442
+title: "JWT изнутри: три части токена, подпись и почему сервер может не хранить сессии"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# JWT изнутри: три части токена, подпись и почему сервер может не хранить сессии
+
+## Суть
+
+JWT (JSON Web Token) — компактный URL-безопасный токен из трёх частей (заголовок, нагрузка, подпись), закодированных Base64URL и разделённых точками. Подпись доказывает, что нагрузку не подменили, поэтому сервер проверяет запрос, не храня состояние сессии.
+
+## Что ответить на собесе
+
+JWT — это самодостаточный токен, которым стороны обмениваются информацией в виде подписанного JSON. Он состоит из трёх частей через точку: header (тип и алгоритм), payload (claims — утверждения о пользователе) и signature (подпись). Первые две части — это просто Base64URL, их видно всем; защищает именно подпись. Сервер выпускает токен после логина, клиент шлёт его в `Authorization: Bearer <token>`, сервер проверяет подпись секретом (HS256) или публичным ключом (RS256) и доверяет содержимому. Состояние не хранится на сервере — это упрощает горизонтальное масштабирование и SSO.
+
+## Как это работает
+
+<figure>
+
+<svg viewBox="0 0 640 150" role="img" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="40" width="170" height="48" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="105" y="62" textAnchor="middle" fontSize="13" fill="currentColor">Header</text>
+  <text x="105" y="80" textAnchor="middle" fontSize="11" fill="currentColor">alg, typ</text>
+  <rect x="210" y="40" width="170" height="48" rx="8" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.05" />
+  <text x="295" y="62" textAnchor="middle" fontSize="13" fill="currentColor">Payload</text>
+  <text x="295" y="80" textAnchor="middle" fontSize="11" fill="currentColor">claims (sub, exp...)</text>
+  <rect x="400" y="40" width="170" height="48" rx="8" stroke="#6366f1" strokeWidth="1.5" fill="#6366f1" fillOpacity="0.06" />
+  <text x="485" y="62" textAnchor="middle" fontSize="13" fill="currentColor">Signature</text>
+  <text x="485" y="80" textAnchor="middle" fontSize="11" fill="currentColor">подпись секретом</text>
+  <text x="200" y="70" textAnchor="middle" fontSize="16" fill="currentColor">.</text>
+  <text x="390" y="70" textAnchor="middle" fontSize="16" fill="currentColor">.</text>
+  <path d="M105 88 L105 112 L485 112 L485 92" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="5 4" />
+  <path d="M295 88 L295 112" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="5 4" />
+  <text x="295" y="132" textAnchor="middle" fontSize="11" fill="currentColor">Base64URL(header) + Base64URL(payload) → подпись</text>
+</svg>
+
+</figure>
+
+Структура `header.payload.signature`:
+
+1. **Header** — тип токена и алгоритм подписи:
+
+```json
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+
+2. **Payload** — набор claims. Есть зарегистрированные (`iss` — издатель, `sub` — субъект, `exp` — срок жизни, `iat` — время выпуска) и произвольные пользовательские:
+
+```json
+{
+  "sub": "1234567890",
+  "name": "Иван Петров",
+  "admin": true,
+  "exp": 1735689600
+}
+```
+
+3. **Signature** — берут Base64URL(header) + "." + Base64URL(payload) и подписывают секретом по выбранному алгоритму:
+
+```python
+import jwt
+
+payload = {"sub": "1234567890", "name": "Ivan", "admin": True}
+secret = "your-256-bit-secret"
+
+token = jwt.encode(payload, secret, algorithm="HS256")
+decoded = jwt.decode(token, secret, algorithms=["HS256"])
+```
+
+Поток аутентификации: клиент логинится → сервер выпускает JWT → клиент шлёт его с каждым запросом → сервер проверяет подпись и срок и открывает доступ. Применяют в REST API и в SSO, где одна аутентификация открывает несколько приложений.
+
+## Подводные камни
+
+- **Payload не зашифрован, а закодирован** — Base64URL разворачивается обратно любым; секреты в нагрузку не кладут (для шифрования нужен JWE).
+- **`alg: none` и подмена алгоритма** — классическая уязвимость: библиотека не должна доверять полю `alg` из самого токена; всегда задавайте `algorithms=[...]` явно.
+- **Отзыв токена** — выданный JWT валиден до `exp` и его нельзя «разлогинить» без отдельного blacklist/короткого TTL + refresh-токенов.
+- **Срок жизни обязателен** — без `exp` украденный токен живёт вечно; делайте access-токены короткими.
+- **HS256 vs RS256** — у HS256 один общий секрет (любой, кто проверяет, может и подписать); RS256 разделяет приватный ключ выпуска и публичный ключ проверки — это безопаснее для распределённых систем.

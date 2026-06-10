@@ -1,0 +1,80 @@
+---
+id: 948
+title: "Сети в Docker: что поднимается само, а что придётся настроить руками"
+category: infrastructure
+categoryLabel: "Инфра, контейнеры, Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сети в Docker: что поднимается само, а что придётся настроить руками
+
+## Суть
+
+Docker сам создаёт сеть `bridge` по умолчанию и подключает к ней контейнеры, если явно не указано иное. Под изоляцию, контроль доступа и удобную связь контейнеров по именам поднимают собственные пользовательские сети.
+
+## Что ответить на собесе
+
+Из коробки сеть уже есть: при установке Docker создаёт несколько сетей, и контейнер без явного `--network` попадает в дефолтную `bridge`. Этого хватает для простых случаев — контейнеры на хосте видят друг друга и выходят в интернет. Но в реальных проектах я почти всегда создаю свою сеть через `docker network create`: она даёт изоляцию групп контейнеров и, главное, встроенный DNS — контейнеры обращаются друг к другу по имени сервиса, а не по IP. Так что ответ: базовая сеть появляется автоматически, но осмысленную топологию настраиваешь вручную.
+
+## Как это работает
+
+Сеть в Docker — это слой, через который контейнеры общаются между собой и с внешним миром, и одновременно граница изоляции.
+
+<figure>
+<svg viewBox="0 0 560 220" fontFamily="sans-serif" fontSize="11" role="img">
+<rect x="20" y="30" width="240" height="120" stroke="currentColor" fill="currentColor" fillOpacity="0.04" rx="6" />
+<text x="140" y="50" textAnchor="middle" fill="currentColor">frontend_net</text>
+<rect x="45" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="85" y="99" textAnchor="middle" fill="currentColor">web</text>
+<rect x="155" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="195" y="99" textAnchor="middle" fill="currentColor">proxy</text>
+<line x1="125" y1="95" x2="155" y2="95" stroke="currentColor" strokeWidth="1.5" />
+<rect x="300" y="30" width="240" height="120" stroke="currentColor" fill="currentColor" fillOpacity="0.04" rx="6" />
+<text x="420" y="50" textAnchor="middle" fill="currentColor">backend_net</text>
+<rect x="325" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="365" y="99" textAnchor="middle" fill="currentColor">api</text>
+<rect x="435" y="70" width="80" height="50" stroke="currentColor" fill="none" rx="4" />
+<text x="475" y="99" textAnchor="middle" fill="currentColor">db</text>
+<line x1="405" y1="95" x2="435" y2="95" stroke="currentColor" strokeWidth="1.5" />
+<line x1="260" y1="90" x2="300" y2="90" stroke="#6366f1" strokeWidth="1.5" strokeDasharray="4 4" />
+<text x="280" y="80" textAnchor="middle" fill="#6366f1">✕</text>
+<text x="280" y="175" textAnchor="middle" fill="currentColor" fillOpacity="0.7">сети изолированы по умолчанию</text>
+<text x="280" y="195" textAnchor="middle" fill="currentColor" fillOpacity="0.7">внутри сети — резолв по имени через DNS</text>
+</svg>
+</figure>
+
+Без указания сети контейнер уходит в дефолтный `bridge`:
+
+```bash
+docker run -d --name web nginx
+```
+
+Ключевой нюанс: в дефолтном `bridge` контейнеры видят друг друга только по IP, а в пользовательской сети — ещё и по имени, благодаря встроенному DNS. Поэтому свою сеть создают почти всегда:
+
+```bash
+docker network create app_net
+docker run -d --name db  --network app_net postgres:16
+docker run -d --name web --network app_net nginx
+```
+
+Теперь `web` достучится до базы просто по хосту `db` — без знания её IP.
+
+Схема изоляции двух групп сервисов:
+
+```
++----------------------------+      +----------------------------+
+|        frontend_net        |      |        backend_net         |
+|   [web]  <----->  [proxy]  |      |   [api]  <----->  [db]     |
++----------------------------+      +----------------------------+
+```
+
+Контейнеры из `frontend_net` не достучатся до `db`, пока их явно не подключат к `backend_net`.
+
+## Подводные камни
+
+- В дефолтной сети `bridge` нет автоматического DNS по именам контейнеров — связь только по IP, а он меняется при пересоздании. Резолв по имени работает именно в ПОЛЬЗОВАТЕЛЬСКИХ сетях.
+- Публикация порта (`-p 8080:80`) и сеть — разные вещи. Подключение к сети даёт связь между контейнерами; чтобы сервис был доступен снаружи хоста, нужен проброс порта.
+- Контейнеры из разных пользовательских сетей по умолчанию изолированы друг от друга — это фича, а не баг. Чтобы они общались, контейнер подключают сразу к нескольким сетям.
+- В Docker Compose сеть для проекта создаётся автоматически, и все сервисы видят друг друга по именам без ручного `network create` — про это часто забывают и плодят лишние сети вручную.

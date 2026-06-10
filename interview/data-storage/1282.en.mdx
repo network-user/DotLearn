@@ -1,0 +1,87 @@
+---
+id: 1282
+title: "A query is slow: which route to take to find the cause and speed it up?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# A query is slow: which route to take to find the cause and speed it up?
+
+## In short
+
+Optimizing slow SQL isn't one trick but a sequence of steps: first look at the execution plan, then fix indexes, simplify the query itself, touch the schema if needed, and refresh statistics. Hardware is the last resort, not the first.
+
+## How to answer in an interview
+
+I start with `EXPLAIN` (or `EXPLAIN ANALYZE`): the plan shows where the database does a full scan, where it loses time on sorting or joining. Next I check indexes on the columns from `WHERE` and `JOIN`, rewrite the query so it reads less data (the needed columns instead of `SELECT *`, joins instead of heavy subqueries). If that isn't enough, I look at the schema and how current the planner's statistics are. Scaling up server resources is a last resort, used when the logic has already been squeezed dry.
+
+## How it works
+
+<figure>
+
+<svg viewBox="0 0 620 130" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+<rect x="10" y="45" width="100" height="44" rx="6" fill="#6366f1" fillOpacity="0.1" stroke="#6366f1" />
+<text x="60" y="66" textAnchor="middle">EXPLAIN</text>
+<text x="60" y="82" textAnchor="middle" fontSize="10">read the plan</text>
+<rect x="135" y="45" width="100" height="44" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="185" y="66" textAnchor="middle">Indexes</text>
+<text x="185" y="82" textAnchor="middle" fontSize="10">WHERE / JOIN</text>
+<rect x="260" y="45" width="100" height="44" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="310" y="66" textAnchor="middle">Query</text>
+<text x="310" y="82" textAnchor="middle" fontSize="10">less data</text>
+<rect x="385" y="45" width="100" height="44" rx="6" fill="currentColor" fillOpacity="0.05" />
+<text x="435" y="66" textAnchor="middle">Schema</text>
+<text x="435" y="82" textAnchor="middle" fontSize="10">+ statistics</text>
+<rect x="510" y="45" width="100" height="44" rx="6" fill="currentColor" fillOpacity="0.05" strokeDasharray="4 3" />
+<text x="560" y="66" textAnchor="middle">Hardware</text>
+<text x="560" y="82" textAnchor="middle" fontSize="10">last resort</text>
+<line x1="110" y1="67" x2="135" y2="67" strokeWidth="2" />
+<line x1="235" y1="67" x2="260" y2="67" strokeWidth="2" />
+<line x1="360" y1="67" x2="385" y2="67" strokeWidth="2" />
+<line x1="485" y1="67" x2="510" y2="67" strokeWidth="2" strokeDasharray="4 3" />
+<circle r="4" fill="#6366f1" stroke="none">
+<animateMotion dur="3s" repeatCount="indefinite" path="M60 67 L560 67" />
+</circle>
+</svg>
+
+</figure>
+
+The first thing to do is ask the database to show how it intends to execute the query:
+
+```sql
+EXPLAIN SELECT name FROM users WHERE email = 'example@example.com';
+```
+
+The plan reveals the bottlenecks: a sequential table scan where index access was expected, expensive joins, unnecessary sorts.
+
+If a filter frequently runs on a column, it's worth indexing - then the database finds rows directly instead of scanning the whole table:
+
+```sql
+CREATE INDEX idx_email ON users(email);
+```
+
+A query can almost always be made cheaper. We replace a subquery with a join and ask only for the needed columns:
+
+```sql
+SELECT users.name, orders.amount
+FROM users
+JOIN orders ON users.id = orders.user_id;
+```
+
+Sometimes the structure itself is the slow part. Normalization removes duplication but spawns joins; denormalization adds redundancy for fast reads - the choice depends on the load profile.
+
+The planner relies on statistics about data distribution. If they're stale, it builds a bad plan - that's why they get refreshed:
+
+```sql
+ANALYZE users;
+```
+
+## Pitfalls
+
+- Extra indexes aren't free: they take up space and slow down every insert and update, because they too must be maintained.
+- An index on a column isn't used if a function or type cast is applied to it in `WHERE` (`WHERE lower(email) = ...` breaks an ordinary index on `email`).
+- `SELECT *` defeats covering indexes and pulls extra data over the network.
+- Upgrading the server before looking at the plan is a common mistake: you pay money for a problem that a single index would have solved.

@@ -1,0 +1,87 @@
+---
+id: 1308
+title: "What problems come up with replication in PostgreSQL?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What problems come up with replication in PostgreSQL?
+
+## In short
+
+Replication provides fault tolerance and read scaling, but in return it brings replica lag, the risk of write conflicts, the struggle for consistency, mandatory monitoring, and extra hardware usage.
+
+## How to answer in an interview
+
+The main problem is replica lag: by default replication is asynchronous, and for some time the replica serves stale data. For "read right after write" scenarios this breaks the logic, and you have to either read from the master or enable synchronous replication - which slows commits down, because the master waits for confirmation. Next: you can't write to a replica, or it'll desync, so it must be strictly read-only. On top of that, replication requires monitoring of lag and stream state, plus extra CPU, memory, and disk per replica. Roughly: you're choosing between data freshness, write speed, and cost.
+
+## How it works
+
+<figure>
+  <svg viewBox="0 0 600 200" role="img" aria-label="WAL stream from the master to the replicas with lag" fill="none" stroke="currentColor" strokeWidth="1.5" fontFamily="sans-serif" fontSize="12">
+    <rect x="20" y="70" width="120" height="60" rx="6" stroke="#6366f1" fill="#6366f1" fillOpacity="0.1" />
+    <text x="80" y="96" fill="currentColor" stroke="none" textAnchor="middle" fontSize="13">Master</text>
+    <text x="80" y="114" fill="currentColor" stroke="none" textAnchor="middle" fontSize="11" strokeOpacity="0.7">write</text>
+
+    <rect x="460" y="20" width="120" height="50" rx="6" fill="currentColor" fillOpacity="0.05" />
+    <text x="520" y="42" fill="currentColor" stroke="none" textAnchor="middle">Replica 1</text>
+    <text x="520" y="58" fill="currentColor" stroke="none" textAnchor="middle" fontSize="11" strokeOpacity="0.7">read-only</text>
+    <rect x="460" y="130" width="120" height="50" rx="6" fill="currentColor" fillOpacity="0.05" />
+    <text x="520" y="152" fill="currentColor" stroke="none" textAnchor="middle">Replica 2</text>
+    <text x="520" y="168" fill="currentColor" stroke="none" textAnchor="middle" fontSize="11" strokeOpacity="0.7">read-only</text>
+
+    <path id="wal1" d="M 140 90 C 280 90, 320 45, 460 45" stroke="#6366f1" strokeDasharray="5 4" />
+    <path id="wal2" d="M 140 110 C 280 110, 320 155, 460 155" stroke="#6366f1" strokeDasharray="5 4" />
+    <text x="300" y="80" fill="currentColor" stroke="none" textAnchor="middle" fontSize="11">WAL stream</text>
+
+    <circle r="5" fill="#6366f1" stroke="none">
+      <animateMotion dur="2.4s" repeatCount="indefinite">
+        <mpath href="#wal1" />
+      </animateMotion>
+    </circle>
+    <circle r="5" fill="#6366f1" stroke="none">
+      <animateMotion dur="3s" repeatCount="indefinite">
+        <mpath href="#wal2" />
+      </animateMotion>
+    </circle>
+
+    <text x="300" y="195" fill="currentColor" stroke="none" textAnchor="middle" fontSize="11" strokeOpacity="0.7">asynchronous → the replica lags behind by the lag amount</text>
+  </svg>
+</figure>
+
+Replication copies changes from the master to the replicas through the WAL stream (the write-ahead log). The basic setup on the master sets the WAL level, enables archiving and a limit on streams to replicas, after which a base copy is taken for the replica.
+
+```sql
+-- On the master:
+ALTER SYSTEM SET wal_level = 'replica';
+ALTER SYSTEM SET archive_mode = 'on';
+ALTER SYSTEM SET archive_command = 'cp %p /path_to_archive/%f';
+ALTER SYSTEM SET max_wal_senders = 3;
+
+SELECT pg_reload_conf();
+```
+
+```bash
+# Take a base copy for the replica (psql has nothing to do with this - it's a command-line utility)
+pg_basebackup -h master_host -D /path_to_replica_data -U replication_user -Fp -Xs -P
+```
+
+In modern versions (12 and up) the replica is put into standby with a flag file `standby.signal` and the `primary_conninfo` parameter in `postgresql.conf`. The old `recovery.conf` from older guides was removed long ago.
+
+```ini
+# postgresql.conf on the replica
+primary_conninfo = 'host=master_host port=5432 user=replication_user password=secret'
+```
+
+After startup the replica connects to the master and replays WAL, trailing by the lag amount.
+
+## Pitfalls
+
+- An asynchronous replica may by definition serve stale data - the read-your-own-writes pattern requires reading from the master or using synchronous replication for critical transactions.
+- Long-running queries on the replica conflict with applying WAL: either the query is canceled (`max_standby_streaming_delay`) or applying the log is stalled. This is the classic recovery conflict.
+- An unclosed replication slot is dangerous: if a replica drops off, the master accumulates WAL for its slot and can fill the disk to the brim.
+- `recovery.conf` is dead as of PostgreSQL 12 - guides that mention it are outdated; you need `standby.signal` and parameters in the main config.
+- Standard physical replication is all-or-nothing: the entire database. If you need selective replication (individual tables), that's logical replication with its own limitations.

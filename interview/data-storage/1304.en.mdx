@@ -1,0 +1,72 @@
+---
+id: 1304
+title: "Finding and analyzing a slow query in PostgreSQL: where to start?"
+category: data-storage
+categoryLabel: "Хранение и БД"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Finding and analyzing a slow query in PostgreSQL: where to start?
+
+## In short
+
+To find a slow query in PostgreSQL, you enable the `pg_stat_statements` extension: it accumulates aggregated statistics on executed queries. Then you sort queries by total time and dissect the specific culprit with `EXPLAIN` and `EXPLAIN ANALYZE`.
+
+## How to answer in an interview
+
+I work in two stages. First I look for a candidate: I enable `pg_stat_statements` and see which queries produce the highest total and average execution time - this gives a picture across the whole workload rather than a single call. Once the culprit is found, I move on to analyzing the plan: `EXPLAIN` shows the plan without running it, while `EXPLAIN ANALYZE` actually executes the query and reports the real time and row counts for each node. In the plan, the first things I look at are a `Seq Scan` where an index was expected, a mismatch between estimated and actual rows, and expensive joins. From there it's an index, a rewritten query, or tweaked settings.
+
+## How it works
+
+### Enabling pg_stat_statements
+
+Register the library in `postgresql.conf` so it loads at server start:
+
+```plaintext
+shared_preload_libraries = 'pg_stat_statements'
+```
+
+After a restart, create the extension in the target database:
+
+```sql
+CREATE EXTENSION pg_stat_statements;
+```
+
+Now a statistics view is available - sort it by total time:
+
+```sql
+SELECT
+    query,
+    calls,
+    total_exec_time,
+    mean_exec_time
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 10;
+```
+
+Here `query` is the query text, `calls` is the number of calls, `total_exec_time` is the total time, and `mean_exec_time` is the average per call.
+
+### Analyzing the plan
+
+```sql
+EXPLAIN SELECT * FROM orders WHERE order_date > '2023-01-01';
+
+EXPLAIN ANALYZE SELECT * FROM orders WHERE order_date > '2023-01-01';
+```
+
+In the `EXPLAIN ANALYZE` output we read:
+
+- `Seq Scan on orders` - a sequential scan of the table is happening.
+- `Filter: (order_date > '2023-01-01')` - the filtering condition.
+- `actual time=0.012..0.015 rows=5 loops=1` - the real time, the row count, and how many times the node ran.
+
+## Pitfalls
+
+- In recent PostgreSQL versions the columns are named `total_exec_time` and `mean_exec_time`; the old `total_time`/`mean_time` only existed up to version 13.
+- `EXPLAIN ANALYZE` **actually executes** the query, so for `UPDATE`/`DELETE`/`INSERT` wrap it in a transaction with `ROLLBACK`, or you'll change the data.
+- A one-off `EXPLAIN ANALYZE` is misleading: the first run hits a cold cache, while a rerun reads from memory - compare several runs.
+- A `Seq Scan` isn't always evil: on a small table it's faster than index access, and the planner accounts for that.
+- A large gap between estimated and actual `rows` hints at stale statistics - running `ANALYZE` helps.

@@ -1,0 +1,85 @@
+---
+id: 1452
+title: "SSL и TLS: как шифрованный канал защищает трафик и чем они различаются"
+category: web-networking
+categoryLabel: "Веб, сети и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# SSL и TLS: как шифрованный канал защищает трафик и чем они различаются
+
+## Суть
+
+SSL и TLS - криптографические протоколы транспортного уровня, которые создают защищённый канал поверх обычного TCP. TLS - это эволюция SSL: старый SSL давно небезопасен и выведен из эксплуатации, а живой протокол сегодня называется TLS. Оба дают одно и то же трио: шифрование, аутентификацию и проверку целостности.
+
+## Что ответить на собесе
+
+SSL (Secure Sockets Layer) - исторический протокол, его версии скомпрометированы и больше не применяются. TLS (Transport Layer Security) - его преемник, именно он стоит за каждым HTTPS-соединением, хотя по привычке всё ещё говорят «SSL-сертификат». Протокол решает три задачи: конфиденциальность (трафик зашифрован), аутентификация (сертификат подтверждает, что сервер тот, за кого себя выдаёт), целостность (подмену данных в пути видно по MAC/хешу). Соединение начинается с handshake: стороны договариваются о шифрах, сервер предъявляет сертификат, и согласуется сессионный ключ для быстрого симметричного шифрования.
+
+## Как это работает
+
+<figure>
+<svg viewBox="0 0 560 260" role="img" aria-label="TLS handshake: обмен сообщениями между клиентом и сервером" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="90" y="24" textAnchor="middle" fontSize="13" fontFamily="sans-serif" fill="currentColor">Клиент</text>
+  <text x="470" y="24" textAnchor="middle" fontSize="13" fontFamily="sans-serif" fill="currentColor">Сервер</text>
+  <line x1="90" y1="36" x2="90" y2="240" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+  <line x1="470" y1="36" x2="470" y2="240" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.5" />
+  <line x1="92" y1="60" x2="466" y2="60" stroke="currentColor" strokeWidth="1.5" />
+  <path d="M466 60 L456 55 L456 65 Z" fill="currentColor" />
+  <text x="280" y="54" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor">ClientHello: список шифронаборов</text>
+  <line x1="468" y1="100" x2="94" y2="100" stroke="currentColor" strokeWidth="1.5" />
+  <path d="M94 100 L104 95 L104 105 Z" fill="currentColor" />
+  <text x="280" y="94" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor">ServerHello + сертификат</text>
+  <line x1="92" y1="140" x2="466" y2="140" stroke="#6366f1" strokeWidth="1.5" />
+  <path d="M466 140 L456 135 L456 145 Z" fill="#6366f1" />
+  <text x="280" y="134" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="#6366f1">обмен ключами (эфемерный DH)</text>
+  <text x="280" y="172" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor" fillOpacity="0.8">сессионный ключ согласован</text>
+  <rect x="92" y="184" width="376" height="34" rx="6" stroke="#6366f1" strokeWidth="2" fill="#6366f1" fillOpacity="0.06" />
+  <text x="280" y="205" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor">симметричное шифрование + MAC на целостность</text>
+  <circle cx="90" cy="60" r="5" fill="#6366f1">
+    <animate attributeName="cx" values="90;470" dur="2.4s" repeatCount="indefinite" />
+    <animate attributeName="opacity" values="1;1;0" keyTimes="0;0.85;1" dur="2.4s" repeatCount="indefinite" />
+  </circle>
+  <text x="280" y="244" textAnchor="middle" fontSize="11" fontFamily="sans-serif" fill="currentColor" fillOpacity="0.7">после handshake канал шифруется быстрым симметричным алгоритмом</text>
+</svg>
+</figure>
+
+Установка защищённого соединения проходит по шагам:
+
+1. **Handshake (рукопожатие):** клиент шлёт список поддерживаемых шифронаборов, сервер выбирает общий.
+2. **Аутентификация и обмен ключами:** сервер присылает сертификат с открытым ключом, клиент проверяет цепочку доверия и согласует сессионный ключ (в современном TLS - через эфемерный Диффи-Хеллман).
+3. **Симметричное шифрование:** дальше весь обмен шифруется быстрым симметричным алгоритмом на сессионном ключе.
+4. **Контроль целостности:** к каждому сообщению добавляется код аутентичности, так что подмену байтов в канале сразу заметно.
+
+В Python защищённый сокет получают через стандартный модуль `ssl`:
+
+```python
+import socket
+import ssl
+
+hostname = "example.com"
+context = ssl.create_default_context()
+
+with socket.create_connection((hostname, 443)) as raw_sock:
+    with context.wrap_socket(raw_sock, server_hostname=hostname) as tls_sock:
+        tls_sock.sendall(b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+        chunks = []
+        while True:
+            data = tls_sock.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+
+print(b"".join(chunks).decode("utf-8", "replace")[:200])
+```
+
+`create_default_context()` сразу включает проверку сертификата и имени хоста, а `wrap_socket` оборачивает обычный TCP-сокет в TLS-слой. Аргумент `server_hostname` нужен и для SNI, и для валидации, что в сертификате указан именно этот домен.
+
+## Подводные камни
+
+- «SSL» в речи обычно значит TLS: старые версии SSL 2.0/3.0 уязвимы (POODLE и др.) и отключены. Не путайте бренд с реально работающим протоколом.
+- Не отключайте проверку сертификата (`context.check_hostname = False`, `CERT_NONE`) ради «чтобы заработало» - это убивает аутентификацию и открывает MITM-атаку.
+- TLS шифрует канал, но не содержимое после расшифровки и не метаданные вроде имени домена (исторически SNI шёл открытым текстом).
+- Просроченный или самоподписанный сертификат рвёт соединение по умолчанию - это фича, а не баг.
