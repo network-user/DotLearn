@@ -242,6 +242,13 @@ export const TopicPage = () => {
 
   return (
     <div className="space-y-6">
+      {activeConcept && (
+        <ReadingProgress
+          slug={slug}
+          conceptId={activeConcept.conceptId}
+          solvedRatio={conceptRatio}
+        />
+      )}
       <TopicHeader
         manifest={manifest}
         passed={progress.passed}
@@ -295,6 +302,63 @@ export const TopicPage = () => {
         </section>
         <TocSidebar conceptId={activeConcept?.conceptId} ratio={conceptRatio} />
       </div>
+    </div>
+  );
+};
+
+interface ReadingProgressProps {
+  slug: string;
+  conceptId: string;
+  solvedRatio: number;
+}
+
+const ReadingProgress = ({ slug, conceptId, solvedRatio }: ReadingProgressProps) => {
+  const { t } = useTranslation('topic');
+  const [readRatio, setReadRatio] = useState(0);
+  const markedRef = useRef(false);
+
+  useEffect(() => {
+    markedRef.current = false;
+    setReadRatio(0);
+  }, [conceptId]);
+
+  useEffect(() => {
+    const compute = (): void => {
+      const el = document.documentElement;
+      const max = el.scrollHeight - el.clientHeight;
+      const ratio = max <= 0 ? 0 : Math.min(1, Math.max(0, el.scrollTop / max));
+      setReadRatio(ratio);
+      if (max > 120 && ratio >= 0.95 && !markedRef.current) {
+        markedRef.current = true;
+        void setConceptRead(slug, conceptId, true);
+      }
+    };
+    compute();
+    window.addEventListener('scroll', compute, { passive: true });
+    window.addEventListener('resize', compute);
+    return () => {
+      window.removeEventListener('scroll', compute);
+      window.removeEventListener('resize', compute);
+    };
+  }, [slug, conceptId]);
+
+  return (
+    <div
+      className="fixed top-0 inset-x-0 z-[calc(var(--z-nav)+1)] h-[3px] pointer-events-none"
+      role="progressbar"
+      aria-label={t('readingProgress')}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(readRatio * 100)}
+    >
+      <div
+        className="absolute inset-y-0 left-0 bg-accent/25"
+        style={{ width: `${readRatio * 100}%` }}
+      />
+      <div
+        className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-500"
+        style={{ width: `${solvedRatio * 100}%` }}
+      />
     </div>
   );
 };
