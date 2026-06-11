@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
@@ -13,6 +13,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Check,
+  Compass,
   Flame,
   Languages,
   ListTree,
@@ -675,8 +676,19 @@ const ConceptPanel = ({
     () => theoryFiles.map((filename) => ({ filename, resolved: getTheory(slug, filename) })),
     [slug, theoryFiles],
   );
+  const overview = useMemo(
+    () =>
+      index === 0
+        ? theories.find((entry) => /(^|\/)00-overview\.(ru|en)\.mdx$/.test(entry.filename))
+        : undefined,
+    [theories, index],
+  );
+  const bodyTheories = overview ? theories.filter((entry) => entry !== overview) : theories;
   return (
     <article className="space-y-8">
+      {overview?.resolved && (
+        <TopicOverview Component={overview.resolved.Component} />
+      )}
       <header>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 eyebrow">
@@ -703,7 +715,7 @@ const ConceptPanel = ({
       {notesOpen && <NotesEditor key={concept.id} slug={slug} conceptId={concept.id} />}
 
       <div data-toc-root className="theory-root max-w-prose">
-        {theories.map(({ filename, resolved }) => (
+        {bodyTheories.map(({ filename, resolved }) => (
           <section key={filename}>
             {resolved ? (
               <Suspense fallback={<Skeleton rounded="lg" className="h-40" />}>
@@ -736,6 +748,19 @@ const ConceptPanel = ({
         )}
       </section>
     </article>
+  );
+};
+
+const TopicOverview = ({ Component }: { Component: ComponentType<Record<string, unknown>> }) => {
+  const { t } = useTranslation('topic');
+  return (
+    <aside className="rounded-xl border border-border-base bg-surface-2/30 p-5 sm:p-6 [&_p]:text-[16.5px] [&_p]:my-3.5 [&_li]:text-[15.5px] [&_li]:leading-[1.6] [&_.theory-content>*:first-child]:mt-0 [&_.theory-content>*:last-child]:mb-0">
+      <div className="eyebrow eyebrow-accent mb-3 flex items-center gap-1.5">
+        <Compass size={12} />
+        {t('overviewLabel', { defaultValue: 'Об этой теме' })}
+      </div>
+      <TheoryContent Component={Component} />
+    </aside>
   );
 };
 

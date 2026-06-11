@@ -53,6 +53,11 @@ const FlashcardReviewPage = lazy(() =>
     default: module.FlashcardReviewPage,
   })),
 );
+const SandboxPage = lazy(() =>
+  import('./pages/SandboxPage').then((module) => ({
+    default: module.SandboxPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -193,6 +198,12 @@ const flashcardReviewRoute = new Route({
   component: FlashcardReviewPage,
 });
 
+const sandboxRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/sandbox',
+  component: SandboxPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
@@ -205,6 +216,7 @@ const routeTree = rootRoute.addChildren([
   progressRoute,
   flashcardsRoute,
   flashcardReviewRoute,
+  sandboxRoute,
 ]);
 
 export const router = new Router({

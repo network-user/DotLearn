@@ -80,6 +80,12 @@ export interface ConceptReadRecord {
   readAt: string;
 }
 
+export interface PlaygroundRecord {
+  id: string;
+  value: string;
+  updatedAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -91,6 +97,7 @@ class ProgressDb extends Dexie {
   conceptNotes!: Table<ConceptNoteRecord, string>;
   bookmarks!: Table<BookmarkRecord, string>;
   conceptRead!: Table<ConceptReadRecord, string>;
+  playground!: Table<PlaygroundRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -142,6 +149,19 @@ class ProgressDb extends Dexie {
       conceptNotes: 'id, topicSlug',
       bookmarks: 'id, topicSlug, createdAt',
       conceptRead: 'id, topicSlug',
+    });
+    this.version(7).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
     });
   }
 }
