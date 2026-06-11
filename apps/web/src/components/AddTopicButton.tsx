@@ -23,8 +23,8 @@ export const AddTopicButton = () => {
         aria-expanded={open}
         aria-label={t('button')}
       >
-        <span className="md:hidden lg:inline">{t('button')}</span>
-        <span className="hidden md:inline lg:hidden" aria-hidden>
+        <span className="hidden lg:inline">{t('button')}</span>
+        <span className="inline lg:hidden" aria-hidden>
           +
         </span>
       </button>

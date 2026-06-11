@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { Bookmark } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
@@ -11,6 +12,7 @@ import { getCurrentLanguage } from '@/lib/i18n';
 import { interviewQuestions } from '@/lib/interview';
 import { db } from '@/lib/progress-db';
 import { effectiveLanguage, listManifests } from '@/lib/topics';
+import { useBookmarks } from '@/lib/use-learning';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
 import { useActivity, useStreak } from '@/lib/use-progress';
 import topicStats from 'virtual:topic-stats';
@@ -52,6 +54,7 @@ export const ProgressPage = () => {
   const streak = useStreak();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const studiedIds = useInterviewStudiedIds();
+  const bookmarks = useBookmarks();
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +97,25 @@ export const ProgressPage = () => {
       };
     });
   }, [manifests, progressRecords, language]);
+
+  const resolvedBookmarks = useMemo(() => {
+    if (!manifests) return [];
+    return bookmarks
+      .map((bookmark) => {
+        const manifest = manifests.find((entry) => entry.slug === bookmark.topicSlug);
+        if (!manifest) return undefined;
+        const concept = manifest.concepts.find((entry) => entry.id === bookmark.conceptId);
+        if (!concept) return undefined;
+        return {
+          id: bookmark.id,
+          slug: bookmark.topicSlug,
+          conceptId: bookmark.conceptId,
+          topicTitle: manifest.title,
+          conceptTitle: concept.title,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+  }, [bookmarks, manifests]);
 
   const totalAttempted = useMemo(
     () => activity.reduce((sum, entry) => sum + entry.exercisesAttempted, 0),
@@ -161,6 +183,32 @@ export const ProgressPage = () => {
           </p>
         </Link>
       </section>
+
+      {resolvedBookmarks.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="eyebrow border-b border-border-base pb-2">{t('bookmarks.heading')}</h2>
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {resolvedBookmarks.map((bookmark) => (
+              <li key={bookmark.id}>
+                <Link
+                  to="/topics/$slug"
+                  params={{ slug: bookmark.slug }}
+                  search={{ concept: bookmark.conceptId }}
+                  className="flex items-center gap-3 rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-4"
+                >
+                  <Bookmark size={16} className="text-accent shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-fg truncate">
+                      {bookmark.conceptTitle}
+                    </div>
+                    <div className="text-xs text-fg-subtle truncate">{bookmark.topicTitle}</div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="space-y-3">
         <h2 className="eyebrow border-b border-border-base pb-2">{t('topics')}</h2>

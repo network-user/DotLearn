@@ -52,6 +52,27 @@ export interface CryptoKeyRecord {
   key: CryptoKey;
 }
 
+export interface TopicPlaceRecord {
+  topicSlug: string;
+  conceptId: string;
+  updatedAt: string;
+}
+
+export interface ConceptNoteRecord {
+  id: string;
+  topicSlug: string;
+  conceptId: string;
+  text: string;
+  updatedAt: string;
+}
+
+export interface BookmarkRecord {
+  id: string;
+  topicSlug: string;
+  conceptId: string;
+  createdAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -59,6 +80,9 @@ class ProgressDb extends Dexie {
   providerCredentials!: Table<ProviderCredentialsRecord, string>;
   interviewStudied!: Table<InterviewStudiedRecord, number>;
   cryptoKeys!: Table<CryptoKeyRecord, string>;
+  topicPlace!: Table<TopicPlaceRecord, string>;
+  conceptNotes!: Table<ConceptNoteRecord, string>;
+  bookmarks!: Table<BookmarkRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -87,6 +111,17 @@ class ProgressDb extends Dexie {
       providerCredentials: 'providerId',
       interviewStudied: 'id',
       cryptoKeys: 'id',
+    });
+    this.version(5).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
     });
   }
 }
@@ -155,4 +190,58 @@ export const recordAttempt = async (
       exercisesPassed: (activity?.exercisesPassed ?? 0) + (becomesPassed ? 1 : 0),
     });
   });
+};
+
+const placeKey = (topicSlug: string, conceptId: string): string =>
+  `${topicSlug}:${conceptId}`;
+
+export const recordPlace = async (
+  topicSlug: string,
+  conceptId: string,
+): Promise<void> => {
+  await db.topicPlace.put({
+    topicSlug,
+    conceptId,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+export const saveConceptNote = async (
+  topicSlug: string,
+  conceptId: string,
+  text: string,
+): Promise<void> => {
+  const id = placeKey(topicSlug, conceptId);
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    await db.conceptNotes.delete(id);
+    return;
+  }
+  await db.conceptNotes.put({
+    id,
+    topicSlug,
+    conceptId,
+    text,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+export const setBookmark = async (
+  topicSlug: string,
+  conceptId: string,
+  bookmarked: boolean,
+): Promise<void> => {
+  const id = placeKey(topicSlug, conceptId);
+  if (bookmarked) {
+    const existing = await db.bookmarks.get(id);
+    if (existing) return;
+    await db.bookmarks.put({
+      id,
+      topicSlug,
+      conceptId,
+      createdAt: new Date().toISOString(),
+    });
+  } else {
+    await db.bookmarks.delete(id);
+  }
 };

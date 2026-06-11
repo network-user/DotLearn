@@ -27,9 +27,6 @@ const ProgressPage = lazy(() =>
 const ProposalsPage = lazy(() =>
   import('./pages/ProposalsPage').then((module) => ({ default: module.ProposalsPage })),
 );
-const SettingsPage = lazy(() =>
-  import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
-);
 const SubmitTopicPage = lazy(() =>
   import('./pages/SubmitTopicPage').then((module) => ({ default: module.SubmitTopicPage })),
 );
@@ -89,10 +86,20 @@ const homeRoute = new Route({
   component: HomePage,
 });
 
+export interface TopicSearch {
+  concept?: string | undefined;
+}
+
 const topicRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/topics/$slug',
   component: TopicPage,
+  validateSearch: (search: Record<string, unknown>): TopicSearch => ({
+    concept:
+      typeof search.concept === 'string' && search.concept.length > 0
+        ? search.concept
+        : undefined,
+  }),
 });
 
 const submitRoute = new Route({
@@ -174,12 +181,6 @@ const progressRoute = new Route({
   component: ProgressPage,
 });
 
-const settingsRoute = new Route({
-  getParentRoute: () => rootRoute,
-  path: '/settings',
-  component: SettingsPage,
-});
-
 const flashcardsRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/flashcards',
@@ -202,7 +203,6 @@ const routeTree = rootRoute.addChildren([
   proposalsRoute,
   adminRoute,
   progressRoute,
-  settingsRoute,
   flashcardsRoute,
   flashcardReviewRoute,
 ]);

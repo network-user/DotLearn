@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import * as RadixDialog from '@radix-ui/react-dialog';
-import type { TopicManifest } from '@dotlearn/contracts';
+import type { InterviewQuestionMeta, TopicManifest } from '@dotlearn/contracts';
 import { useRouter } from '@tanstack/react-router';
 import { Command } from 'cmdk';
 import {
   ArrowRight,
+  Bookmark,
+  BookOpen,
   Code2,
   Database,
   FileText,
@@ -13,8 +15,9 @@ import {
   Hash,
   Inbox,
   Languages,
+  Layers,
   ListChecks,
-  MonitorCog,
+  MessagesSquare,
   Moon,
   PencilLine,
   ShieldCheck,
@@ -23,11 +26,18 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
 import { listManifests } from '@/lib/topics';
+import { useBookmarks } from '@/lib/use-learning';
 
 import { applyTheme, persistTheme, readStoredTheme } from '../../lib/theme';
 import { cx } from './cx';
 import { Kbd } from './Kbd';
+
+const GROUP_CLASS =
+  'px-1 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-fg-subtle';
+
+const INTERVIEW_LIMIT = 25;
 
 const runtimeIcon = (runtime: string) => {
   if (runtime === 'sql.js') return <Database size={14} />;
@@ -40,7 +50,6 @@ const navIcon: Record<string, React.ReactNode> = {
   '/': <Hash size={14} />,
   '/progress': <ListChecks size={14} />,
   '/admin': <ShieldCheck size={14} />,
-  '/settings': <MonitorCog size={14} />,
   '/submit': <PencilLine size={14} />,
   '/proposals': <Inbox size={14} />,
 };
@@ -56,6 +65,9 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const router = useRouter();
   const setOpen = (value: boolean): void => onOpenChange(value);
   const [manifests, setManifests] = useState<TopicManifest[]>([]);
+  const [interview, setInterview] = useState<InterviewQuestionMeta[]>([]);
+  const [query, setQuery] = useState('');
+  const bookmarks = useBookmarks();
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +79,64 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     };
   }, [i18n.resolvedLanguage]);
 
+  useEffect(() => {
+    if (!open) return;
+    setQuery('');
+    let cancelled = false;
+    void import('@/lib/interview').then((module) => {
+      if (!cancelled) setInterview(module.interviewQuestions);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const concepts = useMemo(
+    () =>
+      manifests.flatMap((manifest) =>
+        manifest.concepts.map((concept, index) => ({
+          slug: manifest.slug,
+          topicTitle: manifest.title,
+          conceptId: concept.id,
+          conceptTitle: concept.title,
+          index,
+        })),
+      ),
+    [manifests],
+  );
+
+  const deckTopics = useMemo(() => {
+    const slugs = new Set(flashcardTopicSlugs());
+    return manifests.filter((manifest) => slugs.has(manifest.slug));
+  }, [manifests]);
+
+  const conceptLabelOf = useMemo(() => {
+    const map = new Map<string, { topicTitle: string; conceptTitle: string }>();
+    for (const concept of concepts) {
+      map.set(`${concept.slug}:${concept.conceptId}`, {
+        topicTitle: concept.topicTitle,
+        conceptTitle: concept.conceptTitle,
+      });
+    }
+    return map;
+  }, [concepts]);
+
+  const interviewMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const out: InterviewQuestionMeta[] = [];
+    for (const item of interview) {
+      if (
+        item.title.toLowerCase().includes(q) ||
+        item.categoryLabel.toLowerCase().includes(q)
+      ) {
+        out.push(item);
+        if (out.length >= INTERVIEW_LIMIT) break;
+      }
+    }
+    return out;
+  }, [interview, query]);
+
   const go = (path: string): void => {
     setOpen(false);
     void router.navigate({ to: path });
@@ -75,6 +145,25 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const goTopic = (slug: string): void => {
     setOpen(false);
     void router.navigate({ to: '/topics/$slug', params: { slug } });
+  };
+
+  const goConcept = (slug: string, conceptId: string): void => {
+    setOpen(false);
+    void router.navigate({
+      to: '/topics/$slug',
+      params: { slug },
+      search: { concept: conceptId },
+    });
+  };
+
+  const goInterview = (id: number): void => {
+    setOpen(false);
+    void router.navigate({ to: '/interview/$id', params: { id: String(id) } });
+  };
+
+  const goFlashcards = (slug: string): void => {
+    setOpen(false);
+    void router.navigate({ to: '/flashcards/$slug', params: { slug } });
   };
 
   const toggleTheme = (): void => {
@@ -97,7 +186,6 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
       { path: '/proposals', label: t('proposals', { defaultValue: 'Proposals' }) },
       { path: '/submit', label: t('submit', { defaultValue: 'Submit topic' }) },
       { path: '/admin', label: t('admin') },
-      { path: '/settings', label: t('settings') },
     ],
     [t],
   );
@@ -121,6 +209,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                 <Sparkles size={14} className="text-accent shrink-0" />
                 <Command.Input
                   autoFocus
+                  value={query}
+                  onValueChange={setQuery}
                   placeholder={t('search')}
                   className="flex-1 bg-transparent outline-none text-[14.5px] text-fg placeholder:text-fg-subtle"
                 />
@@ -132,10 +222,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                 </Command.Empty>
 
                 {manifests.length > 0 && (
-                  <Command.Group
-                    heading={t('topics')}
-                    className="px-1 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-fg-subtle"
-                  >
+                  <Command.Group heading={t('groups.topics')} className={GROUP_CLASS}>
                     {manifests.map((manifest) => (
                       <PaletteItem
                         key={`topic-${manifest.slug}`}
@@ -149,10 +236,71 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                   </Command.Group>
                 )}
 
-                <Command.Group
-                  heading={tCommon('languageLabel')}
-                  className="px-1 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-fg-subtle"
-                >
+                {concepts.length > 0 && (
+                  <Command.Group heading={t('groups.concepts')} className={GROUP_CLASS}>
+                    {concepts.map((concept) => (
+                      <PaletteItem
+                        key={`concept-${concept.slug}-${concept.conceptId}`}
+                        value={`concept ${concept.conceptTitle} ${concept.topicTitle} ${concept.conceptId}`}
+                        onSelect={() => goConcept(concept.slug, concept.conceptId)}
+                        icon={<BookOpen size={14} />}
+                        title={concept.conceptTitle}
+                        meta={concept.topicTitle}
+                      />
+                    ))}
+                  </Command.Group>
+                )}
+
+                {interviewMatches.length > 0 && (
+                  <Command.Group heading={t('groups.interview')} className={GROUP_CLASS}>
+                    {interviewMatches.map((item) => (
+                      <PaletteItem
+                        key={`interview-${item.id}`}
+                        value={`interview ${item.title} ${item.categoryLabel}`}
+                        onSelect={() => goInterview(item.id)}
+                        icon={<MessagesSquare size={14} />}
+                        title={item.title}
+                        meta={item.categoryLabel}
+                      />
+                    ))}
+                  </Command.Group>
+                )}
+
+                {deckTopics.length > 0 && (
+                  <Command.Group heading={t('groups.flashcards')} className={GROUP_CLASS}>
+                    {deckTopics.map((manifest) => (
+                      <PaletteItem
+                        key={`deck-${manifest.slug}`}
+                        value={`flashcards cards ${manifest.title} ${manifest.slug}`}
+                        onSelect={() => goFlashcards(manifest.slug)}
+                        icon={<Layers size={14} />}
+                        title={manifest.title}
+                        meta={tCommon('languageLabel')}
+                      />
+                    ))}
+                  </Command.Group>
+                )}
+
+                {bookmarks.length > 0 && (
+                  <Command.Group heading={t('groups.bookmarks')} className={GROUP_CLASS}>
+                    {bookmarks.map((bookmark) => {
+                      const label = conceptLabelOf.get(`${bookmark.topicSlug}:${bookmark.conceptId}`);
+                      if (!label) return null;
+                      return (
+                        <PaletteItem
+                          key={`bookmark-${bookmark.id}`}
+                          value={`bookmark ${label.conceptTitle} ${label.topicTitle}`}
+                          onSelect={() => goConcept(bookmark.topicSlug, bookmark.conceptId)}
+                          icon={<Bookmark size={14} />}
+                          title={label.conceptTitle}
+                          meta={label.topicTitle}
+                        />
+                      );
+                    })}
+                  </Command.Group>
+                )}
+
+                <Command.Group heading={tCommon('languageLabel')} className={GROUP_CLASS}>
                   <PaletteItem
                     value="lang russian ru русский"
                     onSelect={() => switchLanguage('ru')}
@@ -169,10 +317,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                   />
                 </Command.Group>
 
-                <Command.Group
-                  heading={t('topics')}
-                  className="px-1 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-fg-subtle"
-                >
+                <Command.Group heading={t('groups.go')} className={GROUP_CLASS}>
                   {navItems.map((item) => (
                     <PaletteItem
                       key={item.path}
@@ -185,12 +330,9 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                   ))}
                 </Command.Group>
 
-                <Command.Group
-                  heading="Theme"
-                  className="px-1 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-fg-subtle"
-                >
+                <Command.Group heading={t('groups.theme')} className={GROUP_CLASS}>
                   <PaletteItem
-                    value="theme toggle dark light"
+                    value="theme toggle dark light тема"
                     onSelect={toggleTheme}
                     icon={
                       <span className="inline-flex">
@@ -198,7 +340,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                         <Moon size={14} />
                       </span>
                     }
-                    title="Toggle theme"
+                    title={t('groups.toggleTheme')}
                     meta="dark / light"
                   />
                 </Command.Group>

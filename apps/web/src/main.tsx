@@ -7,6 +7,7 @@ import { Toaster } from 'sonner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './lib/i18n';
 import { AuthProvider } from './lib/auth/AuthContext';
+import { COMMAND_PALETTE_EVENT } from './lib/command-palette';
 import { applyTheme, readStoredTheme } from './lib/theme';
 import { router } from './router';
 
@@ -24,8 +25,13 @@ const CommandPaletteHost = () => {
         setOpen((value) => !value);
       }
     };
+    const onOpen = (): void => setOpen(true);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener(COMMAND_PALETTE_EVENT, onOpen);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener(COMMAND_PALETTE_EVENT, onOpen);
+    };
   }, []);
 
   if (!open) {

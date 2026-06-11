@@ -17,7 +17,7 @@ const PAGES = [
   { name: 'topic-sql', path: '/topics/sql-fundamentals' },
   { name: 'progress', path: '/progress' },
   { name: 'proposals', path: '/proposals' },
-  { name: 'settings', path: '/settings' },
+  { name: 'flashcards', path: '/flashcards' },
   { name: 'submit', path: '/submit' },
 ];
 
