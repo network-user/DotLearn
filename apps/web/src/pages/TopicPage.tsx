@@ -3,10 +3,22 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { TopicNotFoundError } from '@dotlearn/lesson-engine';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, BookOpen, Check, Flame, Languages, ListTree } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Bookmark,
+  BookmarkCheck,
+  Check,
+  Flame,
+  Languages,
+  ListTree,
+  NotebookPen,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
 import { TheoryContent } from '@/components/TheoryContent';
@@ -17,9 +29,12 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
+import { db, recordPlace, saveConceptNote, setBookmark } from '@/lib/progress-db';
 import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
 import { effectiveLanguage, loadTopic } from '@/lib/topics';
+import { useConceptBookmarked } from '@/lib/use-learning';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useStreak, useTopicProgress } from '@/lib/use-progress';
 
 type LoadState =
@@ -30,22 +45,50 @@ type LoadState =
 
 export const TopicPage = () => {
   const { slug } = useParams({ from: '/topics/$slug' });
+  const search = useSearch({ from: '/topics/$slug' });
+  const navigate = useNavigate();
   const { t, i18n } = useTranslation('topic');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
   const progress = useTopicProgress(slug);
   const streak = useStreak();
   const reduceMotion = useReducedMotion() ?? false;
+  const requestedConceptRef = useRef<string | undefined>(search.concept);
+  requestedConceptRef.current = search.concept;
+
+  const selectConcept = (conceptId: string): void => {
+    setActiveConceptId(conceptId);
+    void navigate({
+      to: '/topics/$slug',
+      params: { slug },
+      search: { concept: conceptId },
+      replace: true,
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
     setState({ kind: 'loading' });
     const language = getCurrentLanguage();
     loadTopic(slug, language)
-      .then((bundle) => {
+      .then(async (bundle) => {
         if (cancelled) return;
         setState({ kind: 'ready', bundle });
-        setActiveConceptId(bundle.manifest.concepts[0]?.id);
+        const concepts = bundle.manifest.concepts;
+        const requested = requestedConceptRef.current;
+        let initial =
+          requested && concepts.some((concept) => concept.id === requested)
+            ? requested
+            : undefined;
+        if (!initial) {
+          const place = await db.topicPlace.get(slug);
+          if (cancelled) return;
+          if (place && concepts.some((concept) => concept.id === place.conceptId)) {
+            initial = place.conceptId;
+          }
+        }
+        if (cancelled) return;
+        setActiveConceptId(initial ?? concepts[0]?.id);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -65,6 +108,20 @@ export const TopicPage = () => {
       cancelled = true;
     };
   }, [slug, i18n.resolvedLanguage]);
+
+  useEffect(() => {
+    if (state.kind !== 'ready') return;
+    const requested = search.concept;
+    if (!requested || requested === activeConceptId) return;
+    if (state.bundle.manifest.concepts.some((concept) => concept.id === requested)) {
+      setActiveConceptId(requested);
+    }
+  }, [search.concept, state, activeConceptId]);
+
+  useEffect(() => {
+    if (state.kind !== 'ready' || !activeConceptId) return;
+    void recordPlace(slug, activeConceptId);
+  }, [slug, activeConceptId, state.kind]);
 
   if (state.kind === 'loading') {
     return <TopicSkeleton />;
@@ -140,7 +197,7 @@ export const TopicPage = () => {
     const next = activeIndex + delta;
     const nextConcept = bundle.manifest.concepts[next];
     if (nextConcept) {
-      setActiveConceptId(nextConcept.id);
+      selectConcept(nextConcept.id);
       window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
     }
   };
@@ -164,14 +221,14 @@ export const TopicPage = () => {
       <ConceptStrip
         bundle={bundle}
         activeConceptId={activeConcept?.conceptId}
-        onSelect={setActiveConceptId}
+        onSelect={selectConcept}
         progress={progress.byExercise}
       />
       <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
         <ConceptRail
           bundle={bundle}
           activeConceptId={activeConcept?.conceptId}
-          onSelect={setActiveConceptId}
+          onSelect={selectConcept}
           progress={progress.byExercise}
         />
         <section className="min-w-0 space-y-6">
@@ -499,6 +556,10 @@ const ConceptPanel = ({
   ratio,
 }: ConceptPanelProps) => {
   const { t } = useTranslation('topic');
+  const [notesOpen, setNotesOpen] = useState(false);
+  useEffect(() => {
+    setNotesOpen(false);
+  }, [concept.id]);
   const theories = useMemo(
     () => theoryFiles.map((filename) => ({ filename, resolved: getTheory(slug, filename) })),
     [slug, theoryFiles],
@@ -506,19 +567,29 @@ const ConceptPanel = ({
   return (
     <article className="space-y-8">
       <header>
-        <div className="flex items-center gap-2.5 eyebrow">
-          <span className="text-accent">{t('chapter', { n: index + 1 })}</span>
-          <span aria-hidden>·</span>
-          <span className="inline-flex items-center gap-1">
-            <BookOpen size={12} />
-            {t('readingTime', { minutes: concept.estimatedMinutes })}
-          </span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 eyebrow">
+            <span className="text-accent">{t('chapter', { n: index + 1 })}</span>
+            <span aria-hidden>·</span>
+            <span className="inline-flex items-center gap-1">
+              <BookOpen size={12} />
+              {t('readingTime', { minutes: concept.estimatedMinutes })}
+            </span>
+          </div>
+          <ConceptTools
+            slug={slug}
+            conceptId={concept.id}
+            notesOpen={notesOpen}
+            onToggleNotes={() => setNotesOpen((value) => !value)}
+          />
         </div>
         <h2 className="mt-3 font-display font-medium text-[clamp(26px,3.5vw,34px)] leading-[1.15] tracking-tightish text-fg text-balance">
           {concept.title}
         </h2>
         <span aria-hidden className="mt-4 block h-0.5 w-14 bg-accent" />
       </header>
+
+      {notesOpen && <NotesEditor key={concept.id} slug={slug} conceptId={concept.id} />}
 
       <div data-toc-root className="theory-root max-w-prose">
         {theories.map(({ filename, resolved }) => (
@@ -554,6 +625,99 @@ const ConceptPanel = ({
         )}
       </section>
     </article>
+  );
+};
+
+interface ConceptToolsProps {
+  slug: string;
+  conceptId: string;
+  notesOpen: boolean;
+  onToggleNotes: () => void;
+}
+
+const ConceptTools = ({ slug, conceptId, notesOpen, onToggleNotes }: ConceptToolsProps) => {
+  const { t } = useTranslation('topic');
+  const bookmarked = useConceptBookmarked(slug, conceptId);
+  const toggleBookmark = (): void => {
+    const next = !bookmarked;
+    void setBookmark(slug, conceptId, next);
+    toast.success(next ? t('bookmark.added') : t('bookmark.removed'));
+  };
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <button
+        type="button"
+        onClick={toggleBookmark}
+        aria-pressed={bookmarked}
+        title={bookmarked ? t('bookmark.remove') : t('bookmark.add')}
+        aria-label={bookmarked ? t('bookmark.remove') : t('bookmark.add')}
+        className={cx(
+          'grid place-items-center size-9 rounded-lg border transition-colors',
+          bookmarked
+            ? 'border-accent/50 bg-accent/[0.08] text-accent'
+            : 'border-border-base text-fg-muted hover:text-fg hover:bg-surface-2/50',
+        )}
+      >
+        {bookmarked ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleNotes}
+        aria-pressed={notesOpen}
+        title={t('notes.label')}
+        aria-label={t('notes.label')}
+        className={cx(
+          'grid place-items-center size-9 rounded-lg border transition-colors',
+          notesOpen
+            ? 'border-accent/50 bg-accent/[0.08] text-accent'
+            : 'border-border-base text-fg-muted hover:text-fg hover:bg-surface-2/50',
+        )}
+      >
+        <NotebookPen size={16} />
+      </button>
+    </div>
+  );
+};
+
+const NotesEditor = ({ slug, conceptId }: { slug: string; conceptId: string }) => {
+  const { t } = useTranslation('topic');
+  const [text, setText] = useState<string | null>(null);
+  const initialRef = useRef<string>('');
+  useEffect(() => {
+    let active = true;
+    void db.conceptNotes.get(`${slug}:${conceptId}`).then((record) => {
+      if (!active) return;
+      const value = record?.text ?? '';
+      initialRef.current = value;
+      setText(value);
+    });
+    return () => {
+      active = false;
+    };
+  }, [slug, conceptId]);
+  const debounced = useDebouncedValue(text, 600);
+  useEffect(() => {
+    if (debounced === null || debounced === initialRef.current) return;
+    initialRef.current = debounced;
+    void saveConceptNote(slug, conceptId, debounced);
+  }, [debounced, slug, conceptId]);
+  return (
+    <Surface variant="inset" rule="left" className="border-l-accent/40">
+      <div className="p-3 space-y-2">
+        <div className="flex items-center gap-1.5 eyebrow text-[10px]">
+          <NotebookPen size={11} />
+          {t('notes.label')}
+        </div>
+        <textarea
+          value={text ?? ''}
+          onChange={(event) => setText(event.target.value)}
+          placeholder={t('notes.placeholder')}
+          rows={4}
+          className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-[16px] sm:text-sm leading-relaxed text-fg placeholder:text-fg-subtle outline-none transition-colors focus:border-accent/50 focus:ring-2 focus:ring-accent/20 resize-y min-h-[96px]"
+        />
+        <p className="text-[10px] text-fg-subtle">{t('notes.hint')}</p>
+      </div>
+    </Surface>
   );
 };
 

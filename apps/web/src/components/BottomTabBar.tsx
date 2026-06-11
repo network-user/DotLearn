@@ -1,6 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { motion, useReducedMotion } from 'framer-motion';
-import { BarChart3, Inbox, LayoutGrid, MessagesSquare, Settings } from 'lucide-react';
+import { BarChart3, Inbox, Layers, LayoutGrid, MessagesSquare } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
@@ -10,9 +10,9 @@ import { adminPath } from '@/router';
 const tabs = [
   { to: '/', icon: LayoutGrid, labelKey: 'topics' },
   { to: '/interview', icon: MessagesSquare, labelKey: 'interview' },
-  { to: '/proposals', icon: Inbox, labelKey: 'proposals' },
+  { to: '/flashcards', icon: Layers, labelKey: 'flashcards' },
   { to: '/progress', icon: BarChart3, labelKey: 'progress' },
-  { to: '/settings', icon: Settings, labelKey: 'settings' },
+  { to: '/proposals', icon: Inbox, labelKey: 'proposals' },
 ] as const;
 
 export const BottomTabBar = () => {

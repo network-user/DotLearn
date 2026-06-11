@@ -1,10 +1,13 @@
 import type { ReactNode } from 'react';
 
 import { Link, useRouterState } from '@tanstack/react-router';
+import { Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
+import { Kbd } from '@/components/ui/Kbd';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { openCommandPalette } from '@/lib/command-palette';
 import { isNavPathActive } from '@/lib/navigation';
 import { adminPath } from '@/router';
 
@@ -71,10 +74,22 @@ export const Layout = ({ children }: LayoutProps) => {
               {showAdminLink && (
                 <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
               )}
-              <NavLink to="/settings" active={isActive('/settings')} label={t('settings')} />
             </nav>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={openCommandPalette}
+                aria-label={t('openSearch')}
+                title={t('openSearch')}
+                className="group inline-flex items-center gap-2 h-9 rounded-full border border-border-base/70 text-fg-muted hover:text-fg hover:bg-fg/[0.04] transition-colors px-2.5 lg:pl-3 lg:pr-2"
+              >
+                <Search size={15} />
+                <span className="hidden lg:inline text-[13px]">{t('openSearch')}</span>
+                <span className="hidden lg:inline-flex">
+                  <Kbd>⌘K</Kbd>
+                </span>
+              </button>
               <LanguageSwitcher />
               <ThemeToggle />
               <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
