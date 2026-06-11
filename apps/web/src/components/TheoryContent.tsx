@@ -38,8 +38,11 @@ import { AggregateViz } from '@/components/viz/AggregateViz';
 import { ClassFactory } from '@/components/viz/ClassFactory';
 import { CompositionViz } from '@/components/viz/CompositionViz';
 import { GroupByViz } from '@/components/viz/GroupByViz';
+import { HashTableViz } from '@/components/viz/HashTableViz';
 import { InheritanceTree } from '@/components/viz/InheritanceTree';
 import { JoinViz } from '@/components/viz/JoinViz';
+import { MergeStepper } from '@/components/viz/MergeStepper';
+import { RefCountViz } from '@/components/viz/RefCountViz';
 
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
@@ -308,8 +311,11 @@ const mdxComponents = {
   ClassFactory,
   CompositionViz,
   GroupByViz,
+  HashTableViz,
   InheritanceTree,
   JoinViz,
+  MergeStepper,
+  RefCountViz,
   Figure,
   PullQuote,
   MarginNote,

@@ -46,6 +46,16 @@ const InterviewExamPage = lazy(() =>
     default: module.InterviewExamPage,
   })),
 );
+const FlashcardsIndexPage = lazy(() =>
+  import('./pages/FlashcardsIndexPage').then((module) => ({
+    default: module.FlashcardsIndexPage,
+  })),
+);
+const FlashcardReviewPage = lazy(() =>
+  import('./pages/FlashcardReviewPage').then((module) => ({
+    default: module.FlashcardReviewPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -170,6 +180,18 @@ const settingsRoute = new Route({
   component: SettingsPage,
 });
 
+const flashcardsRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/flashcards',
+  component: FlashcardsIndexPage,
+});
+
+const flashcardReviewRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/flashcards/$slug',
+  component: FlashcardReviewPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
@@ -181,6 +203,8 @@ const routeTree = rootRoute.addChildren([
   adminRoute,
   progressRoute,
   settingsRoute,
+  flashcardsRoute,
+  flashcardReviewRoute,
 ]);
 
 export const router = new Router({

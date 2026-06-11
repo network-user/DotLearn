@@ -16,6 +16,7 @@ export default [
       '**/coverage/**',
       '**/*.config.{js,mjs,cjs,ts}',
       'scripts/**',
+      '_*.{js,mjs,cjs}',
     ],
   },
   js.configs.recommended,

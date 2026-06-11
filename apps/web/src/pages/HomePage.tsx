@@ -11,6 +11,7 @@ import {
   Database,
   FileText,
   FlaskConical,
+  Layers,
   Sparkles,
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -144,6 +145,7 @@ const heroRise = (reduceMotion: boolean, delay: number) =>
 
 const Hero = ({ stats }: { stats: HeroStats }) => {
   const { t } = useTranslation('home');
+  const { t: tCards } = useTranslation('flashcards');
   const reduceMotion = useReducedMotion() ?? false;
   const scrollToTopics = (): void => {
     const el = document.querySelector('#topics');
@@ -192,6 +194,11 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
             <Link to="/submit">
               <Button variant="outline" size="lg" trailingIcon={<ArrowUpRight size={16} />}>
                 {t('cta.submit')}
+              </Button>
+            </Link>
+            <Link to="/flashcards">
+              <Button variant="ghost" size="lg" leadingIcon={<Layers size={16} />}>
+                {tCards('title')}
               </Button>
             </Link>
           </motion.div>
@@ -280,12 +287,12 @@ const TopicCard = ({ row }: TopicCardProps) => {
     <Link
       to="/topics/$slug"
       params={{ slug: manifest.slug }}
-      className="block group h-full"
+      className="group relative z-0 block h-full hover:z-20"
       onMouseEnter={() => prefetchTopic(manifest.slug)}
       onFocus={() => prefetchTopic(manifest.slug)}
       onTouchStart={() => prefetchTopic(manifest.slug)}
     >
-      <Surface interactive className="h-full">
+      <Surface interactive className="h-full origin-center group-hover:scale-[1.03] group-focus-visible:scale-[1.03]">
         <div className="p-5 h-full flex flex-col gap-4 min-h-[200px]">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -293,7 +300,10 @@ const TopicCard = ({ row }: TopicCardProps) => {
                 {runtimeIcon(manifest.runtime)}
                 <span>{t(taglineKey)}</span>
               </div>
-              <h3 className="mt-2 font-display text-2xl leading-tight tracking-tightish text-fg truncate">
+              <h3
+                title={manifest.title}
+                className="mt-2 font-display text-2xl leading-tight tracking-tightish text-fg truncate group-hover:whitespace-normal group-hover:overflow-visible group-focus-visible:whitespace-normal"
+              >
                 {manifest.title}
               </h3>
             </div>

@@ -65,6 +65,7 @@ export const createPythonNodeRuntime = (): PythonRuntime => {
         let result: unknown;
         let thrown: { type: string; message: string } | undefined;
         try {
+          await py.loadPackagesFromImports(source);
           py.runPython(source, options);
           result = toPlain(py.runPython(call, options));
         } catch (error) {

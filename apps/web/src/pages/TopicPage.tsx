@@ -156,7 +156,7 @@ export const TopicPage = () => {
       {showFallbackBanner && (
         <Surface variant="inset" rule="left" className="border-l-warn">
           <div className="px-4 py-3 text-sm text-warn flex items-center gap-2">
-            <Flame size={14} />
+            <Languages size={14} />
             {t('fallbackBanner', { language: t(`languages.${usedLang}` as const) })}
           </div>
         </Surface>
