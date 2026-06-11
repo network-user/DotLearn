@@ -6,17 +6,22 @@ type Entry<V> = [string, V];
 export class PersistentMap<V> {
   private readonly map = new Map<string, V>();
   private writeChain: Promise<void> = Promise.resolve();
+  private enabled = false;
 
   constructor(private readonly filename: string) {}
 
   async load(): Promise<void> {
     const entries = await readJsonFile<Entry<V>[]>(dataFile(this.filename), []);
-    if (!Array.isArray(entries)) return;
-    for (const entry of entries) {
-      if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string') {
-        this.map.set(entry[0], entry[1]);
+    if (Array.isArray(entries)) {
+      for (const entry of entries) {
+        if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string') {
+          this.map.set(entry[0], entry[1]);
+        }
       }
     }
+    // Persistence is only armed once load() runs (i.e. inside onModuleInit). Unit tests that
+    // construct a service without bootstrapping the module never touch the filesystem.
+    this.enabled = true;
   }
 
   get(key: string): V | undefined {
@@ -49,6 +54,7 @@ export class PersistentMap<V> {
   }
 
   private schedulePersist(): void {
+    if (!this.enabled) return;
     const snapshot = [...this.map.entries()];
     this.writeChain = this.writeChain
       .then(() => writeJsonFile(dataFile(this.filename), snapshot))
