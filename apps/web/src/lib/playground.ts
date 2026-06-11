@@ -9,15 +9,22 @@ export class PlaygroundStateError extends Error {
 
 export type PlaygroundTab = 'sql' | 'python';
 
+export type PlaygroundView = 'gallery' | 'workspace';
+
+const normalizeView = (value: unknown): PlaygroundView =>
+  value === 'workspace' ? 'workspace' : 'gallery';
+
 export interface SqlPlaygroundState {
   templateId: string;
   schema: string;
   query: string;
+  view: PlaygroundView;
 }
 
 export interface PythonPlaygroundState {
   templateId: string;
   code: string;
+  view: PlaygroundView;
 }
 
 const ACTIVE_TAB_KEY = 'playground:active-tab';
@@ -73,7 +80,8 @@ export const loadSqlState = async (): Promise<SqlPlaygroundState | undefined> =>
   const record = await readRecord(SQL_STATE_KEY);
   if (!record) return undefined;
   try {
-    return parseState(record.value, isSqlState);
+    const parsed = parseState(record.value, isSqlState);
+    return { ...parsed, view: normalizeView(parsed.view) };
   } catch {
     return undefined;
   }
@@ -87,7 +95,8 @@ export const loadPythonState = async (): Promise<PythonPlaygroundState | undefin
   const record = await readRecord(PYTHON_STATE_KEY);
   if (!record) return undefined;
   try {
-    return parseState(record.value, isPythonState);
+    const parsed = parseState(record.value, isPythonState);
+    return { ...parsed, view: normalizeView(parsed.view) };
   } catch {
     return undefined;
   }

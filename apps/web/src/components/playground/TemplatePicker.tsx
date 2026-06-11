@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react';
+import { ArrowRight, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
@@ -11,51 +11,49 @@ export interface TemplateOption {
 
 interface TemplatePickerProps {
   options: TemplateOption[];
-  selectedId: string;
-  onSelect: (id: string) => void;
+  onOpen: (id: string) => void;
+  icon: LucideIcon;
 }
 
-export const TemplatePicker = ({ options, selectedId, onSelect }: TemplatePickerProps) => {
+export const TemplatePicker = ({ options, onOpen, icon: Icon }: TemplatePickerProps) => {
   const { t } = useTranslation('sandbox');
   return (
-    <div
-      role="radiogroup"
+    <ul
       aria-label={t('templates.groupLabel')}
-      className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
     >
-      {options.map((option) => {
-        const active = option.id === selectedId;
-        return (
+      {options.map((option) => (
+        <li key={option.id} className="min-w-0">
           <button
-            key={option.id}
             type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onSelect(option.id)}
+            onClick={() => onOpen(option.id)}
             className={cx(
-              'group relative flex min-h-[var(--tap)] flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left',
-              'transition-[border-color,background-color] duration-fast',
+              'group flex h-full w-full flex-col items-start gap-2 rounded-xl border px-4 py-3.5 text-left',
+              'min-h-[var(--tap-comfort)] transition-[border-color,background-color,transform] duration-fast',
+              'border-border-base bg-surface hover:border-accent/50 hover:bg-accent/[0.04]',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
-              active
-                ? 'border-accent/60 bg-accent/[0.08]'
-                : 'border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/40',
             )}
           >
-            <span className="flex w-full items-center justify-between gap-2">
-              <span
-                className={cx(
-                  'text-[13px] font-medium tracking-snug',
-                  active ? 'text-fg' : 'text-fg-muted group-hover:text-fg',
-                )}
-              >
+            <span className="flex w-full items-center gap-2">
+              <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border-base bg-surface-2/60 text-accent">
+                <Icon size={14} aria-hidden />
+              </span>
+              <span className="truncate text-[14px] font-medium tracking-snug text-fg">
                 {option.label}
               </span>
-              {active && <Check size={14} className="shrink-0 text-accent" aria-hidden />}
             </span>
-            <span className="text-[12px] leading-snug text-fg-subtle">{option.description}</span>
+            <span className="text-[12.5px] leading-snug text-fg-subtle">{option.description}</span>
+            <span className="mt-auto inline-flex items-center gap-1 pt-1 text-[12px] font-medium text-fg-subtle transition-colors group-hover:text-accent">
+              {t('gallery.open')}
+              <ArrowRight
+                size={13}
+                aria-hidden
+                className="transition-transform duration-fast group-hover:translate-x-0.5"
+              />
+            </span>
           </button>
-        );
-      })}
-    </div>
+        </li>
+      ))}
+    </ul>
   );
 };

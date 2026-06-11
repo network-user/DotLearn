@@ -38,11 +38,13 @@ const defaultSqlState = (): SqlPlaygroundState => ({
   templateId: defaultSqlTemplate.id,
   schema: defaultSqlTemplate.schema,
   query: defaultSqlTemplate.query,
+  view: 'gallery',
 });
 
 const defaultPythonState = (): PythonPlaygroundState => ({
   templateId: defaultPythonTemplate.id,
   code: defaultPythonTemplate.code,
+  view: 'gallery',
 });
 
 const PanelFallback = () => (
