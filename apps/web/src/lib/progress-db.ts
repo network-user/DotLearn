@@ -73,6 +73,13 @@ export interface BookmarkRecord {
   createdAt: string;
 }
 
+export interface ConceptReadRecord {
+  id: string;
+  topicSlug: string;
+  conceptId: string;
+  readAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -83,6 +90,7 @@ class ProgressDb extends Dexie {
   topicPlace!: Table<TopicPlaceRecord, string>;
   conceptNotes!: Table<ConceptNoteRecord, string>;
   bookmarks!: Table<BookmarkRecord, string>;
+  conceptRead!: Table<ConceptReadRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -122,6 +130,18 @@ class ProgressDb extends Dexie {
       topicPlace: 'topicSlug, updatedAt',
       conceptNotes: 'id, topicSlug',
       bookmarks: 'id, topicSlug, createdAt',
+    });
+    this.version(6).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
     });
   }
 }
@@ -243,5 +263,25 @@ export const setBookmark = async (
     });
   } else {
     await db.bookmarks.delete(id);
+  }
+};
+
+export const setConceptRead = async (
+  topicSlug: string,
+  conceptId: string,
+  read: boolean,
+): Promise<void> => {
+  const id = placeKey(topicSlug, conceptId);
+  if (read) {
+    const existing = await db.conceptRead.get(id);
+    if (existing) return;
+    await db.conceptRead.put({
+      id,
+      topicSlug,
+      conceptId,
+      readAt: new Date().toISOString(),
+    });
+  } else {
+    await db.conceptRead.delete(id);
   }
 };

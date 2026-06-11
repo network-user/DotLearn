@@ -7,12 +7,14 @@ import { motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
   ArrowUpRight,
+  Bookmark,
   Code2,
   Database,
   FileText,
   FlaskConical,
   History,
   Layers,
+  NotebookPen,
   Sparkles,
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
@@ -27,7 +29,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
 import { effectiveLanguage, listManifests, prefetchTopic } from '@/lib/topics';
-import { useLastPlace } from '@/lib/use-learning';
+import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
 import topicStats from 'virtual:topic-stats';
 
 interface TopicRow {
@@ -135,9 +137,12 @@ export const HomePage = () => {
 const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
   const { t } = useTranslation('home');
   const place = useLastPlace();
+  const bookmarked = useConceptBookmarked(place?.topicSlug ?? '', place?.conceptId);
+  const note = useConceptNote(place?.topicSlug ?? '', place?.conceptId);
   if (!place) return null;
   const row = rows.find((entry) => entry.manifest.slug === place.topicSlug);
   if (!row) return null;
+  const hasNote = note !== undefined && note.text.trim().length > 0;
   const conceptIndex = row.manifest.concepts.findIndex(
     (concept) => concept.id === place.conceptId,
   );
@@ -175,11 +180,19 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
             <h3 className="mt-1 font-display text-xl leading-tight tracking-tightish text-fg truncate">
               {row.manifest.title}
             </h3>
-            {concept && (
-              <p className="mt-0.5 text-[13px] text-fg-muted truncate">
-                {t('continue.concept', { n: conceptIndex + 1, title: concept.title })}
-              </p>
-            )}
+            <div className="mt-0.5 flex items-center gap-2.5 min-w-0">
+              {concept && (
+                <p className="text-[13px] text-fg-muted truncate">
+                  {t('continue.concept', { n: conceptIndex + 1, title: concept.title })}
+                </p>
+              )}
+              {(bookmarked || hasNote) && (
+                <span className="flex items-center gap-1.5 shrink-0 text-accent">
+                  {bookmarked && <Bookmark size={13} />}
+                  {hasNote && <NotebookPen size={13} />}
+                </span>
+              )}
+            </div>
           </div>
           <span className="shrink-0 inline-flex items-center gap-1.5 text-accent text-sm font-medium">
             <span className="hidden sm:inline">{t('continue.cta')}</span>

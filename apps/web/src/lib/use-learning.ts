@@ -7,6 +7,9 @@ import {
   type TopicPlaceRecord,
 } from './progress-db';
 
+const conceptKey = (topicSlug: string, conceptId: string): string =>
+  `${topicSlug}:${conceptId}`;
+
 export const useLastPlace = (): TopicPlaceRecord | undefined =>
   useLiveQuery(async () => {
     const places = await db.topicPlace.orderBy('updatedAt').reverse().limit(1).toArray();
@@ -67,4 +70,32 @@ export const useTopicBookmarkedConceptIds = (topicSlug: string): Set<string> => 
     [],
   );
   return new Set((records ?? []).map((record) => record.conceptId));
+};
+
+export const useConceptRead = (
+  topicSlug: string,
+  conceptId: string | undefined,
+): boolean =>
+  useLiveQuery(
+    async () => {
+      if (conceptId === undefined) return false;
+      const record = await db.conceptRead.get(conceptKey(topicSlug, conceptId));
+      return record !== undefined;
+    },
+    [topicSlug, conceptId],
+    false,
+  );
+
+export const useTopicReadConceptIds = (topicSlug: string): Set<string> => {
+  const records = useLiveQuery(
+    () => db.conceptRead.where('topicSlug').equals(topicSlug).toArray(),
+    [topicSlug],
+    [],
+  );
+  return new Set((records ?? []).map((record) => record.conceptId));
+};
+
+export const useAllNotedKeys = (): Set<string> => {
+  const records = useLiveQuery(() => db.conceptNotes.toArray(), [], []);
+  return new Set((records ?? []).map((record) => record.id));
 };

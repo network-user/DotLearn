@@ -1,16 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Bookmark } from 'lucide-react';
+import { Bookmark, Download, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { interviewQuestions } from '@/lib/interview';
 import { db } from '@/lib/progress-db';
+import {
+  ProgressImportError,
+  downloadProgressExport,
+  exportProgress,
+  importProgress,
+} from '@/lib/progress-io';
 import { effectiveLanguage, listManifests } from '@/lib/topics';
 import { useBookmarks } from '@/lib/use-learning';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
@@ -130,6 +138,35 @@ export const ProgressPage = () => {
   ).length;
   const interviewStudied = studiedIds.size;
   const interviewTotal = interviewQuestions.length;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleExport = async (): Promise<void> => {
+    try {
+      downloadProgressExport(await exportProgress());
+      toast.success(t('data.exported'));
+    } catch {
+      toast.error(t('data.exportError'));
+    }
+  };
+
+  const handleImportFile = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ): Promise<void> => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      const { imported } = await importProgress(parsed);
+      toast.success(t('data.imported', { count: imported }));
+    } catch (error) {
+      if (error instanceof ProgressImportError || error instanceof SyntaxError) {
+        toast.error(t('data.importInvalid'));
+      } else {
+        toast.error(t('data.importError'));
+      }
+    }
+  };
 
   return (
     <div className="space-y-10">
@@ -251,6 +288,38 @@ export const ProgressPage = () => {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('data.heading')}</h2>
+        <div className="rounded-lg border border-border-base bg-surface p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-fg-muted max-w-prose">{t('data.hint')}</p>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleExport()}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-md border border-border-strong px-3 min-h-[var(--tap)] text-sm text-fg hover:bg-surface-2 transition-colors"
+            >
+              <Download size={15} />
+              {t('data.export')}
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-md border border-border-strong px-3 min-h-[var(--tap)] text-sm text-fg hover:bg-surface-2 transition-colors"
+            >
+              <Upload size={15} />
+              {t('data.import')}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(event) => void handleImportFile(event)}
+            />
+          </div>
+        </div>
       </section>
     </div>
   );
