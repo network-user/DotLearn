@@ -35,14 +35,21 @@ import { SideSql } from '@/components/sandbox/SideSql';
 import { cx } from '@/components/ui/cx';
 import { AccessScope } from '@/components/viz/AccessScope';
 import { AggregateViz } from '@/components/viz/AggregateViz';
+import { CapTheoremFigure } from '@/components/viz/CapTheoremFigure';
 import { ClassFactory } from '@/components/viz/ClassFactory';
 import { CompositionViz } from '@/components/viz/CompositionViz';
+import { DocumentModelFigure } from '@/components/viz/DocumentModelFigure';
+import { GraphTraversalFigure } from '@/components/viz/GraphTraversalFigure';
 import { GroupByViz } from '@/components/viz/GroupByViz';
 import { HashTableViz } from '@/components/viz/HashTableViz';
+import { HierarchyTreeFigure } from '@/components/viz/HierarchyTreeFigure';
 import { InheritanceTree } from '@/components/viz/InheritanceTree';
 import { JoinViz } from '@/components/viz/JoinViz';
+import { KeyValueStoreFigure } from '@/components/viz/KeyValueStoreFigure';
 import { MergeStepper } from '@/components/viz/MergeStepper';
+import { NetworkModelFigure } from '@/components/viz/NetworkModelFigure';
 import { RefCountViz } from '@/components/viz/RefCountViz';
+import { WideColumnFigure } from '@/components/viz/WideColumnFigure';
 
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
@@ -308,14 +315,21 @@ const mdxComponents = {
   PyStepper,
   AccessScope,
   AggregateViz,
+  CapTheoremFigure,
   ClassFactory,
   CompositionViz,
+  DocumentModelFigure,
+  GraphTraversalFigure,
   GroupByViz,
   HashTableViz,
+  HierarchyTreeFigure,
   InheritanceTree,
   JoinViz,
+  KeyValueStoreFigure,
   MergeStepper,
+  NetworkModelFigure,
   RefCountViz,
+  WideColumnFigure,
   Figure,
   PullQuote,
   MarginNote,
