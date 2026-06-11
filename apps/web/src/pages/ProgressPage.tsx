@@ -10,8 +10,10 @@ import { toast } from 'sonner';
 
 import { ActivityHeatmap } from '@/components/ActivityHeatmap';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
+import { DualProgressBar } from '@/components/ui/DualProgressBar';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { interviewQuestions } from '@/lib/interview';
+import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
 import {
   ProgressImportError,
@@ -30,6 +32,7 @@ interface TopicRow {
   total: number;
   passed: number;
   failed: number;
+  readConcepts: number;
   lastAttemptAt: string | undefined;
 }
 
@@ -63,6 +66,7 @@ export const ProgressPage = () => {
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const studiedIds = useInterviewStudiedIds();
   const bookmarks = useBookmarks();
+  const readByTopic = useReadConceptsByTopic();
 
   useEffect(() => {
     let cancelled = false;
@@ -101,10 +105,11 @@ export const ProgressPage = () => {
         total,
         passed: stats.passed,
         failed: stats.failed,
+        readConcepts: countReadConcepts(manifest.concepts, readByTopic.get(manifest.slug)),
         lastAttemptAt: stats.lastAttemptAt,
       };
     });
-  }, [manifests, progressRecords, language]);
+  }, [manifests, progressRecords, readByTopic, language]);
 
   const resolvedBookmarks = useMemo(() => {
     if (!manifests) return [];
@@ -248,7 +253,19 @@ export const ProgressPage = () => {
       )}
 
       <section className="space-y-3">
-        <h2 className="eyebrow border-b border-border-base pb-2">{t('topics')}</h2>
+        <div className="flex items-center justify-between gap-3 border-b border-border-base pb-2">
+          <h2 className="eyebrow">{t('topics')}</h2>
+          <div className="flex items-center gap-3 text-[10px] text-fg-subtle">
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden className="size-2 rounded-full bg-accent/40" />
+              {t('legend.reading')}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden className="size-2 rounded-full bg-accent" />
+              {t('legend.solving')}
+            </span>
+          </div>
+        </div>
         {manifests === undefined ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[0, 1].map((index) => (
@@ -263,29 +280,47 @@ export const ProgressPage = () => {
           <p className="text-sm text-fg-subtle">{t('noTopics')}</p>
         ) : (
           <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {rows.map((row) => (
-              <li key={row.manifest.slug}>
-                <Link
-                  to="/topics/$slug"
-                  params={{ slug: row.manifest.slug }}
-                  className="block rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-5"
-                >
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-fg">{row.manifest.title}</h3>
-                    <span className="text-xs text-fg-subtle tabular-nums">
-                      {row.passed}/{row.total}
-                    </span>
-                  </div>
-                  <ProgressBar passed={row.passed} total={row.total} />
-                  <p className="mt-2 text-xs text-fg-subtle">
-                    {t('lastAttempt', {
-                      when: formatRelative(row.lastAttemptAt),
-                      count: row.failed,
-                    })}
-                  </p>
-                </Link>
-              </li>
-            ))}
+            {rows.map((row) => {
+              const totalConcepts = row.manifest.concepts.length;
+              const m = computeMastery(row.readConcepts, totalConcepts, row.passed, row.total);
+              const masteryPercent = Math.round(m.mastery * 100);
+              return (
+                <li key={row.manifest.slug}>
+                  <Link
+                    to="/topics/$slug"
+                    params={{ slug: row.manifest.slug }}
+                    className="block rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="font-semibold text-fg truncate">{row.manifest.title}</h3>
+                      <span className="text-xs font-medium text-fg tabular-nums shrink-0">
+                        {masteryPercent}%
+                      </span>
+                    </div>
+                    <DualProgressBar
+                      reading={m.readingRatio}
+                      solving={m.solvingRatio}
+                      className="mt-3"
+                      ariaLabel={t('masteryAria', { percent: masteryPercent })}
+                    />
+                    <p className="mt-2 text-xs text-fg-subtle tabular-nums">
+                      {t('readSolved', {
+                        read: row.readConcepts,
+                        rt: totalConcepts,
+                        passed: row.passed,
+                        pt: row.total,
+                      })}
+                    </p>
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      {t('lastAttempt', {
+                        when: formatRelative(row.lastAttemptAt),
+                        count: row.failed,
+                      })}
+                    </p>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

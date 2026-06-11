@@ -26,11 +26,13 @@ import { TheoryContent } from '@/components/TheoryContent';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
+import { DualProgressRing } from '@/components/ui/DualProgressRing';
 import { Kbd } from '@/components/ui/Kbd';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
+import { computeMastery } from '@/lib/mastery';
 import { db, recordPlace, saveConceptNote, setBookmark, setConceptRead } from '@/lib/progress-db';
 import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
@@ -373,7 +375,9 @@ interface TopicHeaderProps {
 
 const TopicHeader = ({ manifest, passed, totalExercises, streak, readCount }: TopicHeaderProps) => {
   const { t } = useTranslation('topic');
-  const ratio = totalExercises === 0 ? 0 : passed / totalExercises;
+  const totalConcepts = manifest.concepts.length;
+  const m = computeMastery(readCount, totalConcepts, passed, totalExercises);
+  const masteryPercent = Math.round(m.mastery * 100);
   return (
     <header className="border-y border-border-base py-6 sm:py-8">
       <div className="flex flex-wrap items-start justify-between gap-6">
@@ -404,25 +408,26 @@ const TopicHeader = ({ manifest, passed, totalExercises, streak, readCount }: To
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <ProgressRing
-            value={ratio}
+          <DualProgressRing
+            reading={m.readingRatio}
+            solving={m.solvingRatio}
             size={72}
-            stroke={3}
-            indicatorClassName={ratio === 1 ? 'text-ok' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'}
+            stroke={4}
+            gap={3}
             label={
               <span className="tabular-nums text-[13px] font-display">
-                {Math.round(ratio * 100)}
+                {masteryPercent}
                 <span className="text-[9px] text-fg-subtle">%</span>
               </span>
             }
-            ariaLabel={`${Math.round(ratio * 100)}%`}
+            ariaLabel={t('masteryAria', { percent: masteryPercent })}
           />
           <div className="text-[12px] text-fg-muted leading-snug">
             <div className="text-fg font-semibold tabular-nums">
               {t('solved', { passed, total: totalExercises })}
             </div>
             <div className="text-fg-subtle tabular-nums">
-              {t('readConcepts', { read: readCount, total: manifest.concepts.length })}
+              {t('readConcepts', { read: readCount, total: totalConcepts })}
             </div>
           </div>
         </div>

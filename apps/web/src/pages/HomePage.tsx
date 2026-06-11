@@ -23,10 +23,11 @@ import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
+import { DualProgressRing } from '@/components/ui/DualProgressRing';
 import { Surface } from '@/components/ui/Surface';
-import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
+import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
 import { effectiveLanguage, listManifests, prefetchTopic } from '@/lib/topics';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
@@ -36,6 +37,7 @@ interface TopicRow {
   manifest: TopicManifest;
   total: number;
   passed: number;
+  readConcepts: number;
 }
 
 type DifficultyFilter = 'all' | 'beginner' | 'intermediate' | 'advanced';
@@ -58,6 +60,7 @@ export const HomePage = () => {
   const { t: tCommon } = useTranslation('common');
   const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
+  const readByTopic = useReadConceptsByTopic();
   const [filter, setFilter] = useState<DifficultyFilter>('all');
 
   useEffect(() => {
@@ -86,8 +89,9 @@ export const HomePage = () => {
       manifest,
       total: topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0,
       passed: passedByTopic.get(manifest.slug) ?? 0,
+      readConcepts: countReadConcepts(manifest.concepts, readByTopic.get(manifest.slug)),
     }));
-  }, [manifests, progressRecords, language]);
+  }, [manifests, progressRecords, readByTopic, language]);
 
   const filteredRows = useMemo(() => {
     if (filter === 'all') return rows;
@@ -147,7 +151,7 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
     (concept) => concept.id === place.conceptId,
   );
   const concept = conceptIndex >= 0 ? row.manifest.concepts[conceptIndex] : undefined;
-  const percent = row.total === 0 ? 0 : row.passed / row.total;
+  const m = computeMastery(row.readConcepts, row.manifest.concepts.length, row.passed, row.total);
   return (
     <Link
       to="/topics/$slug"
@@ -159,18 +163,19 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
     >
       <Surface interactive rule="left" className="border-l-accent">
         <div className="p-5 flex items-center gap-4">
-          <ProgressRing
-            value={percent}
+          <DualProgressRing
+            reading={m.readingRatio}
+            solving={m.solvingRatio}
             size={52}
             stroke={4}
-            indicatorClassName={percent === 1 ? 'text-ok' : 'text-accent'}
+            gap={2}
             label={
               <span className="tabular-nums text-[12px]">
-                {Math.round(percent * 100)}
+                {Math.round(m.mastery * 100)}
                 <span className="text-[8px] text-fg-subtle">%</span>
               </span>
             }
-            ariaLabel={`${Math.round(percent * 100)}%`}
+            ariaLabel={`${Math.round(m.mastery * 100)}%`}
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 eyebrow text-[10px] text-accent">
@@ -354,8 +359,10 @@ interface TopicCardProps {
 
 const TopicCard = ({ row }: TopicCardProps) => {
   const { t } = useTranslation('home');
-  const { manifest, total, passed } = row;
-  const percent = total === 0 ? 0 : passed / total;
+  const { manifest, total, passed, readConcepts } = row;
+  const totalConcepts = manifest.concepts.length;
+  const m = computeMastery(readConcepts, totalConcepts, passed, total);
+  const masteryPercent = Math.round(m.mastery * 100);
   const totalMinutes = manifest.concepts.reduce((sum, c) => sum + c.estimatedMinutes, 0);
   const availableLanguages = getAvailableLanguages(manifest);
   const taglineKey = `card.tagline.${manifest.runtime}` as const;
@@ -383,31 +390,38 @@ const TopicCard = ({ row }: TopicCardProps) => {
                 {manifest.title}
               </h3>
             </div>
-            <ProgressRing
-              value={percent}
+            <DualProgressRing
+              reading={m.readingRatio}
+              solving={m.solvingRatio}
               size={48}
               stroke={4}
-              indicatorClassName={
-                percent === 1 ? 'text-ok' : percent > 0 ? 'text-accent' : 'text-fg-subtle'
-              }
+              gap={2}
               label={
                 <span className="tabular-nums">
-                  {Math.round(percent * 100)}
+                  {masteryPercent}
                   <span className="text-[8px] text-fg-subtle">%</span>
                 </span>
               }
-              ariaLabel={`${Math.round(percent * 100)}%`}
+              ariaLabel={t('card.masteryAria', { percent: masteryPercent })}
             />
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-[11px]">
-            <Stat3 label={t('stats.concepts')} value={manifest.concepts.length} />
+            <Stat3
+              label={t('card.readStat')}
+              value={readConcepts}
+              formatter={() => `${readConcepts}/${totalConcepts}`}
+            />
+            <Stat3
+              label={t('card.testsStat')}
+              value={total}
+              formatter={() => `${passed}/${total}`}
+            />
             <Stat3
               label="min"
               value={totalMinutes}
               formatter={(v) => t('card.minutes', { count: v })}
             />
-            <Stat3 label="ex." value={total} formatter={(v) => `${passed}/${v}`} />
           </div>
 
           <div className="mt-auto pt-2 flex items-center justify-between gap-2">
