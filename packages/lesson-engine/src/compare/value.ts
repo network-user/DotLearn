@@ -9,6 +9,11 @@ export const compareValues = (actual: unknown, expected: unknown, path = '$'): V
   if (Number.isNaN(actual as number) && Number.isNaN(expected as number)) {
     return { ok: true };
   }
+  // Python None becomes JS undefined, while a YAML `null` expectation loads as JS null.
+  // Both denote "no value", so treat them as equal.
+  if ((actual === null || actual === undefined) && (expected === null || expected === undefined)) {
+    return { ok: true };
+  }
   if (actual === expected) {
     return { ok: true };
   }

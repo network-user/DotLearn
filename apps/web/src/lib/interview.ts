@@ -70,13 +70,40 @@ export const getInterviewQuestion = (id: number): InterviewQuestionMeta | undefi
 
 export const interviewTitleOf = (id: number): string | undefined => byId.get(id)?.title;
 
+const STOP_WORDS = new Set([
+  'и', 'в', 'во', 'не', 'на', 'с', 'со', 'по', 'из', 'за', 'к', 'о', 'об', 'от', 'для',
+  'что', 'как', 'это', 'или', 'the', 'a', 'an', 'of', 'to', 'in', 'is', 'and', 'for',
+]);
+
+const titleKeywords = (title: string): Set<string> => {
+  const words = title
+    .toLowerCase()
+    .replace(/[«»"'`?.,:;!()]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2 && !STOP_WORDS.has(word));
+  return new Set(words);
+};
+
 export const relatedInterviewQuestions = (
   question: InterviewQuestionMeta,
   limit = 6,
-): InterviewQuestionMeta[] =>
-  interviewQuestions
-    .filter((other) => other.category === question.category && other.id !== question.id)
-    .slice(0, limit);
+): InterviewQuestionMeta[] => {
+  const keywords = titleKeywords(question.title);
+  const candidates = interviewQuestions.filter(
+    (other) => other.category === question.category && other.id !== question.id,
+  );
+  const scored = candidates.map((other) => {
+    const otherKeywords = titleKeywords(other.title);
+    let overlap = 0;
+    for (const word of otherKeywords) {
+      if (keywords.has(word)) overlap += 1;
+    }
+    const stageBonus = other.stage === question.stage ? 1 : 0;
+    return { other, score: overlap * 2 + stageBonus };
+  });
+  scored.sort((a, b) => b.score - a.score || a.other.id - b.other.id);
+  return scored.slice(0, limit).map((entry) => entry.other);
+};
 
 interface MdxModule {
   default: ComponentType<Record<string, unknown>>;

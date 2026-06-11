@@ -126,6 +126,7 @@ const runEvaluate = async (id: string, source: string, call: string): Promise<vo
       let value: unknown;
       let thrown: { type: string; message: string } | undefined;
       try {
+        await py.loadPackagesFromImports(source);
         py.runPython(source, options);
         value = toPlain(py.runPython(call, options));
       } catch (error) {

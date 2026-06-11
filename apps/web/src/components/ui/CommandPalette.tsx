@@ -50,7 +50,7 @@ interface CommandPaletteProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
+export default function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const router = useRouter();
@@ -103,16 +103,14 @@ const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
   );
 
   return (
-    <>
-      {open && (
-        <div
-          role="presentation"
-          onClick={() => setOpen(false)}
-          className="fixed inset-0 z-[var(--z-modal)] bg-canvas/55 backdrop-blur-sm animate-fade-in"
-        />
-      )}
-      {open && (
-        <div className="fixed inset-x-0 top-[14vh] z-[var(--z-modal)] mx-auto w-[92vw] max-w-[640px] px-3">
+    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-[var(--z-modal)] bg-canvas/55 backdrop-blur-sm animate-fade-in" />
+        <RadixDialog.Content
+          aria-label={t('search')}
+          className="fixed inset-x-0 top-[14vh] z-[var(--z-modal)] mx-auto w-[92vw] max-w-[640px] px-3 outline-none"
+        >
+          <RadixDialog.Title className="sr-only">{t('search')}</RadixDialog.Title>
           <Command
             label="Command palette"
             shouldFilter
@@ -220,11 +218,11 @@ const CommandPalette = ({ open, onOpenChange }: CommandPaletteProps) => {
               </div>
             </div>
           </Command>
-        </div>
-      )}
-    </>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   );
-};
+}
 
 interface PaletteItemProps {
   value: string;
