@@ -28,7 +28,7 @@ import { useTranslation } from 'react-i18next';
 
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
 import { listManifests } from '@/lib/topics';
-import { useBookmarks } from '@/lib/use-learning';
+import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
 
 import { applyTheme, persistTheme, readStoredTheme } from '../../lib/theme';
 import { cx } from './cx';
@@ -68,6 +68,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const [interview, setInterview] = useState<InterviewQuestionMeta[]>([]);
   const [query, setQuery] = useState('');
   const bookmarks = useBookmarks();
+  const notedKeys = useAllNotedKeys();
 
   useEffect(() => {
     let cancelled = false;
@@ -246,6 +247,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                         icon={<BookOpen size={14} />}
                         title={concept.conceptTitle}
                         meta={concept.topicTitle}
+                        dot={notedKeys.has(`${concept.slug}:${concept.conceptId}`)}
                       />
                     ))}
                   </Command.Group>
@@ -372,9 +374,10 @@ interface PaletteItemProps {
   icon: React.ReactNode;
   title: React.ReactNode;
   meta?: React.ReactNode;
+  dot?: boolean;
 }
 
-const PaletteItem = ({ value, onSelect, icon, title, meta }: PaletteItemProps) => (
+const PaletteItem = ({ value, onSelect, icon, title, meta, dot }: PaletteItemProps) => (
   <Command.Item
     value={value}
     onSelect={onSelect}
@@ -389,6 +392,7 @@ const PaletteItem = ({ value, onSelect, icon, title, meta }: PaletteItemProps) =
         {icon}
       </span>
       <span className="text-[13.5px] truncate">{title}</span>
+      {dot && <span aria-hidden className="size-1.5 rounded-full bg-accent shrink-0" />}
     </span>
     {meta && (
       <span className="text-[11px] text-fg-subtle tabular-nums shrink-0">{meta}</span>

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
+  BookOpenCheck,
   Bookmark,
   BookmarkCheck,
   Check,
@@ -25,15 +26,16 @@ import { TheoryContent } from '@/components/TheoryContent';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
+import { Kbd } from '@/components/ui/Kbd';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
-import { db, recordPlace, saveConceptNote, setBookmark } from '@/lib/progress-db';
+import { db, recordPlace, saveConceptNote, setBookmark, setConceptRead } from '@/lib/progress-db';
 import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
 import { effectiveLanguage, loadTopic } from '@/lib/topics';
-import { useConceptBookmarked } from '@/lib/use-learning';
+import { useConceptBookmarked, useConceptRead, useTopicReadConceptIds } from '@/lib/use-learning';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useStreak, useTopicProgress } from '@/lib/use-progress';
 
@@ -52,19 +54,23 @@ export const TopicPage = () => {
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
   const progress = useTopicProgress(slug);
   const streak = useStreak();
+  const readConceptIds = useTopicReadConceptIds(slug);
   const reduceMotion = useReducedMotion() ?? false;
   const requestedConceptRef = useRef<string | undefined>(search.concept);
   requestedConceptRef.current = search.concept;
 
-  const selectConcept = (conceptId: string): void => {
-    setActiveConceptId(conceptId);
-    void navigate({
-      to: '/topics/$slug',
-      params: { slug },
-      search: { concept: conceptId },
-      replace: true,
-    });
-  };
+  const selectConcept = useCallback(
+    (conceptId: string): void => {
+      setActiveConceptId(conceptId);
+      void navigate({
+        to: '/topics/$slug',
+        params: { slug },
+        search: { concept: conceptId },
+        replace: true,
+      });
+    },
+    [navigate, slug],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -122,6 +128,38 @@ export const TopicPage = () => {
     if (state.kind !== 'ready' || !activeConceptId) return;
     void recordPlace(slug, activeConceptId);
   }, [slug, activeConceptId, state.kind]);
+
+  useEffect(() => {
+    if (state.kind !== 'ready') return;
+    const concepts = state.bundle.manifest.concepts;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable ||
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.closest('.monaco-editor'))
+      ) {
+        return;
+      }
+      let delta = 0;
+      if (event.key === 'j' || event.key === 'ArrowRight') delta = 1;
+      else if (event.key === 'k' || event.key === 'ArrowLeft') delta = -1;
+      else return;
+      const index = concepts.findIndex((concept) => concept.id === activeConceptId);
+      const next = concepts[index + delta];
+      if (next) {
+        event.preventDefault();
+        selectConcept(next.id);
+        window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [state, activeConceptId, selectConcept, reduceMotion]);
 
   if (state.kind === 'loading') {
     return <TopicSkeleton />;
@@ -209,6 +247,7 @@ export const TopicPage = () => {
         passed={progress.passed}
         totalExercises={totalExercises}
         streak={streak}
+        readCount={readConceptIds.size}
       />
       {showFallbackBanner && (
         <Surface variant="inset" rule="left" className="border-l-warn">
@@ -265,9 +304,10 @@ interface TopicHeaderProps {
   passed: number;
   totalExercises: number;
   streak: number;
+  readCount: number;
 }
 
-const TopicHeader = ({ manifest, passed, totalExercises, streak }: TopicHeaderProps) => {
+const TopicHeader = ({ manifest, passed, totalExercises, streak, readCount }: TopicHeaderProps) => {
   const { t } = useTranslation('topic');
   const ratio = totalExercises === 0 ? 0 : passed / totalExercises;
   return (
@@ -317,7 +357,9 @@ const TopicHeader = ({ manifest, passed, totalExercises, streak }: TopicHeaderPr
             <div className="text-fg font-semibold tabular-nums">
               {t('solved', { passed, total: totalExercises })}
             </div>
-            <div className="text-fg-subtle">{manifest.concepts.length} · concepts</div>
+            <div className="text-fg-subtle tabular-nums">
+              {t('readConcepts', { read: readCount, total: manifest.concepts.length })}
+            </div>
           </div>
         </div>
       </div>
@@ -638,13 +680,34 @@ interface ConceptToolsProps {
 const ConceptTools = ({ slug, conceptId, notesOpen, onToggleNotes }: ConceptToolsProps) => {
   const { t } = useTranslation('topic');
   const bookmarked = useConceptBookmarked(slug, conceptId);
+  const read = useConceptRead(slug, conceptId);
   const toggleBookmark = (): void => {
     const next = !bookmarked;
     void setBookmark(slug, conceptId, next);
     toast.success(next ? t('bookmark.added') : t('bookmark.removed'));
   };
+  const toggleRead = (): void => {
+    const next = !read;
+    void setConceptRead(slug, conceptId, next);
+    toast.success(next ? t('read.markedRead') : t('read.markedUnread'));
+  };
   return (
     <div className="flex items-center gap-1.5 shrink-0">
+      <button
+        type="button"
+        onClick={toggleRead}
+        aria-pressed={read}
+        title={read ? t('read.markUnread') : t('read.markRead')}
+        aria-label={read ? t('read.markUnread') : t('read.markRead')}
+        className={cx(
+          'grid place-items-center size-9 rounded-lg border transition-colors',
+          read
+            ? 'border-ok/50 bg-ok/[0.08] text-ok'
+            : 'border-border-base text-fg-muted hover:text-fg hover:bg-surface-2/50',
+        )}
+      >
+        {read ? <BookOpenCheck size={16} /> : <BookOpen size={16} />}
+      </button>
       <button
         type="button"
         onClick={toggleBookmark}
@@ -745,7 +808,12 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
       >
         <ArrowLeft size={16} className="text-fg-subtle group-hover:text-accent transition-colors" />
         <div className="min-w-0">
-          <div className="eyebrow text-[10px]">{t('prevConcept')}</div>
+          <div className="eyebrow text-[10px] flex items-center gap-1.5">
+            {t('prevConcept')}
+            <span className="hidden sm:inline-flex">
+              <Kbd>k</Kbd>
+            </span>
+          </div>
           <div className="text-[14px] font-serif text-fg truncate group-hover:underline decoration-accent/50 underline-offset-2">
             {prevTitle ?? '—'}
           </div>
@@ -762,7 +830,12 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
         )}
       >
         <div className="min-w-0">
-          <div className="eyebrow text-[10px]">{t('nextConcept')}</div>
+          <div className="eyebrow text-[10px] flex items-center justify-end gap-1.5">
+            <span className="hidden sm:inline-flex">
+              <Kbd>j</Kbd>
+            </span>
+            {t('nextConcept')}
+          </div>
           <div className="text-[14px] font-serif text-fg truncate group-hover:underline decoration-accent/50 underline-offset-2">
             {nextTitle ?? '—'}
           </div>
