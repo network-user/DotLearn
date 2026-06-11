@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Eraser, Play, RotateCcw } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { ArrowLeft, Eraser, Play, RotateCcw, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { LazyCodeEditor } from '@/components/sandbox/LazyCodeEditor';
@@ -9,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Surface } from '@/components/ui/Surface';
 import { coarsePointerQuery, useMediaQuery } from '@/hooks/useMediaQuery';
 import { buildEditorHeight, buildEditorOptions } from '@/lib/editor-options';
-import { savePythonState, type PythonPlaygroundState } from '@/lib/playground';
+import { savePythonState, type PlaygroundView, type PythonPlaygroundState } from '@/lib/playground';
 import {
   defaultPythonTemplate,
   pythonTemplateById,
@@ -35,15 +36,17 @@ const splitStdout = (text: string, prefix: string): ConsoleLine[] =>
 export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
   const { t } = useTranslation('sandbox');
   const isCoarsePointer = useMediaQuery(coarsePointerQuery);
+  const reduceMotion = useReducedMotion() ?? false;
   const [templateId, setTemplateId] = useState(initialState.templateId);
   const [code, setCode] = useState(initialState.code);
+  const [view, setView] = useState<PlaygroundView>(initialState.view);
   const [status, setStatus] = useState<RunStatus>('idle');
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const session = useRef(0);
 
   useEffect(() => {
-    void savePythonState({ templateId, code });
-  }, [templateId, code]);
+    void savePythonState({ templateId, code, view });
+  }, [templateId, code, view]);
 
   const templateOptions: TemplateOption[] = useMemo(
     () =>
@@ -62,12 +65,19 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
     setLines([]);
   }, []);
 
-  const handleSelectTemplate = useCallback(
+  const handleOpenTemplate = useCallback(
     (id: string): void => {
-      applyTemplate(pythonTemplateById(id) ?? defaultPythonTemplate);
+      if (id !== templateId) {
+        applyTemplate(pythonTemplateById(id) ?? defaultPythonTemplate);
+      }
+      setView('workspace');
     },
-    [applyTemplate],
+    [applyTemplate, templateId],
   );
+
+  const backToGallery = useCallback((): void => {
+    setView('gallery');
+  }, []);
 
   const handleReset = useCallback((): void => {
     applyTemplate(pythonTemplateById(templateId) ?? defaultPythonTemplate);
@@ -132,85 +142,112 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
 
   const running = status === 'loading' || status === 'running';
   const consoleStatus = status === 'pass' ? 'pass' : status === 'fail' ? 'fail' : status;
+  const currentTemplate = pythonTemplateById(templateId) ?? defaultPythonTemplate;
+  const motionProps = reduceMotion
+    ? {}
+    : {
+        initial: { opacity: 0, y: 8 },
+        animate: { opacity: 1, y: 0 },
+        exit: { opacity: 0, y: -6 },
+        transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
+      };
 
   return (
-    <div className="space-y-4">
-      <section className="space-y-2">
-        <h2 className="eyebrow text-fg-subtle">{t('templates.heading')}</h2>
-        <TemplatePicker
-          options={templateOptions}
-          selectedId={templateId}
-          onSelect={handleSelectTemplate}
-        />
-      </section>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Surface variant="paper" className="min-w-0 overflow-hidden p-0">
-          <div className="flex items-center justify-between gap-2 border-b border-border-base bg-surface-2/60 px-3 py-2">
-            <span className="eyebrow font-mono">python</span>
-            {!isCoarsePointer && <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>}
+    <AnimatePresence mode="wait" initial={false}>
+      {view === 'gallery' ? (
+        <motion.div key="gallery" {...motionProps} className="space-y-3">
+          <p className="text-[13px] text-fg-muted">{t('gallery.choose')}</p>
+          <TemplatePicker options={templateOptions} onOpen={handleOpenTemplate} icon={Terminal} />
+        </motion.div>
+      ) : (
+        <motion.div key="workspace" {...motionProps} className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<ArrowLeft size={14} />}
+              onClick={backToGallery}
+              className="-ml-2 h-11 sm:h-8"
+            >
+              {t('actions.backToTemplates')}
+            </Button>
+            <span className="inline-flex min-w-0 items-center gap-1.5 eyebrow text-fg-subtle">
+              <Terminal size={12} className="shrink-0 text-accent" />
+              <span className="truncate">{t(currentTemplate.labelKey)}</span>
+            </span>
           </div>
-          <LazyCodeEditor
-            value={code}
-            onChange={(value) => setCode(value ?? '')}
-            language="python"
-            height={buildEditorHeight(isCoarsePointer, '300px', 'min(45dvh, 360px)')}
-            options={buildEditorOptions(isCoarsePointer, 4)}
-            onMount={(editor) => {
-              editor.onKeyDown((event) => {
-                if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void handleRun();
-                }
-              });
-            }}
-          />
-        </Surface>
 
-        <div className="min-w-0">
-          <PythonConsole
-            lines={lines}
-            status={consoleStatus}
-            emptyMessage={t('python.consoleEmpty')}
-          />
-        </div>
-      </div>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <Surface variant="paper" className="min-w-0 overflow-hidden p-0">
+              <div className="flex items-center justify-between gap-2 border-b border-border-base bg-surface-2/60 px-3 py-2">
+                <span className="eyebrow font-mono">python</span>
+                {!isCoarsePointer && (
+                  <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
+                )}
+              </div>
+              <LazyCodeEditor
+                value={code}
+                onChange={(value) => setCode(value ?? '')}
+                language="python"
+                height={buildEditorHeight(isCoarsePointer, '300px', 'min(45dvh, 360px)')}
+                options={buildEditorOptions(isCoarsePointer, 4)}
+                onMount={(editor) => {
+                  editor.onKeyDown((event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void handleRun();
+                    }
+                  });
+                }}
+              />
+            </Surface>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="primary"
-          size="sm"
-          leadingIcon={<Play size={14} />}
-          loading={running}
-          onClick={handleRun}
-          className="h-11 flex-1 sm:h-8 sm:flex-initial"
-        >
-          {status === 'loading'
-            ? t('python.loading')
-            : status === 'running'
-              ? t('python.running')
-              : t('python.run')}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          leadingIcon={<RotateCcw size={13} />}
-          onClick={handleReset}
-          className="h-11 sm:h-8"
-        >
-          {t('actions.resetTemplate')}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          leadingIcon={<Eraser size={13} />}
-          onClick={handleClear}
-          className="h-11 sm:h-8"
-        >
-          {t('actions.clear')}
-        </Button>
-      </div>
-    </div>
+            <div className="min-w-0">
+              <PythonConsole
+                lines={lines}
+                status={consoleStatus}
+                emptyMessage={t('python.consoleEmpty')}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              leadingIcon={<Play size={14} />}
+              loading={running}
+              onClick={handleRun}
+              className="h-11 flex-1 sm:h-8 sm:flex-initial"
+            >
+              {status === 'loading'
+                ? t('python.loading')
+                : status === 'running'
+                  ? t('python.running')
+                  : t('python.run')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<RotateCcw size={13} />}
+              onClick={handleReset}
+              className="h-11 sm:h-8"
+            >
+              {t('actions.resetTemplate')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<Eraser size={13} />}
+              onClick={handleClear}
+              className="h-11 sm:h-8"
+            >
+              {t('actions.clear')}
+            </Button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
