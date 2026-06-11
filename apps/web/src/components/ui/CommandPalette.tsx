@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import * as RadixDialog from '@radix-ui/react-dialog';
 import type { InterviewQuestionMeta, TopicManifest } from '@dotlearn/contracts';
-import { useRouter } from '@tanstack/react-router';
 import { Command } from 'cmdk';
 import {
   ArrowRight,
@@ -29,6 +28,7 @@ import { useTranslation } from 'react-i18next';
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
 import { listManifests } from '@/lib/topics';
 import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
+import { router } from '@/router';
 
 import { applyTheme, persistTheme, readStoredTheme } from '../../lib/theme';
 import { cx } from './cx';
@@ -62,7 +62,6 @@ interface CommandPaletteProps {
 export default function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
-  const router = useRouter();
   const setOpen = (value: boolean): void => onOpenChange(value);
   const [manifests, setManifests] = useState<TopicManifest[]>([]);
   const [interview, setInterview] = useState<InterviewQuestionMeta[]>([]);
@@ -356,7 +355,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                   <span>open</span>
                 </div>
                 <div className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
-                  <Kbd>⌘</Kbd>
+                  <Kbd>Ctrl</Kbd>
                   <Kbd>K</Kbd>
                 </div>
               </div>
