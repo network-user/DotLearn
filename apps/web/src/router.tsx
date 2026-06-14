@@ -129,6 +129,7 @@ const homeRoute = new Route({
 
 export interface TopicSearch {
   concept?: string | undefined;
+  resume?: boolean | undefined;
 }
 
 const topicRoute = new Route({
@@ -137,8 +138,13 @@ const topicRoute = new Route({
   component: TopicPage,
   validateSearch: (search: Record<string, unknown>): TopicSearch => ({
     concept:
-      typeof search.concept === 'string' && search.concept.length > 0
-        ? search.concept
+      typeof search.concept === 'string' && search.concept.length > 0 ? search.concept : undefined,
+    resume:
+      search.resume === '1' ||
+      search.resume === 1 ||
+      search.resume === true ||
+      search.resume === 'true'
+        ? true
         : undefined,
   }),
 });
@@ -164,9 +170,8 @@ const interviewRoute = new Route({
   validateSearch: (search: Record<string, unknown>): InterviewSearch => {
     const str = (value: unknown): string | undefined =>
       typeof value === 'string' && value.length > 0 ? value : undefined;
-    const status = search.status === 'studied' || search.status === 'not-studied'
-      ? search.status
-      : undefined;
+    const status =
+      search.status === 'studied' || search.status === 'not-studied' ? search.status : undefined;
     const sort =
       search.sort === 'title' || search.sort === 'topic' || search.sort === 'stage'
         ? search.sort
