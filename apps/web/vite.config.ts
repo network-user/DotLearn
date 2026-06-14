@@ -11,6 +11,7 @@ import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+import { searchIndexPlugin } from './vite-plugin-search-index';
 import { topicStatsPlugin } from './vite-plugin-topic-stats';
 
 const CONTENT_SECURITY_POLICY = [
@@ -106,6 +107,7 @@ export default defineConfig({
     cspPlugin(),
     pyodideAssetsPlugin(),
     topicStatsPlugin(),
+    searchIndexPlugin(),
     {
       enforce: 'pre',
       ...mdx({
@@ -192,6 +194,7 @@ export default defineConfig({
         manualChunks: (id) => {
           const normalized = id.replace(/\\/g, '/');
           if (normalized.includes('/src/lib/interview.ts')) return 'interview-data';
+          if (normalized.includes('\0virtual:search-index')) return 'search-index';
           if (id.includes('monaco-editor')) return 'monaco';
           if (id.includes('@monaco-editor/react')) return 'monaco';
           if (id.includes('sql.js')) return 'sqljs';

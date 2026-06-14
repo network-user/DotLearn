@@ -33,6 +33,8 @@ import { PyDemo } from '@/components/sandbox/PyDemo';
 import { PyStepper } from '@/components/sandbox/PyStepper';
 import { SideSql } from '@/components/sandbox/SideSql';
 import { cx } from '@/components/ui/cx';
+import { LightboxProvider } from '@/components/ui/Lightbox';
+import { LightboxImage, withZoom } from '@/components/ui/Zoomable';
 import { AccessScope } from '@/components/viz/AccessScope';
 import { AggregateViz } from '@/components/viz/AggregateViz';
 import { CapTheoremFigure } from '@/components/viz/CapTheoremFigure';
@@ -119,10 +121,7 @@ const Callout = ({
   const { t } = useTranslation('viz');
   const tone = calloutTone[type];
   return (
-    <aside
-      className={cx('not-prose my-6 border-l-2 pl-4 py-1', tone.rule)}
-      role="note"
-    >
+    <aside className={cx('not-prose my-6 border-l-2 pl-4 py-1', tone.rule)} role="note">
       <div className={cx('flex items-center gap-1.5 eyebrow mb-1.5', tone.text)}>
         {tone.icon}
         {title ?? t(tone.labelKey, { defaultValue: tone.fallback })}
@@ -154,7 +153,10 @@ const Detail = ({
       >
         <ChevronRight
           size={16}
-          className={cx('shrink-0 transition-transform duration-fast text-accent', open && 'rotate-90')}
+          className={cx(
+            'shrink-0 transition-transform duration-fast text-accent',
+            open && 'rotate-90',
+          )}
         />
         <span className="font-medium text-[14px]">{summary}</span>
       </button>
@@ -217,6 +219,45 @@ const SideViz = ({ title, children }: { title?: string; children: ReactNode }) =
     {title && <div className="eyebrow mb-2">{title}</div>}
     <div className="text-[13px] text-fg-muted leading-relaxed">{children}</div>
   </aside>
+);
+
+const diagramComponents = {
+  AccessScope,
+  AggregateViz,
+  CapTheoremFigure,
+  ClassFactory,
+  CompositionViz,
+  DocumentModelFigure,
+  GraphTraversalFigure,
+  GroupByViz,
+  HashTableViz,
+  HierarchyTreeFigure,
+  InheritanceTree,
+  JoinViz,
+  KeyValueStoreFigure,
+  MergeStepper,
+  NetworkModelFigure,
+  RefCountViz,
+  WideColumnFigure,
+  Figure,
+  Sketch,
+  PipelineFigure,
+  RowFilterFigure,
+  SortLimitFigure,
+  NestedQueryFigure,
+  ObjectMemoryFigure,
+  MroFigure,
+  BarChart,
+  LineChart,
+  AreaChart,
+  DistributionChart,
+};
+
+const zoomableDiagrams: Record<string, ComponentType<Record<string, unknown>>> = Object.fromEntries(
+  Object.entries(diagramComponents).map(([name, Component]) => [
+    name,
+    withZoom(Component as unknown as ComponentType<Record<string, unknown>>),
+  ]),
 );
 
 const mdxComponents = {
@@ -313,54 +354,29 @@ const mdxComponents = {
   SideSql,
   PyDemo,
   PyStepper,
-  AccessScope,
-  AggregateViz,
-  CapTheoremFigure,
-  ClassFactory,
-  CompositionViz,
-  DocumentModelFigure,
-  GraphTraversalFigure,
-  GroupByViz,
-  HashTableViz,
-  HierarchyTreeFigure,
-  InheritanceTree,
-  JoinViz,
-  KeyValueStoreFigure,
-  MergeStepper,
-  NetworkModelFigure,
-  RefCountViz,
-  WideColumnFigure,
-  Figure,
   PullQuote,
   MarginNote,
   Ref,
   Footnotes,
   Compare,
-  Sketch,
   SketchArrow,
   SketchBox,
   SketchHighlight,
   SketchLabel,
-  PipelineFigure,
-  RowFilterFigure,
-  SortLimitFigure,
-  NestedQueryFigure,
-  ObjectMemoryFigure,
-  MroFigure,
-  BarChart,
-  LineChart,
-  AreaChart,
-  DistributionChart,
+  ...zoomableDiagrams,
+  img: LightboxImage,
 };
 
 export const TheoryContent = ({ Component }: TheoryContentProps) => (
-  <MDXProvider components={mdxComponents}>
-    <FigureProvider>
-      <FootnoteProvider>
-        <div className="theory-content">
-          <Component />
-        </div>
-      </FootnoteProvider>
-    </FigureProvider>
-  </MDXProvider>
+  <LightboxProvider>
+    <MDXProvider components={mdxComponents}>
+      <FigureProvider>
+        <FootnoteProvider>
+          <div className="theory-content">
+            <Component />
+          </div>
+        </FootnoteProvider>
+      </FigureProvider>
+    </MDXProvider>
+  </LightboxProvider>
 );

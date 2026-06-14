@@ -58,6 +58,16 @@ const SandboxPage = lazy(() =>
     default: module.SandboxPage,
   })),
 );
+const LearningMapPage = lazy(() =>
+  import('./pages/LearningMapPage').then((module) => ({
+    default: module.LearningMapPage,
+  })),
+);
+const TodayPage = lazy(() =>
+  import('./pages/TodayPage').then((module) => ({
+    default: module.TodayPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -85,10 +95,36 @@ const rootRoute = new RootRoute({
   component: RootComponent,
 });
 
+export interface HomeSearch {
+  q?: string | undefined;
+  difficulty?: string | undefined;
+  runtime?: string[] | undefined;
+  tags?: string[] | undefined;
+  status?: string | undefined;
+}
+
 const homeRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/',
   component: HomePage,
+  validateSearch: (search: Record<string, unknown>): HomeSearch => {
+    const str = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.length > 0 ? value : undefined;
+    const strArray = (value: unknown): string[] | undefined => {
+      const source = Array.isArray(value) ? value : value === undefined ? [] : [value];
+      const cleaned = source.filter(
+        (entry): entry is string => typeof entry === 'string' && entry.length > 0,
+      );
+      return cleaned.length > 0 ? cleaned : undefined;
+    };
+    return {
+      q: str(search.q),
+      difficulty: str(search.difficulty),
+      runtime: strArray(search.runtime),
+      tags: strArray(search.tags),
+      status: str(search.status),
+    };
+  },
 });
 
 export interface TopicSearch {
@@ -204,6 +240,18 @@ const sandboxRoute = new Route({
   component: SandboxPage,
 });
 
+const mapRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/map',
+  component: LearningMapPage,
+});
+
+const todayRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/today',
+  component: TodayPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
@@ -217,6 +265,8 @@ const routeTree = rootRoute.addChildren([
   flashcardsRoute,
   flashcardReviewRoute,
   sandboxRoute,
+  mapRoute,
+  todayRoute,
 ]);
 
 export const router = new Router({
