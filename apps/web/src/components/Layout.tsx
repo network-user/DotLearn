@@ -67,6 +67,8 @@ export const Layout = ({ children }: LayoutProps) => {
 
             <nav className="hidden md:flex items-center gap-0.5 self-stretch [&>a]:h-full">
               <NavLink to="/" active={isActive('/')} label={t('topics')} />
+              <NavLink to="/today" active={isActive('/today')} label={t('today')} />
+              <NavLink to="/map" active={isActive('/map')} label={t('map')} />
               <NavLink to="/interview" active={isActive('/interview')} label={t('interview')} />
               <NavLink to="/sandbox" active={isActive('/sandbox')} label={t('sandbox')} />
               <NavLink to="/proposals" active={isActive('/proposals')} label={t('proposals')} />

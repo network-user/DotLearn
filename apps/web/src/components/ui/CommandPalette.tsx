@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Bookmark,
   BookOpen,
+  CalendarCheck,
   Code2,
   Database,
   FileText,
@@ -19,11 +20,14 @@ import {
   MessagesSquare,
   Moon,
   PencilLine,
+  Search,
   ShieldCheck,
   Sparkles,
   Sun,
+  Waypoints,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { SearchEntry } from 'virtual:search-index';
 
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
 import { listManifests } from '@/lib/topics';
@@ -38,6 +42,35 @@ const GROUP_CLASS =
   'px-1 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-fg-subtle';
 
 const INTERVIEW_LIMIT = 25;
+const CONTENT_LIMIT = 30;
+const SNIPPET_RADIUS = 60;
+
+interface ContentMatch {
+  key: string;
+  slug: string;
+  conceptId: string;
+  conceptTitle: string;
+  topicTitle: string;
+  before: string;
+  hit: string;
+  after: string;
+}
+
+const buildSnippet = (
+  text: string,
+  query: string,
+  matchIndex: number,
+): { before: string; hit: string; after: string } => {
+  const start = Math.max(0, matchIndex - SNIPPET_RADIUS);
+  const end = Math.min(text.length, matchIndex + query.length + SNIPPET_RADIUS);
+  const leadingEllipsis = start > 0 ? '…' : '';
+  const trailingEllipsis = end < text.length ? '…' : '';
+  return {
+    before: `${leadingEllipsis}${text.slice(start, matchIndex)}`,
+    hit: text.slice(matchIndex, matchIndex + query.length),
+    after: `${text.slice(matchIndex + query.length, end)}${trailingEllipsis}`,
+  };
+};
 
 const runtimeIcon = (runtime: string) => {
   if (runtime === 'sql.js') return <Database size={14} />;
@@ -48,6 +81,8 @@ const runtimeIcon = (runtime: string) => {
 
 const navIcon: Record<string, React.ReactNode> = {
   '/': <Hash size={14} />,
+  '/today': <CalendarCheck size={14} />,
+  '/map': <Waypoints size={14} />,
   '/progress': <ListChecks size={14} />,
   '/admin': <ShieldCheck size={14} />,
   '/submit': <PencilLine size={14} />,
@@ -65,6 +100,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const setOpen = (value: boolean): void => onOpenChange(value);
   const [manifests, setManifests] = useState<TopicManifest[]>([]);
   const [interview, setInterview] = useState<InterviewQuestionMeta[]>([]);
+  const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const [query, setQuery] = useState('');
   const bookmarks = useBookmarks();
   const notedKeys = useAllNotedKeys();
@@ -85,6 +121,14 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     let cancelled = false;
     void import('@/lib/interview').then((module) => {
       if (!cancelled) setInterview(module.interviewQuestions);
+    });
+    void import('virtual:search-index').then((module) => {
+      if (cancelled) return;
+      try {
+        setSearchEntries(JSON.parse(module.default) as SearchEntry[]);
+      } catch {
+        setSearchEntries([]);
+      }
     });
     return () => {
       cancelled = true;
@@ -137,6 +181,60 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     return out;
   }, [interview, query]);
 
+  const contentMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+
+    const currentLanguage = i18n.resolvedLanguage === 'en' ? 'en' : 'ru';
+    const slugsWithCurrentLanguage = new Set<string>();
+    for (const entry of searchEntries) {
+      if (entry.language === currentLanguage) slugsWithCurrentLanguage.add(entry.slug);
+    }
+
+    type Ranked = ContentMatch & { titleHit: boolean; matchIndex: number };
+    const ranked: Ranked[] = [];
+    const seen = new Set<string>();
+
+    for (const entry of searchEntries) {
+      const slugHasCurrentLanguage = slugsWithCurrentLanguage.has(entry.slug);
+      if (entry.language !== currentLanguage && slugHasCurrentLanguage) continue;
+
+      const titleIndex = entry.conceptTitle.toLowerCase().indexOf(q);
+      const bodyIndex = entry.text.toLowerCase().indexOf(q);
+      if (titleIndex < 0 && bodyIndex < 0) continue;
+
+      const dedupeKey = `${entry.slug}:${entry.conceptId}:${entry.type}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      const matchIndex = bodyIndex >= 0 ? bodyIndex : 0;
+      const snippet =
+        bodyIndex >= 0
+          ? buildSnippet(entry.text, q, bodyIndex)
+          : { before: '', hit: '', after: entry.text.slice(0, SNIPPET_RADIUS * 2) + (entry.text.length > SNIPPET_RADIUS * 2 ? '…' : '') };
+
+      ranked.push({
+        key: `${entry.type}-${entry.slug}-${entry.conceptId}`,
+        slug: entry.slug,
+        conceptId: entry.conceptId,
+        conceptTitle: entry.conceptTitle,
+        topicTitle: entry.topicTitle,
+        before: snippet.before,
+        hit: snippet.hit,
+        after: snippet.after,
+        titleHit: titleIndex >= 0,
+        matchIndex,
+      });
+    }
+
+    ranked.sort((left, right) => {
+      if (left.titleHit !== right.titleHit) return left.titleHit ? -1 : 1;
+      return left.matchIndex - right.matchIndex;
+    });
+
+    return ranked.slice(0, CONTENT_LIMIT);
+  }, [searchEntries, query, i18n.resolvedLanguage]);
+
   const go = (path: string): void => {
     setOpen(false);
     void router.navigate({ to: path });
@@ -182,6 +280,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const navItems = useMemo(
     () => [
       { path: '/', label: t('topics') },
+      { path: '/today', label: t('today') },
+      { path: '/map', label: t('map') },
       { path: '/progress', label: t('progress') },
       { path: '/proposals', label: t('proposals', { defaultValue: 'Proposals' }) },
       { path: '/submit', label: t('submit', { defaultValue: 'Submit topic' }) },
@@ -247,6 +347,23 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                         title={concept.conceptTitle}
                         meta={concept.topicTitle}
                         dot={notedKeys.has(`${concept.slug}:${concept.conceptId}`)}
+                      />
+                    ))}
+                  </Command.Group>
+                )}
+
+                {contentMatches.length > 0 && (
+                  <Command.Group heading={t('groups.content')} className={GROUP_CLASS}>
+                    {contentMatches.map((match) => (
+                      <ContentPaletteItem
+                        key={match.key}
+                        value={`content ${query} ${match.conceptTitle} ${match.topicTitle} ${match.slug}`}
+                        onSelect={() => goConcept(match.slug, match.conceptId)}
+                        title={match.conceptTitle}
+                        meta={match.topicTitle}
+                        before={match.before}
+                        hit={match.hit}
+                        after={match.after}
                       />
                     ))}
                   </Command.Group>
@@ -396,5 +513,50 @@ const PaletteItem = ({ value, onSelect, icon, title, meta, dot }: PaletteItemPro
     {meta && (
       <span className="text-[11px] text-fg-subtle tabular-nums shrink-0">{meta}</span>
     )}
+  </Command.Item>
+);
+
+interface ContentPaletteItemProps {
+  value: string;
+  onSelect: () => void;
+  title: React.ReactNode;
+  meta: React.ReactNode;
+  before: string;
+  hit: string;
+  after: string;
+}
+
+const ContentPaletteItem = ({
+  value,
+  onSelect,
+  title,
+  meta,
+  before,
+  hit,
+  after,
+}: ContentPaletteItemProps) => (
+  <Command.Item
+    value={value}
+    onSelect={onSelect}
+    className={cx(
+      'flex items-start gap-2.5 rounded-lg px-2.5 py-2 cursor-pointer outline-none',
+      'data-[selected=true]:bg-accent/10 data-[selected=true]:text-fg',
+      'text-fg-muted transition-colors duration-fast',
+    )}
+  >
+    <span className="grid place-items-center size-6 rounded-md bg-surface-2/60 text-fg-subtle shrink-0 mt-0.5">
+      <Search size={14} />
+    </span>
+    <span className="flex flex-col min-w-0 gap-0.5">
+      <span className="flex items-center justify-between gap-3">
+        <span className="text-[13.5px] truncate">{title}</span>
+        <span className="text-[11px] text-fg-subtle shrink-0">{meta}</span>
+      </span>
+      <span className="text-[12px] leading-snug text-fg-subtle line-clamp-2">
+        {before}
+        {hit && <span className="text-accent">{hit}</span>}
+        {after}
+      </span>
+    </span>
   </Command.Item>
 );

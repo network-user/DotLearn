@@ -15,8 +15,10 @@ import {
   Check,
   Compass,
   Flame,
+  Focus,
   Languages,
   ListTree,
+  Minimize2,
   NotebookPen,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -48,6 +50,118 @@ type LoadState =
   | { kind: 'notFound' }
   | { kind: 'error'; message: string };
 
+const RAIL_WIDTH_KEY = 'dotlearn:topic-rail-w';
+const TOC_WIDTH_KEY = 'dotlearn:topic-toc-w';
+const FOCUS_KEY = 'dotlearn:topic-focus';
+const RAIL_WIDTH_DEFAULT = 244;
+const TOC_WIDTH_DEFAULT = 220;
+const RAIL_WIDTH_MIN = 180;
+const RAIL_WIDTH_MAX = 360;
+const TOC_WIDTH_MIN = 160;
+const TOC_WIDTH_MAX = 320;
+const RESIZE_STEP = 16;
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const readStoredWidth = (key: string, fallback: number, min: number, max: number): number => {
+  if (typeof window === 'undefined') return fallback;
+  const raw = window.localStorage.getItem(key);
+  if (raw === null) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? clamp(parsed, min, max) : fallback;
+};
+
+const readStoredFocus = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(FOCUS_KEY) === 'on';
+};
+
+type ResizeEdge = 'rail' | 'toc';
+
+interface ResizeHandleProps {
+  edge: ResizeEdge;
+  width: number;
+  min: number;
+  max: number;
+  ariaLabel: string;
+  onResize: (next: number) => void;
+  className?: string;
+}
+
+const ResizeHandle = ({
+  edge,
+  width,
+  min,
+  max,
+  ariaLabel,
+  onResize,
+  className,
+}: ResizeHandleProps) => {
+  const draggingRef = useRef(false);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(width);
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    draggingRef.current = true;
+    startXRef.current = event.clientX;
+    startWidthRef.current = width;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (!draggingRef.current) return;
+    const direction = edge === 'rail' ? 1 : -1;
+    const delta = (event.clientX - startXRef.current) * direction;
+    onResize(clamp(startWidthRef.current + delta, min, max));
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    draggingRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const direction = edge === 'rail' ? 1 : -1;
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      onResize(clamp(width - RESIZE_STEP * direction, min, max));
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      onResize(clamp(width + RESIZE_STEP * direction, min, max));
+    }
+  };
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={ariaLabel}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(width)}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onKeyDown={onKeyDown}
+      className={cx(
+        'group relative w-2 -mx-3 self-stretch cursor-col-resize touch-none select-none',
+        'focus-visible:outline-none',
+        className,
+      )}
+    >
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-border-base transition-colors group-hover:bg-accent group-focus-visible:bg-accent"
+      />
+    </div>
+  );
+};
+
 export const TopicPage = () => {
   const { slug } = useParams({ from: '/topics/$slug' });
   const search = useSearch({ from: '/topics/$slug' });
@@ -61,6 +175,34 @@ export const TopicPage = () => {
   const reduceMotion = useReducedMotion() ?? false;
   const requestedConceptRef = useRef<string | undefined>(search.concept);
   requestedConceptRef.current = search.concept;
+  const [railWidth, setRailWidth] = useState(() =>
+    readStoredWidth(RAIL_WIDTH_KEY, RAIL_WIDTH_DEFAULT, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX),
+  );
+  const [tocWidth, setTocWidth] = useState(() =>
+    readStoredWidth(TOC_WIDTH_KEY, TOC_WIDTH_DEFAULT, TOC_WIDTH_MIN, TOC_WIDTH_MAX),
+  );
+  const [focusMode, setFocusMode] = useState(readStoredFocus);
+
+  useEffect(() => {
+    window.localStorage.setItem(RAIL_WIDTH_KEY, String(Math.round(railWidth)));
+  }, [railWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem(TOC_WIDTH_KEY, String(Math.round(tocWidth)));
+  }, [tocWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem(FOCUS_KEY, focusMode ? 'on' : 'off');
+    const root = document.documentElement;
+    if (focusMode) {
+      root.dataset.focus = 'on';
+    } else {
+      delete root.dataset.focus;
+    }
+    return () => {
+      delete document.documentElement.dataset.focus;
+    };
+  }, [focusMode]);
 
   const selectConcept = useCallback(
     (conceptId: string): void => {
@@ -146,6 +288,18 @@ export const TopicPage = () => {
           target.tagName === 'SELECT' ||
           target.closest('.monaco-editor'))
       ) {
+        return;
+      }
+      if (event.key === 'f') {
+        event.preventDefault();
+        setFocusMode((value) => !value);
+        return;
+      }
+      if (event.key === 'Escape') {
+        setFocusMode((value) => {
+          if (value) event.preventDefault();
+          return false;
+        });
         return;
       }
       let delta = 0;
@@ -267,20 +421,57 @@ export const TopicPage = () => {
           </div>
         </Surface>
       )}
-      <ConceptStrip
-        bundle={bundle}
-        activeConceptId={activeConcept?.conceptId}
-        onSelect={selectConcept}
-        progress={progress.byExercise}
-      />
-      <div className="grid grid-cols-1 lg:grid-cols-[244px_minmax(0,1fr)] xl:grid-cols-[244px_minmax(0,1fr)_220px] gap-6">
-        <ConceptRail
+      {focusMode && (
+        <button
+          type="button"
+          onClick={() => setFocusMode(false)}
+          aria-label={t('focus.exitButton')}
+          title={t('focus.exitButton')}
+          className="fixed right-[calc(env(safe-area-inset-right,0px)+12px)] top-[calc(var(--safe-top)+12px)] z-[var(--z-modal)] inline-flex items-center gap-2 h-11 px-4 rounded-full border border-border-base glass-strong text-sm font-medium text-fg shadow-float hover:bg-fg/[0.04] transition-colors"
+        >
+          <Minimize2 size={15} />
+          <span>{t('focus.exitButton')}</span>
+        </button>
+      )}
+      {!focusMode && (
+        <ConceptStrip
           bundle={bundle}
           activeConceptId={activeConcept?.conceptId}
           onSelect={selectConcept}
           progress={progress.byExercise}
         />
-        <section className="min-w-0 space-y-6">
+      )}
+      <div
+        className={cx(
+          'grid grid-cols-1 gap-6',
+          !focusMode &&
+            'lg:[grid-template-columns:var(--rail-w)_minmax(0,1fr)] xl:[grid-template-columns:var(--rail-w)_minmax(0,1fr)_var(--toc-w)]',
+        )}
+        style={{ '--rail-w': `${railWidth}px`, '--toc-w': `${tocWidth}px` } as React.CSSProperties}
+      >
+        {!focusMode && (
+          <div className="hidden lg:flex items-stretch min-w-0">
+            <div className="min-w-0 flex-1">
+              <ConceptRail
+                bundle={bundle}
+                activeConceptId={activeConcept?.conceptId}
+                onSelect={selectConcept}
+                progress={progress.byExercise}
+              />
+            </div>
+            <ResizeHandle
+              edge="rail"
+              width={railWidth}
+              min={RAIL_WIDTH_MIN}
+              max={RAIL_WIDTH_MAX}
+              ariaLabel={t('resize.railAria')}
+              onResize={setRailWidth}
+            />
+          </div>
+        )}
+        <section
+          className={cx('min-w-0 space-y-6', focusMode && 'mx-auto w-full max-w-3xl')}
+        >
           {activeConcept && activeManifestConcept ? (
             <ConceptTransition conceptId={activeConcept.conceptId}>
               <ConceptPanel
@@ -291,6 +482,8 @@ export const TopicPage = () => {
                 exercises={conceptExercises}
                 passed={conceptPassed}
                 ratio={conceptRatio}
+                focusMode={focusMode}
+                onToggleFocus={() => setFocusMode((value) => !value)}
               />
             </ConceptTransition>
           ) : (
@@ -303,7 +496,21 @@ export const TopicPage = () => {
             onNext={() => handleNav(1)}
           />
         </section>
-        <TocSidebar conceptId={activeConcept?.conceptId} ratio={conceptRatio} />
+        {!focusMode && (
+          <div className="hidden xl:flex items-stretch min-w-0">
+            <ResizeHandle
+              edge="toc"
+              width={tocWidth}
+              min={TOC_WIDTH_MIN}
+              max={TOC_WIDTH_MAX}
+              ariaLabel={t('resize.tocAria')}
+              onResize={setTocWidth}
+            />
+            <div className="min-w-0 flex-1">
+              <TocSidebar conceptId={activeConcept?.conceptId} ratio={conceptRatio} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

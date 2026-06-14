@@ -6,6 +6,7 @@ import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle2, GraduationCap, Search, Shuffle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import type { InterviewSearch } from '@/router';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
 import { Surface } from '@/components/ui/Surface';
@@ -50,12 +51,12 @@ export const InterviewListPage = () => {
   const debouncedQuery = useDebouncedValue(queryInput, 220);
 
   const patch = (
-    next: Record<string, string | undefined>,
+    next: Partial<InterviewSearch>,
     options?: { replace?: boolean },
   ): void => {
     void navigate({
       to: '/interview',
-      search: (prev) => ({ ...prev, ...next }),
+      search: (prev): InterviewSearch => ({ ...(prev as InterviewSearch), ...next }),
       ...(options?.replace ? { replace: true } : {}),
     });
   };

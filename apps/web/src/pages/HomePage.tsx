@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
   ArrowUpRight,
   Bookmark,
+  CalendarCheck,
   Code2,
   Database,
   FileText,
@@ -15,7 +16,11 @@ import {
   History,
   Layers,
   NotebookPen,
+  RotateCcw,
+  Search,
   Sparkles,
+  Waypoints,
+  X,
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
 
@@ -31,6 +36,7 @@ import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib
 import { db } from '@/lib/progress-db';
 import { effectiveLanguage, listManifests, prefetchTopic } from '@/lib/topics';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import topicStats from 'virtual:topic-stats';
 
 interface TopicRow {
@@ -41,6 +47,22 @@ interface TopicRow {
 }
 
 type DifficultyFilter = 'all' | 'beginner' | 'intermediate' | 'advanced';
+type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'mastered';
+
+const STATUS_FILTERS: StatusFilter[] = ['all', 'not-started', 'in-progress', 'mastered'];
+const STATUS_LABEL_KEY: Record<StatusFilter, string> = {
+  all: 'status.all',
+  'not-started': 'status.notStarted',
+  'in-progress': 'status.inProgress',
+  mastered: 'status.mastered',
+};
+
+const RUNTIME_LABEL_KEY: Record<string, string> = {
+  'sql.js': 'runtimeLabel.sql',
+  pyodide: 'runtimeLabel.python',
+  javascript: 'runtimeLabel.javascript',
+  none: 'runtimeLabel.none',
+};
 
 const DIFFICULTY_TONE: Record<string, 'success' | 'warning' | 'danger'> = {
   beginner: 'success',
@@ -55,13 +77,70 @@ const runtimeIcon = (runtime: string) => {
   return <FileText size={14} />;
 };
 
+const statusOfRow = (row: TopicRow): StatusFilter => {
+  const m = computeMastery(
+    row.readConcepts,
+    row.manifest.concepts.length,
+    row.passed,
+    row.total,
+  );
+  if (m.mastery >= 0.999) return 'mastered';
+  if (row.passed === 0 && row.readConcepts === 0 && m.mastery === 0) return 'not-started';
+  return 'in-progress';
+};
+
+const toggleInArray = (values: string[], value: string): string[] =>
+  values.includes(value)
+    ? values.filter((entry) => entry !== value)
+    : [...values, value];
+
+const isDifficultyFilter = (value: string | undefined): value is DifficultyFilter =>
+  value === 'beginner' || value === 'intermediate' || value === 'advanced';
+
+const isStatusFilter = (value: string | undefined): value is StatusFilter =>
+  value === 'not-started' || value === 'in-progress' || value === 'mastered';
+
 export const HomePage = () => {
   const { t } = useTranslation('home');
   const { t: tCommon } = useTranslation('common');
   const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
-  const [filter, setFilter] = useState<DifficultyFilter>('all');
+
+  const search = useSearch({ from: '/' });
+  const navigate = useNavigate();
+
+  const difficulty: DifficultyFilter = isDifficultyFilter(search.difficulty)
+    ? search.difficulty
+    : 'all';
+  const status: StatusFilter = isStatusFilter(search.status) ? search.status : 'all';
+  const runtimeFilter = useMemo(() => search.runtime ?? [], [search.runtime]);
+  const tagFilter = useMemo(() => search.tags ?? [], [search.tags]);
+  const query = search.q ?? '';
+
+  const [queryInput, setQueryInput] = useState(query);
+  const debouncedQuery = useDebouncedValue(queryInput, 300);
+
+  const patch = useCallback(
+    (next: Partial<HomeSearchPatch>): void => {
+      void navigate({
+        to: '/',
+        search: (prev) => ({ ...prev, ...next }),
+        replace: true,
+      });
+    },
+    [navigate],
+  );
+
+  useEffect(() => {
+    if ((debouncedQuery || undefined) !== (query || undefined)) {
+      patch({ q: debouncedQuery || undefined });
+    }
+  }, [debouncedQuery, query, patch]);
+
+  useEffect(() => {
+    setQueryInput(query);
+  }, [query]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,19 +172,83 @@ export const HomePage = () => {
     }));
   }, [manifests, progressRecords, readByTopic, language]);
 
+  const availableRuntimes = useMemo(() => {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const row of rows) {
+      if (!seen.has(row.manifest.runtime)) {
+        seen.add(row.manifest.runtime);
+        ordered.push(row.manifest.runtime);
+      }
+    }
+    return ordered;
+  }, [rows]);
+
+  const availableTags = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      for (const tag of row.manifest.tags) {
+        seen.add(tag);
+      }
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b, language));
+  }, [rows, language]);
+
   const filteredRows = useMemo(() => {
-    if (filter === 'all') return rows;
-    return rows.filter((row) => row.manifest.difficulty === filter);
-  }, [rows, filter]);
+    const needle = debouncedQuery.trim().toLowerCase();
+    return rows.filter((row) => {
+      const { manifest } = row;
+      if (difficulty !== 'all' && manifest.difficulty !== difficulty) return false;
+      if (runtimeFilter.length > 0 && !runtimeFilter.includes(manifest.runtime)) return false;
+      if (tagFilter.length > 0 && !tagFilter.every((tag) => manifest.tags.includes(tag)))
+        return false;
+      if (status !== 'all' && statusOfRow(row) !== status) return false;
+      if (needle) {
+        const haystack = [manifest.title, ...manifest.tags].join(' ').toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [rows, difficulty, runtimeFilter, tagFilter, status, debouncedQuery]);
 
   const totalConcepts = rows.reduce((sum, row) => sum + row.manifest.concepts.length, 0);
   const runtimes = new Set(rows.map((row) => row.manifest.runtime));
+
+  const filtersActive =
+    queryInput.trim().length > 0 ||
+    difficulty !== 'all' ||
+    status !== 'all' ||
+    runtimeFilter.length > 0 ||
+    tagFilter.length > 0;
+
+  const resetFilters = useCallback((): void => {
+    setQueryInput('');
+    patch({
+      q: undefined,
+      difficulty: undefined,
+      status: undefined,
+      runtime: undefined,
+      tags: undefined,
+    });
+  }, [patch]);
+
+  const toggleRuntime = (value: string): void => {
+    const next = toggleInArray(runtimeFilter, value);
+    patch({ runtime: next.length > 0 ? next : undefined });
+  };
+
+  const toggleTag = (value: string): void => {
+    const next = toggleInArray(tagFilter, value);
+    patch({ tags: next.length > 0 ? next : undefined });
+  };
 
   return (
     <div className="space-y-14">
       <Hero stats={{ topics: rows.length, concepts: totalConcepts, runtimes: runtimes.size }} />
 
       <ContinueCard rows={rows} />
+
+      <TodayCard />
 
       <section className="space-y-5" id="topics">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -117,18 +260,35 @@ export const HomePage = () => {
                 : t('available', { count: filteredRows.length })}
             </p>
           </div>
-          <FilterBar value={filter} onChange={setFilter} />
+          <FilterBar value={difficulty} onChange={(value) => patch({ difficulty: value === 'all' ? undefined : value })} />
         </div>
+
+        <CatalogToolbar
+          queryInput={queryInput}
+          onQueryChange={setQueryInput}
+          status={status}
+          onStatusChange={(value) => patch({ status: value === 'all' ? undefined : value })}
+          availableRuntimes={availableRuntimes}
+          runtimeFilter={runtimeFilter}
+          onToggleRuntime={toggleRuntime}
+          availableTags={availableTags}
+          tagFilter={tagFilter}
+          onToggleTag={toggleTag}
+          filtersActive={filtersActive}
+          onReset={resetFilters}
+        />
 
         {manifests === undefined ? (
           <SkeletonGrid />
         ) : rows.length === 0 ? (
           <EmptyState />
+        ) : filteredRows.length === 0 ? (
+          <NoMatchesState onReset={resetFilters} />
         ) : (
           <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger">
             {filteredRows.map((row) => (
               <li key={row.manifest.slug}>
-                <TopicCard row={row} />
+                <TopicCard row={row} activeTags={tagFilter} onToggleTag={toggleTag} />
               </li>
             ))}
           </ul>
@@ -137,6 +297,14 @@ export const HomePage = () => {
     </div>
   );
 };
+
+interface HomeSearchPatch {
+  q?: string | undefined;
+  difficulty?: string | undefined;
+  runtime?: string[] | undefined;
+  tags?: string[] | undefined;
+  status?: string | undefined;
+}
 
 const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
   const { t } = useTranslation('home');
@@ -201,6 +369,60 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
           </div>
           <span className="shrink-0 inline-flex items-center gap-1.5 text-accent text-sm font-medium">
             <span className="hidden sm:inline">{t('continue.cta')}</span>
+            <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+          </span>
+        </div>
+      </Surface>
+    </Link>
+  );
+};
+
+const TodayCard = () => {
+  const { t } = useTranslation('home');
+  const nowIso = useMemo(() => new Date().toISOString(), []);
+  const failedCount = useLiveQuery(
+    () => db.progress.where('status').equals('fail').count(),
+    [],
+    0,
+  );
+  const dueCount = useLiveQuery(
+    () => db.flashcardReviews.where('due').below(nowIso).count(),
+    [nowIso],
+    0,
+  );
+  if (failedCount === 0 && dueCount === 0) return null;
+  return (
+    <Link to="/today" className="group block">
+      <Surface interactive rule="left" className="border-l-accent">
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+          <span className="grid size-11 shrink-0 place-items-center rounded-full bg-accent/[0.08] text-accent">
+            <CalendarCheck size={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 eyebrow text-[10px] text-accent">
+              {t('today.eyebrow')}
+            </div>
+            <h3 className="mt-1 font-display text-xl leading-tight tracking-tightish text-fg">
+              {t('today.title')}
+            </h3>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              {dueCount > 0 && (
+                <Badge tone="warning" variant="soft">
+                  <span className="inline-flex items-center gap-1.5">
+                    <RotateCcw size={12} />
+                    {t('today.due', { count: dueCount })}
+                  </span>
+                </Badge>
+              )}
+              {failedCount > 0 && (
+                <Badge tone="danger" variant="soft">
+                  {t('today.mistakes', { count: failedCount })}
+                </Badge>
+              )}
+            </div>
+          </div>
+          <span className="shrink-0 inline-flex items-center gap-1.5 text-accent text-sm font-medium">
+            <span className="hidden sm:inline">{t('today.cta')}</span>
             <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
           </span>
         </div>
@@ -282,6 +504,11 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
                 {tCards('title')}
               </Button>
             </Link>
+            <Link to="/map">
+              <Button variant="ghost" size="lg" leadingIcon={<Waypoints size={16} />}>
+                {t('mapCta')}
+              </Button>
+            </Link>
           </motion.div>
         </div>
 
@@ -353,11 +580,151 @@ const FilterBar = ({
   );
 };
 
-interface TopicCardProps {
-  row: TopicRow;
+interface CatalogToolbarProps {
+  queryInput: string;
+  onQueryChange: (value: string) => void;
+  status: StatusFilter;
+  onStatusChange: (value: StatusFilter) => void;
+  availableRuntimes: string[];
+  runtimeFilter: string[];
+  onToggleRuntime: (value: string) => void;
+  availableTags: string[];
+  tagFilter: string[];
+  onToggleTag: (value: string) => void;
+  filtersActive: boolean;
+  onReset: () => void;
 }
 
-const TopicCard = ({ row }: TopicCardProps) => {
+const CatalogToolbar = ({
+  queryInput,
+  onQueryChange,
+  status,
+  onStatusChange,
+  availableRuntimes,
+  runtimeFilter,
+  onToggleRuntime,
+  availableTags,
+  tagFilter,
+  onToggleTag,
+  filtersActive,
+  onReset,
+}: CatalogToolbarProps) => {
+  const { t } = useTranslation('home');
+  return (
+    <Surface variant="chrome" className="p-3 sm:p-4">
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <label className="relative block flex-1">
+            <Search
+              size={16}
+              aria-hidden
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-fg-subtle"
+            />
+            <input
+              type="search"
+              value={queryInput}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder={t('searchPlaceholder')}
+              aria-label={t('searchPlaceholder')}
+              className="form-input pl-10"
+            />
+          </label>
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={onReset}
+              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] w-full sm:w-auto shrink-0"
+            >
+              <X size={14} />
+              {t('reset')}
+            </button>
+          )}
+        </div>
+
+        <FacetGroup label={t('facets.status')}>
+          {STATUS_FILTERS.map((option) => (
+            <Chip
+              key={option}
+              active={status === option}
+              onClick={() => onStatusChange(option)}
+            >
+              {t(STATUS_LABEL_KEY[option])}
+            </Chip>
+          ))}
+        </FacetGroup>
+
+        {availableRuntimes.length > 0 && (
+          <FacetGroup label={t('facets.runtime')}>
+            {availableRuntimes.map((runtime) => (
+              <Chip
+                key={runtime}
+                active={runtimeFilter.includes(runtime)}
+                onClick={() => onToggleRuntime(runtime)}
+                icon={runtimeIcon(runtime)}
+              >
+                {t(RUNTIME_LABEL_KEY[runtime] ?? `card.tagline.${runtime}`)}
+              </Chip>
+            ))}
+          </FacetGroup>
+        )}
+
+        {availableTags.length > 0 && (
+          <FacetGroup label={t('facets.tags')}>
+            {availableTags.map((tag) => (
+              <Chip key={tag} active={tagFilter.includes(tag)} onClick={() => onToggleTag(tag)}>
+                {tag}
+              </Chip>
+            ))}
+          </FacetGroup>
+        )}
+      </div>
+    </Surface>
+  );
+};
+
+const FacetGroup = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3">
+    <span className="eyebrow text-[10px] text-fg-subtle sm:pt-2 sm:w-20 sm:shrink-0">
+      {label}
+    </span>
+    <div className="flex flex-wrap gap-1.5">{children}</div>
+  </div>
+);
+
+const Chip = ({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-pressed={active}
+    className={cx(
+      'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] tracking-snug transition-colors duration-fast',
+      active
+        ? 'border-accent/50 bg-accent/[0.08] text-accent font-medium'
+        : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+    )}
+  >
+    {icon}
+    {children}
+  </button>
+);
+
+interface TopicCardProps {
+  row: TopicRow;
+  activeTags: string[];
+  onToggleTag: (tag: string) => void;
+}
+
+const TopicCard = ({ row, activeTags, onToggleTag }: TopicCardProps) => {
   const { t } = useTranslation('home');
   const { manifest, total, passed, readConcepts } = row;
   const totalConcepts = manifest.concepts.length;
@@ -424,6 +791,35 @@ const TopicCard = ({ row }: TopicCardProps) => {
             />
           </div>
 
+          {manifest.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {manifest.tags.map((tag) => {
+                const active = activeTags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    aria-pressed={active}
+                    aria-label={t('card.tagFilter', { tag })}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onToggleTag(tag);
+                    }}
+                    className={cx(
+                      'rounded-full border px-2 py-0.5 text-[11px] tracking-snug transition-colors duration-fast',
+                      active
+                        ? 'border-accent/50 bg-accent/[0.08] text-accent font-medium'
+                        : 'border-border-base text-fg-subtle hover:text-fg hover:border-border-strong',
+                    )}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="mt-auto pt-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 flex-wrap">
               <Badge tone={DIFFICULTY_TONE[manifest.difficulty] ?? 'neutral'} variant="soft">
@@ -484,6 +880,23 @@ const EmptyState = () => {
             components={{ hint: <span className="text-accent" /> }}
           />
         </p>
+      </div>
+    </Surface>
+  );
+};
+
+const NoMatchesState = ({ onReset }: { onReset: () => void }) => {
+  const { t } = useTranslation('home');
+  return (
+    <Surface variant="inset">
+      <div className="p-8 text-center">
+        <h3 className="font-display text-2xl text-fg">{t('noMatches.title')}</h3>
+        <p className="mt-2 text-sm text-fg-muted">{t('noMatches.hint')}</p>
+        <div className="mt-5 flex justify-center">
+          <Button variant="outline" size="sm" leadingIcon={<X size={14} />} onClick={onReset}>
+            {t('reset')}
+          </Button>
+        </div>
       </div>
     </Surface>
   );
