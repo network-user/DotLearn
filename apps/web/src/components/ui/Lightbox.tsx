@@ -295,8 +295,8 @@ const LightboxOverlay = ({ item, onClose }: { item: LightboxItem | null; onClose
                       transform: `translate(${transform.tx}px, ${transform.ty}px) scale(${transform.scale})`,
                     }}
                     className={cx(
-                      'flex origin-center items-center justify-center will-change-transform',
-                      isImage && 'h-full w-full',
+                      'flex origin-center items-center justify-center',
+                      isImage && 'h-full w-full will-change-transform',
                       animate
                         ? 'transition-transform duration-med ease-emph motion-reduce:transition-none'
                         : '',

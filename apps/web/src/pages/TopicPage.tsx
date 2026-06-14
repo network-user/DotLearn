@@ -1,4 +1,12 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+} from 'react';
 
 import type { Exercise } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
@@ -25,6 +33,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
+import { ReadingPositionTracker, ResumeBanner } from '@/components/ResumeReading';
 import { TheoryContent } from '@/components/TheoryContent';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
@@ -39,7 +48,9 @@ import { computeMastery } from '@/lib/mastery';
 import { db, recordPlace, saveConceptNote, setBookmark, setConceptRead } from '@/lib/progress-db';
 import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
+import { programmaticScrollTo } from '@/lib/reading-position';
 import { effectiveLanguage, loadTopic } from '@/lib/topics';
+import type { TopicSearch } from '@/router';
 import { useConceptBookmarked, useConceptRead, useTopicReadConceptIds } from '@/lib/use-learning';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useStreak, useTopicProgress } from '@/lib/use-progress';
@@ -217,6 +228,15 @@ export const TopicPage = () => {
     [navigate, slug],
   );
 
+  const clearResume = useCallback((): void => {
+    void navigate({
+      to: '/topics/$slug',
+      params: { slug },
+      search: (prev: TopicSearch) => ({ concept: prev.concept }),
+      replace: true,
+    });
+  }, [navigate, slug]);
+
   useEffect(() => {
     let cancelled = false;
     setState({ kind: 'loading' });
@@ -228,9 +248,7 @@ export const TopicPage = () => {
         const concepts = bundle.manifest.concepts;
         const requested = requestedConceptRef.current;
         let initial =
-          requested && concepts.some((concept) => concept.id === requested)
-            ? requested
-            : undefined;
+          requested && concepts.some((concept) => concept.id === requested) ? requested : undefined;
         if (!initial) {
           const place = await db.topicPlace.get(slug);
           if (cancelled) return;
@@ -311,7 +329,7 @@ export const TopicPage = () => {
       if (next) {
         event.preventDefault();
         selectConcept(next.id);
-        window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+        programmaticScrollTo(0, !reduceMotion);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -393,7 +411,7 @@ export const TopicPage = () => {
     const nextConcept = bundle.manifest.concepts[next];
     if (nextConcept) {
       selectConcept(nextConcept.id);
-      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      programmaticScrollTo(0, !reduceMotion);
     }
   };
 
@@ -405,6 +423,17 @@ export const TopicPage = () => {
           conceptId={activeConcept.conceptId}
           solvedRatio={conceptRatio}
         />
+      )}
+      {activeConcept && (
+        <>
+          <ReadingPositionTracker slug={slug} conceptId={activeConcept.conceptId} />
+          <ResumeBanner
+            slug={slug}
+            conceptId={activeConcept.conceptId}
+            resume={search.resume ?? false}
+            onResumeHandled={clearResume}
+          />
+        </>
       )}
       <TopicHeader
         manifest={manifest}
@@ -469,9 +498,7 @@ export const TopicPage = () => {
             />
           </div>
         )}
-        <section
-          className={cx('min-w-0 space-y-6', focusMode && 'mx-auto w-full max-w-3xl')}
-        >
+        <section className={cx('min-w-0 space-y-6', focusMode && 'mx-auto w-full max-w-3xl')}>
           {activeConcept && activeManifestConcept ? (
             <ConceptTransition conceptId={activeConcept.conceptId}>
               <ConceptPanel
@@ -665,7 +692,9 @@ const conceptStatOf = (
 ): ConceptStat => {
   const conceptBundle = bundle.concepts.find((entry) => entry.conceptId === conceptId);
   const exercises = conceptBundle?.exercises.flatMap((file) => file.exercises) ?? [];
-  const passed = exercises.filter((exercise) => progress.get(exercise.id)?.status === 'pass').length;
+  const passed = exercises.filter(
+    (exercise) => progress.get(exercise.id)?.status === 'pass',
+  ).length;
   const ratio = exercises.length === 0 ? 0 : passed / exercises.length;
   return {
     passed,
@@ -691,7 +720,9 @@ const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
             )}
             aria-current={active ? 'true' : undefined}
           >
-            {active && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent" />}
+            {active && (
+              <span aria-hidden className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent" />
+            )}
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-baseline gap-2.5 min-w-0">
                 <span
@@ -700,7 +731,11 @@ const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
                     done ? 'text-ok' : active ? 'text-accent' : undefined,
                   )}
                 >
-                  {done ? <Check size={13} className="inline" /> : String(index + 1).padStart(2, '0')}
+                  {done ? (
+                    <Check size={13} className="inline" />
+                  ) : (
+                    String(index + 1).padStart(2, '0')
+                  )}
                 </span>
                 <span className="text-[13.5px] font-medium truncate">{concept.title}</span>
               </div>
@@ -711,7 +746,10 @@ const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
             <div className="mt-2 pl-[34px] flex items-center gap-2">
               <div className="flex-1 h-px bg-border-base overflow-visible">
                 <div
-                  className={cx('h-[2px] -mt-px transition-[width] duration-slow', done ? 'bg-ok' : 'bg-accent')}
+                  className={cx(
+                    'h-[2px] -mt-px transition-[width] duration-slow',
+                    done ? 'bg-ok' : 'bg-accent',
+                  )}
                   style={{ width: `${Math.round(ratio * 100)}%` }}
                 />
               </div>
@@ -788,7 +826,11 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
                         done ? 'text-ok' : active ? 'text-accent' : undefined,
                       )}
                     >
-                      {done ? <Check size={12} className="inline" /> : String(index + 1).padStart(2, '0')}
+                      {done ? (
+                        <Check size={12} className="inline" />
+                      ) : (
+                        String(index + 1).padStart(2, '0')
+                      )}
                     </span>
                     <span className="text-[13px] font-medium truncate max-w-[40vw]">
                       {concept.title}
@@ -809,12 +851,7 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
           </ol>
         </div>
       </Surface>
-      <Dialog
-        open={listOpen}
-        onOpenChange={setListOpen}
-        title={t('allConcepts')}
-        placement="sheet"
-      >
+      <Dialog open={listOpen} onOpenChange={setListOpen} title={t('allConcepts')} placement="sheet">
         <div className="rounded-xl border border-border-base overflow-hidden">
           <ConceptList
             bundle={bundle}
@@ -863,6 +900,8 @@ interface ConceptPanelProps {
   exercises: Exercise[];
   passed: number;
   ratio: number;
+  focusMode: boolean;
+  onToggleFocus: () => void;
 }
 
 const ConceptPanel = ({
@@ -873,6 +912,8 @@ const ConceptPanel = ({
   exercises,
   passed,
   ratio,
+  focusMode,
+  onToggleFocus,
 }: ConceptPanelProps) => {
   const { t } = useTranslation('topic');
   const [notesOpen, setNotesOpen] = useState(false);
@@ -893,9 +934,7 @@ const ConceptPanel = ({
   const bodyTheories = overview ? theories.filter((entry) => entry !== overview) : theories;
   return (
     <article className="space-y-8">
-      {overview?.resolved && (
-        <TopicOverview Component={overview.resolved.Component} />
-      )}
+      {overview?.resolved && <TopicOverview Component={overview.resolved.Component} />}
       <header>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 eyebrow">
@@ -911,6 +950,8 @@ const ConceptPanel = ({
             conceptId={concept.id}
             notesOpen={notesOpen}
             onToggleNotes={() => setNotesOpen((value) => !value)}
+            focusMode={focusMode}
+            onToggleFocus={onToggleFocus}
           />
         </div>
         <h2 className="mt-3 font-display font-medium text-[clamp(26px,3.5vw,34px)] leading-[1.15] tracking-tightish text-fg text-balance">
@@ -976,9 +1017,18 @@ interface ConceptToolsProps {
   conceptId: string;
   notesOpen: boolean;
   onToggleNotes: () => void;
+  focusMode: boolean;
+  onToggleFocus: () => void;
 }
 
-const ConceptTools = ({ slug, conceptId, notesOpen, onToggleNotes }: ConceptToolsProps) => {
+const ConceptTools = ({
+  slug,
+  conceptId,
+  notesOpen,
+  onToggleNotes,
+  focusMode,
+  onToggleFocus,
+}: ConceptToolsProps) => {
   const { t } = useTranslation('topic');
   const bookmarked = useConceptBookmarked(slug, conceptId);
   const read = useConceptRead(slug, conceptId);
@@ -1038,6 +1088,21 @@ const ConceptTools = ({ slug, conceptId, notesOpen, onToggleNotes }: ConceptTool
         )}
       >
         <NotebookPen size={16} />
+      </button>
+      <button
+        type="button"
+        onClick={onToggleFocus}
+        aria-pressed={focusMode}
+        title={focusMode ? t('focus.exit') : t('focus.enter')}
+        aria-label={focusMode ? t('focus.exit') : t('focus.enter')}
+        className={cx(
+          'grid place-items-center size-9 rounded-lg border transition-colors',
+          focusMode
+            ? 'border-accent/50 bg-accent/[0.08] text-accent'
+            : 'border-border-base text-fg-muted hover:text-fg hover:bg-surface-2/50',
+        )}
+      >
+        {focusMode ? <Minimize2 size={16} /> : <Focus size={16} />}
       </button>
     </div>
   );
@@ -1191,7 +1256,9 @@ const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio
       (events) => {
         const visible = events.filter((e) => e.isIntersecting);
         if (visible.length > 0) {
-          const first = visible.sort((a, b) => a.target.getBoundingClientRect().top - b.target.getBoundingClientRect().top)[0];
+          const first = visible.sort(
+            (a, b) => a.target.getBoundingClientRect().top - b.target.getBoundingClientRect().top,
+          )[0];
           if (first) setActiveId(first.target.id);
         }
       },
@@ -1216,7 +1283,9 @@ const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio
             value={ratio}
             size={24}
             stroke={2}
-            indicatorClassName={ratio === 1 ? 'text-ok' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'}
+            indicatorClassName={
+              ratio === 1 ? 'text-ok' : ratio > 0 ? 'text-accent' : 'text-fg-subtle'
+            }
           />
         </div>
         {entries.length === 0 ? (

@@ -86,6 +86,16 @@ export interface PlaygroundRecord {
   updatedAt: string;
 }
 
+export interface ConceptScrollRecord {
+  id: string;
+  topicSlug: string;
+  conceptId: string;
+  anchorId?: string;
+  anchorOffset: number;
+  ratio: number;
+  updatedAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -98,6 +108,7 @@ class ProgressDb extends Dexie {
   bookmarks!: Table<BookmarkRecord, string>;
   conceptRead!: Table<ConceptReadRecord, string>;
   playground!: Table<PlaygroundRecord, string>;
+  conceptScroll!: Table<ConceptScrollRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -163,6 +174,20 @@ class ProgressDb extends Dexie {
       conceptRead: 'id, topicSlug',
       playground: 'id',
     });
+    this.version(8).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
+      conceptScroll: 'id, topicSlug',
+    });
   }
 }
 
@@ -170,10 +195,7 @@ export const db = new ProgressDb();
 
 export const INTERVIEW_TOPIC_SLUG = 'interview';
 
-export const setInterviewStudied = async (
-  id: number,
-  studied: boolean,
-): Promise<void> => {
+export const setInterviewStudied = async (id: number, studied: boolean): Promise<void> => {
   await db.transaction('rw', db.interviewStudied, db.activity, async () => {
     const existing = await db.interviewStudied.get(id);
     if (studied) {
@@ -196,8 +218,7 @@ export const setInterviewStudied = async (
 
 const todayUtc = (): string => new Date().toISOString().slice(0, 10);
 
-const progressKey = (topicSlug: string, exerciseId: string): string =>
-  `${topicSlug}:${exerciseId}`;
+const progressKey = (topicSlug: string, exerciseId: string): string => `${topicSlug}:${exerciseId}`;
 
 export const recordAttempt = async (
   topicSlug: string,
@@ -210,8 +231,7 @@ export const recordAttempt = async (
 
   await db.transaction('rw', db.progress, db.activity, async () => {
     const existing = await db.progress.get(id);
-    const nextStatus: ProgressStatus =
-      existing?.status === 'pass' ? 'pass' : status;
+    const nextStatus: ProgressStatus = existing?.status === 'pass' ? 'pass' : status;
     await db.progress.put({
       id,
       topicSlug,
@@ -232,13 +252,9 @@ export const recordAttempt = async (
   });
 };
 
-const placeKey = (topicSlug: string, conceptId: string): string =>
-  `${topicSlug}:${conceptId}`;
+const placeKey = (topicSlug: string, conceptId: string): string => `${topicSlug}:${conceptId}`;
 
-export const recordPlace = async (
-  topicSlug: string,
-  conceptId: string,
-): Promise<void> => {
+export const recordPlace = async (topicSlug: string, conceptId: string): Promise<void> => {
   await db.topicPlace.put({
     topicSlug,
     conceptId,
@@ -304,4 +320,35 @@ export const setConceptRead = async (
   } else {
     await db.conceptRead.delete(id);
   }
+};
+
+export interface ScrollPosition {
+  anchorId?: string;
+  anchorOffset: number;
+  ratio: number;
+}
+
+export const recordScroll = async (
+  topicSlug: string,
+  conceptId: string,
+  position: ScrollPosition,
+): Promise<void> => {
+  await db.conceptScroll.put({
+    id: placeKey(topicSlug, conceptId),
+    topicSlug,
+    conceptId,
+    anchorOffset: position.anchorOffset,
+    ratio: position.ratio,
+    updatedAt: new Date().toISOString(),
+    ...(position.anchorId ? { anchorId: position.anchorId } : {}),
+  });
+};
+
+export const getScroll = async (
+  topicSlug: string,
+  conceptId: string,
+): Promise<ConceptScrollRecord | undefined> => db.conceptScroll.get(placeKey(topicSlug, conceptId));
+
+export const deleteScroll = async (topicSlug: string, conceptId: string): Promise<void> => {
+  await db.conceptScroll.delete(placeKey(topicSlug, conceptId));
 };

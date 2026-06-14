@@ -4,6 +4,7 @@ import {
   type BookmarkRecord,
   type ConceptNoteRecord,
   type ConceptReadRecord,
+  type ConceptScrollRecord,
   type FlashcardReviewRecord,
   type InterviewStudiedRecord,
   type ProgressRecord,
@@ -26,6 +27,7 @@ export interface ProgressExport {
     conceptNotes: ConceptNoteRecord[];
     bookmarks: BookmarkRecord[];
     conceptRead: ConceptReadRecord[];
+    conceptScroll: ConceptScrollRecord[];
   };
 }
 
@@ -46,6 +48,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
     conceptNotes,
     bookmarks,
     conceptRead,
+    conceptScroll,
   ] = await Promise.all([
     db.progress.toArray(),
     db.activity.toArray(),
@@ -55,6 +58,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
     db.conceptNotes.toArray(),
     db.bookmarks.toArray(),
     db.conceptRead.toArray(),
+    db.conceptScroll.toArray(),
   ]);
 
   return {
@@ -71,6 +75,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
       conceptNotes,
       bookmarks,
       conceptRead,
+      conceptScroll,
     },
   };
 };
@@ -86,7 +91,11 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
     throw new ProgressImportError('invalid-shape');
   }
   const payload = raw as Partial<ProgressExport>;
-  if (payload.kind !== 'progress-export' || typeof payload.data !== 'object' || payload.data === null) {
+  if (
+    payload.kind !== 'progress-export' ||
+    typeof payload.data !== 'object' ||
+    payload.data === null
+  ) {
     throw new ProgressImportError('invalid-shape');
   }
   const data = payload.data;
@@ -98,6 +107,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
   const conceptNotes = asArray<ConceptNoteRecord>(data.conceptNotes);
   const bookmarks = asArray<BookmarkRecord>(data.bookmarks);
   const conceptRead = asArray<ConceptReadRecord>(data.conceptRead);
+  const conceptScroll = asArray<ConceptScrollRecord>(data.conceptScroll);
 
   await db.transaction(
     'rw',
@@ -110,6 +120,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
       db.conceptNotes,
       db.bookmarks,
       db.conceptRead,
+      db.conceptScroll,
     ],
     async () => {
       await db.progress.bulkPut(progress);
@@ -120,6 +131,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
       await db.conceptNotes.bulkPut(conceptNotes);
       await db.bookmarks.bulkPut(bookmarks);
       await db.conceptRead.bulkPut(conceptRead);
+      await db.conceptScroll.bulkPut(conceptScroll);
     },
   );
 
@@ -131,7 +143,8 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
     topicPlace.length +
     conceptNotes.length +
     bookmarks.length +
-    conceptRead.length;
+    conceptRead.length +
+    conceptScroll.length;
 
   return { imported };
 };

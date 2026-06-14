@@ -78,21 +78,14 @@ const runtimeIcon = (runtime: string) => {
 };
 
 const statusOfRow = (row: TopicRow): StatusFilter => {
-  const m = computeMastery(
-    row.readConcepts,
-    row.manifest.concepts.length,
-    row.passed,
-    row.total,
-  );
+  const m = computeMastery(row.readConcepts, row.manifest.concepts.length, row.passed, row.total);
   if (m.mastery >= 0.999) return 'mastered';
   if (row.passed === 0 && row.readConcepts === 0 && m.mastery === 0) return 'not-started';
   return 'in-progress';
 };
 
 const toggleInArray = (values: string[], value: string): string[] =>
-  values.includes(value)
-    ? values.filter((entry) => entry !== value)
-    : [...values, value];
+  values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
 
 const isDifficultyFilter = (value: string | undefined): value is DifficultyFilter =>
   value === 'beginner' || value === 'intermediate' || value === 'advanced';
@@ -260,7 +253,10 @@ export const HomePage = () => {
                 : t('available', { count: filteredRows.length })}
             </p>
           </div>
-          <FilterBar value={difficulty} onChange={(value) => patch({ difficulty: value === 'all' ? undefined : value })} />
+          <FilterBar
+            value={difficulty}
+            onChange={(value) => patch({ difficulty: value === 'all' ? undefined : value })}
+          />
         </div>
 
         <CatalogToolbar
@@ -315,16 +311,14 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
   const row = rows.find((entry) => entry.manifest.slug === place.topicSlug);
   if (!row) return null;
   const hasNote = note !== undefined && note.text.trim().length > 0;
-  const conceptIndex = row.manifest.concepts.findIndex(
-    (concept) => concept.id === place.conceptId,
-  );
+  const conceptIndex = row.manifest.concepts.findIndex((concept) => concept.id === place.conceptId);
   const concept = conceptIndex >= 0 ? row.manifest.concepts[conceptIndex] : undefined;
   const m = computeMastery(row.readConcepts, row.manifest.concepts.length, row.passed, row.total);
   return (
     <Link
       to="/topics/$slug"
       params={{ slug: row.manifest.slug }}
-      search={{ concept: place.conceptId }}
+      search={{ concept: place.conceptId, resume: true }}
       onMouseEnter={() => prefetchTopic(row.manifest.slug)}
       onFocus={() => prefetchTopic(row.manifest.slug)}
       className="group block"
@@ -380,11 +374,7 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
 const TodayCard = () => {
   const { t } = useTranslation('home');
   const nowIso = useMemo(() => new Date().toISOString(), []);
-  const failedCount = useLiveQuery(
-    () => db.progress.where('status').equals('fail').count(),
-    [],
-    0,
-  );
+  const failedCount = useLiveQuery(() => db.progress.where('status').equals('fail').count(), [], 0);
   const dueCount = useLiveQuery(
     () => db.flashcardReviews.where('due').below(nowIso).count(),
     [nowIso],
@@ -469,10 +459,7 @@ const Hero = ({ stats }: { stats: HeroStats }) => {
             <motion.span {...heroRise(reduceMotion, 0.08)} className="block">
               {t('heroLineA')}
             </motion.span>
-            <motion.span
-              {...heroRise(reduceMotion, 0.18)}
-              className="block text-accent italic"
-            >
+            <motion.span {...heroRise(reduceMotion, 0.18)} className="block text-accent italic">
               {t('heroLineB')}
             </motion.span>
           </h1>
@@ -643,11 +630,7 @@ const CatalogToolbar = ({
 
         <FacetGroup label={t('facets.status')}>
           {STATUS_FILTERS.map((option) => (
-            <Chip
-              key={option}
-              active={status === option}
-              onClick={() => onStatusChange(option)}
-            >
+            <Chip key={option} active={status === option} onClick={() => onStatusChange(option)}>
               {t(STATUS_LABEL_KEY[option])}
             </Chip>
           ))}
@@ -684,9 +667,7 @@ const CatalogToolbar = ({
 
 const FacetGroup = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-3">
-    <span className="eyebrow text-[10px] text-fg-subtle sm:pt-2 sm:w-20 sm:shrink-0">
-      {label}
-    </span>
+    <span className="eyebrow text-[10px] text-fg-subtle sm:pt-2 sm:w-20 sm:shrink-0">{label}</span>
     <div className="flex flex-wrap gap-1.5">{children}</div>
   </div>
 );
@@ -742,7 +723,10 @@ const TopicCard = ({ row, activeTags, onToggleTag }: TopicCardProps) => {
       onFocus={() => prefetchTopic(manifest.slug)}
       onTouchStart={() => prefetchTopic(manifest.slug)}
     >
-      <Surface interactive className="h-full origin-center group-hover:scale-[1.03] group-focus-visible:scale-[1.03]">
+      <Surface
+        interactive
+        className="h-full origin-center group-hover:scale-[1.03] group-focus-visible:scale-[1.03]"
+      >
         <div className="p-5 h-full flex flex-col gap-4 min-h-[200px]">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">

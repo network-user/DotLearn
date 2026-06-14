@@ -20,6 +20,14 @@ const MARKDOWN_EMPHASIS = /(\*{1,3}|_{1,3}|~{2})/g;
 const BLOCKQUOTE = /^\s{0,3}>\s?/gm;
 const LIST_MARKER = /^\s{0,3}([-*+]|\d+\.)\s+/gm;
 const WHITESPACE = /\s+/g;
+const MAX_ENTRY_TEXT = 1500;
+
+const clampText = (text: string): string => {
+  if (text.length <= MAX_ENTRY_TEXT) return text;
+  const sliced = text.slice(0, MAX_ENTRY_TEXT);
+  const lastSpace = sliced.lastIndexOf(' ');
+  return lastSpace > MAX_ENTRY_TEXT * 0.6 ? sliced.slice(0, lastSpace) : sliced;
+};
 
 type ConceptManifest = {
   id: string;
@@ -147,7 +155,7 @@ export const searchIndexPlugin = (): Plugin => {
         if (!concept) continue;
         const filePath = join(theoryDir, file);
         addWatchFile(filePath);
-        const text = stripMarkdown(readFileSync(filePath, 'utf8'));
+        const text = clampText(stripMarkdown(readFileSync(filePath, 'utf8')));
         if (!text) continue;
         entries.push({
           type: 'concept',
@@ -175,7 +183,7 @@ export const searchIndexPlugin = (): Plugin => {
         if (!concept) continue;
         const filePath = join(exercisesDir, file);
         addWatchFile(filePath);
-        const text = collectExercisePrompts(filePath);
+        const text = clampText(collectExercisePrompts(filePath));
         if (!text) continue;
         entries.push({
           type: 'exercise',
