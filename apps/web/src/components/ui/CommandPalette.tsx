@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import * as RadixDialog from '@radix-ui/react-dialog';
-import type { InterviewQuestionMeta, TopicManifest } from '@dotlearn/contracts';
+import type { InterviewQuestionMeta } from '@dotlearn/contracts';
 import { Command } from 'cmdk';
 import {
   ArrowRight,
@@ -32,8 +32,8 @@ import { useTranslation } from 'react-i18next';
 import type { SearchEntry } from 'virtual:search-index';
 
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
-import { listManifests } from '@/lib/topics';
 import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
+import { useVisibleManifests } from '@/lib/use-manifests';
 import { router } from '@/router';
 
 import { applyTheme, persistTheme, readStoredTheme } from '../../lib/theme';
@@ -102,22 +102,12 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const setOpen = (value: boolean): void => onOpenChange(value);
-  const [manifests, setManifests] = useState<TopicManifest[]>([]);
+  const manifests = useVisibleManifests();
   const [interview, setInterview] = useState<InterviewQuestionMeta[]>([]);
   const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const [query, setQuery] = useState('');
   const bookmarks = useBookmarks();
   const notedKeys = useAllNotedKeys();
-
-  useEffect(() => {
-    let cancelled = false;
-    void listManifests().then((list) => {
-      if (!cancelled) setManifests(list);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [i18n.resolvedLanguage]);
 
   useEffect(() => {
     if (!open) return;

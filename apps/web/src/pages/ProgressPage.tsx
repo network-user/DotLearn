@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
@@ -21,7 +21,8 @@ import {
   exportProgress,
   importProgress,
 } from '@/lib/progress-io';
-import { effectiveLanguage, listManifests } from '@/lib/topics';
+import { effectiveLanguage } from '@/lib/topics';
+import { useVisibleManifests } from '@/lib/use-manifests';
 import { useBookmarks } from '@/lib/use-learning';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
 import { useActivity, useStreak } from '@/lib/use-progress';
@@ -60,7 +61,7 @@ const useRelativeFormatter = () => {
 export const ProgressPage = () => {
   const { t } = useTranslation('progress');
   const formatRelative = useRelativeFormatter();
-  const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
+  const manifests = useVisibleManifests();
   const activity = useActivity();
   const streak = useStreak();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
@@ -68,22 +69,9 @@ export const ProgressPage = () => {
   const bookmarks = useBookmarks();
   const readByTopic = useReadConceptsByTopic();
 
-  useEffect(() => {
-    let cancelled = false;
-    listManifests().then((loaded) => {
-      if (!cancelled) {
-        setManifests(loaded);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const language = getCurrentLanguage();
 
   const rows = useMemo<TopicRow[]>(() => {
-    if (!manifests) return [];
     const byTopic = new Map<string, { passed: number; failed: number; lastAttemptAt?: string }>();
     for (const record of progressRecords ?? []) {
       const entry = byTopic.get(record.topicSlug) ?? { passed: 0, failed: 0 };
@@ -112,7 +100,6 @@ export const ProgressPage = () => {
   }, [manifests, progressRecords, readByTopic, language]);
 
   const resolvedBookmarks = useMemo(() => {
-    if (!manifests) return [];
     return bookmarks
       .map((bookmark) => {
         const manifest = manifests.find((entry) => entry.slug === bookmark.topicSlug);
@@ -266,17 +253,7 @@ export const ProgressPage = () => {
             </span>
           </div>
         </div>
-        {manifests === undefined ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[0, 1].map((index) => (
-              <div
-                key={index}
-                className="h-28 rounded-lg border border-border-base bg-surface-2 animate-pulse"
-                aria-hidden
-              />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-sm text-fg-subtle">{t('noTopics')}</p>
         ) : (
           <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">

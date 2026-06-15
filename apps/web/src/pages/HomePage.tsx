@@ -35,8 +35,9 @@ import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
-import { effectiveLanguage, getAllManifests, loadHiddenSlugs, prefetchTopic } from '@/lib/topics';
+import { effectiveLanguage, prefetchTopic } from '@/lib/topics';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
+import { useVisibleManifests } from '@/lib/use-manifests';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import topicStats from 'virtual:topic-stats';
 
@@ -96,7 +97,7 @@ const isStatusFilter = (value: string | undefined): value is StatusFilter =>
 
 export const HomePage = () => {
   const { t } = useTranslation('home');
-  const [manifests, setManifests] = useState<TopicManifest[]>(() => getAllManifests());
+  const manifests = useVisibleManifests();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
 
@@ -135,17 +136,6 @@ export const HomePage = () => {
   useEffect(() => {
     setQueryInput(query);
   }, [query]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadHiddenSlugs().then((hidden) => {
-      if (cancelled || hidden.size === 0) return;
-      setManifests((prev) => prev.filter((manifest) => !hidden.has(manifest.slug)));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const language = getCurrentLanguage();
 

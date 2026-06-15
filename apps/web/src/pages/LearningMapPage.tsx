@@ -1,38 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
-import type { TopicManifest } from '@dotlearn/contracts';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Waypoints } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { LearningMap, type MapNode } from '@/components/LearningMap';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
-import { effectiveLanguage, listManifests } from '@/lib/topics';
+import { effectiveLanguage } from '@/lib/topics';
+import { useVisibleManifests } from '@/lib/use-manifests';
 import topicStats from 'virtual:topic-stats';
 
 export const LearningMapPage = () => {
   const { t } = useTranslation('map');
-  const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
+  const manifests = useVisibleManifests();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
   const language = getCurrentLanguage();
 
-  useEffect(() => {
-    let cancelled = false;
-    listManifests().then((loaded) => {
-      if (!cancelled) setManifests(loaded);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const nodes = useMemo<MapNode[]>(() => {
-    if (!manifests) return [];
     const existingSlugs = new Set(manifests.map((manifest) => manifest.slug));
     const passedByTopic = new Map<string, number>();
     for (const record of progressRecords ?? []) {
@@ -60,12 +48,7 @@ export const LearningMapPage = () => {
         <p className="max-w-prose text-sm text-fg-muted">{t('subtitle')}</p>
       </header>
 
-      {manifests === undefined ? (
-        <div className="space-y-4" aria-hidden>
-          <Skeleton rounded="2xl" className="h-6 w-32" />
-          <Skeleton rounded="2xl" className="h-64" />
-        </div>
-      ) : nodes.length === 0 ? (
+      {nodes.length === 0 ? (
         <Surface variant="inset">
           <div className="p-8 text-center">
             <p className="text-sm text-fg-muted">{t('empty')}</p>

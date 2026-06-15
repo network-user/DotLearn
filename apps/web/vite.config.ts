@@ -208,6 +208,7 @@ export default defineConfig({
           const normalized = id.replace(/\\/g, '/');
           if (normalized.includes('/src/lib/interview.ts')) return 'interview-data';
           if (normalized.includes('\0virtual:search-index')) return 'search-index';
+          if (normalized.includes('\0virtual:topic-manifests')) return 'topic-manifests';
           if (id.includes('monaco-editor')) return 'monaco';
           if (id.includes('@monaco-editor/react')) return 'monaco';
           if (id.includes('sql.js')) return 'sqljs';
