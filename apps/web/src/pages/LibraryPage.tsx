@@ -1,18 +1,16 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 
-import type { TopicManifest } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
 import { ArrowRight, Bookmark, Highlighter, NotebookPen, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/Button';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { cx } from '@/components/ui/cx';
 import type { BookmarkRecord, ConceptNoteRecord, HighlightRecord } from '@/lib/progress-db';
 import { removeHighlight, saveConceptNote, setBookmark } from '@/lib/progress-db';
-import { listManifests } from '@/lib/topics';
 import { useAllHighlights, useAllNotes, useBookmarks } from '@/lib/use-learning';
+import { useVisibleManifests } from '@/lib/use-manifests';
 
 type TabKey = 'highlights' | 'notes' | 'bookmarks';
 
@@ -49,25 +47,13 @@ export const LibraryPage = () => {
   const notes = useAllNotes();
   const bookmarks = useBookmarks();
 
-  const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
+  const manifests = useVisibleManifests();
   const [tab, setTab] = useState<TabKey>('highlights');
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    void listManifests().then((loaded) => {
-      if (!cancelled) {
-        setManifests(loaded);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const resolveTitles = useMemo(() => {
     return (topicSlug: string, conceptId: string): ResolvedTitles => {
-      const manifest = manifests?.find((entry) => entry.slug === topicSlug);
+      const manifest = manifests.find((entry) => entry.slug === topicSlug);
       const concept = manifest?.concepts.find((entry) => entry.id === conceptId);
       return {
         topicTitle: manifest?.title ?? topicSlug,
@@ -155,15 +141,7 @@ export const LibraryPage = () => {
         aria-label={t('searchPlaceholder')}
       />
 
-      {manifests === undefined ? (
-        <ul className="space-y-3">
-          {[0, 1, 2].map((index) => (
-            <li key={index}>
-              <Skeleton className="h-24 w-full" rounded="2xl" />
-            </li>
-          ))}
-        </ul>
-      ) : tab === 'highlights' ? (
+      {tab === 'highlights' ? (
         <TabList
           sourceCount={counts.highlights}
           filteredCount={filteredHighlights.length}
