@@ -29,6 +29,8 @@ import {
   SketchLabel,
   SortLimitFigure,
 } from '@/components/article';
+import { Checkpoint } from '@/components/article/Checkpoint';
+import { Term } from '@/components/article/Term';
 import { PyDemo } from '@/components/sandbox/PyDemo';
 import { PyStepper } from '@/components/sandbox/PyStepper';
 import { SideSql } from '@/components/sandbox/SideSql';
@@ -350,6 +352,8 @@ const mdxComponents = {
   Detail,
   Steps,
   KeyTakeaways,
+  Checkpoint,
+  Term,
   SideViz,
   SideSql,
   PyDemo,

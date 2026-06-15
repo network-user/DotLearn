@@ -9,9 +9,11 @@ import {
   Inbox,
   Layers,
   LayoutGrid,
+  Library,
   MessagesSquare,
   MoreHorizontal,
   PencilLine,
+  Settings,
   Waypoints,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -32,8 +34,10 @@ const tabs = [
 const moreLinks = [
   { to: '/today', icon: CalendarCheck, labelKey: 'today' },
   { to: '/map', icon: Waypoints, labelKey: 'map' },
+  { to: '/library', icon: Library, labelKey: 'library' },
   { to: '/proposals', icon: Inbox, labelKey: 'proposals' },
   { to: '/submit', icon: PencilLine, labelKey: 'submit' },
+  { to: '/settings', icon: Settings, labelKey: 'settings' },
 ] as const;
 
 export const BottomTabBar = () => {

@@ -5,6 +5,7 @@ import {
   type BookmarkRecord,
   type ConceptNoteRecord,
   type ConceptScrollRecord,
+  type HighlightRecord,
   type TopicPlaceRecord,
 } from './progress-db';
 
@@ -95,3 +96,36 @@ export const useReadingScroll = (
     if (conceptId === undefined) return null;
     return (await db.conceptScroll.get(conceptKey(topicSlug, conceptId))) ?? null;
   }, [topicSlug, conceptId]);
+
+export const useConceptHighlights = (
+  topicSlug: string,
+  conceptId: string | undefined,
+): HighlightRecord[] => {
+  const records = useLiveQuery(
+    () => {
+      if (conceptId === undefined) return [];
+      return db.highlights.where('[topicSlug+conceptId]').equals([topicSlug, conceptId]).toArray();
+    },
+    [topicSlug, conceptId],
+    [],
+  );
+  return records ?? [];
+};
+
+export const useAllHighlights = (): HighlightRecord[] => {
+  const records = useLiveQuery(
+    () => db.highlights.orderBy('createdAt').reverse().toArray(),
+    [],
+    [],
+  );
+  return records ?? [];
+};
+
+export const useAllNotes = (): ConceptNoteRecord[] => {
+  const records = useLiveQuery(
+    () => db.conceptNotes.orderBy('updatedAt').reverse().toArray(),
+    [],
+    [],
+  );
+  return records ?? [];
+};

@@ -96,6 +96,18 @@ export interface ConceptScrollRecord {
   updatedAt: string;
 }
 
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink';
+
+export interface HighlightRecord {
+  id: string;
+  topicSlug: string;
+  conceptId: string;
+  text: string;
+  color: HighlightColor;
+  note?: string;
+  createdAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -109,6 +121,7 @@ class ProgressDb extends Dexie {
   conceptRead!: Table<ConceptReadRecord, string>;
   playground!: Table<PlaygroundRecord, string>;
   conceptScroll!: Table<ConceptScrollRecord, string>;
+  highlights!: Table<HighlightRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -187,6 +200,21 @@ class ProgressDb extends Dexie {
       conceptRead: 'id, topicSlug',
       playground: 'id',
       conceptScroll: 'id, topicSlug',
+    });
+    this.version(9).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
+      conceptScroll: 'id, topicSlug',
+      highlights: 'id, topicSlug, conceptId, createdAt, [topicSlug+conceptId]',
     });
   }
 }
@@ -351,4 +379,52 @@ export const getScroll = async (
 
 export const deleteScroll = async (topicSlug: string, conceptId: string): Promise<void> => {
   await db.conceptScroll.delete(placeKey(topicSlug, conceptId));
+};
+
+const newHighlightId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `h-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+
+export interface HighlightInput {
+  topicSlug: string;
+  conceptId: string;
+  text: string;
+  color: HighlightColor;
+  note?: string;
+}
+
+export const addHighlight = async (input: HighlightInput): Promise<HighlightRecord> => {
+  const record: HighlightRecord = {
+    id: newHighlightId(),
+    topicSlug: input.topicSlug,
+    conceptId: input.conceptId,
+    text: input.text,
+    color: input.color,
+    createdAt: new Date().toISOString(),
+    ...(input.note && input.note.trim().length > 0 ? { note: input.note.trim() } : {}),
+  };
+  await db.highlights.put(record);
+  return record;
+};
+
+export const removeHighlight = async (id: string): Promise<void> => {
+  await db.highlights.delete(id);
+};
+
+export const setHighlightColor = async (id: string, color: HighlightColor): Promise<void> => {
+  await db.highlights.update(id, { color });
+};
+
+export const setHighlightNote = async (id: string, note: string): Promise<void> => {
+  const trimmed = note.trim();
+  if (trimmed.length > 0) {
+    await db.highlights.update(id, { note: trimmed });
+    return;
+  }
+  const record = await db.highlights.get(id);
+  if (!record) return;
+  const next: HighlightRecord = { ...record };
+  delete next.note;
+  await db.highlights.put(next);
 };

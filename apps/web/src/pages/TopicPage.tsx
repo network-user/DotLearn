@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 import { ExerciseRunner } from '@/components/ExerciseRunner';
 import { ReadingPositionTracker, ResumeBanner } from '@/components/ResumeReading';
 import { TheoryContent } from '@/components/TheoryContent';
+import { TheoryHighlighter } from '@/components/TheoryHighlighter';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
@@ -334,6 +335,57 @@ export const TopicPage = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
+  }, [state, activeConceptId, selectConcept, reduceMotion]);
+
+  useEffect(() => {
+    if (state.kind !== 'ready') return;
+    const concepts = state.bundle.manifest.concepts;
+    let startX = 0;
+    let startY = 0;
+    let ignore = false;
+    const onStart = (event: TouchEvent): void => {
+      if (event.touches.length !== 1) {
+        ignore = true;
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) {
+        ignore = true;
+        return;
+      }
+      startX = touch.clientX;
+      startY = touch.clientY;
+      ignore = false;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        target.closest('.monaco-editor, input, textarea, select, pre, .overflow-x-auto, [data-no-swipe]')
+      ) {
+        ignore = true;
+      }
+    };
+    const onEnd = (event: TouchEvent): void => {
+      if (ignore) return;
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Math.abs(dx) < 70 || Math.abs(dy) > 50) return;
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) return;
+      const index = concepts.findIndex((concept) => concept.id === activeConceptId);
+      const next = concepts[index + (dx < 0 ? 1 : -1)];
+      if (next) {
+        selectConcept(next.id);
+        programmaticScrollTo(0, !reduceMotion);
+      }
+    };
+    window.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchend', onEnd);
+    };
   }, [state, activeConceptId, selectConcept, reduceMotion]);
 
   if (state.kind === 'loading') {
@@ -975,6 +1027,8 @@ const ConceptPanel = ({
           </section>
         ))}
       </div>
+
+      <TheoryHighlighter slug={slug} conceptId={concept.id} />
 
       <section className="space-y-4 pt-4 border-t-2 border-fg/80">
         <div className="flex items-center justify-between gap-3">
