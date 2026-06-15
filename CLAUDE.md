@@ -96,17 +96,27 @@ Any change to language fields or file-suffix conventions is a **breaking change*
 - **Names are descriptive:** `submissionStatus`, not `s`.
 - **Typed errors.** Throw domain-specific error classes, not bare `Error`.
 
+## Testing
+
+The repo uses **vitest**. Run everything with `pnpm test` (Turborepo runs each package's `test`); per package: `pnpm --filter @dotlearn/<pkg> test`, watch mode via `test:watch`. Tests are co-located as `src/**/*.spec.ts` with `import { describe, it, expect } from 'vitest'` (globals are off). Existing suites: `packages/lesson-engine` (answer grading, value/row comparison, loader), `packages/contracts` (Zod schemas), `apps/api` (domain services).
+
+- **Maintain the suite as part of the change, not after.** When you add or modify logic that is (or should be) tested, add/update the matching `*.spec.ts` and keep `pnpm test` green. Changing `packages/contracts` schemas or `packages/lesson-engine` grading/loader without touching their specs is incomplete work.
+- **Test where it earns its keep — not everywhere.** Cover pure, deterministic logic with real failure modes: answer grading/comparison, schema validation and invariants, loaders/resolvers, backend domain services, and any non-obvious algorithm. A bug there is silent and user-facing, so it's worth a test. Trivial glue, thin wrappers, and presentational markup are not.
+- **Do not** add component-render or Playwright e2e tests by default. For this solo, local-first project without a CI e2e gate their maintenance cost outweighs the value; write them only when explicitly asked.
+- Keep tests deterministic: no network, no real heavy runtimes. Inject fakes (e.g. `inlineJavascriptRuntime` for JS exercises; never spin up pyodide/sql.js in a unit test). Validate a meaningful test by checking it fails when the code it guards is broken.
+
 ## Extending the contract
 
 A new exercise `type` or runtime is a **breaking change**. Required steps, in one PR:
 
 1. Add the Zod variant to `packages/contracts/src/exercise.schema.ts`
 2. Add the runner to `packages/lesson-engine/src/runners/`
-3. Update `.cursor/skills/lesson-forge/schemas/exercise.schema.json` and `.claude/skills/lesson-forge/schemas/exercise.schema.json`
-4. Update `reference/exercise-types.md` in both skill locations
-5. Run `pnpm sync:skills`
+3. Add `*.spec.ts` for the new runner and the schema variant; keep `pnpm test` green
+4. Update `.cursor/skills/lesson-forge/schemas/exercise.schema.json` and `.claude/skills/lesson-forge/schemas/exercise.schema.json`
+5. Update `reference/exercise-types.md` in both skill locations
+6. Run `pnpm sync:skills`
 
-Do not start unless you can finish all five steps in the same change.
+Do not start unless you can finish all steps in the same change.
 
 ## Submission flow
 
