@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 import { exerciseVariantCount, resolveExerciseVariant, type Exercise } from '@dotlearn/contracts';
 import { Shuffle } from 'lucide-react';
@@ -45,7 +45,10 @@ const RunnerDispatch = ({ topicSlug, exercise }: ExerciseRunnerProps) => {
   );
 };
 
-export const ExerciseRunner = ({ topicSlug, exercise }: ExerciseRunnerProps) => {
+export const ExerciseRunner = memo(function ExerciseRunner({
+  topicSlug,
+  exercise,
+}: ExerciseRunnerProps) {
   const { t } = useTranslation('runners');
   const variantTotal = exerciseVariantCount(exercise);
   const [variantIndex, setVariantIndex] = useState(() =>
@@ -88,7 +91,7 @@ export const ExerciseRunner = ({ topicSlug, exercise }: ExerciseRunnerProps) => 
       <RunnerDispatch key={variantIndex} topicSlug={topicSlug} exercise={resolved} />
     </div>
   );
-};
+});
 
 const UnknownRunner = ({
   type,

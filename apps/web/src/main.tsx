@@ -1,6 +1,7 @@
 import { lazy, StrictMode, Suspense, useEffect, useState } from 'react';
 
 import { RouterProvider } from '@tanstack/react-router';
+import { MotionConfig } from 'framer-motion';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
 
@@ -8,6 +9,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import './lib/i18n';
 import { AuthProvider } from './lib/auth/AuthContext';
 import { COMMAND_PALETTE_EVENT } from './lib/command-palette';
+import { initSettings, useSettings } from './lib/settings';
 import { applyTheme, readStoredTheme } from './lib/theme';
 import { router } from './router';
 
@@ -46,6 +48,26 @@ const CommandPaletteHost = () => {
 };
 
 applyTheme(readStoredTheme());
+initSettings();
+
+const AppRoot = () => {
+  const settings = useSettings();
+  return (
+    <MotionConfig reducedMotion={settings.motion === 'reduced' ? 'always' : 'user'}>
+      <RouterProvider router={router} />
+      <CommandPaletteHost />
+      <Toaster
+        theme="system"
+        position="bottom-right"
+        toastOptions={{
+          classNames: {
+            toast: 'border border-border-base bg-surface/95 text-fg',
+          },
+        }}
+      />
+    </MotionConfig>
+  );
+};
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -56,17 +78,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <ErrorBoundary>
       <AuthProvider>
-        <RouterProvider router={router} />
-        <CommandPaletteHost />
-        <Toaster
-          theme="system"
-          position="bottom-right"
-          toastOptions={{
-            classNames: {
-              toast: 'border border-border-base bg-surface/95 text-fg',
-            },
-          }}
-        />
+        <AppRoot />
       </AuthProvider>
     </ErrorBoundary>
   </StrictMode>,

@@ -6,6 +6,7 @@ import {
   type ConceptReadRecord,
   type ConceptScrollRecord,
   type FlashcardReviewRecord,
+  type HighlightRecord,
   type InterviewStudiedRecord,
   type ProgressRecord,
   type TopicPlaceRecord,
@@ -28,6 +29,7 @@ export interface ProgressExport {
     bookmarks: BookmarkRecord[];
     conceptRead: ConceptReadRecord[];
     conceptScroll: ConceptScrollRecord[];
+    highlights: HighlightRecord[];
   };
 }
 
@@ -49,6 +51,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
     bookmarks,
     conceptRead,
     conceptScroll,
+    highlights,
   ] = await Promise.all([
     db.progress.toArray(),
     db.activity.toArray(),
@@ -59,6 +62,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
     db.bookmarks.toArray(),
     db.conceptRead.toArray(),
     db.conceptScroll.toArray(),
+    db.highlights.toArray(),
   ]);
 
   return {
@@ -76,6 +80,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
       bookmarks,
       conceptRead,
       conceptScroll,
+      highlights,
     },
   };
 };
@@ -108,6 +113,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
   const bookmarks = asArray<BookmarkRecord>(data.bookmarks);
   const conceptRead = asArray<ConceptReadRecord>(data.conceptRead);
   const conceptScroll = asArray<ConceptScrollRecord>(data.conceptScroll);
+  const highlights = asArray<HighlightRecord>(data.highlights);
 
   await db.transaction(
     'rw',
@@ -121,6 +127,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
       db.bookmarks,
       db.conceptRead,
       db.conceptScroll,
+      db.highlights,
     ],
     async () => {
       await db.progress.bulkPut(progress);
@@ -132,6 +139,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
       await db.bookmarks.bulkPut(bookmarks);
       await db.conceptRead.bulkPut(conceptRead);
       await db.conceptScroll.bulkPut(conceptScroll);
+      await db.highlights.bulkPut(highlights);
     },
   );
 
@@ -144,9 +152,44 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
     conceptNotes.length +
     bookmarks.length +
     conceptRead.length +
-    conceptScroll.length;
+    conceptScroll.length +
+    highlights.length;
 
   return { imported };
+};
+
+export const clearAllProgress = async (): Promise<void> => {
+  await db.transaction(
+    'rw',
+    [
+      db.progress,
+      db.activity,
+      db.flashcardReviews,
+      db.interviewStudied,
+      db.topicPlace,
+      db.conceptNotes,
+      db.bookmarks,
+      db.conceptRead,
+      db.conceptScroll,
+      db.highlights,
+      db.playground,
+    ],
+    async () => {
+      await Promise.all([
+        db.progress.clear(),
+        db.activity.clear(),
+        db.flashcardReviews.clear(),
+        db.interviewStudied.clear(),
+        db.topicPlace.clear(),
+        db.conceptNotes.clear(),
+        db.bookmarks.clear(),
+        db.conceptRead.clear(),
+        db.conceptScroll.clear(),
+        db.highlights.clear(),
+        db.playground.clear(),
+      ]);
+    },
+  );
 };
 
 export const downloadProgressExport = (data: ProgressExport): void => {

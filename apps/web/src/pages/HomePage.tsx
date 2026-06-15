@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
@@ -230,10 +230,13 @@ export const HomePage = () => {
     patch({ runtime: next.length > 0 ? next : undefined });
   };
 
-  const toggleTag = (value: string): void => {
-    const next = toggleInArray(tagFilter, value);
-    patch({ tags: next.length > 0 ? next : undefined });
-  };
+  const toggleTag = useCallback(
+    (value: string): void => {
+      const next = toggleInArray(tagFilter, value);
+      patch({ tags: next.length > 0 ? next : undefined });
+    },
+    [tagFilter, patch],
+  );
 
   return (
     <div className="space-y-14">
@@ -705,7 +708,7 @@ interface TopicCardProps {
   onToggleTag: (tag: string) => void;
 }
 
-const TopicCard = ({ row, activeTags, onToggleTag }: TopicCardProps) => {
+const TopicCard = memo(function TopicCard({ row, activeTags, onToggleTag }: TopicCardProps) {
   const { t } = useTranslation('home');
   const { manifest, total, passed, readConcepts } = row;
   const totalConcepts = manifest.concepts.length;
@@ -823,7 +826,7 @@ const TopicCard = ({ row, activeTags, onToggleTag }: TopicCardProps) => {
       </Surface>
     </Link>
   );
-};
+});
 
 const Stat3 = ({
   label,

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { Search } from 'lucide-react';
+import { Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
@@ -13,7 +13,10 @@ import { adminPath } from '@/router';
 import { AddTopicButton } from './AddTopicButton';
 import { BottomTabBar } from './BottomTabBar';
 import { Breadcrumbs } from './Breadcrumbs';
+import { InstallPrompt } from './InstallPrompt';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { Onboarding } from './Onboarding';
+import { ShortcutsHost } from './ShortcutsDialog';
 import { ThemeToggle } from './ThemeToggle';
 
 type LayoutProps = {
@@ -73,6 +76,7 @@ export const Layout = ({ children }: LayoutProps) => {
               <NavLink to="/sandbox" active={isActive('/sandbox')} label={t('sandbox')} />
               <NavLink to="/proposals" active={isActive('/proposals')} label={t('proposals')} />
               <NavLink to="/progress" active={isActive('/progress')} label={t('progress')} />
+              <NavLink to="/library" active={isActive('/library')} label={t('library')} />
               {showAdminLink && (
                 <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
               )}
@@ -91,6 +95,19 @@ export const Layout = ({ children }: LayoutProps) => {
               </button>
               <LanguageSwitcher />
               <ThemeToggle />
+              <Link
+                to="/settings"
+                aria-label={t('settings')}
+                title={t('settings')}
+                className={cx(
+                  'hidden md:inline-flex items-center justify-center rounded-md border border-border-base px-2 py-1.5 transition-colors',
+                  isActive('/settings')
+                    ? 'text-fg bg-fg/[0.06]'
+                    : 'text-fg-muted hover:text-fg hover:bg-surface-2',
+                )}
+              >
+                <Settings size={15} />
+              </Link>
               <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
               <AddTopicButton />
             </div>
@@ -125,6 +142,9 @@ export const Layout = ({ children }: LayoutProps) => {
       </footer>
 
       <BottomTabBar />
+      <ShortcutsHost />
+      <InstallPrompt />
+      <Onboarding />
     </div>
   );
 };

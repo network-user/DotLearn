@@ -9,11 +9,13 @@ import { useTranslation } from 'react-i18next';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
+import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { reviewFlashcard, type FlashcardRating } from '@/lib/flashcards';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
+import { useSettings } from '@/lib/settings';
 import { loadDueAcrossDecks, loadFailedExercises, type DueCard, type FailedExercise } from '@/lib/today';
 import { useStreak } from '@/lib/use-progress';
 
@@ -34,6 +36,7 @@ export const TodayPage = () => {
   const language = getCurrentLanguage();
 
   const streak = useStreak();
+  const { dailyGoal } = useSettings();
   const activityToday = useLiveQuery(() => db.activity.get(todayUtc()), [], undefined);
   const solvedToday = activityToday?.exercisesPassed ?? 0;
 
@@ -72,6 +75,8 @@ export const TodayPage = () => {
         <p className="max-w-prose text-sm text-fg-muted">{t('subtitle')}</p>
       </header>
 
+      <GoalCard done={solvedToday} goal={dailyGoal} />
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <SummaryStat
           icon={<Flame size={16} className="text-accent" />}
@@ -89,6 +94,35 @@ export const TodayPage = () => {
 
       <MistakesSection failed={failed} typeLabel={(type) => tTypes(`exam.types.${type}`, { defaultValue: type })} />
     </div>
+  );
+};
+
+const GoalCard = ({ done, goal }: { done: number; goal: number }) => {
+  const { t } = useTranslation('today');
+  const ratio = goal > 0 ? Math.min(1, done / goal) : 0;
+  const reached = goal > 0 && done >= goal;
+  return (
+    <Surface variant={reached ? 'accent' : 'chrome'} rule={reached ? 'left' : 'none'}>
+      <div className="flex items-center gap-4 p-4 sm:p-5">
+        <div className="relative shrink-0">
+          <ProgressRing
+            value={ratio}
+            size={60}
+            stroke={5}
+            indicatorClassName={reached ? 'text-ok' : 'text-accent'}
+          />
+          <span className="absolute inset-0 grid place-items-center text-[12px] font-display tabular-nums text-fg">
+            {t('goal.progress', { done, goal })}
+          </span>
+        </div>
+        <div className="min-w-0">
+          <div className="eyebrow text-fg-subtle">{t('goal.heading')}</div>
+          <p className={cx('mt-1 text-sm font-medium', reached ? 'text-ok' : 'text-fg')}>
+            {reached ? t('goal.reached') : t('goal.remaining', { count: Math.max(0, goal - done) })}
+          </p>
+        </div>
+      </div>
+    </Surface>
   );
 };
 

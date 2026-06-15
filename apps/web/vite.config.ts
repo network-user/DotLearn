@@ -8,6 +8,7 @@ import react from '@vitejs/plugin-react';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
+import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -171,6 +172,16 @@ export default defineConfig({
         ],
       },
     }),
+    ...(process.env.ANALYZE
+      ? [
+          visualizer({
+            filename: 'dist/bundle-stats.html',
+            gzipSize: true,
+            brotliSize: true,
+            template: 'treemap',
+          }) as unknown as Plugin,
+        ]
+      : []),
   ],
   resolve: {
     alias: {

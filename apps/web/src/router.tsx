@@ -68,6 +68,16 @@ const TodayPage = lazy(() =>
     default: module.TodayPage,
   })),
 );
+const SettingsPage = lazy(() =>
+  import('./pages/SettingsPage').then((module) => ({
+    default: module.SettingsPage,
+  })),
+);
+const LibraryPage = lazy(() =>
+  import('./pages/LibraryPage').then((module) => ({
+    default: module.LibraryPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -257,6 +267,18 @@ const todayRoute = new Route({
   component: TodayPage,
 });
 
+const settingsRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+});
+
+const libraryRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/library',
+  component: LibraryPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
@@ -272,6 +294,8 @@ const routeTree = rootRoute.addChildren([
   sandboxRoute,
   mapRoute,
   todayRoute,
+  settingsRoute,
+  libraryRoute,
 ]);
 
 export const router = new Router({
