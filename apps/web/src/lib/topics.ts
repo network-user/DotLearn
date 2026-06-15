@@ -13,11 +13,7 @@ import {
 
 import { listHiddenTopics } from './api-client';
 import { getCurrentLanguage } from './i18n';
-
-const manifestModules = import.meta.glob<{ default: unknown }>(
-  '../../../../topics/*/manifest.json',
-  { eager: true },
-);
+import manifestRecord from 'virtual:topic-manifests';
 
 const exerciseModules = import.meta.glob<string>(
   '../../../../topics/*/exercises/*.yaml',
@@ -37,11 +33,7 @@ const reKey = <T>(record: Record<string, T>): Record<string, T> => {
   return out;
 };
 
-const manifests = reKey(
-  Object.fromEntries(
-    Object.entries(manifestModules).map(([path, mod]) => [path, mod.default]),
-  ),
-);
+const manifests: Record<string, unknown> = manifestRecord;
 const exercises = reKey(exerciseModules);
 
 const source: TopicSource = createLazyTopicSource({ manifests, exercises });
@@ -139,40 +131,55 @@ export const loadTopic = async (
   return filtered;
 };
 
-let manifestList: TopicManifest[] | undefined;
-let hiddenSlugsPromise: Promise<Set<string>> | undefined;
+const slugFromManifestPath = (path: string): string | undefined =>
+  /^\/topics\/([^/]+)\/manifest\.json$/.exec(path)?.[1];
 
-const loadHiddenSlugs = async (): Promise<Set<string>> => {
+let allManifestsCache: TopicManifest[] | undefined;
+
+export const getAllManifests = (): TopicManifest[] => {
+  if (allManifestsCache) {
+    return allManifestsCache;
+  }
+  allManifestsCache = Object.keys(manifests)
+    .map((path) => slugFromManifestPath(path))
+    .filter((slug): slug is string => slug !== undefined)
+    .map((slug) => manifestOf(slug))
+    .filter((manifest): manifest is TopicManifest => manifest !== undefined)
+    .sort((a, b) => a.title.localeCompare(b.title));
+  return allManifestsCache;
+};
+
+let hiddenSlugsPromise: Promise<Set<string>> | undefined;
+let hiddenSlugsCache: Set<string> | undefined;
+
+export const loadHiddenSlugs = async (): Promise<Set<string>> => {
   if (!hiddenSlugsPromise) {
     hiddenSlugsPromise = listHiddenTopics()
-      .then((items) => new Set(items.map((item) => item.slug)))
-      .catch(() => new Set<string>());
+      .then((items) => {
+        hiddenSlugsCache = new Set(items.map((item) => item.slug));
+        return hiddenSlugsCache;
+      })
+      .catch(() => {
+        hiddenSlugsCache = new Set<string>();
+        return hiddenSlugsCache;
+      });
   }
   return hiddenSlugsPromise;
 };
 
 export const invalidateHiddenTopicsCache = (): void => {
   hiddenSlugsPromise = undefined;
-  manifestList = undefined;
+  hiddenSlugsCache = undefined;
 };
 
 export const listManifests = async (): Promise<TopicManifest[]> => {
-  if (manifestList) {
-    return manifestList;
-  }
-  const [slugs, hidden] = await Promise.all([listTopicSlugs(), loadHiddenSlugs()]);
-  manifestList = slugs
-    .map((slug) => manifestOf(slug))
-    .filter((manifest): manifest is TopicManifest => manifest !== undefined)
-    .filter((manifest) => !hidden.has(manifest.slug))
-    .sort((a, b) => a.title.localeCompare(b.title));
-  return manifestList;
+  const all = getAllManifests();
+  void loadHiddenSlugs();
+  const hidden = hiddenSlugsCache;
+  return hidden && hidden.size > 0
+    ? all.filter((manifest) => !hidden.has(manifest.slug))
+    : all;
 };
 
-export const listAllManifestsIgnoringHidden = async (): Promise<TopicManifest[]> => {
-  const slugs = await listTopicSlugs();
-  return slugs
-    .map((slug) => manifestOf(slug))
-    .filter((manifest): manifest is TopicManifest => manifest !== undefined)
-    .sort((a, b) => a.title.localeCompare(b.title));
-};
+export const listAllManifestsIgnoringHidden = async (): Promise<TopicManifest[]> =>
+  getAllManifests();

@@ -2,11 +2,15 @@ import { useSyncExternalStore } from 'react';
 
 export type AccentId = 'blue' | 'violet' | 'teal' | 'rose' | 'amber' | 'graphite';
 export type ReadingSize = 'compact' | 'normal' | 'comfortable';
+export type ReadingFont = 'serif' | 'sans';
+export type ReadingSpacing = 'normal' | 'relaxed';
 export type MotionPref = 'system' | 'reduced';
 
 export interface AppSettings {
   accent: AccentId;
   reading: ReadingSize;
+  readingFont: ReadingFont;
+  readingSpacing: ReadingSpacing;
   motion: MotionPref;
   dailyGoal: number;
 }
@@ -28,6 +32,8 @@ export const DAILY_GOAL_MAX = 50;
 export const DEFAULT_SETTINGS: AppSettings = {
   accent: 'blue',
   reading: 'normal',
+  readingFont: 'serif',
+  readingSpacing: 'normal',
   motion: 'system',
   dailyGoal: 5,
 };
@@ -49,6 +55,8 @@ const sanitize = (raw: unknown): AppSettings => {
     reading: READING_SIZES.includes(value.reading as ReadingSize)
       ? (value.reading as ReadingSize)
       : DEFAULT_SETTINGS.reading,
+    readingFont: value.readingFont === 'sans' ? 'sans' : 'serif',
+    readingSpacing: value.readingSpacing === 'relaxed' ? 'relaxed' : 'normal',
     motion: value.motion === 'reduced' ? 'reduced' : 'system',
     dailyGoal: typeof value.dailyGoal === 'number' ? clampGoal(value.dailyGoal) : DEFAULT_SETTINGS.dailyGoal,
   };
@@ -74,6 +82,10 @@ export const applySettings = (settings: AppSettings): void => {
   else root.dataset.accent = settings.accent;
   if (settings.reading === 'normal') delete root.dataset.reading;
   else root.dataset.reading = settings.reading;
+  if (settings.readingFont === 'sans') root.dataset.readingFont = 'sans';
+  else delete root.dataset.readingFont;
+  if (settings.readingSpacing === 'relaxed') root.dataset.readingSpacing = 'relaxed';
+  else delete root.dataset.readingSpacing;
   if (settings.motion === 'reduced') root.dataset.motion = 'reduced';
   else delete root.dataset.motion;
 };

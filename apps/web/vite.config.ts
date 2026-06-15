@@ -13,6 +13,7 @@ import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 import { searchIndexPlugin } from './vite-plugin-search-index';
+import { topicManifestsPlugin } from './vite-plugin-topic-manifests';
 import { topicStatsPlugin } from './vite-plugin-topic-stats';
 
 const CONTENT_SECURITY_POLICY = [
@@ -107,6 +108,7 @@ export default defineConfig({
   plugins: [
     cspPlugin(),
     pyodideAssetsPlugin(),
+    topicManifestsPlugin(),
     topicStatsPlugin(),
     searchIndexPlugin(),
     {
