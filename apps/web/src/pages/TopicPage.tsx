@@ -33,6 +33,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
+import { ReadingSettingsButton } from '@/components/ReadingSettingsButton';
 import { ReadingPositionTracker, ResumeBanner } from '@/components/ResumeReading';
 import { TheoryContent } from '@/components/TheoryContent';
 import { TheoryHighlighter } from '@/components/TheoryHighlighter';
@@ -524,7 +525,7 @@ export const TopicPage = () => {
       )}
       <div
         className={cx(
-          'grid grid-cols-1 gap-6',
+          'grid grid-cols-1 gap-6 lg:gap-10 xl:gap-12',
           !focusMode &&
             'lg:[grid-template-columns:var(--rail-w)_minmax(0,1fr)] xl:[grid-template-columns:var(--rail-w)_minmax(0,1fr)_var(--toc-w)]',
         )}
@@ -1158,6 +1159,7 @@ const ConceptTools = ({
       >
         {focusMode ? <Minimize2 size={16} /> : <Focus size={16} />}
       </button>
+      <ReadingSettingsButton />
     </div>
   );
 };
@@ -1277,30 +1279,57 @@ const TocSidebar = ({ conceptId, ratio }: { conceptId: string | undefined; ratio
   const [entries, setEntries] = useState<TocEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const rafRef = useRef<number | null>(null);
+  const lastSigRef = useRef('');
 
   useEffect(() => {
+    let cancelled = false;
+    let observer: MutationObserver | null = null;
+    let scheduled = false;
     const collect = (): void => {
+      if (cancelled) return;
       const root = document.querySelector('[data-toc-root]');
-      if (!root) {
-        setEntries([]);
-        return;
-      }
-      const nodes = root.querySelectorAll<HTMLElement>('[data-toc]');
       const next: TocEntry[] = [];
-      nodes.forEach((node) => {
-        if (!node.id || !node.textContent) return;
-        next.push({
-          id: node.id,
-          text: node.textContent,
-          level: node.dataset.toc === 'h3' ? 3 : 2,
+      if (root) {
+        root.querySelectorAll<HTMLElement>('[data-toc]').forEach((node) => {
+          if (!node.id || !node.textContent) return;
+          next.push({
+            id: node.id,
+            text: node.textContent,
+            level: node.dataset.toc === 'h3' ? 3 : 2,
+          });
         });
-      });
+      }
+      const signature = next.map((entry) => `${entry.level}:${entry.id}:${entry.text}`).join('|');
+      if (signature === lastSigRef.current) return;
+      lastSigRef.current = signature;
       setEntries(next);
     };
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => requestAnimationFrame(collect));
+    const schedule = (): void => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        collect();
+      });
+    };
+    const attach = (): void => {
+      if (cancelled) return;
+      const root = document.querySelector('[data-toc-root]');
+      if (!root) {
+        rafRef.current = requestAnimationFrame(attach);
+        return;
+      }
+      collect();
+      observer = new MutationObserver(schedule);
+      observer.observe(root, { childList: true, subtree: true });
+    };
+    setEntries([]);
+    lastSigRef.current = '';
+    rafRef.current = requestAnimationFrame(attach);
     return () => {
+      cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      observer?.disconnect();
     };
   }, [conceptId]);
 

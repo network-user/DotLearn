@@ -3,12 +3,13 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
   ArrowUpRight,
   Bookmark,
   CalendarCheck,
+  ChevronDown,
   Code2,
   Database,
   FileText,
@@ -18,6 +19,7 @@ import {
   NotebookPen,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Waypoints,
   X,
@@ -30,11 +32,10 @@ import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { DualProgressRing } from '@/components/ui/DualProgressRing';
 import { Surface } from '@/components/ui/Surface';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
-import { effectiveLanguage, listManifests, prefetchTopic } from '@/lib/topics';
+import { effectiveLanguage, getAllManifests, loadHiddenSlugs, prefetchTopic } from '@/lib/topics';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import topicStats from 'virtual:topic-stats';
@@ -95,8 +96,7 @@ const isStatusFilter = (value: string | undefined): value is StatusFilter =>
 
 export const HomePage = () => {
   const { t } = useTranslation('home');
-  const { t: tCommon } = useTranslation('common');
-  const [manifests, setManifests] = useState<TopicManifest[] | undefined>(undefined);
+  const [manifests, setManifests] = useState<TopicManifest[]>(() => getAllManifests());
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
 
@@ -120,6 +120,7 @@ export const HomePage = () => {
         to: '/',
         search: (prev) => ({ ...prev, ...next }),
         replace: true,
+        resetScroll: false,
       });
     },
     [navigate],
@@ -137,10 +138,9 @@ export const HomePage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    listManifests().then((loaded) => {
-      if (!cancelled) {
-        setManifests(loaded);
-      }
+    void loadHiddenSlugs().then((hidden) => {
+      if (cancelled || hidden.size === 0) return;
+      setManifests((prev) => prev.filter((manifest) => !hidden.has(manifest.slug)));
     });
     return () => {
       cancelled = true;
@@ -150,7 +150,6 @@ export const HomePage = () => {
   const language = getCurrentLanguage();
 
   const rows = useMemo<TopicRow[]>(() => {
-    if (!manifests) return [];
     const passedByTopic = new Map<string, number>();
     for (const record of progressRecords ?? []) {
       if (record.status === 'pass') {
@@ -251,9 +250,7 @@ export const HomePage = () => {
           <div>
             <h2 className="text-2xl font-semibold tracking-tightish">{t('topicsHeading')}</h2>
             <p className="mt-1 text-sm text-fg-muted">
-              {manifests === undefined
-                ? tCommon('loading')
-                : t('available', { count: filteredRows.length })}
+              {t('available', { count: filteredRows.length })}
             </p>
           </div>
           <FilterBar
@@ -277,9 +274,7 @@ export const HomePage = () => {
           onReset={resetFilters}
         />
 
-        {manifests === undefined ? (
-          <SkeletonGrid />
-        ) : rows.length === 0 ? (
+        {rows.length === 0 ? (
           <EmptyState />
         ) : filteredRows.length === 0 ? (
           <NoMatchesState onReset={resetFilters} />
@@ -600,6 +595,48 @@ const CatalogToolbar = ({
   onReset,
 }: CatalogToolbarProps) => {
   const { t } = useTranslation('home');
+  const reduceMotion = useReducedMotion() ?? false;
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFacetCount =
+    (status !== 'all' ? 1 : 0) + runtimeFilter.length + tagFilter.length;
+
+  const facets = (
+    <div className="space-y-4">
+      <FacetGroup label={t('facets.status')}>
+        {STATUS_FILTERS.map((option) => (
+          <Chip key={option} active={status === option} onClick={() => onStatusChange(option)}>
+            {t(STATUS_LABEL_KEY[option])}
+          </Chip>
+        ))}
+      </FacetGroup>
+
+      {availableRuntimes.length > 0 && (
+        <FacetGroup label={t('facets.runtime')}>
+          {availableRuntimes.map((runtime) => (
+            <Chip
+              key={runtime}
+              active={runtimeFilter.includes(runtime)}
+              onClick={() => onToggleRuntime(runtime)}
+              icon={runtimeIcon(runtime)}
+            >
+              {t(RUNTIME_LABEL_KEY[runtime] ?? `card.tagline.${runtime}`)}
+            </Chip>
+          ))}
+        </FacetGroup>
+      )}
+
+      {availableTags.length > 0 && (
+        <FacetGroup label={t('facets.tags')}>
+          {availableTags.map((tag) => (
+            <Chip key={tag} active={tagFilter.includes(tag)} onClick={() => onToggleTag(tag)}>
+              {tag}
+            </Chip>
+          ))}
+        </FacetGroup>
+      )}
+    </div>
+  );
+
   return (
     <Surface variant="chrome" className="p-3 sm:p-4">
       <div className="space-y-4">
@@ -619,6 +656,26 @@ const CatalogToolbar = ({
               className="form-input pl-10"
             />
           </label>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+            aria-controls="catalog-facets"
+            aria-label={t('filtersToggle.aria')}
+            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] w-full sm:w-auto shrink-0"
+          >
+            <SlidersHorizontal size={14} />
+            {filtersOpen ? t('filtersToggle.hide') : t('filtersToggle.show')}
+            {activeFacetCount > 0 && (
+              <span className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-accent/[0.12] px-1.5 text-[11px] font-semibold tabular-nums text-accent">
+                {activeFacetCount}
+              </span>
+            )}
+            <ChevronDown
+              size={14}
+              className={cx('transition-transform duration-fast', filtersOpen && 'rotate-180')}
+            />
+          </button>
           {filtersActive && (
             <button
               type="button"
@@ -631,37 +688,26 @@ const CatalogToolbar = ({
           )}
         </div>
 
-        <FacetGroup label={t('facets.status')}>
-          {STATUS_FILTERS.map((option) => (
-            <Chip key={option} active={status === option} onClick={() => onStatusChange(option)}>
-              {t(STATUS_LABEL_KEY[option])}
-            </Chip>
-          ))}
-        </FacetGroup>
-
-        {availableRuntimes.length > 0 && (
-          <FacetGroup label={t('facets.runtime')}>
-            {availableRuntimes.map((runtime) => (
-              <Chip
-                key={runtime}
-                active={runtimeFilter.includes(runtime)}
-                onClick={() => onToggleRuntime(runtime)}
-                icon={runtimeIcon(runtime)}
+        {reduceMotion ? (
+          filtersOpen && (
+            <div id="catalog-facets">{facets}</div>
+          )
+        ) : (
+          <AnimatePresence initial={false}>
+            {filtersOpen && (
+              <motion.div
+                key="facets"
+                id="catalog-facets"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
               >
-                {t(RUNTIME_LABEL_KEY[runtime] ?? `card.tagline.${runtime}`)}
-              </Chip>
-            ))}
-          </FacetGroup>
-        )}
-
-        {availableTags.length > 0 && (
-          <FacetGroup label={t('facets.tags')}>
-            {availableTags.map((tag) => (
-              <Chip key={tag} active={tagFilter.includes(tag)} onClick={() => onToggleTag(tag)}>
-                {tag}
-              </Chip>
-            ))}
-          </FacetGroup>
+                <div className="pt-1">{facets}</div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
       </div>
     </Surface>
@@ -843,16 +889,6 @@ const Stat3 = ({
       {formatter ? formatter(value) : value}
     </div>
   </div>
-);
-
-const SkeletonGrid = () => (
-  <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" aria-hidden>
-    {[0, 1, 2].map((index) => (
-      <li key={index}>
-        <Skeleton rounded="2xl" className="h-48" />
-      </li>
-    ))}
-  </ul>
 );
 
 const EmptyState = () => {

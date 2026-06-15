@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from 'react';
@@ -29,17 +30,17 @@ export const FootnoteProvider = ({ children }: { children: ReactNode }) => {
     },
     [ids],
   );
-  return (
-    <FootnoteContext.Provider value={{ register, numberOf }}>{children}</FootnoteContext.Provider>
-  );
+  const value = useMemo<FootnoteRegistry>(() => ({ register, numberOf }), [register, numberOf]);
+  return <FootnoteContext.Provider value={value}>{children}</FootnoteContext.Provider>;
 };
 
 export const Ref = ({ id }: { id: string }) => {
   const registry = useContext(FootnoteContext);
+  const register = registry?.register;
   useEffect(() => {
-    if (!registry) return undefined;
-    return registry.register(id);
-  }, [registry, id]);
+    if (!register) return undefined;
+    return register(id);
+  }, [register, id]);
   const number = registry?.numberOf(id) ?? null;
   if (number === null) return null;
   return (

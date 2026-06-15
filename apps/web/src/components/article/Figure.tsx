@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useState,
   type ReactNode,
 } from 'react';
@@ -32,8 +33,9 @@ export const FigureProvider = ({ children }: { children: ReactNode }) => {
     },
     [ids],
   );
+  const value = useMemo<FigureNumbering>(() => ({ register, numberOf }), [register, numberOf]);
   return (
-    <FigureNumberingContext.Provider value={{ register, numberOf }}>
+    <FigureNumberingContext.Provider value={value}>
       {children}
     </FigureNumberingContext.Provider>
   );
@@ -51,10 +53,11 @@ export const Figure = ({ caption, id, wide = false, children }: FigureProps) => 
   const autoId = useId();
   const figureId = id ?? autoId;
   const numbering = useContext(FigureNumberingContext);
+  const register = numbering?.register;
   useEffect(() => {
-    if (!numbering) return undefined;
-    return numbering.register(figureId);
-  }, [numbering, figureId]);
+    if (!register) return undefined;
+    return register(figureId);
+  }, [register, figureId]);
   const number = numbering?.numberOf(figureId) ?? null;
 
   return (
