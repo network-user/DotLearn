@@ -45,6 +45,7 @@ import { Kbd } from '@/components/ui/Kbd';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
+import { THEORY_HIGHLIGHTS_ENABLED } from '@/lib/feature-flags';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery } from '@/lib/mastery';
 import { db, recordPlace, saveConceptNote, setBookmark, setConceptRead } from '@/lib/progress-db';
@@ -1029,7 +1030,9 @@ const ConceptPanel = ({
         ))}
       </div>
 
-      <TheoryHighlighter slug={slug} conceptId={concept.id} />
+      {THEORY_HIGHLIGHTS_ENABLED ? (
+        <TheoryHighlighter slug={slug} conceptId={concept.id} />
+      ) : null}
 
       <section className="space-y-4 pt-4 border-t-2 border-fg/80">
         <div className="flex items-center justify-between gap-3">
