@@ -1,0 +1,184 @@
+---
+conceptId: analyzing-code
+title: "Code analysis: loops, nesting, recursion"
+estimatedMinutes: 45
+---
+
+# Read complexity directly from the code
+
+The theory about steps and about O sounds nice, until you find yourself in front of someone else’s thirty-line function with two loops, a recursive call and a call to the dictionary inside. The question “what is the complexity of this” turns from abstract to practical: you need to look at the code and name the growth class without running it. This is a skill, and it breaks down into several stable rules that work almost always.
+
+By the end of the section, you will learn to determine complexity by the structure of the code: adding sequential blocks, multiplying nested loops, recognizing the logarithm by dividing a problem in half, seeing the hidden cost of operations with lists and strings, and evaluating recursion through the number and size of calls. This is the same work that is done in interviews and code reviews when they ask “how does this scale.”
+
+## Mental model: add sequential, multiply nested
+
+Any code is a tree of blocks. Two rules cover almost all cases. **Successive blocks are added**: first one loop on `n`, then another on `n` - this is `n + n = O(n)`. **Nested blocks are multiplied**: a loop on `n` inside a loop on `n` is `n × n = O(n²)`. After addition and multiplication, all that remains is to throw away the constants and lower terms, as in the previous section.
+
+<Figure caption="Consecutive loops add up in O(n), nested loops multiply in O(n²). The structure of the code is directly translated into a formula.">
+  <Sketch viewBox="0 0 440 220" title="Adding and multiplying blocks">
+    <SketchBox x={20} y={30} width={170} height={160} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={105} y={22} muted>последовательно</SketchLabel>
+    <SketchBox x={40} y={50} width={130} height={50} />
+    <SketchLabel x={105} y={80} mono>цикл n</SketchLabel>
+    <SketchBox x={40} y={120} width={130} height={50} />
+    <SketchLabel x={105} y={150} mono>цикл n</SketchLabel>
+    <SketchLabel x={105} y={200} accent mono>n + n = O(n)</SketchLabel>
+    <SketchBox x={250} y={30} width={170} height={160} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={335} y={22} muted>вложенно</SketchLabel>
+    <SketchBox x={265} y={50} width={140} height={120} />
+    <SketchLabel x={335} y={70} mono>цикл n</SketchLabel>
+    <SketchBox x={285} y={90} width={100} height={60} accent />
+    <SketchLabel x={335} y={125} mono accent>цикл n</SketchLabel>
+    <SketchLabel x={335} y={200} accent mono>n × n = O(n²)</SketchLabel>
+  </Sketch>
+</Figure>
+
+On the left, two cycles stand next to each other - their contributions add up. On the right, one inside the other - the contributions are multiplied. Looking at the code, you essentially go around this tree: going down into nesting, multiplying, going through adjacent blocks, adding. Next we will look at cases where this rule is hidden.
+
+## Nesting is not always a square
+
+It’s tempting to immediately write a double loop in `O(n²)`, but you need to look at the actual number of iterations of the inner loop, and not at the fact of nesting itself. The classic trap is an inner loop that depends on an outer loop.
+
+```python
+def upper_triangle(items):
+    pairs = 0
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            pairs += 1
+    return pairs
+```
+
+The inner loop takes `n-1` steps on the first iteration, `n-2` on the second, and so on until zero. The sum of `(n-1) + (n-2) + ... + 1` is `n(n-1)/2` - this is approximately `n²/2`. The constant `1/2` is thrown away, leaving `O(n²)`. The paradox is that the cycle goes through only half of the pairs, but the difficulty class is still quadratic: half of the square is a square.
+
+<Callout type="warning">
+Don't judge complexity by the number of lines or "how deeply nested". Count how many times the innermost operation will actually be executed. The loop `range(i, n)` inside `range(n)` is a sum, not a product `n × n`, but still simplifies to `O(n²)`.
+</Callout>
+
+## The logarithm is hidden in the bisection
+
+If at each step the problem is reduced **by several times** rather than by one, a logarithm appears. A sign is a variable that is divided (`size //= 2`, `lo, hi` converge, the index jumps to the middle), and not reduced by one.
+
+```python
+def count_halvings(n):
+    steps = 0
+    while n > 1:
+        n //= 2
+        steps += 1
+    return steps
+```
+
+From `n` we get `n/2`, then `n/4`, and so on until one. The number of divisions is `log₂ n`: for a million about twenty. Compare this with the `while n > 0: n -= 1` loop, which takes exactly `n` steps. The difference between "divide" and "subtract" is the gap between `log n` and `n`. And if there is also a linear pass inside the logarithmic loop, the result will be `O(n log n)`, the proprietary complexity of good sorts.
+
+## Hidden cost: not everything in Python is O(1)
+
+The most common analysis mistake is mistaking an expensive operation for a cheap one. Many expressions look like one step, but hide a whole pass through the data inside. A few examples worth remembering.
+
+```python
+def has_dup_slow(items):
+    for x in items:
+        if items.count(x) > 1:
+            return True
+    return False
+```
+
+The `for` loop is `n` iterations. But `items.count(x)` is internally `O(n)`: it goes through the entire list. The result is `n × n = O(n²)`, although there is only one visible cycle. The same with `x in some_list` (linear search, `O(n)`), with slices `items[1:]` (copying, `O(n)`) and with merging lines in a loop using `+=`. But `x in some_set` and `x in some_dict` are `O(1)`: sets and dictionaries are searched by hash.
+
+<Figure caption="The seemingly identical “is there an element” checks differ by an order of magnitude: a list is searched by brute force, a set is searched by hash.">
+  <BarChart
+    title="Steps per check "x in collection", n = 1000"
+    unit="steps"
+    data={[
+      { label: "x in list", value: 1000 },
+      { label: "x in set", value: 1 },
+      { label: "x in dict", value: 1 },
+    ]}
+    highlight={["x in set", "x in dict"]}
+  />
+</Figure>
+
+Replacing `list` with `set` in the membership check turns `O(n)` into `O(1)`, and the outer loop turns `O(n²)` into `O(n)`. This is not a micro-optimization, but a change in complexity class, and it often decides whether the code can handle the real amount of data.
+
+## Live sandbox: two ways to find a duplicate
+
+Below two functions look for whether there is a duplicate element in the list. The first one uses `count` inside a loop - `O(n²)`. The second one accumulates what is seen in `set` - `O(n)`. The `ops` counter counts significant operations. Run the code, then **change `n` from 200 to 400** and compare how many times each counter increases: the quadratic counter quadruples, the linear counter doubles.
+
+<PyDemo
+  title="O(n²) vs O(n) in finding a duplicate"
+  code={`def has_dup_slow(items):
+    ops = 0
+    for x in items:
+        seen_count = 0
+        for y in items:
+            ops += 1
+            if y == x:
+                seen_count += 1
+        if seen_count > 1:
+            return True, ops
+    return False, ops
+
+def has_dup_fast(items):
+    ops = 0
+    seen = set()
+    for x in items:
+        ops += 1
+        if x in seen:
+            return True, ops
+        seen.add(x)
+    return False, ops
+
+n = 200
+data = list(range(n))
+print("slow:", has_dup_slow(data)[1], "ops")
+print("fast:", has_dup_fast(data)[1], "ops")`}
+/>
+
+Using unique data, both reach the end, but the cost of the passage differs by orders of magnitude: with `n = 200` the slow version performs about forty thousand operations, the fast one - two hundred. Doubling `n` separates them even further. Same result, different difficulty classes.
+
+## Recursion: number of calls to work in each
+
+Recursion is analyzed as “how many calls in total” multiplied by “how much work is in one call”. Let's take naive Fibonacci numbers.
+
+```python
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+```
+
+Each call generates two new ones, the call tree grows in breadth, and their total number grows approximately as `2ⁿ` - exponential. Inside each call, the work is constant, so the total complexity is `O(2ⁿ)`: for `n = 40` this is already billions of calls. Compare with binary search, where there is **one** call per level and `log n` levels: there the recursion gives `O(log n)`. The difference is whether the call tree branches or extends into a line.
+
+<MarginNote label="Don't count calls manually">Для рекурсии с делением задачи (merge sort, быстрая сортировка) сложность выводят через рекуррентные соотношения и master-теорему. Здесь достаточно интуиции «ширина дерева × работа в узле».</MarginNote>
+
+## An edge case that will surprise you
+
+It seems like the complexity is always determined by the deepest loop. But sometimes what seems harmless dominates. A function with one loop on `n`, inside of which `sorted(small_chunk)` is called on a piece of constant size, remains `O(n)` - sorting a constant chunk costs a constant. And a function without explicit loops at all, but with `sorted(items)` on the entire input, is immediately `O(n log n)`, because the cost is hidden inside the built-in function.
+
+Moral: look not at the form of the code, but at the cost of each operation separately. Built-in functions (`sorted`, `min`, `max`, `sum`, `in` for a list, slices) have their own complexity, and this must be taken into account along with explicit loops. The most expensive contribution wins - even if it is hidden in one line without a single `for`.
+
+## Common mistakes
+
+- **Count nesting by type, not by the number of iterations.** The loop `range(i, n)` inside `range(n)` goes through half the pairs, but it’s still `O(n²)`; and a constant inner loop does not add nesting at all.
+- **Accept expensive operations in `O(1)`.** `x in list`, `list.count(x)`, slicing and merging strings via `+=` are linear. A linear call hidden inside a loop turns `O(n)` into `O(n²)`.
+- **Confuse subtraction and division in a loop.** `n -= 1` gives `n` steps (linear), `n //= 2` gives `log n` steps (logarithmically). The sign of a logarithm is a decrease by several times, not by one.
+
+<Detail summary="Amortization: why append is considered O(1)">
+
+`list.append` is sometimes forced to re-allocate memory and copy the entire list - at this point the operation costs `O(n)`. Why is it called `O(1)`? Because such expensive moments rarely happen: the list grows with a margin, and the cost of copies, spread across all `appends`, gives a constant for the operation. This is amortized complexity - the average cost over a long series of operations. We will analyze it in detail in the next section.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Complexity can be read from the structure of the code: successive blocks are added, nested loops are multiplied.",
+    "Nesting is not always a square: count the real number of iterations of the inner loop, but a constant inner loop does not add nesting.",
+    "The logarithm occurs when dividing a problem by times (n //= 2), and not when decreasing by one (n -= 1).",
+    "Many operations hide linear cost: x in list, list.count, slices; replacing list with set makes the search O(1).",
+    "Recursion is evaluated as the number of calls × work in one call: a branching tree gives an exponent, a linear chain gives a logarithm or a line.",
+  ]}
+/>
+
+## Links
+
+- [Python Wiki - TimeComplexity (complexity list, dict, set, deque)](https://wiki.python.org/moin/TimeComplexity)
+- [Python documentation - Sorting HOW TO (Timsort, O(n log n))](https://docs.python.org/3/howto/sorting.html)
+- [Wikipedia - Master theorem for divide-and-conquer recurrences](https://en.wikipedia.org/wiki/Master_theorem_(analysis_of_algorithms))

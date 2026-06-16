@@ -1,0 +1,166 @@
+---
+conceptId: pydantic-validation
+title: "Pydantic models and validation"
+estimatedMinutes: 45
+---
+
+# A model that checks the data for you
+
+Without checking the input data, any handler turns into a minefield: the client will send `price` as a string, forget a required field, send `email` without a dog - and you will fall, somewhere deep inside the business logic, with an incomprehensible `TypeError`. The classic answer is to write a bunch of `if's by hand at the beginning of the function: check for the presence of a key, check the type, cast, return `400` for any discrepancy. This mountain grows with each field and lives separately from the description of how the data should look.
+
+Pydantic reverses the approach: You once describe what the correct data looks like in the form of a class with standard fields, and Pydantic does the checking and casting itself. By the end of this section, you will be able to declare a model, set field constraints, add your own validation, and predict what FastAPI will return when the input fails validation.
+
+## Mental model: class as a form of data
+
+A Pydantic model is a class derived from `BaseModel`, where each field is declared with a standard annotation. An annotation is not a hint for the IDE, but an executable rule. When FastAPI instantiates a model from the input JSON, Pydantic goes through the fields and does the same thing for each: takes the value, checks and results in the declared type, and if not possible, generates an error.
+
+```python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    name: str
+    age: int
+    is_active: bool = True
+```
+
+The `name` field is required and must be a string. `age` is required and casts to `int`. `is_active` has a default value, so is optional. From JSON `{"name": "Ann", "age": "30"}` we get `User(name='Ann', age=30, is_active=True)`: the string `"30"` is reduced to a number, `is_active` is substituted from the default.
+
+<Figure caption="Pydantic walks through the fields of the model: each value is checked and cast to a type. Errors do not interrupt the flow - they accumulate to return the entire list to the client at once.">
+  <PipelineFigure
+    stages={[
+      { label: "Raw JSON", note: "values ​​as received" },
+      { label: "Type check", note: "str, int, bool", active: true },
+      { label: "Bring", note: "\"30\" → 30", active: true },
+      { label: "User object", note: "fields are guaranteed to be valid" },
+    ]}
+    title="Pydantic Validation Pipeline"
+  />
+</Figure>
+
+The key consequence: inside the handler, you are working with an object whose fields are already guaranteed to be of the desired type. No manual checks. If the data did not go through, the handler was not called, and the client received `422` with a list of all problems at once, and not the first one that came up.
+
+## Restrictions on fields via Field
+
+The type specifies the rough shape. Thin boundaries - line length, number range - are set by `Field`.
+
+```python
+from pydantic import BaseModel, Field
+
+class Product(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    price: float = Field(gt=0)
+    quantity: int = Field(ge=0, le=1000)
+```
+
+`gt=0` requires price strictly greater than zero, `ge=0` for quantity - greater than or equal to. JSON with `"price": -5` will now give `422` with a clear message that the value must be greater than zero. You described the rule once, next to the field, and it works on every request.
+
+<Callout type="tip">
+`Field` distinguishes between `gt`/`ge` and `lt`/`le` just like mathematics: `gt` (greater than) - strictly greater, `ge` (greater or equal) - greater than or equal. Mixing up the boundary is a common reason for the zero going where it shouldn't.
+</Callout>
+
+## Nested models
+
+The model field may be another model. Pydantic will check it recursively as well.
+
+```python
+class Address(BaseModel):
+    city: str
+    zip_code: str
+
+class Customer(BaseModel):
+    name: str
+    address: Address
+```
+
+JSON `{"name": "Ann", "address": {"city": "Moscow", "zip_code": "101000"}}` will be collected in `Customer`, where `customer.address` is a full-fledged `Address` object. If the nested object is missing `city`, the error will indicate the exact location: `address.city`. The depth of nesting is not limited, and the check remains equally detailed at any level.
+
+## Custom verification via validator
+
+When a rule is not expressed in terms of a type and a `Field` - for example, "the password and its confirmation must match" - a validator is included: a method marked with a decorator that Pydantic calls during validation.
+
+```python
+from pydantic import BaseModel, field_validator
+
+class Signup(BaseModel):
+    username: str
+
+    @field_validator("username")
+    @classmethod
+    def no_spaces(cls, v: str) -> str:
+        if " " in v:
+            raise ValueError("в имени не должно быть пробелов")
+        return v
+```
+
+The validator receives a value already cast to the type, checks its condition and either returns the value (possibly modified - for example, `v.strip().lower()`), or throws `ValueError`. Pydantic will turn a thrown `ValueError` into a regular validation error, and the client will see it in the same `422` response next to the others.
+
+<Figure caption="The validator is the last step after type casting: it receives an already typed value, can normalize it, and returns or throws a ValueError, which will become part of the 422.">
+  <Sketch viewBox="0 0 440 140" title="The place of the validator in field verification">
+    <SketchBox x={20} y={50} width={110} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={75} y={76} mono size={11}>JSON-значение</SketchLabel>
+    <SketchBox x={165} y={50} width={110} height={44} />
+    <SketchLabel x={220} y={70} mono size={11}>тип + Field</SketchLabel>
+    <SketchLabel x={220} y={86} muted size={10}>приведение</SketchLabel>
+    <SketchBox x={310} y={50} width={110} height={44} accent />
+    <SketchLabel x={365} y={70} mono accent size={11}>validator</SketchLabel>
+    <SketchLabel x={365} y={86} muted size={10}>своё правило</SketchLabel>
+    <SketchArrow from={[130, 72]} to={[165, 72]} />
+    <SketchArrow from={[275, 72]} to={[310, 72]} accent />
+    <SketchArrow from={[365, 94]} to={[365, 120]} dashed />
+    <SketchLabel x={365} y={134} muted size={10}>ValueError → 422</SketchLabel>
+  </Sketch>
+</Figure>
+
+## The response is also a model: response_model
+
+Models describe not only the input, but also the output. The `response_model` parameter of the decorator filters the response according to the scheme: only the model fields will be included in the JSON, the rest will be cut off.
+
+```python
+class UserOut(BaseModel):
+    id: int
+    name: str
+
+@app.get("/users/{user_id}", response_model=UserOut)
+def get_user(user_id: int):
+    return {"id": user_id, "name": "Ann", "password": "secret"}
+```
+
+Even though the handler also returned `password`, the client will only receive `{"id": ..., "name": ...}`. `response_model` is insurance against accidental leakage of fields: what is not in the output model will not escape, even if it is included in the returned dictionary.
+
+## Edge cases
+
+**Excess fields are silently discarded by default.** JSON with a `nickname` field that is not in the model will not raise an error - Pydantic will simply ignore the `nickname`. If you want to prohibit unknown fields, this can be configured separately (`model_config` with `extra="forbid"`), but out of the box the extra stuff is simply lost. This surprises those who expect `422` for every unfamiliar field.
+
+**`str` accepts almost anything that is not a string, with caution.** In strict mode, Pydantic will not silently turn the number `42` into `"42"` for the `str` field, but in default mode (lax) the behavior depends on the version and settings. Don't rely on silent casting where the type is important - declare it precisely.
+
+**The default value is evaluated once.** If the default field is a mutable object, it needs `Field(default_factory=list)` rather than `= []`, otherwise all instances will share the same list. This is the same pitfall as with Python's default mutable function arguments.
+
+## Common mistakes
+
+- **They do with their hands what the model does.** The `if "name" not in data: ...` chain inside the handler duplicates the work of Pydantic. If a field is described as required in the model, validation has already occurred before the function is called.
+- **Confuse `gt` and `ge` at the border.** The `price: float = Field(ge=0)` field will skip a zero, but `gt=0` will not. For the price you usually need `gt`, for the balance in the warehouse - `ge`. The limit value appears in production, and not in hastily assembled tests.
+- **Return extra fields from the handler without `response_model`.** Without an output model, the entire dictionary, including internal or sensitive fields, will go outside. `response_model` is an explicit exit contract.
+
+<Detail summary="Pydantic v1 and v2: what has changed in the names">
+
+The theme uses the Pydantic v2 API - this is what modern FastAPI installs. If you see in old examples `@validator` instead of `@field_validator`, `class Config` instead of `model_config`, `.dict()` instead of `.model_dump()` - this is Pydantic v1. The idea is the same, the names and some defaults have changed (in particular, v2 is stricter about type casting). For new code, stick to v2 names; When reading someone else's code, keep in mind that both sets mean approximately the same thing.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A Pydantic model is a class with typed fields, where the annotation acts as an executable validation and casting rule.",
+    "FastAPI creates a model object from the input JSON and accumulates all errors at once, returning them to the client with a single 422 response.",
+    "Field specifies thin boundaries (min_length, gt, le), and field_validator is an arbitrary rule that throws a ValueError if violated.",
+    "Nested models are checked recursively, and the error indicates the exact path to the problem field.",
+    "response_model filters the response according to the output scheme and protects against accidental leakage of fields to the outside.",
+  ]}
+/>
+
+## Links
+
+- [FastAPI - Body, Pydantic models](https://fastapi.tiangolo.com/tutorial/body/)
+- [FastAPI - Body, Fields](https://fastapi.tiangolo.com/tutorial/body-fields/)
+- [FastAPI - Response Model](https://fastapi.tiangolo.com/tutorial/response-model/)
+- [Pydantic - Validators](https://docs.pydantic.dev/latest/concepts/validators/)
+- [Pydantic - Fields](https://docs.pydantic.dev/latest/concepts/fields/)
