@@ -1,0 +1,185 @@
+---
+conceptId: class-decorators
+title: Class decorators and classes as decorators
+estimatedMinutes: 30
+---
+
+So far you've decorated functions with functions. But `@` works more broadly than it seems. You can adorn not only a function but also a class - that's how `@dataclass` and `@functools.total_ordering` work. And the reverse: a decorator needn't be only a function - a class works too if it has `__call__`. In this section we'll unpack both symmetries and understand when a class-decorator is more convenient than a function.
+
+By the end of this section you'll write a decorator that takes a class and augments it, and a decorator-class that stores state in instance fields instead of a closure.
+
+## @ above a class gets a class and returns a class
+
+When `@` stands above `class`, it follows the same rule: `@register` above `class User` means `User = register(User)`. The decorator gets a class object, can inspect or augment it, and must return a class (usually the same one). That's handy to add methods to a class, register it in a registry, or validate it.
+
+```python
+def add_repr(cls):
+    def __repr__(self):
+        return f"{cls.__name__}({self.__dict__})"
+    cls.__repr__ = __repr__
+    return cls
+
+@add_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+print(repr(Point(1, 2)))
+```
+
+It prints `Point({'x': 1, 'y': 2})`. Decorator `add_repr` got class `Point`, bound a new `__repr__` method to it, and returned the same class. From the outside `Point` is still `Point`, but now has a human-readable representation. Note: a class decorator doesn't wrap the class in another object - it usually mutates and returns the original class.
+
+<Figure caption="A class decorator gets a class, augments it (new method, registry entry) and returns the same class.">
+  <Sketch viewBox="0 0 420 130" title="Class decorator">
+    <SketchBox x={20} y={40} width={120} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={70} mono>class Point</SketchLabel>
+    <SketchArrow from={[145, 65]} to={[215, 65]} />
+    <SketchLabel x={180} y={50} muted>add_repr</SketchLabel>
+    <SketchBox x={220} y={40} width={180} height={50} accent />
+    <SketchLabel x={310} y={70} mono accent>Point + __repr__</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Class registry in one line
+
+A common practical pattern is collecting all classes of a kind in a registry without listing them by hand. The decorator writes the class into a shared dict at definition time.
+
+```python
+PLUGINS = {}
+
+def plugin(cls):
+    PLUGINS[cls.__name__] = cls
+    return cls
+
+@plugin
+class Exporter:
+    pass
+
+@plugin
+class Importer:
+    pass
+
+print(sorted(PLUGINS))
+```
+
+It prints `['Exporter', 'Importer']`. Each `@plugin` at class definition added it to `PLUGINS`. The registry fills itself: add a new class with `@plugin` - it automatically lands in the dict, no manual list.
+
+## Class as decorator: state in fields, not a closure
+
+Now the reverse symmetry. A decorator is "something you call on a function and that later gets called instead of it." A function isn't the only callable object: an instance with `__call__` is callable too. So a class can be a decorator: its `__init__` takes the function, and `__call__` plays the wrapper role.
+
+```python
+class CountCalls:
+    def __init__(self, func):
+        self.func = func
+        self.count = 0
+
+    def __call__(self, *args, **kwargs):
+        self.count += 1
+        return self.func(*args, **kwargs)
+
+@CountCalls
+def hello():
+    return "привет"
+
+hello()
+hello()
+print(hello.count)
+```
+
+It prints `2`. Unpack it. `@CountCalls` means `hello = CountCalls(hello)` - the name `hello` now points at a class instance. Each `hello()` triggers `__call__`: increments `self.count` and calls the original function. State (`count`) lives in an instance field, not a captured closure variable. Bonus: the counter is reachable from outside as `hello.count` - a function-decorator has no natural place for public state like that.
+
+## Try it yourself
+
+Run the code: class-decorator `Memoize` caches results by arguments in a dict field. Call `slow(4)` twice and watch the cache size. Then add a print of `slow.cache` after the calls and confirm a repeat call with the same argument doesn't recompute - it takes the value from the instance field.
+
+<PyDemo
+  title="Class-decorator with cache in a field"
+  code={`class Memoize:
+    def __init__(self, func):
+        self.func = func
+        self.cache = {}
+
+    def __call__(self, n):
+        if n not in self.cache:
+            self.cache[n] = self.func(n)
+        return self.cache[n]
+
+@Memoize
+def slow(n):
+    print("считаю", n)
+    return n * n
+
+print(slow(4))
+print(slow(4))`}
+/>
+
+It prints `считаю 4`, then `16`, then `16` again - but without a second `считаю 4`: the second call took the ready value from `self.cache`. The cache is an instance field, visible and surviving across calls.
+
+## When a class is better, when a function is
+
+Both a function-decorator and a class-decorator solve the same jobs. The choice is where it's more convenient to keep state and whether you need outside access to it.
+
+<Compare
+  leftTitle="Function-decorator"
+  rightTitle="Class-decorator"
+  left={["State in a closure via nonlocal", "More compact for simple wrappers", "State hidden, not exposed outward", "Familiar form, less code"]}
+  right={["State in instance fields (self.count)", "Handier when state is rich or complex", "State reachable outside as an attribute (hello.count)", "Easy to add methods (reset, stats)"]}
+  verdict="Simple wrapper - function; wrapper with rich, externally observable state - class."
+/>
+
+## When behavior surprises you
+
+A class-decorator without arguments is simple, but a class-decorator factory with arguments is structured differently than you'd expect from functions. If the class has `__init__(self, *deco_args)`, then `@Repeat(3)` first creates instance `Repeat(3)`, and that instance is applied to the function - so `__call__` plays the decorator role and takes the function, not call arguments.
+
+```python
+class Repeat:
+    def __init__(self, times):
+        self.times = times
+
+    def __call__(self, func):
+        def wrapper(*args, **kwargs):
+            result = None
+            for _ in range(self.times):
+                result = func(*args, **kwargs)
+            return result
+        return wrapper
+
+@Repeat(3)
+def ping():
+    print("ping")
+
+ping()
+```
+
+It prints `ping` three times. Here `Repeat(3)` is an instance, `__call__(func)` is the middle level (takes the function), and `wrapper` is inner. So a class factory shifts roles one level: `__call__` no longer takes call arguments but the function itself. Confusing this with an ordinary class-decorator (where `__call__` is the wrapper) is a common mistake.
+
+## Common mistakes
+
+- **Forgetting to return the class.** A class decorator that augments `cls` but doesn't `return cls` turns the class name into `None`. Always return the class.
+- **Losing `__name__`/metadata on the function with a class-decorator.** `@CountCalls` replaces the function with an instance that has no function `__name__`. If metadata matters, copy it via `functools.update_wrapper(self, func)` in `__init__`.
+- **Confusing `__call__` on an ordinary class-decorator and a class factory.** Without arguments `__call__` is the wrapper (takes call arguments). With arguments `__call__` takes the function and returns the wrapper.
+
+<Detail summary="Why @dataclass is a class decorator">
+
+Standard `@dataclass` is exactly such a decorator: it gets a class, reads field annotations, and generates `__init__`, `__repr__`, `__eq__`, and optionally other methods for you, then returns the same class. That shows the power of the pattern: a class decorator can generate a whole method set from what's declared in the body. `functools.total_ordering` works similarly - it fills in missing comparison operators from one you defined. Neither wraps the class in another object; both enrich the original and return it.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "@ above a class works like above a function: @register above class User means User = register(User); the decorator gets a class and returns a class.",
+    "A class decorator usually mutates the original class (adds a method, writes to a registry) and returns it, rather than wrapping it in another object.",
+    "A class registry is built in one line with @plugin: each class registers itself at definition time.",
+    "A decorator can be a class with __call__: __init__ takes the function, __call__ plays the wrapper; state lives in instance fields.",
+    "A class-decorator is handy when state is rich or must be reachable from outside (hello.count); a function suits simple wrappers.",
+    "For a class factory with arguments, roles shift: Repeat(3) is an instance, __call__ takes the function, __call__ returns the wrapper.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - dataclasses](https://docs.python.org/3/library/dataclasses.html)
+- [Python documentation - __call__ method](https://docs.python.org/3/reference/datamodel.html#object.__call__)
+- [Python documentation - functools.total_ordering](https://docs.python.org/3/library/functools.html#functools.total_ordering)

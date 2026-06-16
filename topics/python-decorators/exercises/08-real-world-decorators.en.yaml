@@ -1,0 +1,237 @@
+exercises:
+  - id: memoize-quiz-001
+    concept: real-world-decorators
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does the memoize decorator do?"
+    choices:
+      - id: a
+        text: "Remembers the function result by its arguments and on a repeat with the same arguments returns the saved result without recomputing."
+      - id: b
+        text: "Retries the function call on error."
+      - id: c
+        text: "Measures function execution time."
+      - id: d
+        text: "Deletes the function from memory after the first call."
+    correct: [a]
+    explanation: "memoize keeps a cache dict in the closure: the first call with given arguments computes and stores, later ones take the cached value. Suited for pure expensive functions."
+    variants:
+      - prompt: "What is better to use in real code instead of hand-rolled memoize?"
+        choices:
+          - id: a
+            text: "functools.lru_cache (or functools.cache) - same idea with size limits, thread safety, and statistics."
+          - id: b
+            text: "A global variable with the result."
+          - id: c
+            text: "time.perf_counter."
+          - id: d
+            text: "Nothing - caching is always written by hand."
+        correct: [a]
+        explanation: "Standard functools.lru_cache implements memoization reliably. A hand-written version is useful to understand the mechanism."
+      - prompt: "Why do memoize and lru_cache crash when arguments include a list or dict?"
+        choices:
+          - id: a
+            text: "Lists and dicts are unhashable, and the cache needs a hashable key for its dict."
+          - id: b
+            text: "Lists are too large for the cache."
+          - id: c
+            text: "That's a limitation of @ syntax."
+          - id: d
+            text: "They only crash in Python 2."
+        correct: [a]
+        explanation: "The cache key is a tuple of arguments, which must be hashable. Lists and dicts can't be hashed, so you get TypeError: unhashable type."
+
+  - id: memoize-predict-001
+    concept: real-world-decorators
+    type: predict-output
+    difficulty: 3
+    prompt: "What will this program print?"
+    snippet: |
+      import functools
+
+      def memoize(func):
+          cache = {}
+          @functools.wraps(func)
+          def wrapper(*args):
+              if args not in cache:
+                  print("считаю", args)
+                  cache[args] = func(*args)
+              return cache[args]
+          return wrapper
+
+      @memoize
+      def square(n):
+          return n * n
+
+      print(square(4))
+      print(square(4))
+      print(square(5))
+    expected:
+      kind: stdout
+      value: |-
+        считаю (4,)
+        16
+        16
+        считаю (5,)
+        25
+    hints:
+      - "'считаю' prints only when arguments aren't in the cache yet. Which calls miss the cache?"
+      - "First square(4) computes and caches; second square(4) takes the ready value (no 'считаю'); square(5) is a new key."
+
+  - id: write-memoize-001
+    concept: real-world-decorators
+    type: python-function
+    difficulty: 3
+    prompt: "Write decorator `memoize` that caches the result by positional arguments in a closure dict. A repeat call with the same arguments must not recompute the function. Preserve metadata via functools.wraps."
+    starter: |
+      import functools
+
+      def memoize(func):
+          ...
+
+      @memoize
+      def fib(n):
+          return n if n < 2 else fib(n - 1) + fib(n - 2)
+    cases:
+      - call: "fib(10)"
+        expect: 55
+      - call: "fib(20)"
+        expect: 6765
+      - call: "memoize(lambda x: x * x)(6)"
+        expect: 36
+      - call: "fib.__name__"
+        expect: "fib"
+    hints:
+      - "Create dict cache in the decorator body - it lives in the closure, one per function."
+      - "In the wrapper check if args is in cache; if not - compute func(*args) and store; return cache[args]."
+      - "The key is tuple args; don't forget @functools.wraps(func) above the wrapper."
+    solution: |
+      import functools
+
+      def memoize(func):
+          cache = {}
+          @functools.wraps(func)
+          def wrapper(*args):
+              if args not in cache:
+                  cache[args] = func(*args)
+              return cache[args]
+          return wrapper
+
+      @memoize
+      def fib(n):
+          return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+  - id: write-retry-001
+    concept: real-world-decorators
+    type: python-function
+    difficulty: 4
+    prompt: "Write decorator factory `retry(times)`: the wrapped function is retried up to `times` times; on success return the result, on exhausting all attempts re-raise the last exception (not return None)."
+    starter: |
+      import functools
+
+      def retry(times):
+          ...
+    cases:
+      - call: "retry(3)(lambda: 42)()"
+        expect: 42
+      - call: "(lambda box: retry(3)(lambda: (box.append(1), 1/0)[1] if len(box) < 2 else 'ok')())([])"
+        expect: "ok"
+      - call: "retry(2)(lambda: 7)()"
+        expect: 7
+    hints:
+      - "Three levels: retry(times) -> decorator(func) -> wrapper. The wrapper needs a retry loop."
+      - "In a loop over range(times) try return func(*args, **kwargs) in try; in except save the error and continue."
+      - "After the loop, if there was no success, raise the saved last error."
+    solution: |
+      import functools
+
+      def retry(times):
+          def decorator(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  last_error = None
+                  for _ in range(times):
+                      try:
+                          return func(*args, **kwargs)
+                      except Exception as error:
+                          last_error = error
+                  raise last_error
+              return wrapper
+          return decorator
+
+  - id: write-command-registry-001
+    concept: real-world-decorators
+    type: python-function
+    difficulty: 4
+    prompt: "Implement `make_registry()` returning pair `(command, registry)`: `command(name)` is a decorator factory that registers the function in dict `registry` under key `name` and returns it unchanged; `registry` is the dict itself. Different `make_registry()` calls give independent registries."
+    starter: |
+      def make_registry():
+          ...
+    cases:
+      - call: "(lambda cr: (cr[0]('hi')(lambda: 1), sorted(cr[1])))(make_registry())[1]"
+        expect: ["hi"]
+      - call: "(lambda cr: (cr[0]('a')(lambda: 1), cr[0]('b')(lambda: 2), cr[1]['b']()))(make_registry())[2]"
+        expect: 2
+      - call: "(lambda cr: cr[0]('x')(lambda: 99) is not None)(make_registry())"
+        expect: true
+      - call: "(lambda a, b: (a[0]('k')(lambda: 1), len(b[1]))) (make_registry(), make_registry())[1]"
+        expect: 0
+    hints:
+      - "Create dict registry. command(name) is a factory: captures name and returns a decorator that puts func in registry[name] and returns func."
+      - "Return tuple (command, registry) so calling code sees both the registrar and the registry."
+      - "The last case checks isolation: the second make_registry() registry stays empty when you register in the first."
+    solution: |
+      def make_registry():
+          registry = {}
+          def command(name):
+              def decorator(func):
+                  registry[name] = func
+                  return func
+              return decorator
+          return command, registry
+
+  - id: write-once-001
+    concept: real-world-decorators
+    type: python-function
+    difficulty: 5
+    prompt: "Write decorator `once`: the wrapped function runs only on the first call, its result is cached, and all later calls return the same result without calling the function again. Preserve metadata via functools.wraps."
+    starter: |
+      import functools
+
+      def once(func):
+          ...
+
+      @once
+      def init():
+          return object()
+    cases:
+      - call: "init() is init()"
+        expect: true
+      - call: "(lambda box: (lambda f: [f(), f(), f()])(once(lambda: (box.append(1), len(box))[1])))([])"
+        expect: [1, 1, 1]
+      - call: "once(lambda: 7)()"
+        expect: 7
+      - call: "init.__name__"
+        expect: "init"
+    hints:
+      - "You need to remember whether the function was called and its result. Where do you store the flag and value between calls?"
+      - "Create variables called=False and result=None in the closure; change them via nonlocal in the wrapper."
+      - "In the wrapper: if not called yet - call, save result, set flag; then always return the saved result."
+    solution: |
+      import functools
+
+      def once(func):
+          called = False
+          result = None
+          @functools.wraps(func)
+          def wrapper(*args, **kwargs):
+              nonlocal called, result
+              if not called:
+                  result = func(*args, **kwargs)
+                  called = True
+              return result
+          return wrapper
+
+      @once
+      def init():
+          return object()

@@ -56,6 +56,24 @@ async function main() {
     errors.push(`file count ${fileCount} != index length ${index.length}`);
   }
 
+  const flashcardsPath = resolve(OUT_DIR, 'flashcards-index.json');
+  if (!existsSync(flashcardsPath)) {
+    errors.push('flashcards-index.json missing — run pnpm build:interview-flashcards');
+  } else {
+    const flashcards = JSON.parse(await readFile(flashcardsPath, 'utf-8'));
+    if (!Array.isArray(flashcards?.ru?.cards)) {
+      errors.push('flashcards-index.json: ru.cards must be an array');
+    }
+    if (!Array.isArray(flashcards?.ru?.missing)) {
+      errors.push('flashcards-index.json: ru.missing must be an array');
+    }
+    if (flashcards?.ru?.missing?.length > 0) {
+      warnings.push(
+        `${flashcards.ru.missing.length} interview article(s) missing a flashcard answer section`,
+      );
+    }
+  }
+
   // 3. exercises-index points at real files and known question ids
   for (const ex of exIndex) {
     if (!ids.has(ex.qid)) errors.push(`exercise ${ex.exerciseId} references unknown qid ${ex.qid}`);

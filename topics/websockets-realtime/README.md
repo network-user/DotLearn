@@ -12,3 +12,22 @@
 Prerequisites: нет.
 
 Generated via `lesson-forge`.
+
+## English
+
+# WebSocket and Socket.IO
+
+How the browser and server keep a persistent two-way connection over a single TCP link: upgrading from HTTP to WebSocket, frame format, connection lifecycle in the browser API, the Socket.IO layer with its rooms and auto-reconnect, and server-side realtime patterns - broadcast, presence, and horizontal scaling. For anyone building chats, notifications, live dashboards, or collaborative editing who wants to understand what happens under the hood, not just call `socket.emit`.
+
+## Concepts
+
+1. From HTTP to WebSocket: handshake and frames
+2. WebSocket API and connection lifecycle
+3. Socket.IO: a layer on top of WebSocket
+4. Patterns: broadcast, presence, scaling
+
+## Prerequisites
+
+None.
+
+Generated via `lesson-forge`.

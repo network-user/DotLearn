@@ -1,0 +1,183 @@
+---
+conceptId: di-pattern
+title: "The DI Pattern and Inversion of Control"
+estimatedMinutes: 45
+---
+
+# Who creates the dependency is bound to it
+
+Class `OrderService` places orders and sends the customer an email. The natural thing is to create the mail client right inside: `self.mailer = SmtpMailer("smtp.example.com")`. The code works. But now `OrderService` is glued to SMTP: to run it in a test you must either send real mail or reach inside and change the constructor. Switch from SMTP to a queue-based sender — again you edit `OrderService`, even though order placement did not change one bit. The class took on extra responsibility: it not only places orders but also decides *where to get* the mail client.
+
+Dependency injection takes that second responsibility away. The dependency is not created inside — it is *passed in from outside*, through the constructor or an argument. In this section you will see how that shift works, why it is called inversion of control, and learn to tell apart a class that holds its dependencies in a tight grip from one that accepts them.
+
+## Mental model: creation versus use
+
+Every dependency has two moments in its life: it is *created* and it is *used*. When both moments live inside one class, the class is not free — it is tied to a specific way of creation. DI separates them: creation moves outside, to the caller, and the class is left with use only.
+
+<Figure caption="Without DI the class creates the dependency itself (arrow inward) and is tied to a concrete type. With DI the dependency arrives from outside through the constructor — the class depends only on the contract.">
+  <Sketch viewBox="0 0 480 220" title="Creating versus passing a dependency">
+    <SketchLabel x={110} y={22} weight="bold">Without DI</SketchLabel>
+    <SketchBox x={30} y={40} width={160} height={120} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={110} y={62} mono>OrderService</SketchLabel>
+    <SketchBox x={55} y={90} width={110} height={50} accent />
+    <SketchLabel x={110} y={112} mono size={11} accent>SmtpMailer</SketchLabel>
+    <SketchLabel x={110} y={130} size={10} muted>created inside</SketchLabel>
+    <SketchLabel x={370} y={22} weight="bold">With DI</SketchLabel>
+    <SketchBox x={290} y={40} width={160} height={90} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={370} y={62} mono>OrderService</SketchLabel>
+    <SketchLabel x={370} y={88} size={11} muted>accepts mailer</SketchLabel>
+    <SketchLabel x={370} y={104} mono size={11} accent>Mailer (contract)</SketchLabel>
+    <SketchBox x={300} y={165} width={140} height={40} accent dashed />
+    <SketchLabel x={370} y={189} mono size={11} accent>SmtpMailer</SketchLabel>
+    <SketchArrow from={[370, 165]} to={[370, 131]} accent />
+    <SketchLabel x={370} y={150} size={10} muted>passed from outside</SketchLabel>
+  </Sketch>
+</Figure>
+
+On the left `OrderService` spawned `SmtpMailer` itself and is now inseparable from it. On the right `OrderService` receives a ready object through the constructor and knows only that it has the required method. Who exactly arrived — `SmtpMailer`, a stub, or a queue client — is decided by the caller. The class stopped controlling creation of its dependencies; control was *inverted* and moved up.
+
+## First — how not to do it
+
+To feel the benefit of DI, look at a tightly coupled variant. `OrderService` creates the mail client itself.
+
+```python
+class SmtpMailer:
+    def send(self, to, text):
+        print(f"SMTP -> {to}: {text}")
+
+class OrderService:
+    def __init__(self):
+        self.mailer = SmtpMailer()
+
+    def place(self, customer):
+        self.mailer.send(customer, "Order accepted")
+```
+
+Here `OrderService.__init__` hard-codes `SmtpMailer()`. There is no way from outside to say "send through another channel" or "in a test, do not send at all." Changing that means editing the class itself — and risking order logic for concerns unrelated to placing orders.
+
+## Now — injection through the constructor
+
+Move `new` outside. `OrderService` no longer mentions `SmtpMailer`; it accepts any object with a `send` method.
+
+```python
+class OrderService:
+    def __init__(self, mailer):
+        self.mailer = mailer
+
+    def place(self, customer):
+        self.mailer.send(customer, "Order accepted")
+
+service = OrderService(SmtpMailer())
+service.place("ana@example.com")
+```
+
+Prints `SMTP -> ana@example.com: Order accepted`. The difference is one constructor line, but the consequences are large: now the *caller* decides which mailer to plug in. This is constructor injection — the most common form of DI. The dependency becomes visible in the signature: read `__init__` and you know what the class needs.
+
+<Callout type="tip">
+Heuristic for a "hidden dependency": if inside the class you see object creation via `SomeClass(...)`, ask whether that object should come from outside. Value objects (dates, coordinates) are fine to create inside. Services, clients, repositories, connections — candidates for injection.
+</Callout>
+
+## A contract makes injection meaningful
+
+Injection shows its strength together with abstraction from the previous concept. `OrderService` depends not on `SmtpMailer` but on the *contract* `Mailer`. Then any implementation of the contract plugs in without changing the service.
+
+```python
+from typing import Protocol
+
+class Mailer(Protocol):
+    def send(self, to: str, text: str) -> None: ...
+
+class QueueMailer:
+    def send(self, to, text):
+        print(f"queue <- {to}: {text}")
+
+service = OrderService(QueueMailer())
+service.place("boris@example.com")
+```
+
+Prints `queue <- boris@example.com: Order accepted`. `OrderService` did not change a line, yet the delivery channel changed completely. The class depends on shape (`send(to, text)`), and whoever assembles the application picks the concrete device. Abstraction and injection work as a pair: abstraction describes shape, injection delivers the concrete implementation.
+
+## Inversion of control in one sentence
+
+"Inversion of control" sounds abstract, but the meaning is simple: before, the class *controlled* which concrete objects to use — now that control is inverted and handed outside. The class declares "I need a mailer", and *which one* is decided at a higher level. The Hollywood principle: "don't call us, we'll call you" — the class does not fetch dependencies; they are brought to it.
+
+<PullQuote>The class stops asking "where do I get the dependency" and starts saying "give me the dependency".</PullQuote>
+
+DI is the concrete technique (pass an object through constructor or argument); inversion of control is the principle it implements. In large frameworks a DI container takes over control, creates objects, and wires dependencies; FastAPI does this through `Depends`, covered in the next concept.
+
+## Try injection yourself
+
+Run the code: the same `Notifier` first writes to the console, then "sends SMS" — the only difference is which object was passed to the constructor. Try adding a third class `SilentChannel` whose `send` does nothing (`pass`), pass it to `Notifier`, and confirm that `notify` runs without error and without output. That is exactly the trick used in tests to replace a dependency with a stub.
+
+<PyDemo
+  title="One logic, different channels"
+  code={`class ConsoleChannel:
+    def send(self, text):
+        print("console:", text)
+
+class SmsChannel:
+    def send(self, text):
+        print("sms:", text)
+
+class Notifier:
+    def __init__(self, channel):
+        self.channel = channel
+
+    def notify(self, text):
+        self.channel.send(text)
+
+Notifier(ConsoleChannel()).notify("hello")
+Notifier(SmsChannel()).notify("hello")`}
+/>
+
+Notice that `Notifier` knows nothing about channels upfront: it accepts `channel` and calls `send`. Adding a new channel means writing a new class with `send`, without touching `Notifier`. Logic and delivery split, and each can change independently.
+
+## A seven-argument constructor is a diagnosis, not fate
+
+DI without a contract easily degenerates into passing too much. The temptation "since we are passing things in, let us also pass config, logger, database, cache" leads to a ten-argument constructor. That does not make code more flexible — it shifts complexity to the caller, who must assemble a dozen objects in the right order.
+
+```python
+class Report:
+    def __init__(self, db, cache, logger, mailer, config, clock, metrics):
+        self.db = db
+        self.cache = cache
+        self.logger = logger
+        self.mailer = mailer
+        ...
+```
+
+Seven dependencies in one class almost always signals the class does too much (violates single responsibility). The surprising part: the fix is not "less strict DI" but *splitting the class*. When each class has one job, each has one or two dependencies and injection reads easily again. DI does not replace good design — it exposes it: a bloated dependency list is a diagnosis, not inevitability.
+
+## Common mistakes
+
+- **Creating the dependency inside and "sort of injecting" beside it.** If the constructor accepts `mailer=None` then does `self.mailer = mailer or SmtpMailer()`, tight coupling returns through the back door: the default binds the class to a concrete type again. Make the dependency a required argument, or assemble defaults at application composition level, not inside the service.
+- **Injecting a concrete class instead of a contract.** If code everywhere annotates `mailer: SmtpMailer`, swapping implementations is still blocked by the type. Depend on `Protocol`/ABC so any implementation fits.
+- **Confusing DI with global variables.** Taking a dependency from a global singleton is not injection: the link is still hidden inside and not visible in the signature. Injection means the dependency explicitly enters from outside.
+- **Injecting everything.** Value data (numbers, strings, dates) and short-lived objects are fine to create inside. Injection is for *services* that have multiple implementations or must be replaced in tests.
+
+<Detail summary="Three forms of injection: constructor, setter, method">
+
+Constructor injection (pass in `__init__`) is the main one: the object is born fully equipped and never exists in a half-configured state. Choose it by default.
+
+Setter injection (a separate `set_mailer` method) allows changing the dependency after creation and is rare — for example when the dependency is optional by nature or changes during the object's life. The cost is an intermediate state where the dependency is not yet set.
+
+Method argument injection (pass the dependency directly to `place(customer, mailer)`) fits when the dependency is needed by one method and changes from call to call. That is essentially what `Depends` uses in FastAPI handlers — the dependency arrives as a function parameter on each request.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Dependency injection is passing a dependency from outside (through constructor or argument) instead of creating it inside the class.",
+    "Creating and using a dependency are different responsibilities; DI leaves the class with use and moves creation to application assembly.",
+    "Inversion of control is the principle 'dependencies are brought to the class, not fetched by it'; DI is the concrete technique that implements it.",
+    "DI shines together with abstraction: the class depends on a contract (Protocol/ABC), and the caller picks the concrete implementation.",
+    "A default like mailer or SmtpMailer() brings tight coupling back through the back door — make dependencies required arguments.",
+    "A bloated dependency list diagnoses broken single responsibility; fix it by splitting the class, not by weakening DI.",
+  ]}
+/>
+
+## References
+
+- [Martin Fowler — Inversion of Control Containers and the Dependency Injection pattern](https://martinfowler.com/articles/injection.html)
+- [Python documentation — typing.Protocol](https://docs.python.org/3/library/typing.html#typing.Protocol)
+- [Wikipedia — Dependency injection](https://en.wikipedia.org/wiki/Dependency_injection)

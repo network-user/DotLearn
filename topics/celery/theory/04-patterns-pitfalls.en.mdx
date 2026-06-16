@@ -1,0 +1,138 @@
+---
+conceptId: patterns-pitfalls
+title: "Patterns (chains, groups) and pitfalls"
+estimatedMinutes: 45
+---
+
+# When one task is not enough
+
+One task sends one email - clear. Real work rarely fits in one task. Download a file, process it, save the result - three steps where each depends on the previous. Or notify a thousand users - a thousand independent tasks, then a summary "sent this many". Doing this manually with nested `.delay()` quickly becomes a mess: who calls whom, how to wait for all, what to do with results.
+
+Celery provides a language for composing tasks - canvas. By the end you will distinguish `chain` (sequential, result passed forward), `group` (parallel), and `chord` (group plus final step), know when to use each, and recognize pitfalls that break even individually correct tasks: heavy arguments, shared state, queue overflow.
+
+## Mental model: chain sequential, group parallel
+
+Two basic ways to connect tasks. **Chain** enqueues tasks in order; each result becomes the next task's argument. **Group** runs a set of tasks in parallel, independently. Their combination **chord** runs a group and, when the whole group finishes, runs a final callback over collected results.
+
+<Figure caption="Chain runs tasks in order passing results forward; group runs them in parallel and independently; chord adds a final step over all group results.">
+  <Sketch viewBox="0 0 470 250" title="Chain, group, chord">
+    <SketchLabel x={45} y={28} muted size={12}>chain</SketchLabel>
+    <SketchBox x={20} y={40} width={50} height={36} fill="rgb(var(--surface-2))" radius={6} />
+    <SketchBox x={95} y={40} width={50} height={36} fill="rgb(var(--surface-2))" radius={6} />
+    <SketchBox x={170} y={40} width={50} height={36} fill="rgb(var(--surface-2))" radius={6} />
+    <SketchArrow from={[70, 58]} to={[95, 58]} accent />
+    <SketchArrow from={[145, 58]} to={[170, 58]} accent />
+    <SketchLabel x={45} y={118} muted size={12}>group</SketchLabel>
+    <SketchBox x={20} y={130} width={50} height={32} accent radius={6} />
+    <SketchBox x={20} y={172} width={50} height={32} accent radius={6} />
+    <SketchBox x={20} y={214} width={50} height={32} accent radius={6} />
+    <SketchLabel x={300} y={28} muted size={12}>chord</SketchLabel>
+    <SketchBox x={280} y={40} width={50} height={28} accent radius={6} />
+    <SketchBox x={280} y={76} width={50} height={28} accent radius={6} />
+    <SketchBox x={280} y={112} width={50} height={28} accent radius={6} />
+    <SketchBox x={390} y={70} width={60} height={40} fill="rgb(var(--surface-2))" radius={6} />
+    <SketchLabel x={420} y={94} mono size={11}>callback</SketchLabel>
+    <SketchArrow from={[330, 54]} to={[390, 85]} />
+    <SketchArrow from={[330, 90]} to={[390, 90]} />
+    <SketchArrow from={[330, 126]} to={[390, 95]} />
+  </Sketch>
+</Figure>
+
+In chain, arrows go task to task: first result feeds the second. In group there are no arrows between tasks: they run in parallel and know nothing of each other. In chord three parallel tasks converge on one callback that runs only when all three finish. These three bricks compose most multi-step scenarios.
+
+<MarginNote label="signature">The canvas brick is a signature: a task with part of its arguments fixed (`add.s(2)`). Chain, group, and chord are built from signatures. `.s()` creates a signature without executing the task.</MarginNote>
+
+## Chain: result flows through
+
+Use a chain when steps depend on each other: the next step works on the previous result. Build "download → process → store".
+
+```python
+from celery import chain
+
+workflow = chain(
+    download.s(url),
+    process.s(),
+    store.s(),
+)
+workflow.delay()
+```
+
+`download.s(url)` is a signature with `url` fixed. In the chain, `download`'s result becomes the first argument to `process`, and `process`'s result to `store`. So `process` and `store` use `.s()` without the first argument: the previous step supplies it. One `.delay()` starts the chain; Celery enqueues the next step when the previous finishes. If any step fails, later steps do not run by default - the chain breaks.
+
+<Callout type="info">
+Short syntax with `|`: `(download.s(url) | process.s() | store.s()).delay()`. Reads left to right as a pipeline and does the same as `chain(...)`.
+</Callout>
+
+## Group and chord: many in parallel, then summary
+
+A group is for independent work over many items. Email every user in a list - classic case.
+
+```python
+from celery import group
+
+job = group(send_email.s(uid) for uid in user_ids)
+job.delay()
+```
+
+`group` creates one signature per user and enqueues them all at once. Workers process them in parallel, in any order, independently. A group does not wait for completion or collect results - it is a fan-out. If you need a summary after ("sent N emails"), wrap the group in a chord with a final callback.
+
+```python
+from celery import chord
+
+chord(
+    (send_email.s(uid) for uid in user_ids),
+    summarize.s(),
+).delay()
+```
+
+`summarize` receives the list of all `send_email` results and runs exactly once when the whole group finishes. Chord is the only canvas pattern that requires result backend: Celery must track group completion and collect results somewhere. Chain and group without callback do not need backend.
+
+## Pitfall: heavy arguments
+
+Task arguments are serialized (JSON by default) and travel through the broker. What you pass is stored in the queue whole.
+
+```python
+process_image.delay(huge_image_bytes)
+process_image.delay(image_id)
+```
+
+The first call pushes the entire image into the broker: message bloats, serialization and transfer slow, queue fills with megabytes. The second passes only `image_id`; the task loads the image from storage. Rule: pass references (ids, keys, paths) through the queue, not data. Same for ORM objects - pass `user.id`, not a serialized `user` that may be stale when the task runs.
+
+## Edge cases
+
+**This will surprise you: a task may run before the database transaction commits.** You create a user in a DB transaction and immediately call `send_welcome_email.delay(user.id)`. A free worker grabs the task in milliseconds - before your transaction commits. The task reads the database, finds no user, and fails. Fix by enqueueing after commit (in Django - `transaction.on_commit(lambda: ...)`): data must be visible before the task hits the queue.
+
+**Shared state between tasks is not shared as you think.** Workers run tasks in a process pool. A global variable or in-memory cache filled by one task is invisible to another in a different process. State multiple tasks must see lives in external storage (database, Redis), not process memory.
+
+**Queue overflow quietly increases delay.** If tasks are enqueued faster than workers dequeue, the queue grows with no errors - everything just runs later. Externally "Celery is slow"; really throughput is insufficient. Fix by adding workers, splitting queues and priorities, or limiting enqueue rate.
+
+## Common mistakes
+
+- **Passing heavy objects instead of identifiers.** Large arguments inflate broker messages and slow the whole queue. Pass ids and keys; load data inside the task.
+- **Enqueueing before transaction commit.** Worker may grab the task before the producer commits - task cannot find what it was started for. Enqueue after commit.
+- **Using chord without result backend.** Chord cannot work without result storage: nowhere to wait for the group and collect output. Configure backend or use chain and group without final callback.
+
+<Detail summary="Why gen expressions in group can bite, and how chord collects results">
+
+Group and chord are often built from generators: `group(send.s(uid) for uid in user_ids)`. Convenient, but the generator materializes when the group is built and all signatures sit in producer memory. Fine for thousands of items; for millions use batches (`chunks`) or sub-groups instead of one giant group - otherwise the parent message swells like a heavy argument.
+
+Chord result collection: Celery tracks how many group tasks finished via result backend (counter in Redis or polling depending on backend). When the counter reaches group size, the callback runs with collected results. Two consequences. First: if any group task fails without a result, chord by default never runs the callback - the whole construct hangs waiting, so handle errors inside the group. Second: on huge groups backend polling itself adds load; batching helps again.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Canvas composes tasks from signatures (.s()): chain runs sequentially, group in parallel, chord is group plus final callback.",
+    "In chain each task's result passes to the next; a failed step breaks the chain by default.",
+    "Group is a fan-out of independent tasks with no result collection; use chord for a summary after the group.",
+    "Chord requires result backend to wait for the group and collect results; chain and group without callback do not.",
+    "Pass identifiers and keys through the queue, not heavy objects: arguments travel whole through the broker.",
+    "Enqueue after transaction commit - worker may grab the task before data is visible.",
+  ]}
+/>
+
+## References
+
+- [Celery - Canvas: Designing Work-flows](https://docs.celeryq.dev/en/stable/userguide/canvas.html)
+- [Celery - Tasks best practices](https://docs.celeryq.dev/en/stable/userguide/tasks.html#tips-and-best-practices)
+- [Celery - Routing Tasks (queues and priorities)](https://docs.celeryq.dev/en/stable/userguide/routing.html)

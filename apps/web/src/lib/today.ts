@@ -1,11 +1,13 @@
 import type { SupportedLanguage } from './i18n';
 import { flashcardTopicSlugs, loadTopicCards, type DeckCard } from './flashcard-decks';
+import { interviewFlashcardSlug, loadInterviewCards } from './interview-flashcards';
 import { db } from './progress-db';
 import { loadTopic, topicTitleOf } from './topics';
 
 export interface DueCard {
-  slug: string;
+  deckSlug: string;
   title: string;
+  sourceLabel: string;
   card: DeckCard;
 }
 
@@ -18,28 +20,56 @@ export interface FailedExercise {
   type: string;
 }
 
+const dueFromCards = (
+  deckSlug: string,
+  title: string,
+  sourceLabel: string,
+  cards: DeckCard[],
+  records: Map<string, { due: string }>,
+  now: number,
+): DueCard[] =>
+  cards
+    .filter((card) => {
+      const record = records.get(`${deckSlug}:${card.id}`);
+      return !record || new Date(record.due).getTime() <= now;
+    })
+    .map((card) => ({ deckSlug, title, sourceLabel, card }));
+
 export const loadDueAcrossDecks = async (
   language: SupportedLanguage,
 ): Promise<DueCard[]> => {
   const now = Date.now();
+  const allRecords = await db.flashcardReviews.toArray();
+  const byKey = new Map(allRecords.map((record) => [`${record.topicSlug}:${record.cardId}`, record]));
+
   const slugs = flashcardTopicSlugs();
-  const perTopic = await Promise.all(
+  const topicDue = await Promise.all(
     slugs.map(async (slug) => {
-      const [cards, records] = await Promise.all([
-        loadTopicCards(slug, language),
-        db.flashcardReviews.where('topicSlug').equals(slug).toArray(),
-      ]);
-      const byCard = new Map(records.map((record) => [record.cardId, record]));
-      const title = topicTitleOf(slug) ?? slug;
-      return cards
-        .filter((card) => {
-          const record = byCard.get(card.id);
-          return !record || new Date(record.due).getTime() <= now;
-        })
-        .map((card) => ({ slug, title, card }));
+      try {
+        const cards = await loadTopicCards(slug, language);
+        const title = topicTitleOf(slug) ?? slug;
+        return dueFromCards(slug, title, title, cards, byKey, now);
+      } catch {
+        return [] as DueCard[];
+      }
     }),
   );
-  return perTopic.flat();
+
+  const interviewSlug = interviewFlashcardSlug();
+  const interviewCards = await loadInterviewCards(language);
+  const interviewDue = interviewCards
+    .filter((card) => {
+      const record = byKey.get(`${interviewSlug}:${card.id}`);
+      return !record || new Date(record.due).getTime() <= now;
+    })
+    .map((card) => ({
+      deckSlug: interviewSlug,
+      title: card.front,
+      sourceLabel: card.categoryLabel,
+      card,
+    }));
+
+  return [...topicDue.flat(), ...interviewDue];
 };
 
 export const loadFailedExercises = async (

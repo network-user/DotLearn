@@ -1,0 +1,138 @@
+---
+conceptId: tool-use
+title: Tool use
+estimatedMinutes: 28
+---
+
+# How the model steps outside its text
+
+A language model does one thing well - continue text. It does not know today's weather, cannot see your database, send email, or reliably do column arithmetic. Everything after its training cutoff does not exist for it. Yet modern assistants book tables, search the web, and run code. The model does not do that itself - it asks your code to. Tool use (function calling) turns a text continuer into a system that can act.
+
+By the end of this section you will know what a tool is and how JSON schema describes it, how the model decides to call a tool and what it returns instead of an answer, what structured output is, and how the agent loop model → tool → result → answer works.
+
+## The model does not call the tool - it requests a call
+
+The easy mistake: thinking the model executes actions. It still only generates text. A tool call is a structured piece of that text: instead of a normal reply the model emits "I want to call tool `X` with these arguments." Your code (or the platform) runs that request and feeds the result back.
+
+<Figure caption="Full loop: model decides a tool is needed, your code runs it and returns the result, model uses it and forms the final answer.">
+  <AgentLoopDiagram
+    steps={[
+      { title: "Think", detail: "Model decides whether a tool is needed to answer." },
+      { title: "Call tool", detail: "Emits tool name and arguments in structured form." },
+      { title: "Observe", detail: "Your code runs the call and returns the result to the model." },
+      { title: "Repeat", detail: "Another call if needed; otherwise move to answer." },
+      { title: "Answer", detail: "Forms the final reply using tool results." }
+    ]}
+  />
+</Figure>
+
+Step through the diagram: model and your code alternate. The model decides what to do; code executes; the model reads the outcome and continues. The network remains a text generator - surrounding plumbing lets it act.
+
+## Tools are described with JSON schema
+
+For the model to know what is available, each tool is described structurally: name, human-readable description (what it does and when to call it), and a JSON Schema for arguments - which parameters, types, required fields. The description is not filler: the model uses it to decide fit. Vague descriptions cause mistimed or missed calls.
+
+```json
+{
+  "name": "get_weather",
+  "description": "Get current weather for a city. Call when the user asks about weather.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "city": { "type": "string", "description": "City name" }
+    },
+    "required": ["city"]
+  }
+}
+```
+
+The schema is a contract: arguments must match that shape. `city` arrives as a string named `city`, not a number. Good description plus precise schema is half the battle: the model learns when to call and how to fill arguments.
+
+## How the model decides to call a tool
+
+With tools declared, each request is a choice: answer in text or request a call. The model decides from query meaning and tool descriptions. "What is 2+2" it answers itself; "weather in Paris" with `get_weather` available it requests a call because weather is unknown.
+
+<Callout type="tip">Tool power lives in descriptions. Be prescriptive: say not only what the tool does but when to call it ("call when you need FX rates or fresh news"). A clear trigger sharply improves timing.</Callout>
+
+A call is a request, not a guarantee. The model can err - wrong tool, bad args, or answer alone when a tool was needed. Your code validates calls and results; do not trust blindly.
+
+## Structured output: same mechanism, different shape
+
+A close relative of tool calling is structured output: force the model to emit data matching a JSON schema instead of free text. Useful when code must parse the reply - extract fields, store in a database, pass downstream. Instead of hoping for valid JSON you set a schema and the reply conforms.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "sentiment": { "type": "string", "enum": ["positive", "negative", "neutral"] },
+    "confidence": { "type": "number" }
+  },
+  "required": ["sentiment", "confidence"]
+}
+```
+
+With that schema a sentiment task returns an object with `sentiment` and `confidence`, ready to parse - not a prose paragraph. The same JSON-schema pattern bounds tool arguments and final answers: constrain output shape.
+
+## Try it yourself
+
+Build the dispatcher core: given tool name and arguments, return a result. That is what your code runs after the model requests a call. Run it, change the requested tool, and watch the output change.
+
+<PyDemo
+  title="Tool call dispatcher"
+  code={`def get_weather(city):
+    table = {"Париж": "18C, ясно", "Москва": "9C, дождь"}
+    return table.get(city, "нет данных")
+
+def add(a, b):
+    return a + b
+
+def dispatch(name, args):
+    if name == "get_weather":
+        return get_weather(args["city"])
+    if name == "add":
+        return add(args["a"], args["b"])
+    return "неизвестный инструмент"
+
+print(dispatch("get_weather", {"city": "Париж"}))
+print(dispatch("add", {"a": 2, "b": 3}))`}
+/>
+
+This prints `18C, ясно` and `5`: the dispatcher maps the model requested name to a real function with the given args. In a real agent that result returns to the model as an observation for the user-facing answer.
+
+## Agent loop: calls in sequence
+
+One call is a special case. Real tasks loop: search, read results, call another tool, then answer. That is the agent loop from the diagram: model → call → result → model → … → answer. The loop runs until the model has enough and outputs final text instead of another call. That is how a token continuer becomes a multi-step actor.
+
+## When behavior surprises you
+
+Tools do not make the model omniscient or error-free. Vague descriptions cause wrong calls; bad tool output means bad answers. Agent quality depends on tool descriptions and result handling, not only the model.
+
+A second surprise: the model can hallucinate a call - invent a tool name or args outside the schema. Your code must validate name and args before running and return a clear error so the model can recover on the next step.
+
+## Common misconceptions
+
+- **The model executes the tool itself.** No: it emits a structured request; your code runs it and returns the result.
+- **Tool description is optional.** The model decides whether to call from the description; vagueness is the main cause of mistimed calls.
+- **If a tool exists, the model always calls it correctly.** A call is a request, not a guarantee; code must validate.
+
+<Detail summary="How tool calls differ from plain replies at the protocol level">
+
+Under the hood a model response is a sequence of blocks. Usually one text block. With tools the model may emit a tool-use block with name and argument object, and the turn stops to await execution. Your code runs the call and sends back a tool-result block tied to that call by id. The model continues knowing the outcome. Dialogue with tools is typed blocks in order - text, call request, result - not magic.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Tool use turns a text continuer into an actor: the model emits a structured call request; your code executes it.",
+    "Each tool has a name, prescriptive description, and JSON argument schema; description drives when the model calls.",
+    "Structured output uses the same JSON-schema idea to make replies machine-readable, not free text.",
+    "The agent loop runs model → call → result → model until the model outputs a final answer instead of another call.",
+    "Calls are requests, not guarantees: validate name and args in code and return clear errors on failure.",
+  ]}
+/>
+
+## References
+
+- [Anthropic - Tool use overview](https://docs.anthropic.com/en/docs/build-with-claude/tool-use)
+- [OpenAI - Function calling](https://platform.openai.com/docs/guides/function-calling)
+- [JSON Schema](https://json-schema.org/)

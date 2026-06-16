@@ -1,0 +1,82 @@
+---
+conceptId: key-value
+title: "Key-value stores: the simplest database and the price of simplicity"
+estimatedMinutes: 40
+---
+
+# Key-value stores: the simplest database and the price of simplicity
+
+Strip everything you can from a database and you get a key-value store. It is a giant dictionary: put a value under a key, fetch it by the same key. No tables, schema, relationships, or query language - two operations, `SET` and `GET`, and almost instant access. On that austerity sit Redis, Amazon DynamoDB, Memcached, and dozens more. Simplicity makes them indispensable where a relational database is overkill: cache, sessions, counters, queues, leaderboards.
+
+## A dictionary the size of a database
+
+The mental model is dead simple: imagine a `dict` from your programming language, but on its own server and surviving app restarts. The key is usually a string. The value is anything: a number, string, serialized JSON, binary blob. Access is by key in one step.
+
+<KeyValueStoreFigure />
+
+Request any key on the diagram. It runs through a hash function, lands in a bucket, and the value is found in one hop - that is the promised O(1) complexity. Whether you have a million keys or a hundred, a key hit costs roughly the same. Hence the main use case - anything where you need to fetch a known thing at a known address fast.
+
+```text
+SET user:1001  "Anna"
+GET user:1001  → "Anna"
+SET session:ab12  "{token: ...}"  EX 3600
+GET session:ab12  → "{token: ...}"
+```
+
+Notice key naming. With no query language, structure comes from naming convention: `user:1001`, `session:ab12`, `cart:1001`. The colon is not database syntax but a common habit to make keys readable and groupable by prefix.
+
+## The value is opaque
+
+The key constraint hides in the word "value." For the database it is a black box: store and return by key, never look inside. You cannot ask "give all values where `age > 30`" - the database does not know there is an `age` inside. Content-based query is impossible; the only entry is the key.
+
+That is the price of simplicity. The same trait that gives speed and trivial horizontal scaling (keys shard easily by hash) removes flexibility. No `JOIN`, no field filter, no sort by value. If you need to search data without the primary key, plain key-value is not the fit.
+
+<Callout type="info" title="TTL: data that expires on its own">
+Many key-value databases can set a time to live (TTL) on a value: after N seconds the key deletes itself. Perfect for cache and sessions - stale data goes away without a cleanup job. Relational databases usually lack that built-in self-destruct timer.
+</Callout>
+
+## Where it shines
+
+**Cache.** Store the result of a heavy query or computation under a key with TTL. The next request gets it in O(1) instead of hitting the slow database again. Cache is the number-one reason Redis sits next to almost every relational database.
+
+**Sessions.** Session token is a natural key, session data the value, TTL the lifetime. Fast, simple, self-expiring.
+
+**Counters and leaderboards.** Increment by key is atomic and instant: page views, rate limits, leaderboards. A relational database with transactions would be heavyweight here.
+
+Notice the pattern: in every scenario you always know the key upfront and read the whole value. That is exactly where key-value aims.
+
+## Surprise: "simple" does not mean "primitive"
+
+Redis breaks the naive picture of key-value as a bare dictionary. A value can be not only a string but a list, set, hash, sorted set, each with its own operations - push to a list, intersect sets, top-N from a sorted set. The model stays key-value: everything is still addressed by key; the value can just be structured. So Redis is often called not a "database" but a "data structure server": same primitive, far richer than bare `GET/SET`.
+
+## Common mistakes
+
+**Using it as the primary store for connected data.** The moment you want "all orders for a user" without an explicit key per order - you hit a wall. Connected data is not key-value territory.
+
+**Searching by value.** Scanning all keys and reading values (`SCAN` the whole keyspace) is an antipattern that kills the point of the model. Need content search - pick another model or build a separate index.
+
+**Forgetting eviction and memory.** Many of these databases keep data in RAM. Without TTL and an eviction policy, keys accumulate until memory runs out. Cache without expiry is a timed memory leak.
+
+**Inventing keys without convention.** Without prefix discipline (`user:`, `session:`) the keyspace becomes mush where nothing is clear.
+
+<Detail summary="How keys spread across nodes">
+
+To scale horizontally, a key-value database distributes keys across nodes with a hash function. Naive "node number = hash(key) % N" is bad: add a node, N changes, almost every key moves. So they use *consistent hashing*: nodes and keys sit on one ring, and adding a node moves only a small fraction of keys, not the whole keyspace. That is one reason key-value scales almost linearly.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Key-value is a distributed dictionary: SET and GET by key in O(1), no schema, relationships, or query language.",
+    "Values are opaque to the database: content query is impossible; the only entry is the key.",
+    "Ideal scenarios are cache, sessions, counters, and leaderboards: key known upfront, value read whole.",
+    "Simplicity buys speed and easy horizontal scaling but costs JOIN, filters, and value search.",
+    "Redis shows the model can be simple but not primitive: values can be structures with rich operations.",
+  ]}
+/>
+
+## References
+
+- [Redis documentation: data types](https://redis.io/docs/latest/develop/data-types/)
+- [Redis: key eviction policies](https://redis.io/docs/latest/develop/reference/eviction/)
+- [Amazon DynamoDB: key-value model](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Introduction.html)

@@ -1,14 +1,22 @@
-# Dependency Injection и абстракции
+# Dependency Injection and Abstractions
 
-Тема для тех, кто уже владеет ООП в Python и хочет писать код, который легко менять и тестировать. Вы разберётесь, как описывать контракты через `abc.ABC` и `typing.Protocol`, как передавать зависимости снаружи вместо того, чтобы создавать их внутри (инверсия управления), как этот же приём встроен в `Depends` у FastAPI, и почему DI превращает тесты из боли в удовольствие за счёт подмены зависимостей.
+For developers who already know Python OOP and want code that is easy to change and test. You will learn how to describe contracts with `abc.ABC` and `typing.Protocol`, how to pass dependencies in from outside instead of creating them inside (inversion of control), how the same idea is built into FastAPI's `Depends`, and why DI turns testing from a pain into a pleasure by swapping dependencies.
 
-Концепты:
+## Concepts
 
-- Абстракции: ABC и Protocol
-- Паттерн DI и инверсия управления
-- Depends в FastAPI
-- Тестирование через подмену зависимостей
+1. **Abstractions: ABC and Protocol** — describe the shape of a dependency as a contract without implementation.
+2. **The DI pattern and inversion of control** — pass dependencies in from outside instead of creating them inside.
+3. **`Depends` in FastAPI** — let the framework assemble the dependency graph for you.
+4. **Testing through dependency substitution** — replace real dependencies with test doubles.
 
-Prerequisites: `python-oop`.
+## Prerequisites
 
-Generated via `lesson-forge`.
+`python-oop`.
+
+## Estimated effort
+
+About 3 hours.
+
+## Runtime
+
+`pyodide` — runs entirely in your browser. No setup.

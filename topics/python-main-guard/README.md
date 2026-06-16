@@ -1,13 +1,21 @@
-# if __name__ == "__main__" в Python
+# if __name__ == "__main__" in Python
 
-Разбор одной из самых узнаваемых строк в Python для начинающих: что такое модуль и зачем у него есть переменная `__name__`, как `if __name__ == "__main__"` отделяет код запуска от кода импорта, и почему без этого guard ломаются `multiprocessing`, тесты и переиспользование модулей. Тема для тех, кто уже писал простые скрипты и хочет понять, как устроены импорты.
+A tour of one of the most recognizable lines in Python for beginners: what a module is and why it has a `__name__` variable, how `if __name__ == "__main__"` separates launch code from import code, and why without this guard `multiprocessing`, tests, and module reuse break. For anyone who has written simple scripts and wants to understand how imports work.
 
-Концепты:
+## Concepts
 
-- Модули и переменная `__name__` - что Python кладёт в `__name__` при запуске и при импорте.
-- Зачем нужен `if __name__ == "__main__"` - идиома, отделяющая точку входа от импортируемого кода.
-- Сайд-эффекты импорта и multiprocessing - почему незащищённый код на верхнем уровне модуля кусается.
+- Modules and the `__name__` variable — what Python puts in `__name__` on launch vs import.
+- Why `if __name__ == "__main__"` is needed — the idiom that separates the entry point from importable code.
+- Import side effects and multiprocessing — why unguarded top-level code bites back.
 
-Prerequisites: нет.
+## Prerequisites
 
-Generated via `lesson-forge`.
+None.
+
+## Estimated effort
+
+About 2 hours.
+
+## Runtime
+
+`pyodide` — runs entirely in your browser. No setup.

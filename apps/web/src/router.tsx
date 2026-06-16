@@ -13,6 +13,10 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { PageTransition } from './components/ui/PageTransition';
 import { Skeleton } from './components/ui/Skeleton';
+import {
+  parseFlashcardsPracticeSearch,
+  type FlashcardsPracticeSearch,
+} from '@dotlearn/lesson-engine';
 import { HomePage } from './pages/HomePage';
 
 const TopicPage = lazy(() =>
@@ -242,11 +246,6 @@ const progressRoute = new Route({
   component: ProgressPage,
 });
 
-export interface FlashcardsPracticeSearch {
-  mode?: 'topics' | 'interview' | 'random' | undefined;
-  category?: string | undefined;
-}
-
 const flashcardsRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/flashcards',
@@ -257,15 +256,8 @@ const flashcardsPracticeRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/flashcards/practice',
   component: FlashcardsPracticePage,
-  validateSearch: (search: Record<string, unknown>): FlashcardsPracticeSearch => {
-    const mode =
-      search.mode === 'topics' || search.mode === 'interview' || search.mode === 'random'
-        ? search.mode
-        : undefined;
-    const category =
-      typeof search.category === 'string' && search.category.length > 0 ? search.category : undefined;
-    return { mode, category };
-  },
+  validateSearch: (search: Record<string, unknown>): FlashcardsPracticeSearch =>
+    parseFlashcardsPracticeSearch(search),
 });
 
 const flashcardReviewRoute = new Route({

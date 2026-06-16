@@ -1,0 +1,138 @@
+---
+conceptId: socketio
+title: "Socket.IO: a layer on top of WebSocket"
+estimatedMinutes: 45
+---
+
+# Why a whole protocol grew on top of ready-made WebSocket
+
+Bare WebSocket gives you a pipe where bytes flow. Everything else you write yourself: parse JSON, invent an "event type" field, manually reconnect after drops, check whether a message arrived, and hope corporate proxies don't block the upgrade. By the third chat that's tedious. Socket.IO is a library that takes that routine work and leaves you with two clear operations: `emit` (send a named event) and `on` (subscribe to it).
+
+Don't confuse the layers. Socket.IO is **not** WebSocket and not even "WebSocket with sugar": it's its own protocol that in the good case rides on WebSocket, and in the bad case on HTTP long-polling, switching between them transparently. By the end of this section you'll understand what Socket.IO adds over WebSocket (events, rooms, auto-reconnect, acknowledgements, fallback transport), where its limits are, and why a Socket.IO client can't connect to a bare WebSocket server.
+
+## Mental model: a layer above transport
+
+Think of Socket.IO as two layers. The lower one - Engine.IO - handles transport: establishes the connection, chooses between WebSocket and long-polling, keeps heartbeat, reconnects. The upper one - Socket.IO itself - provides application semantics: named events, rooms, namespaces, delivery acknowledgements. Your code talks only to the upper layer; the lower one quietly decides which pipe everything rides on.
+
+<Figure caption="Your code calls emit/on on Socket.IO; it serializes the event and hands it to Engine.IO, which picks transport - WebSocket, or long-polling when upgrade isn't possible.">
+  <Sketch viewBox="0 0 300 220" title="Socket.IO layers">
+    <SketchBox x={50} y={15} width={200} height={45} accent />
+    <SketchLabel x={150} y={42} size={11} accent>your code: emit / on</SketchLabel>
+    <SketchArrow from={[150, 60]} to={[150, 80]} />
+    <SketchBox x={50} y={80} width={200} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={150} y={101} size={11} mono>Socket.IO</SketchLabel>
+    <SketchLabel x={150} y={117} size={10} muted>events, rooms, ack</SketchLabel>
+    <SketchArrow from={[150, 125]} to={[150, 145]} />
+    <SketchBox x={50} y={145} width={200} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={150} y={166} size={11} mono>Engine.IO</SketchLabel>
+    <SketchLabel x={150} y={182} size={10} muted>WebSocket or long-polling</SketchLabel>
+  </Sketch>
+</Figure>
+
+Because of this layering, Socket.IO has its own packet format on top of WebSocket frames. So `new WebSocket("wss://.../socket.io/")` in the browser won't connect to a Socket.IO server: it doesn't speak Engine.IO. You need the `socket.io-client`, and client and server versions must be compatible.
+
+## Named events instead of parsing by type
+
+With bare WebSocket you get one `message` event and parse what's inside yourself. Socket.IO flips that: you send an event with a name, and the other side subscribes by name.
+
+```js
+socket.emit("chat:message", { text: "hello", room: "general" });
+
+socket.on("chat:message", (msg) => {
+  appendToChat(msg.text);
+});
+```
+
+The name `chat:message` is an arbitrary string - your contract. Payload serializes automatically: objects, arrays, strings, numbers, even binary data - no `JSON.stringify` or `JSON.parse`. That removes a whole class of "forgot to parse" bugs and keeps code symmetric: one side `emit`, the other `on` with the same name.
+
+## Acknowledgements: did the message arrive
+
+Bare WebSocket doesn't confirm delivery of a single message - you only know the channel is open. Socket.IO adds acknowledgement: the sender passes a callback, the receiver invokes it, and the value returns to the sender.
+
+```js
+socket.emit("order:create", { id: 42 }, (response) => {
+  console.log("server confirmed:", response.status);
+});
+```
+
+On the server, the handler gets that callback as its last argument and calls it when the event is processed. That turns emit into something like request-response over a persistent connection - useful when the sender needs to wait for a result, not fire blindly.
+
+<Callout type="info">
+Acknowledgement confirms that the handler on the other side invoked the callback, not that the event changed the database or reached a third system. It's a "received and processed" signal, not a distributed transaction. For exactly-once guarantees you need idempotency at the application level.
+</Callout>
+
+## Rooms: addressing a group
+
+The most common realtime task is sending a message not to everyone and not to one person, but to a group: chat participants, channel subscribers, players at a table. Socket.IO handles this with rooms. A room is a named set of connections on the server; the client joins, and the server broadcasts into it.
+
+```js
+io.on("connection", (socket) => {
+  socket.join("room:general");
+  io.to("room:general").emit("chat:message", { text: "hello everyone" });
+});
+```
+
+`socket.join` adds the connection to a room; `io.to("room:general").emit(...)` delivers the event to all members. Rooms live only on the server - the client doesn't know about them and has no room API. One socket can be in many rooms, and that's the main addressing tool we'll return to in the patterns section.
+
+<Figure caption="A room is a set of connections on the server; io.to('room').emit delivers the event only to its members, skipping other sockets.">
+  <Sketch viewBox="0 0 460 180" title="Broadcast to a room">
+    <SketchBox x={20} y={70} width={90} height={45} accent />
+    <SketchLabel x={65} y={97} size={11} accent mono>server</SketchLabel>
+    <SketchHighlight x={250} y={15} width={200} height={110} />
+    <SketchLabel x={350} y={32} size={11} muted>room:general</SketchLabel>
+    <SketchBox x={270} y={45} width={70} height={35} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={305} y={67} size={10} mono>A</SketchLabel>
+    <SketchBox x={360} y={45} width={70} height={35} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={395} y={67} size={10} mono>B</SketchLabel>
+    <SketchBox x={270} y={90} width={70} height={30} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={305} y={110} size={10} mono>C</SketchLabel>
+    <SketchBox x={130} y={140} width={90} height={30} hatched />
+    <SketchLabel x={175} y={160} size={10} mono>D outside room</SketchLabel>
+    <SketchArrow from={[110, 80]} to={[270, 62]} accent />
+    <SketchArrow from={[110, 92]} to={[360, 62]} accent />
+    <SketchArrow from={[110, 100]} to={[270, 100]} accent />
+  </Sketch>
+</Figure>
+
+## Surprise: auto-reconnect can silently swallow your messages
+
+Socket.IO prides itself on automatic reconnection: network drops - the client reconnects with increasing delay, and your code barely notices. But there's a nuance that catches many people. While disconnected, your `emit` calls **buffer by default** and flush after reconnect. Convenient - but if during downtime you sent a bunch of "increment counter" commands, they all apply at once after reconnect and state diverges.
+
+Worse: a reconnected client gets a **new** `socket.id`, and its previous room membership on the server doesn't restore itself - rooms were tied to the old connection. The server must re-join rooms in the new `connection` handler. Treating reconnect as fully transparent means debugging "why did room messages stop after network loss" someday.
+
+<Callout type="warning">
+After reconnect the client has a new `socket.id`, and server-side rooms from the old connection aren't inherited. Restore room membership in the server `connection` handler, and make critical emits idempotent - the buffer may deliver them again.
+</Callout>
+
+## Fallback transport: when WebSocket isn't allowed
+
+Engine.IO starts with HTTP long-polling and then, if the environment allows, upgrades to WebSocket. That's the insurance against proxies and firewalls from the first section: even where `Upgrade` is blocked, long-polling passes as ordinary HTTP and the app keeps working, just with more latency. Transparent fallback is one of the main reasons teams pick Socket.IO over bare WebSocket in production with diverse clients.
+
+## Common mistakes
+
+- **Connecting `new WebSocket` to a Socket.IO server (or vice versa).** Different protocols. Use `socket.io-client` with a Socket.IO server and compatible versions; a bare WebSocket server won't understand the Socket.IO client.
+- **Treating acknowledgement as a business guarantee.** Ack means "handler called the callback," not "money charged." Build guarantees with application-level idempotency.
+- **Relying on the emit buffer during outages.** Buffered events deliver after reconnect - possibly duplicating effects. Don't send non-idempotent commands that way.
+- **Forgetting to restore rooms after reconnect.** A new `socket.id` doesn't remember old rooms; put the client back in its rooms on the server at new `connection`.
+
+<Detail summary="Namespaces: another addressing level">
+
+Besides rooms, Socket.IO has namespaces - a way to split one physical connection into logical channels with different handlers: `/chat`, `/admin`, `/notifications`. The client connects to a namespace via `io("/chat")`, and events in one namespace don't cross into another, though they share one transport. The difference from rooms: a namespace splits by functionality type (defined in application code); a room is a dynamic grouping of connections inside a namespace (created and changed at runtime). Most apps get by with the default `/` namespace and rooms; namespaces appear when you need to isolate whole subsystems with different authorization.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Socket.IO is a separate protocol above transport, not WebSocket: Engine.IO picks transport (WebSocket or long-polling), Socket.IO provides events, rooms, and acknowledgements.",
+    "socket.io-client and bare WebSocket are incompatible: you need a paired Socket.IO client and server with compatible versions.",
+    "emit/on replace manual message parsing: the event name is your contract, payload serializes automatically, acknowledgement returns the handler's response to the sender.",
+    "Rooms are server-side sets of connections; io.to(room).emit addresses a group, and one socket can be in several rooms.",
+    "Auto-reconnect buffers emit and assigns a new socket.id: restore rooms on the server and make critical commands idempotent.",
+  ]}
+/>
+
+## References
+
+- [Socket.IO - official documentation](https://socket.io/docs/v4/)
+- [Socket.IO - Rooms](https://socket.io/docs/v4/rooms/)
+- [Socket.IO - How it works: Engine.IO and transports](https://socket.io/docs/v4/how-it-works/)

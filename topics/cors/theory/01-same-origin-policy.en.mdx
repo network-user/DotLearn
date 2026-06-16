@@ -1,0 +1,135 @@
+---
+conceptId: same-origin-policy
+title: "Same-origin policy: what and why"
+estimatedMinutes: 45
+---
+
+# Why your JavaScript cannot go anywhere it wants
+
+You open a tab with online banking, leave it open, and read news in another tab. Foreign JavaScript runs on the news page — ads, counters, widgets. What stops that code from quietly calling your bank, reading the balance response, and leaking it? You are logged in; bank cookies ride with the request automatically. If any script could read responses from any site where you are logged in, the web would be unusable for anything worth more than a meme.
+
+Same-origin policy closes that hole — a baseline security rule in every browser. By the end of this section you will know what the browser counts as the "same origin" versus foreign, which operations the rule limits and which it does not, and why CORS is not "turning security off" but a controlled exception.
+
+## Mental model: origin is a triple
+
+Origin is not "domain" or "site" in everyday speech. The browser defines it strictly as three URL parts: **scheme** (`http` or `https`), **host** (`example.com`), and **port** (`443`, `80`, `8080`). Two URLs share an origin if and only if all three match. Path, query, and `#` fragment do not count.
+
+<Figure caption="Origin is scheme, host, and port. Any difference in one of the three makes the source foreign.">
+  <Sketch viewBox="0 0 460 150" title="What makes an origin">
+    <SketchBox x={20} y={50} width={420} height={50} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={70} y={80} mono>https</SketchLabel>
+    <SketchLabel x={130} y={80} muted>://</SketchLabel>
+    <SketchLabel x={210} y={80} mono accent>shop.example.com</SketchLabel>
+    <SketchLabel x={310} y={80} muted>:</SketchLabel>
+    <SketchLabel x={345} y={80} mono>443</SketchLabel>
+    <SketchLabel x={410} y={80} muted>/cart</SketchLabel>
+    <SketchLabel x={70} y={120} size={11} muted>scheme</SketchLabel>
+    <SketchLabel x={210} y={120} size={11} muted>host</SketchLabel>
+    <SketchLabel x={345} y={120} size={11} muted>port</SketchLabel>
+    <SketchLabel x={410} y={120} size={11} muted>path not counted</SketchLabel>
+  </Sketch>
+</Figure>
+
+Take `https://shop.example.com` (port 443 implied for https). Then `https://shop.example.com/products` is the same origin — path does not matter. But `http://shop.example.com` is foreign (different scheme). `https://api.example.com` is foreign (different host). `https://shop.example.com:8443` is foreign (different port). The browser ignores that one company owns all these addresses; it compares three fields, and any mismatch makes origins different.
+
+<MarginNote label="origin vs site">There is a related but broader notion — "site": it ignores port and collapses subdomains to registrable domain (`example.com`). Some cookie mechanisms (`SameSite`) use site. Same-origin policy uses origin — the triple — not site. Do not confuse them.</MarginNote>
+
+## What same-origin policy actually limits
+
+The nuance almost everyone trips on: same-origin policy does **not** forbid **sending** a cross-origin request. The browser will send it. What the policy forbids is **reading the response** from JavaScript when the response came from another origin and the server did not explicitly allow reading. The request went out, the server handled it, the response returned — but your script gets an error instead of the body.
+
+<Figure caption="The request reaches a foreign origin and runs. Same-origin policy intercepts the response and does not give it to the script.">
+  <Sketch viewBox="0 0 460 180" title="Where same-origin policy applies">
+    <SketchBox x={20} y={70} width={120} height={50} accent radius={8} />
+    <SketchLabel x={80} y={100} mono accent>news.com (JS)</SketchLabel>
+    <SketchBox x={320} y={70} width={120} height={50} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={380} y={100} mono>bank.com</SketchLabel>
+    <SketchArrow from={[140, 85]} to={[320, 85]} accent />
+    <SketchLabel x={230} y={72} size={11} muted>request goes out</SketchLabel>
+    <SketchArrow from={[320, 110]} to={[200, 110]} dashed />
+    <SketchLabel x={250} y={128} size={11} muted>response blocked</SketchLabel>
+    <SketchHighlight x={150} y={95} width={50} height={30} />
+    <SketchLabel x={175} y={155} size={11} muted>browser</SketchLabel>
+    <SketchLabel x={175} y={170} size={11} muted>blocks read</SketchLabel>
+  </Sketch>
+</Figure>
+
+Why block reading but not sending? Many legitimate web features send cross-domain requests without needing to read the response. `<img src="https://cdn.other.com/logo.png">` sends a GET to a foreign host by design. A form with `action` on another domain sends POST. Those channels were historically open. What had to close was foreign scripts programmatically pulling private responses using your cookies.
+
+## What is NOT covered
+
+Some cross-domain operations are intentionally allowed because they do not let a script read foreign response bytes:
+
+```html
+<img src="https://other.com/pic.png">
+<link rel="stylesheet" href="https://other.com/app.css">
+<script src="https://other.com/lib.js"></script>
+```
+
+Images, styles, and `<script src>` load from any origin and apply. You still cannot read their raw bytes from JavaScript (for images this is "tainted canvas"). Load and apply — yes; read as data — no. `<script>` runs in your context, which is why it works; JSONP once rode that loophole before CORS.
+
+<Callout type="info">
+Remember the split: "the browser loaded and applied a resource" versus "my code read the response as data" — two different permissions. Same-origin policy cuts the second; the first often stays open.
+</Callout>
+
+## What this rule protects
+
+Back to the opening scenario. Banking tab open, session cookies alive. You visit `evil.com`; its script runs `fetch("https://bank.com/balance")`. The browser attaches bank cookies (default for simple requests), the request goes out, the bank responds with balance. Same-origin policy does not give `evil.com` the body: request origin (`evil.com`) ≠ response origin (`bank.com`), and the bank sent no permission. The script errors; balance stays private.
+
+<Figure caption="Without same-origin policy any open site could read responses from services where you are logged in. The policy cuts the read arrow.">
+  <PipelineFigure
+    title="Attack the policy stops"
+    stages={[
+      { label: "evil.com open in browser", note: "its JavaScript runs" },
+      { label: "fetch to bank.com", note: "session cookies attached automatically", active: true },
+      { label: "bank.com responds with balance", note: "server does not know who asked in JS" },
+      { label: "browser blocks reading response", note: "origins differ, no permission", active: true },
+    ]}
+  />
+</Figure>
+
+Note what the policy **does not** do. It does not stop the request from reaching the server and executing. So same-origin policy alone does not stop CSRF (state-changing requests like "transfer money") — you need CSRF tokens, `SameSite` cookies, etc. The policy protects response confidentiality, not server-side side effects. Keep that boundary in mind.
+
+## Edge case that surprises people
+
+"One domain — one origin" is false. Subdomains are different origins. Script on `https://app.example.com` cannot read a response from `https://api.example.com` by default, even under the same company. Different host → foreign origin → CORS, same as a totally unrelated site.
+
+```text
+https://example.com        baseline origin
+https://www.example.com    foreign: www host
+https://api.example.com    foreign: subdomain
+http://example.com         foreign: http not https
+https://example.com:8080   foreign: non-default port
+```
+
+Each lower line is a separate origin from the first. Frontend on one subdomain and API on another almost always needs CORS — newcomers are surprised: "but it is our server". To the browser these are two sources.
+
+## Common mistakes
+
+- **"Same-origin policy blocked my request."** It did not block sending — the server may have run your POST. It blocked reading the response in JS. A "failed" POST from CORS may already have executed on the server — important for non-idempotent actions.
+- **Treating origin as domain.** Origin is scheme + host + port. `http` vs `https`, `:3000` vs `:8080`, subdomains — all different origins.
+- **Expecting the policy to stop CSRF.** It hides responses but not execution. Protect state-changing requests separately.
+- **Calling CORS a security hole.** CORS does not disable same-origin policy; it lets the server explicitly allow a specific origin to read its response.
+
+<Detail summary="Where same-origin policy came from">
+
+The rule appeared in Netscape Navigator in 1995 at the dawn of in-browser scripts and became the foundation of web security. Initially it governed DOM access between frames. As XMLHttpRequest, fetch, canvas, and localStorage arrived, each was tied to the same origin logic. Today same-origin policy is a family of rules (network, storage, DOM, cookies) united by origin. CORS, standardized around 2014, is the controlled way to relax the network part where needed.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Origin is scheme, host, and port — all three must match; path and query do not count.",
+    "Same-origin policy does not block sending cross-origin requests — it blocks reading the response in JS without server permission.",
+    "img, link, and script load from any origin but their bytes cannot be read as data — loading and reading are different permissions.",
+    "The policy protects response confidentiality (foreign script cannot read your balance) but not CSRF — the request still runs.",
+    "Subdomains, schemes, and ports are different origins — your API on another subdomain needs CORS.",
+  ]}
+/>
+
+## References
+
+- [MDN - Same-origin policy](https://developer.mozilla.org/en-US/docs/Web/Security/Same-origin_policy)
+- [MDN - Origin](https://developer.mozilla.org/en-US/docs/Glossary/Origin)
+- [HTML Standard - Origin](https://html.spec.whatwg.org/multipage/browsers.html#origin)
+- [MDN - Cross-Origin Resource Sharing (CORS)](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)

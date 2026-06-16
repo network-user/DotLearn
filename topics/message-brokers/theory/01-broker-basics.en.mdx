@@ -1,0 +1,150 @@
+---
+conceptId: broker-basics
+title: Why a message broker
+estimatedMinutes: 45
+---
+
+# Message broker: an intermediary that breaks the direct call
+
+The order service completes a purchase and must do three things: reserve stock, email the buyer, and recalculate sales analytics. The most direct approach is to call three other services in sequence inside order processing. While everything works, that looks fine. But email goes through an external gateway that today responds in four seconds instead of a hundred milliseconds; analytics cannot keep up on Black Friday and starts timing out. The buyer waits for "order accepted" while the order service is blocked on the slowest of the three calls and fails with it.
+
+The problem is not that some service is slow. The problem is that order processing is tightly coupled to all three recipients: it knows their addresses, waits for their responses, and shares their fate. A message broker is an intermediary that breaks that coupling. By the end of this section you will understand what it means to "decouple" services, the three typical jobs a broker solves - decoupling, peak smoothing, and buffering - and why "put a message in the broker" is fundamentally different from "call someone else's method".
+
+## Mental model: producer puts, broker stores, consumer takes
+
+With a direct call, the sender holds the receiver: it talks to a specific address and blocks until that side answers. A broker inserts a buffer between them. The producer puts a message in the broker and is immediately free - it does not care who reads it or when. The consumer takes messages at its own pace when ready. Producer and consumer no longer know about each other and do not have to be alive at the same time.
+
+<Figure caption="On the left the producer waits for each recipient and fails with the slowest. On the right it puts a message in the broker and is free; consumers read independently at their own pace.">
+  <Sketch viewBox="0 0 460 230" title="Direct call versus broker">
+    <SketchLabel x={95} y={20} weight="bold">Direct call</SketchLabel>
+    <SketchBox x={20} y={40} width={70} height={40} />
+    <SketchLabel x={55} y={64} mono>Orders</SketchLabel>
+    <SketchBox x={150} y={20} width={70} height={32} />
+    <SketchLabel x={185} y={40} mono size={11}>Mail</SketchLabel>
+    <SketchBox x={150} y={62} width={70} height={32} />
+    <SketchLabel x={185} y={82} mono size={11}>Stock</SketchLabel>
+    <SketchArrow from={[90, 55]} to={[150, 38]} />
+    <SketchArrow from={[90, 65]} to={[150, 78]} />
+    <SketchLabel x={120} y={108} muted size={10}>waits for reply</SketchLabel>
+
+    <SketchLabel x={350} y={20} weight="bold">Through broker</SketchLabel>
+    <SketchBox x={250} y={130} width={70} height={40} />
+    <SketchLabel x={285} y={154} mono>Orders</SketchLabel>
+    <SketchBox x={345} y={125} width={60} height={50} accent />
+    <SketchLabel x={375} y={154} mono accent size={11}>broker</SketchLabel>
+    <SketchBox x={420} y={110} width={30} height={28} />
+    <SketchLabel x={435} y={128} mono size={9}>Mail</SketchLabel>
+    <SketchBox x={420} y={162} width={30} height={28} />
+    <SketchLabel x={435} y={180} mono size={9}>Stock</SketchLabel>
+    <SketchArrow from={[320, 150]} to={[345, 150]} />
+    <SketchArrow from={[405, 140]} to={[420, 125]} accent dashed />
+    <SketchArrow from={[405, 160]} to={[420, 175]} accent dashed />
+  </Sketch>
+</Figure>
+
+Notice the arrows on the right: the producer writes to the broker with a solid arrow - a synchronous operation that is fast and ends once the broker confirms receipt. Consumers read with dashed arrows - on their own schedule, independently. If the mail service is down for a minute, its messages simply wait in the broker until it returns. The order service never even finds out.
+
+## Decoupling: the producer does not know recipients
+
+The first thing a broker gives you is decoupling. The producer publishes the fact "order created" and does not list recipients. Who subscribes to that fact is up to consumers, not the sender.
+
+```text
+Before: Orders.process() -> Mail.send(); Stock.reserve(); Analytics.track()
+After:  Orders.publish("order.created", payload)
+```
+
+In the "before" version, adding a fourth recipient - say, a loyalty points service - means editing the order service and adding a fourth call. In the "after" version, the points service simply subscribes to `order.created` on its own, and the order service does not change at all. The list of recipients stops being hard-coded in the sender.
+
+<Callout type="info">
+Decoupling works both ways: the producer does not know who reads, and the consumer does not know who writes. They agree only on the message format - that is their contract.
+</Callout>
+
+## Peak smoothing: the buffer absorbs spikes
+
+Second - load smoothing. Traffic to most systems is uneven: quiet at night, a spike at lunch, a wall of requests during a sale. If a consumer handles 1000 messages per second but 5000 arrive at peak, without a buffer the extra 4000 are either rejected or crush the system. The broker accepts all 5000 and gives the consumer exactly as much as it can handle.
+
+<Figure caption="The producer sends an uneven stream peaking at 5000/s. The broker accumulates the queue and feeds the consumer a steady 1000/s - the spike spreads over time, nothing is lost.">
+  <LineChart
+    series={[
+      { name: "Incoming (producer)", points: [{ x: 0, y: 800 }, { x: 1, y: 1200 }, { x: 2, y: 5000 }, { x: 3, y: 4200 }, { x: 4, y: 1500 }, { x: 5, y: 700 }] },
+      { name: "Processed (consumer)", points: [{ x: 0, y: 800 }, { x: 1, y: 1000 }, { x: 2, y: 1000 }, { x: 3, y: 1000 }, { x: 4, y: 1000 }, { x: 5, y: 1000 }] },
+    ]}
+    xLabel="time, s"
+    yLabel="messages/s"
+  />
+</Figure>
+
+The price of smoothing is latency: messages from the spike are processed not instantly but as the queue is drained. That is an honest trade. You exchange "process now or fail" for "process a bit later, but process everything". For order placement, crediting points two seconds later goes unnoticed; losing an "order placed" event is lost money.
+
+## Buffering: producer and consumer need not be alive together
+
+The third property follows from the message living in the broker, not in the sender's memory. You can stop the consumer for a deploy, update it, and bring it back - the producer keeps writing to the broker calmly, and accumulated messages wait for the updated consumer. With a direct call, stopping the receiver meant errors at the sender; here it only means a temporary queue growth.
+
+```text
+12:00       consumer stops for deploy
+12:00..12:03  producer writes, queue grows: 0 -> 9000
+12:03       consumer up, drains queue, queue: 9000 -> 0
+```
+
+The same mechanism enables reprocessing: if a consumer crashes mid-work, the message is unacknowledged and goes to it again after restart. But the buffer has a limit. If the consumer is consistently slower than the producer, the queue grows without bound until it hits memory or disk limits. A broker is a peak amortizer, not a way to permanently outrun a producer that is too fast.
+
+<Callout type="warning">
+A broker smooths a temporary spike but does not fix chronic lag. If the producer's average rate exceeds the consumer's average rate, the queue grows without limit - you need to speed up the consumer or add more in parallel.
+</Callout>
+
+## Edge case: the broker treats nothing as synchronous
+
+Here is a surprise for people used to function calls. When the producer gets confirmation "broker accepted the message", that does not mean anyone processed it. It means exactly one thing: the message is in the broker and will not be lost. Processing happens later and possibly in another service. So you cannot get a "call and wait for result" answer through a broker: the model is fundamentally one-way (fire-and-forget). If you need a reply, you must send it back as a separate message in the opposite direction - with different latency and logic.
+
+## Deterministic example: how `publish` differs from a call
+
+To feel the difference between "call and wait" and "put and forget", compare two tiny snippets. The first mimics a direct call: the sender pays the full cost of a slow receiver. The second mimics publishing to a broker: the sender pays only for acceptance.
+
+```python
+log = []
+
+def direct_call(receiver_latency_ms):
+    cost = 5 + receiver_latency_ms
+    log.append(("direct", cost))
+    return cost
+
+def publish(broker_ack_ms):
+    cost = broker_ack_ms
+    log.append(("publish", cost))
+    return cost
+
+print(direct_call(400))
+print(publish(3))
+print(log)
+```
+
+A direct call to a slow receiver costs the sender `405` time units - it waited for a reply. Publishing costs `3`: the producer paid only for the broker to confirm receipt and is immediately free. `log` records both entries: `[('direct', 405), ('publish', 3)]`. Cost to the sender no longer depends on how slow the receiver is.
+
+## Common mistakes
+
+- **Treating the broker as a replacement for a synchronous reply.** A broker decouples sender from receiver but does not return processing results. If the user needs an immediate answer, keep a synchronous path and send only what can wait through the broker.
+- **Thinking the broker makes the system faster.** It does not speed up processing each message - on the contrary, it adds a network hop and latency. It makes the system more resilient to spikes and failures; that is a different property.
+- **Relying on the buffer as infinite.** A queue that only grows is a symptom, not a solution. A broker amortizes a spike but does not compensate for a consumer that is permanently behind.
+
+<Detail summary="Message broker versus event bus versus task queue - the same thing?">
+
+These terms overlap but emphasize different things. A "task queue" (for example Celery on RabbitMQ) stresses background work: one message, one task, one worker. An "event bus" stresses publishing facts to many subscribers: one event, many independent readers. "Message broker" is the most general term: infrastructure that accepts, stores, and delivers messages; whether you use it as a task queue or event bus is a topology choice. RabbitMQ historically leans toward task queues, Kafka toward event bus and streaming, but both can do either.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A broker is an intermediary between producer and consumer: the producer puts a message in and is free; the consumer takes it at its own pace.",
+    "Decoupling: the producer does not know recipients, the consumer does not know senders; only the message format links them.",
+    "Peak smoothing: the broker accepts the full spike and gives the consumer exactly as much as it can handle, at the cost of delay.",
+    "Buffering: producer and consumer need not be alive together - messages survive a stopped receiver.",
+    "Broker acceptance confirmation is not processing: the model is one-way; a reply must be sent as a separate message.",
+    "A broker amortizes a temporary spike but does not save a consumer that is consistently slower than the producer.",
+  ]}
+/>
+
+## Links
+
+- [RabbitMQ - AMQP 0-9-1 Model Explained](https://www.rabbitmq.com/tutorials/amqp-concepts.html)
+- [Apache Kafka - Introduction](https://kafka.apache.org/intro)
+- [Enterprise Integration Patterns - Message Broker](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageBroker.html)

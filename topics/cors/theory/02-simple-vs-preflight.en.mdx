@@ -1,0 +1,182 @@
+---
+conceptId: simple-vs-preflight
+title: "Simple requests and preflight"
+estimatedMinutes: 45
+---
+
+# Why one request leaves at once and another takes two trips
+
+You changed a GET to PUT and added `Content-Type: application/json` — and the Network panel shows an extra `OPTIONS` you never wrote. Where did it come from? Not a bug and not your code: the browser sent a **preflight** — a preliminary question to the server: "I'm about to send PUT with JSON from a foreign origin, are you OK with that?" If the server does not answer correctly, your PUT never leaves.
+
+CORS splits cross-origin requests into those the browser sends immediately (**simple requests**) and those it checks first with a separate request (**preflight**). By the end of this section you will know exactly which properties put a request in each bucket, what the browser asks in preflight, and why those requests were chosen for advance checking.
+
+## Mental model: two routes
+
+A simple request takes one route: the browser sends it, gets a response, and decides whether to expose the body to script based on `Access-Control-Allow-Origin`. One round-trip.
+
+Preflight takes two. First the browser sends `OPTIONS` with no body — asking permission. The server replies with allowed methods, headers, and origin. Only if the browser is satisfied does it send the real request. Two round-trips.
+
+<Figure caption="Simple request: one round-trip. Preflight adds preliminary OPTIONS: permission question, then the real request.">
+  <Sketch viewBox="0 0 470 230" title="Simple vs preflight routes">
+    <SketchLabel x={110} y={28} weight={600}>Simple request</SketchLabel>
+    <SketchBox x={20} y={40} width={90} height={40} accent radius={8} />
+    <SketchLabel x={65} y={65} mono accent size={11}>browser</SketchLabel>
+    <SketchBox x={360} y={40} width={90} height={40} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={405} y={65} mono size={11}>server</SketchLabel>
+    <SketchArrow from={[110, 55]} to={[360, 55]} accent />
+    <SketchLabel x={235} y={48} size={10} muted>GET</SketchLabel>
+    <SketchArrow from={[360, 72]} to={[110, 72]} dashed />
+    <SketchLabel x={235} y={88} size={10} muted>response + Allow-Origin</SketchLabel>
+    <SketchLabel x={110} y={128} weight={600}>Preflight</SketchLabel>
+    <SketchBox x={20} y={140} width={90} height={40} accent radius={8} />
+    <SketchLabel x={65} y={165} mono accent size={11}>browser</SketchLabel>
+    <SketchBox x={360} y={140} width={90} height={40} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={405} y={165} mono size={11}>server</SketchLabel>
+    <SketchArrow from={[110, 150]} to={[360, 150]} dashed />
+    <SketchLabel x={235} y={144} size={10} muted>OPTIONS (question)</SketchLabel>
+    <SketchArrow from={[360, 165]} to={[110, 165]} dashed />
+    <SketchLabel x={235} y={178} size={10} muted>permission</SketchLabel>
+    <SketchArrow from={[110, 195]} to={[360, 195]} accent />
+    <SketchLabel x={235} y={210} size={10} muted>PUT (real request)</SketchLabel>
+  </Sketch>
+</Figure>
+
+The main question is which route a request takes. That is fully determined by method, headers, and body type. The browser computes it before sending, by fixed rules.
+
+## What makes a request "simple"
+
+A request is simple (no preflight) only if **all** conditions hold:
+
+```text
+method one of:        GET, HEAD, POST
+headers only from:    Accept, Accept-Language, Content-Language, Content-Type
+Content-Type one of:  text/plain
+                      application/x-www-form-urlencoded
+                      multipart/form-data
+```
+
+Violate any condition → non-simple → preflight. `PUT`, `PATCH`, `DELETE` → preflight. Custom header like `Authorization` or `X-Api-Key` → preflight. `Content-Type: application/json` → preflight — `application/json` is not among the three allowed body types.
+
+<Callout type="warning">
+The most common sudden preflight trigger is `Content-Type: application/json`. That JSON type is not in the simple trio, so almost any meaningful JSON POST to a foreign origin triggers preliminary OPTIONS.
+</Callout>
+
+Examples. Simple — GET without extra headers:
+
+```js
+fetch("https://api.other.com/items")
+```
+
+Non-simple — same idea but JSON POST:
+
+```js
+fetch("https://api.other.com/items", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ name: "vase" }),
+})
+```
+
+Before this POST the browser sends `OPTIONS https://api.other.com/items` and waits for permission.
+
+## What the browser asks in preflight
+
+Preflight is a bodyless `OPTIONS` where the browser lists what it intends to do. Two key question headers:
+
+```text
+OPTIONS /items HTTP/1.1
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: content-type
+```
+
+`Access-Control-Request-Method` is the future method; `Access-Control-Request-Headers` lists non-simple headers. The server answers what it allows:
+
+```text
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: https://app.example.com
+Access-Control-Allow-Methods: POST, GET, OPTIONS
+Access-Control-Allow-Headers: Content-Type
+Access-Control-Max-Age: 600
+```
+
+If method is in `Allow-Methods`, headers covered by `Allow-Headers`, and origin matches `Allow-Origin` — the real POST goes. Otherwise the console shows a CORS error and the real request never leaves.
+
+<Figure caption="Browser lists future method and headers in OPTIONS; server lists what it allows. Real request goes only if sets match.">
+  <Compare
+    leftTitle="Browser asks (OPTIONS)"
+    rightTitle="Server allows (response)"
+    left={
+      <ul>
+        <li>Origin: https://app.example.com</li>
+        <li>Request-Method: POST</li>
+        <li>Request-Headers: content-type</li>
+      </ul>
+    }
+    right={
+      <ul>
+        <li>Allow-Origin: https://app.example.com</li>
+        <li>Allow-Methods: POST, GET</li>
+        <li>Allow-Headers: Content-Type</li>
+      </ul>
+    }
+    verdict="Method and headers covered, origin matched — real POST proceeds."
+  />
+</Figure>
+
+## Preflight cache: Max-Age
+
+Two requests per PUT would be wasteful. The preflight response may include `Access-Control-Max-Age` — seconds the browser may cache permission. While cached, repeat requests of the same shape skip new OPTIONS.
+
+```text
+Access-Control-Max-Age: 600
+```
+
+Browsers cap `Max-Age` (Chromium ~2 hours, Firefox ~24 hours). You see OPTIONS before the first request in a series and after cache expiry, not every time.
+
+<MarginNote label="OPTIONS may not reach your handler">Preflight `OPTIONS` is handled by the CORS layer (framework middleware or web server). It usually never hits your route handler — configure CORS, do not write business logic for OPTIONS.</MarginNote>
+
+## Edge case that surprises people
+
+Preflight depends on request shape, not whether you care about the response. A request whose response you ignore may still preflight because of method or headers. Add one custom header to a simple GET and every cross-origin GET suddenly doubles latency with OPTIONS.
+
+```js
+fetch("https://api.other.com/items", {
+  headers: { "X-Trace-Id": "abc" },
+})
+```
+
+Not simple: `X-Trace-Id` is not in the simple header list. Method unchanged — header alone triggers preflight.
+
+Design cross-origin APIs so hot paths stay simple where possible, and set `Access-Control-Max-Age` so preflight is paid once per series. Custom headers for tracing or auth are worth preflight — fight repetition, not OPTIONS itself.
+
+## Common mistakes
+
+- **Surprise at extra OPTIONS in Network.** Normal preflight, not a bug. Appears when the request is non-simple.
+- **Assuming any POST is simple.** POST is simple only with one of three `Content-Type` values. `application/json` → preflight.
+- **Writing OPTIONS handlers in business logic.** Fix CORS configuration, not a route handler.
+- **Skipping `Access-Control-Max-Age`.** Without it every non-simple request doubles round-trips.
+
+<Detail summary="Why preflight exists">
+
+CORS had to extend cross-origin requests without breaking sites written when such requests from JS were impossible. Before CORS, cross-origin from JavaScript was basically what forms and tags could do: GET and form-like POST. Old servers assumed foreign scripts would not send `DELETE` or custom headers. If CORS allowed that without asking, a foreign script could hit a legacy server with dangerous operations before the server could refuse. Preflight is insurance: for anything beyond historically possible behavior, the browser asks first and does not send the real request until the server proves it is CORS-aware.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "CORS splits cross-origin requests into simple (sent immediately) and non-simple (preflight OPTIONS first).",
+    "Simple only if method GET/HEAD/POST, headers from a narrow list, Content-Type one of three form-like types.",
+    "Content-Type: application/json is the most common preflight trigger — not in the simple list.",
+    "Preflight sends Access-Control-Request-Method and Request-Headers; server answers Allow-Methods and Allow-Headers; real request goes on match.",
+    "Access-Control-Max-Age caches preflight permission for repeat requests.",
+  ]}
+/>
+
+## References
+
+- [MDN - Cross-Origin Resource Sharing (CORS)](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)
+- [MDN - Simple requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#simple_requests)
+- [MDN - Preflighted requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#preflighted_requests)
+- [MDN - Access-Control-Max-Age](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age)
+- [Fetch Standard - CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol)

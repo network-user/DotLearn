@@ -7,6 +7,18 @@ const ANSWER_HEADINGS = [
 
 export const stripFrontmatter = (raw: string): string => raw.replace(FRONTMATTER, '');
 
+export const cleanInterviewAnswer = (section: string): string => {
+  const withoutComponents = section
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1');
+  const lines = withoutComponents
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*]\s+/, '').trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+  return lines.join('\n\n').replace(/\s+/g, ' ').trim();
+};
+
 export const extractInterviewAnswer = (raw: string): string | undefined => {
   const body = stripFrontmatter(raw);
   for (const heading of ANSWER_HEADINGS) {
@@ -20,16 +32,4 @@ export const extractInterviewAnswer = (raw: string): string | undefined => {
     if (cleaned.length >= 3) return cleaned;
   }
   return undefined;
-};
-
-export const cleanInterviewAnswer = (section: string): string => {
-  const withoutComponents = section
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1');
-  const lines = withoutComponents
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^[-*]\s+/, '').trim())
-    .filter((line) => line.length > 0 && !line.startsWith('#'));
-  return lines.join('\n\n').replace(/\s+/g, ' ').trim();
 };

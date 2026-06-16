@@ -1,0 +1,104 @@
+---
+conceptId: document
+title: "Document databases: data that lives as one piece"
+estimatedMinutes: 45
+---
+
+# Document databases: data that lives as one piece
+
+The relational model breaks an object into flat tables and reassembles on read. The document model does the opposite: it stores the object whole, in the shape it has in the application - a nested structure. A user with orders inside sits in the database as one document, and reading it needs no `JOIN`. This family (best known through MongoDB) grew from a simple observation: very often you read and write data as one chunk, not as scattered linked rows.
+
+## A document is an aggregate
+
+A document is essentially JSON: key-value pairs where values can be numbers, strings, arrays, or nested objects. Documents go into *collections* - like tables, but without a rigid schema. The main idea is self-containment: everything needed for one entity lives inside it, not spread across other collections.
+
+<DocumentModelFigure />
+
+Toggle the view on the diagram. On the left the same data normalized: `users` table, `orders` table, link via `user_id`. On the right one document: orders nested in the user as an array. To get a user with all orders, a relational database needs a `JOIN` of two tables; a document database needs one read by identifier. If your app almost always shows a user with orders, the document saves work and time.
+
+In design this self-contained unit is called an *aggregate*: a cluster of data that makes sense to read and change as a whole. An order with line items, an article with tags, a profile with settings - natural aggregates. The document model literally stores one aggregate as one piece.
+
+```json
+{
+  "_id": 1,
+  "name": "Anna",
+  "orders": [
+    { "id": 10, "item": "Book", "price": 450 },
+    { "id": 11, "item": "Coffee", "price": 200 }
+  ]
+}
+```
+
+## Flexible schema: benefit and trap
+
+A collection has no schema imposed by the database. One user document may have a `phone` field, the next may not; a third adds `preferences` nobody else has. That is *schema-on-read*: structure is checked by application code on read, not by the database on write. The upside is obvious - change data shape without migrations, add fields on the fly, heterogeneous entities in one collection.
+
+The trap is obvious too once the project reaches year three. Without discipline a collection accumulates several format generations: `name` as a string somewhere, split into `firstName` and `lastName` elsewhere, missing entirely in a third. The database stays silent - code must cope, and every reader must remember all variants. "Schemaless" does not mean "no schema work": the schema moved into the application and became implicit.
+
+<Callout type="warning" title="Denormalization brings back the old pain">
+Embedding data in a document duplicates it. If a product name lives in every order and the product is renamed, you again must walk all documents and fix copies - the same update anomaly relational normalization once removed. The document model did not cancel that tradeoff; it put it back in your hands: you decide what to embed and what to reference.
+</Callout>
+
+## Embed or reference
+
+The central document schema question is aggregate boundary. What goes inside the document, and what moves to another collection linked by reference.
+
+Embed when data is read with the parent, belongs only to it, and does not grow without bound: order line items, article tags, an address in a profile. Reference when data is shared by many (one product in a thousand orders), has its own lifecycle, or grows without limit. A reference in a document database is a field with another `_id`, but assembling linked documents by those references is application code: there is no automatic `JOIN` like in relational databases by default.
+
+<Compare
+  leftTitle="Embed"
+  rightTitle="Reference"
+  left={<>
+
+- Read together with the parent
+- Belongs only to it
+- Size is bounded
+- Example: order line items
+
+  </>}
+  right={<>
+
+- Shared by many entities
+- Has its own lifecycle
+- Can grow without bound
+- Example: product catalog
+
+  </>}
+  verdict="Embedding speeds reads at the cost of duplication; referencing removes duplication at the cost of assembly in code."
+/>
+
+## Surprise: the unbounded array
+
+The most common beginner trap is embedding what grows forever. Comments on a popular post, user events, an operation log: embed them as an array in the document - and one day the document swells to hundreds of megabytes, hits a size limit, and is rewritten whole on every single new element. What grows without bound almost always belongs in a separate collection with a reference, not a nested array.
+
+## Common mistakes
+
+**Modeling relational data as documents.** If everything references everything and you constantly assemble documents by reference in code, you built a slow relational database by hand. Heavily connected data is a signal for relational or graph models.
+
+**Embedding the unbounded.** An array that grows forever will eventually kill the document. Move it to its own collection.
+
+**Treating flexible schema as no schema.** Without a consistent format and application-side validation, a collection becomes a pile of incompatible documents.
+
+**Expecting relational guarantees by default.** Multi-document transactions and strict consistency in distributed document databases exist, but as deliberate configuration, not a given.
+
+<Detail summary="Why document models pair well with DDD">
+
+In domain-driven design (DDD) an aggregate is a consistency boundary: a cluster of objects that changes as a whole with one root. The document model maps almost one-to-one: one aggregate - one document, aggregate boundary - document boundary. Teams that think in aggregates often find document databases natural: they store exactly the chunks they already operate on in code.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A document is a self-contained JSON aggregate; related data is nested inside, read as one piece without JOIN.",
+    "Flexible schema (schema-on-read) speeds changes but moves format consistency work into application code.",
+    "Embedding duplicates data and brings back update anomalies; embed versus reference is the central schema decision.",
+    "Unbounded arrays (comments, logs) must not be embedded - they swell the document and hit size limits.",
+    "Heavily connected data signals the document model is a poor fit; use relational or graph instead.",
+  ]}
+/>
+
+## References
+
+- [MongoDB: data modeling and embed/reference patterns](https://www.mongodb.com/docs/manual/core/data-modeling-introduction/)
+- [MongoDB: document size limits](https://www.mongodb.com/docs/manual/reference/limits/)
+- [Martin Fowler on aggregate-oriented databases](https://martinfowler.com/bliki/AggregateOrientedDatabase.html)

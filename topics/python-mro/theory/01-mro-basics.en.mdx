@@ -1,0 +1,174 @@
+---
+conceptId: mro-basics
+title: What MRO is
+estimatedMinutes: 45
+---
+
+# MRO: the list Python uses to find attributes
+
+You write `obj.method()`, and somewhere the right definition is found - but where exactly? With single inheritance the answer is obvious: go from the instance's class to its parent, then to that parent's parent. Once a second base class appears, "up the chain" is no longer an unambiguous route: from a class with two parents, do you go to the left one, the right one, or their common ancestor? Python answers that question once, when the class is created, and records the answer as a flat ordered list - method resolution order, MRO.
+
+By the end of this section you will read `__mro__` for any class, predict from it which attribute wins when names conflict, and understand that attribute lookup is not a tree walk but a pass over a precomputed list.
+
+## Mental model: one list instead of a tree
+
+You picture the class hierarchy as a tree (or graph) with arrows to parents. But Python does not use a tree for attribute lookup. When a class is defined, it flattens the entire ancestor graph into **one linear list** and stores it in `__mro__`. Any access `obj.attr` walks this list left to right until it finds the first class whose `__dict__` contains `attr`.
+
+```python
+class Animal:
+    def speak(self):
+        return "sound"
+
+class Dog(Animal):
+    def speak(self):
+        return "woof"
+
+print([c.__name__ for c in Dog.__mro__])
+```
+
+This prints `['Dog', 'Animal', 'object']`. That is the search route: first `Dog`, then `Animal`, finally `object`, the common ancestor of all classes. When you call `Dog().speak()`, Python walks this list and stops at `Dog` because `speak` is found there already.
+
+<Figure caption="obj.speak() walks MRO left to right and takes the first definition: Dog intercepts speak, so Animal and object are never reached.">
+  <MroFigure
+    chain={['Dog', 'Animal', 'object']}
+    lookup="speak()"
+    foundIn="Dog"
+    startLabel="Dog().speak()"
+    title="Searching the MRO list"
+  />
+</Figure>
+
+The key idea: the list is fixed once when the class is defined. Lookup at runtime does not "decide" where to turn - it simply iterates the ready-made list. All the complexity is in *how* that list is built; the next section is devoted to that.
+
+<MarginNote label="__mro__ and mro()">`Dog.__mro__` is a read-only tuple. The method `Dog.mro()` returns the same order as a list; you can override it in a metaclass, but in ordinary code that is almost never needed.</MarginNote>
+
+## Two ways to inspect the order
+
+MRO has two interfaces: the attribute `__mro__` (tuple) and the method `mro()` (list). The contents are the same.
+
+```python
+class A: pass
+class B(A): pass
+class C(B): pass
+
+print(C.__mro__ == tuple(C.mro()))
+print([c.__name__ for c in C.mro()])
+```
+
+This prints `True` and `['C', 'B', 'A', 'object']`. The linear chain `C → B → A → object` is the degenerate case where MRO matches "up through parents." The interesting part starts when there are several parents.
+
+## Name conflicts: the list decides the dispute
+
+When the same method is defined in several ancestors, the one that appears earlier in `__mro__` wins. There is no magic "base class is more important" - only position in the list.
+
+```python
+class Base:
+    def role(self):
+        return "base"
+
+class Mixin:
+    def role(self):
+        return "mixin"
+
+class Widget(Mixin, Base):
+    pass
+
+print(Widget().role())
+print([c.__name__ for c in Widget.__mro__])
+```
+
+This prints `mixin` because MRO is `['Widget', 'Mixin', 'Base', 'object']`: `Mixin` is left of `Base`, so its `role` is found first. Change the order to `Widget(Base, Mixin)` and `Base` wins. The order of base classes in the parentheses directly controls whose behavior overrides whose.
+
+<Callout type="tip">
+When you are unsure which method will run under multiple inheritance, do not guess from the tree - print `Cls.__mro__` and read the list left to right. The first match is the answer.
+</Callout>
+
+## Try the list yourself
+
+Run the code as written: with `Widget(Mixin, Base)` the `role` method comes from `Mixin`. Now swap the parent order to `class Widget(Base, Mixin)` and run again. The `role()` output changes, and so does `__mro__`: watch how swapping two names in the parentheses reorders two classes in the list.
+
+<PyDemo
+  title="Parent order decides name conflicts"
+  code={`class Base:
+    def role(self):
+        return "base"
+
+class Mixin:
+    def role(self):
+        return "mixin"
+
+class Widget(Mixin, Base):
+    pass
+
+print(Widget().role())
+print([c.__name__ for c in Widget.__mro__])`}
+/>
+
+## Lookup stops at the first match
+
+MRO determines not only the winner in a conflict but also when search stops. As soon as a class with the needed attribute is found, the rest of the list is not scanned at all.
+
+```python
+class A:
+    x = "from A"
+
+class B:
+    x = "from B"
+    y = "only in B"
+
+class C(A, B):
+    pass
+
+print(C.x, C.y)
+```
+
+This prints `from A only in B`. Attribute `x` exists in both `A` and `B`, but `A` is earlier in MRO - its version is taken. Attribute `y` exists only in `B`, so search passes `A` and reaches `B`. The same list serves both lookups; it just stops at different points.
+
+## Surprise: object is always last, and that is not accidental
+
+It may look like `object` at the end of the list is a formality. But its position at the very end is what keeps MRO consistent: any method you define higher up is guaranteed to override the default from `object`. If `object` could land in the middle, its `__init__` or `__eq__` might sometimes beat yours - and behavior would depend on the shape of the hierarchy.
+
+```python
+class A:
+    def __repr__(self):
+        return "A-object"
+
+class B(A):
+    pass
+
+print(repr(B()))
+print(B.__mro__[-1].__name__)
+```
+
+This prints `A-object` and `object`. `__repr__` from `object` always exists but stands last, so your version from `A` is found first. This is an invariant C3 must preserve for any valid hierarchy - and the reason Python sometimes refuses to build one at all.
+
+## Typical mistakes
+
+- **Thinking "the base class matters more than the derived one."** In MRO it is the opposite: the derived class always comes before its ancestors, which is why overriding works. What matters is position in the list, not "level" in the tree.
+- **Guessing order under multiple inheritance from a tree diagram.** The tree does not show how C3 will reorder classes. The only reliable way is to read `Cls.__mro__`.
+- **Confusing `type(obj)` with MRO.** `type(obj)` is only the instance's class, the first element of the list. Attribute lookup sees the entire `__mro__`, not one class.
+
+<Detail summary="Where MRO comes from: old-style and new-style classes">
+
+In Python 2, "old-style" classes (not inheriting `object`) coexisted with "new-style" ones (explicitly inheriting `object`). Old-style MRO was built by naive depth-first search left to right and gave unintuitive order in diamond hierarchies, breaking overrides. New-style classes brought C3 linearization.
+
+In Python 3 there are no old-style classes: every class implicitly inherits `object` and gets correct C3 MRO. Everything you read here applies to any modern code without caveats. Details of the transition are in the [official MRO write-up](https://docs.python.org/3/howto/mro.html).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "MRO is the flat ordered list of classes in Cls.__mro__, computed once when the class is created.",
+    "Lookup for obj.attr walks __mro__ left to right and stops at the first class where the attribute is defined.",
+    "When names conflict, the class earlier in MRO wins; the order of base classes in parentheses controls this directly.",
+    "The derived class always comes before its ancestors in MRO - that is why overriding works.",
+    "object closes every MRO, ensuring your methods override the default implementation.",
+    "Do not guess order from the inheritance tree - print Cls.__mro__ and read the list.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - The Python 2.3 Method Resolution Order](https://docs.python.org/3/howto/mro.html)
+- [Python documentation - type.__mro__ and type.mro()](https://docs.python.org/3/library/stdtypes.html#class.__mro__)
+- [Python documentation - super()](https://docs.python.org/3/library/functions.html#super)

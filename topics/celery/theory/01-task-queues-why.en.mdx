@@ -1,0 +1,146 @@
+---
+conceptId: task-queues-why
+title: Why background task queues
+estimatedMinutes: 45
+---
+
+# The request arrived, but the work is slow: where to put it
+
+The user clicked "Sign up". Your handler created a database row, then called an SMTP server to send a confirmation email. The SMTP server paused for four seconds. The whole time the browser spins and your web server worker is busy on that one request and cannot take the next. If ten people register at once, you hit not the CPU or the database but someone else's mail server, whose speed you do not control.
+
+The root issue is that an HTTP request must answer quickly while some work is slow or unreliable by nature: sending email, generating PDFs, transcoding video, calling external APIs. By the end of this section you will tell work that can stay in the handler from work that must leave it, and understand why a "task queue" is not just a todo list but a way to decouple in time whoever creates work from whoever executes it.
+
+## Mental model: producer enqueues, consumer dequeues
+
+A background task queue splits one synchronous call into two independent halves. The web handler (producer) does not run slow work itself - it describes it as a message, puts it in a queue, and immediately responds to the user. A separate process (consumer, in Celery a worker) pulls messages at its own pace and runs them. Between them sits a broker - storage that holds messages until they are taken.
+
+<Figure caption="Producer enqueues a task and answers immediately; consumer picks it up later and runs it at its own pace. The queue decouples them in time.">
+  <Sketch viewBox="0 0 460 180" title="Producer, queue, consumer">
+    <SketchBox x={20} y={60} width={110} height={56} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={75} y={84} mono>web</SketchLabel>
+    <SketchLabel x={75} y={102} muted size={11}>producer</SketchLabel>
+    <SketchBox x={185} y={48} width={90} height={80} accent radius={8} />
+    <SketchLabel x={230} y={84} mono accent>queue</SketchLabel>
+    <SketchLabel x={230} y={140} muted size={11}>broker</SketchLabel>
+    <SketchBox x={330} y={60} width={110} height={56} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={385} y={84} mono>worker</SketchLabel>
+    <SketchLabel x={385} y={102} muted size={11}>consumer</SketchLabel>
+    <SketchArrow from={[130, 88]} to={[183, 88]} accent />
+    <SketchArrow from={[277, 88]} to={[328, 88]} />
+  </Sketch>
+</Figure>
+
+The arrows matter. Producer writes to the queue and waits for nothing else: its job ends when the broker accepts the message. Worker reads from the queue when it has capacity. If a worker dies or there are temporarily too few, messages pile up in the queue and wait. The user does not know and should not need to know: registration succeeded and the email will arrive "soon".
+
+<MarginNote label="Terms">Producer and consumer are roles, not separate programs. The same service can be producer for one queue and consumer for another.</MarginNote>
+
+## What changes for the user
+
+Compare two registration handlers. First synchronous - where we started.
+
+```python
+def register(request):
+    user = create_user(request.data)
+    send_welcome_email(user.email)
+    return Response({"id": user.id})
+```
+
+Here `send_welcome_email` blocks the response. Until the SMTP server reports back, `return` does not run. Response time = user creation time + email send time, and the second term is outside your control.
+
+Now move sending to a background task. The handler enqueues with `.delay()` and returns immediately.
+
+```python
+def register(request):
+    user = create_user(request.data)
+    send_welcome_email.delay(user.email)
+    return Response({"id": user.id})
+```
+
+`send_welcome_email.delay(...)` does not send email. It serializes the task name and arguments into a message, puts it in the queue, and returns in milliseconds. A worker sends the email - maybe in a second, maybe in a minute if the queue is long. Response time is now only database write time.
+
+<Callout type="info">
+`.delay(args)` is shorthand for enqueueing. Under the hood it calls `.apply_async(args=...)`, which also supports delay, priority, and queue selection. We return to `apply_async` when fine-grained control is needed.
+</Callout>
+
+## What to offload and what to keep
+
+Not everything belongs in the background. A good background candidate usually matches one of: slow (seconds or more), unreliable (depends on an external system that may fail), resource-heavy (CPU or memory that interferes with serving requests), or simply not needed for the response right now.
+
+<Compare
+  leftTitle="Keep in the handler"
+  rightTitle="Move to background"
+  left={
+    <ul>
+      <li>Validation and writes to your database</li>
+      <li>Reads the response depends on</li>
+      <li>Fast computation (milliseconds)</li>
+    </ul>
+  }
+  right={
+    <ul>
+      <li>Email or push delivery</li>
+      <li>PDF, report, or preview generation</li>
+      <li>External API calls</li>
+      <li>Media transcoding</li>
+    </ul>
+  }
+  verdict="If the work result is needed in the response, keep it in the handler. If the response does not depend on it, it is a background candidate."
+/>
+
+The line is: "Is this work result needed in the HTTP response?" If the user must see a generated PDF immediately, that is synchronous work; background does not help (unless you show "preparing document" and poll status later). If the PDF can arrive by email in a minute, offload it.
+
+## How this differs from a background thread
+
+You might ask: why a broker and separate process if you can start email in a thread inside the web process? The difference is durability. A thread lives inside the process: process dies (deploy, restart, OOM) and all unfinished threads and their work are lost. A message in the broker survives restarts of both web server and worker: it sits in storage until taken and acknowledged.
+
+```python
+import threading
+
+def register(request):
+    user = create_user(request.data)
+    threading.Thread(target=send_welcome_email, args=(user.email,)).start()
+    return Response({"id": user.id})
+```
+
+This returns quickly, but the email only lives while the process lives. Redeploy at that moment - email never sent, and you may never know. With a queue the message waits for the next live worker. Background tasks are primarily about reliable delivery of work; fast responses are a bonus.
+
+## Edge cases
+
+A queue solves some problems and introduces others - worth knowing upfront.
+
+**Delay instead of instant.** A background task runs not "now" but "when the queue reaches it". Usually fractions of a second, but under load the queue grows and email may arrive minutes later. If something must happen strictly at request time, background is wrong.
+
+**Harder to report errors.** In synchronous code a failed email send returns 500 to the user. A background task fails after the user already got "200 OK". Telling them afterward is separate work (email "we could not", status record, team alert).
+
+**This will surprise you: "successful response" no longer means "everything done".** The most common mindset shift when adopting queues. Before, code after `return` had definitely run. Now `200 OK` only means "task accepted into the queue". The work may not have started, may have started and failed, or may hang. Track status of important background operations separately; do not treat enqueue as completion.
+
+## Common mistakes
+
+- **Offloading work the response cannot live without.** If the result is required in the HTTP response, a queue does not help: you still wait or return incomplete data. First ask whether the response depends on this work.
+- **Treating enqueue as completion.** `.delay()` returning successfully means "accepted into the queue", not "done". Logic that must wait for the result cannot rely on successful enqueue alone.
+- **Passing heavy objects instead of identifiers.** Task arguments are serialized and travel through the broker. Passing a whole ORM object or large file is expensive and fragile; pass `user.id` and let the task load the object. More on this in the pitfalls section.
+
+<Detail summary="Why brokers appeared instead of just a database table">
+
+The simplest queue is a `tasks` table in your database: producer inserts a row, consumer loops on unprocessed rows. That works for small load. Problems appear at scale: multiple workers grabbing the same task needs row locks (`SELECT ... FOR UPDATE SKIP LOCKED`), and constant polling loads the database you need for main work.
+
+Dedicated brokers (Redis, RabbitMQ) are designed for "deliver this message to exactly one recipient and hold it until acknowledged". They push messages without polling, redeliver unacknowledged messages, and scale to thousands per second. Celery works on both; broker choice is the next section.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A background task queue splits a synchronous call into producer (enqueues) and consumer (runs later), decoupling them in time.",
+    "Offload work the HTTP response does not depend on: email, file generation, external API calls.",
+    "If the result is needed in the response, keep work in the handler; background will not help.",
+    ".delay() enqueues and returns in milliseconds; the worker runs the work later.",
+    "Messages in the broker survive process restarts - the key difference from a background thread.",
+    "A successful response now means only \"task accepted\", not \"work completed\"; track important operations separately.",
+  ]}
+/>
+
+## References
+
+- [Celery - Introduction to Celery](https://docs.celeryq.dev/en/stable/getting-started/introduction.html)
+- [Celery - Calling Tasks (delay and apply_async)](https://docs.celeryq.dev/en/stable/userguide/calling.html)
+- [Celery - First Steps with Celery](https://docs.celeryq.dev/en/stable/getting-started/first-steps-with-celery.html)

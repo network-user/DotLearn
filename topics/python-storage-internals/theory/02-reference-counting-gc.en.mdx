@@ -1,0 +1,173 @@
+---
+conceptId: reference-counting-gc
+title: Reference counting and garbage collection
+estimatedMinutes: 50
+---
+
+When the last name stops pointing at an object, the object is no longer needed and the memory under it should be freed. In languages with manual memory management the programmer does that; in Java and Go a tracing collector runs periodically. CPython chose a third path: it counts references to every object and frees the object the moment the counter hits zero. That is fast and predictable, but the approach has a blind spot — cycles — and a second, additional mechanism exists for them.
+
+By the end of this section you will understand what increases and decreases the reference count, why `sys.getrefcount` always shows one more than you expect, how a reference cycle forms that counting cannot remove, and why the `gc` module with generations and `weakref` weak references exist.
+
+## Reference counting: a counter inside the object
+
+Every object in CPython stores a number inside itself — how many references point at it. Create a reference — counter `+1`; a reference disappears — counter `-1`. As soon as the counter reaches zero, the object is destroyed immediately and memory is returned. That is an important trait of CPython: the destructor (`__del__`) for an object without cycles runs right away, deterministically, not "sometime later".
+
+The counter increases when: binding a name, adding an object to a list or dict, passing it to a function as an argument. It decreases when: a name leaves scope, `del name`, rebinding a name to another object, removing from a container.
+
+```python
+import sys
+data = []
+print(sys.getrefcount(data) - 1)
+alias = data
+print(sys.getrefcount(data) - 1)
+```
+
+The first number is `1`, the second `2`: the name `alias` added one reference. We subtract one because `getrefcount` has a quirk.
+
+<Callout type="info">`sys.getrefcount(x)` always shows one more than the "real" reference count: the argument `x` itself is another temporary reference to the object for the duration of the call. That is why the code above uses `- 1`. Absolute values depend on the implementation; rely on the difference before and after, not on the number itself.</Callout>
+
+## How references grow and shrink
+
+Follow one object's counter through its life. In the figure, three names share one list and the counter is three; after `del b` it becomes two.
+
+<Figure caption="The reference count is the number of names and containers holding the object. del removes one reference; when the counter reaches zero, the object is destroyed immediately.">
+  <Sketch viewBox="0 0 420 200" title="Reference counting">
+    <SketchLabel x={40} y={40} mono>a</SketchLabel>
+    <SketchLabel x={40} y={100} mono>b</SketchLabel>
+    <SketchLabel x={40} y={160} mono>c</SketchLabel>
+    <SketchBox x={220} y={70} width={160} height={60} accent />
+    <SketchLabel x={300} y={95} mono accent>[1, 2, 3]</SketchLabel>
+    <SketchLabel x={300} y={118} muted>refcount = 3</SketchLabel>
+    <SketchArrow from={[60, 40]} to={[218, 85]} accent />
+    <SketchArrow from={[60, 100]} to={[218, 100]} dashed />
+    <SketchArrow from={[60, 160]} to={[218, 115]} accent />
+  </Sketch>
+</Figure>
+
+The dashed arrow from `b` is the one about to disappear. After `del b` the counter becomes `2` and the object lives. Remove `a` and `c` too — the counter hits zero and the list is destroyed on the spot.
+
+```python
+import sys
+x = object()
+y = x
+z = x
+print(sys.getrefcount(x) - 1)
+del y
+print(sys.getrefcount(x) - 1)
+```
+
+This prints `3`, then `2`: three names (`x`, `y`, `z`) give three references; `del y` removes one. Note: `del y` deletes the name, not the object. The object vanishes only when the last reference is gone.
+
+## Try it yourself
+
+Run the code and watch how the relative reference count changes. Add the object to a list (`container = [x]`) and print the counter again — a container also holds a reference, so the number grows. Remove the element and confirm the counter drops back.
+
+<PyDemo
+  title="Reference count in motion"
+  code={`import sys
+
+obj = object()
+base = sys.getrefcount(obj) - 1
+print('after creation:', base)
+
+alias = obj
+print('after second name:', sys.getrefcount(obj) - 1)
+
+del alias
+print('after del:', sys.getrefcount(obj) - 1)`}
+/>
+
+## The blind spot: reference cycles
+
+Reference counting breaks on cycles. If two objects reference each other, their counters never reach zero on their own — even when nothing outside points at them anymore.
+
+```python
+a = {}
+b = {}
+a["other"] = b
+b["other"] = a
+del a
+del b
+```
+
+After `del a` and `del b` no name points at these dicts, but they hold each other: each counter is `1`. To reference counting they are "alive" though unreachable to the program — a memory leak.
+
+<Figure caption="Two objects reference each other. After external names are removed their counters stay at 1 — reference counting cannot remove such a cycle.">
+  <Sketch viewBox="0 0 420 180" title="Reference cycle">
+    <SketchBox x={40} y={60} width={120} height={60} />
+    <SketchLabel x={100} y={85} mono>a</SketchLabel>
+    <SketchLabel x={100} y={108} muted>refcount = 1</SketchLabel>
+    <SketchBox x={260} y={60} width={120} height={60} accent />
+    <SketchLabel x={320} y={85} mono accent>b</SketchLabel>
+    <SketchLabel x={320} y={108} muted>refcount = 1</SketchLabel>
+    <SketchArrow from={[160, 78]} to={[258, 78]} accent />
+    <SketchArrow from={[258, 102]} to={[160, 102]} />
+  </Sketch>
+</Figure>
+
+Play with counters yourself: "refcount" mode shows the counter rise and fall on bind/del; "cycle" mode shows a cycle stuck at one, removed only by "run gc":
+
+<RefCountViz />
+
+## The garbage collector and generations
+
+Exactly for such cycles CPython keeps a second mechanism — a tracing garbage collector in the `gc` module. It periodically walks container objects, finds groups reachable only from within themselves (unreachable cycles), and destroys them. Reference counting removes the vast majority of garbage instantly; `gc` cleans up cycles.
+
+The collector works in generations on the hypothesis that most objects die young. New objects land in generation 0, checked often. Survivors move to generation 1, then generation 2 — checked less and less because a long-lived object is unlikely to suddenly become garbage. That lowers overhead.
+
+```python
+import gc
+collected = gc.collect()
+print(type(collected))
+```
+
+`gc.collect()` runs a full collection by hand and returns the number of unreachable objects found (`int`). You usually do not need to touch it — the collector runs on its own — but it helps when debugging leaks.
+
+## weakref: a reference that does not keep the object alive
+
+Sometimes you need to refer to an object without preventing it from dying — for example in a cache. An ordinary reference increases the counter and keeps the object alive. A weak reference (`weakref`) points at an object without increasing the counter: once all ordinary references are gone, the object is destroyed and the weak reference "goes stale".
+
+```python
+import weakref
+
+class Node:
+    pass
+
+n = Node()
+ref = weakref.ref(n)
+print(ref() is n)
+del n
+print(ref() is None)
+```
+
+This prints `True`, then `True`: while `n` lives, `ref()` returns it; after `del n` no ordinary references remain, the object is destroyed, and `ref()` returns `None`. Weak references also break cycles: if one link in a cycle is weak, reference counting can collect the rest without `gc`.
+
+## Common mistakes
+
+- **Treating the absolute value of `getrefcount` as meaningful.** It is always one higher because of the function's own argument and depends on interpreter optimizations. Watch the change, not the number.
+- **Thinking `del x` destroys the object.** `del x` removes the name `x` and decrements the counter by one. The object is destroyed only when the counter reaches zero.
+- **Expecting immediate `__del__` for objects in cycles.** An object in an unreachable cycle is destroyed by `gc` eventually, not right away — so release critical resources (files, sockets) explicitly via `with` or `close()`, not via `__del__`.
+
+<Detail summary="Why GIL and reference counting are linked">
+
+The reference counter changes on every assignment and deletion — constantly, and it must be atomic or two threads could corrupt the counter and memory. In CPython the global interpreter lock (GIL) guarantees that only one thread runs bytecode at a time, so counter operations do not need expensive synchronization on every change. That is one historical reason the GIL exists — and one reason removing it is hard. The detail is specific to CPython; implementations without reference counting (Jython on the JVM) have no GIL.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "CPython counts references to every object: a reference added — counter +1, removed — -1; at zero the object is destroyed immediately.",
+    "The counter increases on assignment, putting in a container, passing to a function; it decreases on del, leaving scope, removing from a container.",
+    "sys.getrefcount shows one more because of the temporary argument reference; rely on the difference in values, not the absolute number.",
+    "Reference counting does not remove cycles: mutually referencing objects keep each other alive even with no external references.",
+    "The gc module's collector finds and removes unreachable cycles; it works in generations, checking young objects more often than old ones.",
+    "weakref refers to an object without increasing the counter: the object may die, and the weak reference then returns None.",
+  ]}
+/>
+
+## References
+
+- [Python docs - gc module](https://docs.python.org/3/library/gc.html)
+- [Python docs - weakref module](https://docs.python.org/3/library/weakref.html)
+- [Python docs - sys.getrefcount](https://docs.python.org/3/library/sys.html#sys.getrefcount)
+- [CPython devguide - Garbage collector design](https://devguide.python.org/internals/garbage-collector/)

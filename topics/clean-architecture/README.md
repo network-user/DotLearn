@@ -1,14 +1,22 @@
-# Чистая и луковая архитектура
+# Clean and Onion Architecture
 
-Тема для разработчиков, которые уже умеют писать классы, но хотят научиться раскладывать код по слоям так, чтобы бизнес-логика не зависела от фреймворка и базы данных. Разбираем, зачем вообще нужны слои, как работает правило зависимостей из Clean Architecture, чем луковая и гексагональная архитектура отличаются от классических трёхслойных приложений и как применить всё это в реальном Python-проекте.
+For developers who already know how to write classes but want to learn how to split code into layers so business logic does not depend on the framework or database. We cover why layers exist at all, how the dependency rule from Clean Architecture works, how onion and hexagonal architecture differ from classic three-tier apps, and how to apply all of this in a real Python project.
 
-Концепты:
+## Concepts
 
-1. Зачем слои: связанность и тестируемость
-2. Правило зависимостей (Clean Architecture)
-3. Луковая и гексагональная архитектура
-4. Применение в Python-проекте
+1. **Why layers: coupling and testability** — why mixed "everything in one pile" code is hard to change and how separation by responsibility level restores control.
+2. **The dependency rule (Clean Architecture)** — one sentence from which all of Clean Architecture follows: every arrow points inward, toward business rules.
+3. **Onion and hexagonal architecture** — three names for one idea and the differences in emphasis that easily confuse people in interviews.
+4. **Applying it in Python** — how to lay out layers in packages, wire everything at the composition root, and avoid drowning in abstractions for their own sake.
 
-Prerequisites: `python-oop`.
+## Prerequisites
 
-Generated via `lesson-forge`.
+`python-oop`.
+
+## Estimated effort
+
+About 3 hours.
+
+## Runtime
+
+None — examples use diagrams and code fragments.

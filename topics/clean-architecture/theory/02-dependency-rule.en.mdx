@@ -1,0 +1,153 @@
+---
+conceptId: dependency-rule
+title: The dependency rule (Clean Architecture)
+estimatedMinutes: 45
+---
+
+# One rule from which all of Clean Architecture follows
+
+In the previous section we separated business rules and infrastructure onto different levels. But a gap remained: the service that places an order still has to call saving to the database somewhere. If it directly imports a repository class that imports the PostgreSQL driver, the dependency arrow again points from business logic into technology. You changed the database — you change the import in the service. Layers exist, but dependency still flows the wrong way.
+
+Clean Architecture solves this with one sentence — the dependency rule. By the end of this section you will understand why all dependencies must point inward toward business rules, how dependency inversion physically flips the arrow from the database toward the domain, and how a layer boundary differs from simply splitting into modules. This is the heart of the whole topic.
+
+## Mental model: concentric rings and one arrow
+
+Clean Architecture draws the system as nested rings. At the center — Entities, the most stable business rules. Around them — Use Cases. Further out — interface adapters (controllers, presenters, gateways). On the outside — frameworks and drivers: web, database, external services. Exactly one rule ties the rings together.
+
+> Source code dependencies always point inward, toward higher-level policies. Nothing in an inner circle knows anything about an outer one.
+
+<Figure caption="The dependency rule: source code in outer rings depends on inner rings, never the reverse. A database class name must not appear in a use case.">
+  <Sketch viewBox="0 0 320 320" title="Clean Architecture concentric rings">
+    <SketchBox x={10} y={10} width={300} height={300} fill="rgb(var(--surface-2))" hatched radius={150} />
+    <SketchLabel x={160} y={28} size={11} muted>Frameworks &amp; Drivers</SketchLabel>
+    <SketchBox x={55} y={55} width={210} height={210} fill="rgb(var(--surface-2))" radius={105} />
+    <SketchLabel x={160} y={72} size={11} muted>Interface Adapters</SketchLabel>
+    <SketchBox x={100} y={100} width={120} height={120} fill="rgb(var(--surface-1))" radius={60} />
+    <SketchLabel x={160} y={116} size={11} muted>Use Cases</SketchLabel>
+    <SketchBox x={130} y={130} width={60} height={60} accent radius={30} />
+    <SketchLabel x={160} y={163} size={11}>Entities</SketchLabel>
+    <SketchArrow from={[160, 300]} to={[160, 196]} accent />
+    <SketchLabel x={250} y={250} size={11} accent>dependencies inward</SketchLabel>
+  </Sketch>
+</Figure>
+
+The arrow in the diagram is the direction of dependencies in source code, not the direction of data flow at runtime. Data during execution naturally moves both ways: a request arrives from outside, a response leaves outside. But `import` always points toward the center. A use case imports an entity; an entity never imports a use case. A controller knows about the use case; the use case does not know about the controller.
+
+## Naive code breaks the rule
+
+Back to placing an order. The natural first sketch: the service creates the repository itself and calls it.
+
+```python
+from infrastructure.sql_order_repo import SqlOrderRepo
+
+class PlaceOrderUseCase:
+    def execute(self, order):
+        repo = SqlOrderRepo()
+        repo.save(order)
+```
+
+Here the use case (inner ring) imports `SqlOrderRepo` from infrastructure (outer ring). The dependency arrow points outward — a direct violation of the rule. The name `Sql` leaked into the center of the system: switching the database to Mongo forces edits in the business-scenario file.
+
+## Dependency inversion flips the arrow
+
+To flip the dependency without flipping data flow, the use case must depend not on a concrete repository but on an **abstraction** it declares itself. Declare the interface next to the use case, in the inner ring.
+
+```python
+from abc import ABC, abstractmethod
+
+class OrderRepository(ABC):
+    @abstractmethod
+    def save(self, order) -> None: ...
+```
+
+Now the use case depends only on this interface and knows nothing about SQL.
+
+```python
+class PlaceOrderUseCase:
+    def __init__(self, repo: OrderRepository):
+        self._repo = repo
+
+    def execute(self, order):
+        self._repo.save(order)
+```
+
+The concrete implementation lives in infrastructure and **implements** the interface from the center.
+
+```python
+class SqlOrderRepo(OrderRepository):
+    def save(self, order) -> None:
+        ...
+```
+
+The arrow flipped: now `SqlOrderRepo` (outer ring) depends on `OrderRepository` (inner ring), not the other way around. This is dependency inversion — the D in SOLID. The use case dictates the contract; infrastructure adapts.
+
+<Figure caption="Before inversion the arrow points outward — into infrastructure. After: both depend on the interface in the center, and dependency points inward.">
+  <Sketch viewBox="0 0 440 200" title="Dependency inversion">
+    <SketchLabel x={110} y={20} size={11} muted>before</SketchLabel>
+    <SketchBox x={30} y={40} width={150} height={44} accent />
+    <SketchLabel x={105} y={67} size={12}>UseCase</SketchLabel>
+    <SketchBox x={30} y={120} width={150} height={44} fill="rgb(var(--surface-2))" hatched />
+    <SketchLabel x={105} y={147} size={12}>SqlOrderRepo</SketchLabel>
+    <SketchArrow from={[105, 84]} to={[105, 118]} />
+    <SketchLabel x={350} y={20} size={11} muted>after</SketchLabel>
+    <SketchBox x={270} y={40} width={150} height={40} accent />
+    <SketchLabel x={345} y={64} size={12}>UseCase</SketchLabel>
+    <SketchBox x={270} y={90} width={150} height={36} fill="rgb(var(--surface-1))" dashed />
+    <SketchLabel x={345} y={112} size={11} mono>OrderRepository</SketchLabel>
+    <SketchBox x={270} y={140} width={150} height={40} fill="rgb(var(--surface-2))" hatched />
+    <SketchLabel x={345} y={164} size={12}>SqlOrderRepo</SketchLabel>
+    <SketchArrow from={[345, 80]} to={[345, 90]} accent />
+    <SketchArrow from={[345, 140]} to={[345, 126]} accent />
+  </Sketch>
+</Figure>
+
+## The boundary is the interface data crosses
+
+The line between rings is called the boundary. Data crosses it only in simple, framework-independent forms: primitives, dataclasses, plain structures. You cannot drag through an object that carries knowledge of the outer ring — for example an ORM model that hits the database when you access a field, or a framework HTTP request object.
+
+```python
+@dataclass(frozen=True)
+class OrderDTO:
+    id: str
+    total: float
+```
+
+The use case accepts and returns such simple structures. The controller outside translates the HTTP request into `OrderDTO`, and the presenter translates the use case result into JSON. The boundary stays clean: no outer-ring detail crosses inward.
+
+<Callout type="warning">
+If an object you pass inward through the boundary hits the database when you access a field (lazy ORM loading), the boundary is leaky: the business scenario unknowingly depends on the database. Pass "dead" data structures through the boundary, not live ORM objects.
+</Callout>
+
+## This will surprise you: the interface belongs to whoever calls it
+
+Intuition says the repository interface is part of the data layer because it is about storage. In Clean Architecture it is the opposite: the `OrderRepository` interface belongs to the use case that calls it, not the implementation that fulfills it. So the interface file sits in the inner ring, next to business logic, and `SqlOrderRepo` sits outside.
+
+This is the inversion mechanism: the contract owner is the consumer, not the supplier. When the contract belongs to the center, the center dictates what it needs ("be able to save an order"), and infrastructure must provide it by any means — SQL, file, test stub. The `import` arrow runs from supplier to consumer, that is inward, as the rule requires.
+
+## Common mistakes
+
+- **Putting the repository interface in the infrastructure layer.** Then the use case imports it from the outer ring and the arrow points outward again. The interface is part of the inner layer; the implementation is part of the outer.
+- **Dragging ORM models through the boundary.** If the use case works with SQLAlchemy objects, it depends on the ORM. Translate data into simple dataclasses at the boundary itself.
+- **Confusing data flow direction with dependency direction.** Data at runtime flows outward to the response; that is fine. The rule limits only `import` in source code — it always points inward.
+
+<Detail summary="Why this is called inversion, not just abstraction">
+
+"Just add an interface" is not inversion yet. Dependency Inversion Principle is that both high-level and low-level modules depend on an abstraction, and that abstraction is defined on the high-level side. Normal control flow naturally runs from high level to low: the use case calls the repository. Without inversion, the code dependency would go the same way. Inversion flips exactly the dependency in source code while leaving control flow as it was. Hence "inversion": we reversed the dependency relative to control flow.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "The dependency rule: source code always depends inward toward more stable business rules; the center knows nothing about outer rings.",
+    "Dependency direction in code is about import, not about runtime data flow.",
+    "Dependency inversion flips the arrow: the use case declares the interface, infrastructure implements it.",
+    "The repository interface belongs to the consumer (use case), not the supplier, and lives in the inner ring.",
+    "Only simple data structures cross the layer boundary, not objects that carry knowledge of the framework or database.",
+  ]}
+/>
+
+## References
+
+- [Robert C. Martin - The Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
+- [The Dependency Inversion Principle (Martin's original article)](https://web.archive.org/web/20110714224327/http://www.objectmentor.com/resources/articles/dip.pdf)
+- [Python documentation - abc module](https://docs.python.org/3/library/abc.html)

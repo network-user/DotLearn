@@ -1,0 +1,127 @@
+---
+conceptId: why-layering
+title: "Why layers: coupling and testability"
+estimatedMinutes: 45
+---
+
+# Why code written "in one pile" becomes impossible to change
+
+You open the function that calculates a discount for an order and see an SQL query, a call to the payment API, an email send, and somewhere in the middle the discount formula itself. Six months later marketing asks to change the discount rule, and it turns out you cannot test the new formula without bringing up the database, connecting to the payment gateway, and configuring SMTP. One small change request runs into half the project's infrastructure. This is not bad luck or laziness on the author's part — it is the predictable consequence of business rules and the way they are delivered to the world being fused in one piece of code.
+
+By the end of this section you will understand what coupling and cohesion are, why mixing levels of detail makes code fragile, and how separation into layers restores the ability to change one part of the system without touching the rest. This is the foundation on which the dependency rule and onion architecture will grow.
+
+## Mental model: levels, not files
+
+A layer is not a folder or a module by itself. A layer is a level of responsibility. A typical backend holds three fundamentally different kinds of code: domain rules (what "order" and "discount" mean), application scenarios (what happens when the user clicks "checkout"), and technical details (how we store the order in PostgreSQL and send mail via SMTP). These three kinds change for different reasons and at different rates. The discount formula changes when the business changes. The database driver changes when you migrate to another store. Mix them and you tie together two events that are independent by nature.
+
+<Figure caption="Three levels of responsibility change for different reasons: rules — rarely and because of the business; details — often and because of technology. Mixing them forces you to change everything at once.">
+  <Sketch viewBox="0 0 440 220" title="Three levels of responsibility">
+    <SketchBox x={40} y={20} width={360} height={48} accent />
+    <SketchLabel x={220} y={48} weight={700}>Domain rules</SketchLabel>
+    <SketchBox x={40} y={86} width={360} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={114}>Application scenarios</SketchLabel>
+    <SketchBox x={40} y={152} width={360} height={48} fill="rgb(var(--surface-2))" hatched />
+    <SketchLabel x={220} y={180}>Technical details: DB, network, framework</SketchLabel>
+    <SketchLabel x={415} y={48} anchor="end" muted size={11}>rarely</SketchLabel>
+    <SketchLabel x={415} y={180} anchor="end" muted size={11}>often</SketchLabel>
+  </Sketch>
+</Figure>
+
+Layered architecture is an agreement: each piece of code lives on exactly one level and does not blend in neighboring ones. The discount rule does not know that data came from SQL. The code that sends email does not know the discount formula. Then a change in one level stays inside that level.
+
+## Coupling: how much breaks from one edit
+
+Coupling is a measure of how much one module depends on the internal structure of another. High coupling means: to change A you must touch B, C, and D. Low coupling means A can be rewritten entirely and neighbors will not notice as long as the contract holds.
+
+Look at a function where everything is dumped together.
+
+```python
+def apply_discount(order_id):
+    conn = psycopg2.connect(DSN)
+    row = conn.execute("SELECT total FROM orders WHERE id=%s", [order_id])
+    total = row.fetchone()[0]
+    discounted = total * 0.9 if total > 1000 else total
+    conn.execute("UPDATE orders SET total=%s WHERE id=%s", [discounted, order_id])
+    smtp.send(order_email(order_id), f"New total: {discounted}")
+```
+
+The business rule here is a single line: `total * 0.9 if total > 1000`. Everything else is delivery detail. But the rule is woven into `psycopg2` and `smtp`. You cannot change the threshold from `1000` to `500` without a live database and mail server: the formula does not exist apart from the infrastructure.
+
+Now pull the rule onto its own level.
+
+```python
+def discounted_total(total: float) -> float:
+    return total * 0.9 if total > 1000 else total
+```
+
+This function knows nothing about the database or mail. You can call it with a number and verify the result in milliseconds. Coupling to infrastructure dropped to zero: the rule became autonomous.
+
+## Cohesion: how focused a module is on one job
+
+The flip side is cohesion: how much the elements inside a module are devoted to one task. High cohesion is good: the module does one thing and does it completely. Low cohesion means the module became a pile of unrelated functions.
+
+<Figure caption="The goal is low coupling between modules and high cohesion inside: each module does one job and barely depends on how neighbors are built.">
+  <Sketch viewBox="0 0 440 180" title="Coupling and cohesion">
+    <SketchBox x={30} y={40} width={110} height={90} accent />
+    <SketchLabel x={85} y={32} size={11} muted>high cohesion</SketchLabel>
+    <SketchLabel x={85} y={90}>Discounts</SketchLabel>
+    <SketchBox x={300} y={40} width={110} height={90} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={355} y={90}>Notifications</SketchLabel>
+    <SketchArrow from={[140, 85]} to={[300, 85]} dashed />
+    <SketchLabel x={220} y={72} size={11} muted>thin contract</SketchLabel>
+  </Sketch>
+</Figure>
+
+The first `apply_discount` function had low cohesion: it read the database, calculated, and sent mail — three different responsibilities in one body. Splitting them raised cohesion in each piece: `discounted_total` handles only the formula, the repository only storage, the sender only mail. Coupling between them rests on thin contracts (pass a number, pass an order), not on knowing each other's internals.
+
+## Testability as the honest litmus test
+
+The most honest indicator of good separation is test difficulty. If verifying a business rule requires live PostgreSQL and a mail server, the rule is not separated enough from details. The pure function `discounted_total` is checked without any infrastructure.
+
+```python
+def test_discount_above_threshold():
+    assert discounted_total(2000) == 1800
+
+def test_discount_at_threshold():
+    assert discounted_total(1000) == 1000
+```
+
+The second test catches an edge case: at `total == 1000` the discount does not apply because the condition is strict (`> 1000`). You might never write such a test in the version with the database — it is too expensive to set up. Easy tests are a direct consequence of low coupling. When testing a business rule requires bringing up half the system, that is a signal the layers are mixed.
+
+<Callout type="tip">
+A good review heuristic: ask "what do I need to bring up to test this function?". If the answer is a database, network, or framework, but the function is supposedly about a business rule, the layers are confused.
+</Callout>
+
+## This will surprise you: "we have layers" — and everything is still coupled
+
+A team can neatly split code into `controllers/`, `services/`, and `repositories/` and believe layers exist. Then `service` imports a concrete ORM model class, `repository` leaks a framework HTTP exception, and `controller` returns a raw SQL error string to the user. Folders are in place — coupling never went away.
+
+Layers exist not where files lie but where knowledge boundaries run. If `service` knows the repository stores data in SQL specifically, the boundary is fake: changing the database will still drag edits into the service. Folders are form; a real layer is defined by what the code about neighbors **does not** know.
+
+## Common mistakes
+
+- **Treating file splits as architecture.** Ten files that freely import each other in any direction are no less coupled than one big file. What matters is dependency direction, not file count.
+- **Pulling details into business rules for convenience.** "We need the order from the database here anyway, let's query inline" — and the rule is nailed to SQL again. Pass ready data into the rule, not the way to fetch it.
+- **Confusing layer and framework.** A layer is a level of responsibility in your head and in dependencies. A framework is a tool on one of the lower levels. If architecture depends on structure imposed by the framework, switching frameworks will break everything.
+
+<Detail summary="Where layers came from: a bit of history">
+
+The idea of separating responsibilities in programs was formalized back in the 1970s: David Parnas in his 1972 paper proposed hiding decisions likely to change behind stable interfaces — that is information hiding. Three-tier architecture (presentation — business — data) became an industry standard in the 1990s with client-server apps. Clean Architecture, onion, and hexagonal architecture, which we cover next, are different answers to Parnas's question: which decisions to hide and which way to point dependencies.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A layer is a level of responsibility, not a folder: rules, scenarios, and technical details change for different reasons.",
+    "Coupling measures how much breaks from one edit; the goal is for a change to stay inside its layer.",
+    "Cohesion measures how focused a module is on one job; high cohesion and low coupling go together.",
+    "Testability is an honest indicator: if verifying a business rule needs a database and network, layers are mixed.",
+    "Folders alone do not create a layer — the boundary is what code deliberately does not know about neighbors.",
+  ]}
+/>
+
+## References
+
+- [Robert C. Martin - The Clean Architecture (original article)](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
+- [Martin Fowler - Reducing Coupling](https://martinfowler.com/ieeeSoftware/coupling.pdf)
+- [David Parnas - On the Criteria To Be Used in Decomposing Systems into Modules (1972)](https://www.win.tue.nl/~wstomv/edu/2ip30/references/criteria_for_modularization.pdf)

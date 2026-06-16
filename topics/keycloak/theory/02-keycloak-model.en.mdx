@@ -1,0 +1,151 @@
+---
+conceptId: keycloak-model
+title: "Keycloak model: realm, client, roles"
+estimatedMinutes: 45
+---
+
+# Realm, client, and roles: how Keycloak organizes access
+
+In the previous section the authorization server was abstract — "whoever issues tokens". Now it has a name — Keycloak — and internal structure. When you open the Keycloak admin console for the first time, a dozen tabs hit you: realms, clients, users, roles, groups, client scopes. Without a map it is easy to pile everything into one heap and, six months later, end up with a system where nobody can tell who allowed what to whom.
+
+Keycloak brings order with three main entities. **Realm** isolates whole worlds from each other. **Client** describes each application that talks to Keycloak. **Roles** define what a user or service may do. By the end of this section you will confidently answer which realm a user lives in, which client they represent, and where roles in a token come from — and you will not confuse realm roles with client roles.
+
+## Mental model: a realm is a separate universe
+
+**Realm** is an isolated space with its own users, clients, roles, and signing keys for tokens. A user from one realm does not exist in another; a token signed by one realm's keys will not be accepted in another. Typical split is by environment or product: one realm for employees, another for external customers.
+
+```text
+realm: corp           realm: customers
+  users: alice, bob     users: c-12345, c-98472
+  clients: hr-portal    clients: shop-spa
+  keys: RS256 (key-A)   keys: RS256 (key-B)
+```
+
+The realm boundary is impermeable: `alice` from `corp` cannot sign into `shop-spa` even if she knows the password, because her account does not exist in realm `customers`. This isolation is the first thing you choose when designing a system: everything else lives *inside* a realm.
+
+<Figure caption="A realm fully isolates its world: users, clients, and signing keys of one realm are invisible to another.">
+  <Sketch viewBox="0 0 460 200" title="Two isolated realms">
+    <SketchBox x={20} y={20} width={190} height={160} dashed />
+    <SketchLabel x={115} y={40} mono accent>realm: corp</SketchLabel>
+    <SketchBox x={45} y={60} width={140} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={78} size={12}>users: alice, bob</SketchLabel>
+    <SketchBox x={45} y={100} width={140} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={118} size={12}>client: hr-portal</SketchLabel>
+    <SketchBox x={45} y={140} width={140} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={158} size={12}>key: key-A</SketchLabel>
+    <SketchBox x={250} y={20} width={190} height={160} dashed />
+    <SketchLabel x={345} y={40} mono accent>realm: customers</SketchLabel>
+    <SketchBox x={275} y={60} width={140} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={78} size={12}>users: c-12345</SketchLabel>
+    <SketchBox x={275} y={100} width={140} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={118} size={12}>client: shop-spa</SketchLabel>
+    <SketchBox x={275} y={140} width={140} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={158} size={12}>key: key-B</SketchLabel>
+  </Sketch>
+</Figure>
+
+There is one special realm — `master`. It is created at install time and is for administering Keycloak itself. Do not keep application users in `master`: create separate realms for them so you do not accidentally grant server admin rights.
+
+## Client: each application is its own record
+
+**Client** is an application registration in a realm. Every application that wants tokens from Keycloak needs its own client with a unique `client_id`. The main distinction between clients is whether they can store a secret.
+
+**Confidential client** is an app with a server side (backend) that can safely hold `client_secret`. **Public client** is a SPA or mobile app: its code is visible to the user, a secret cannot be hidden, so it has no secret at all.
+
+```text
+client: shop-backend    confidential   secret: ●●●●
+client: shop-spa        public         secret: (none)
+```
+
+This distinction determines which authentication flow applies. A public client cannot prove itself with a secret, so it relies on PKCE (covered in the next section). A confidential client proves itself with a secret and can use the client credentials flow for machine access.
+
+<Callout type="warning">
+Never make a SPA or mobile app a confidential client with an embedded secret. A secret in code the user downloads is not a secret. Such clients must be public and use PKCE.
+</Callout>
+
+## Roles: realm roles and client roles
+
+**Role** in Keycloak is a named permission you assign to a user or service. There are two kinds, easy to confuse.
+
+**Realm role** is realm-wide, shared by all clients: e.g. `admin` or `user`. **Client role** is defined inside a specific client and only meaningful there: client `shop-backend` may have role `order:refund`, which means nothing to other applications.
+
+```text
+realm roles (shared):     admin, user, auditor
+client roles (local):
+  shop-backend:  order:refund, order:read
+  hr-portal:     employee:edit
+```
+
+Choose by scope. If a permission makes sense across the whole realm — make it a realm role. If it is about one application — a client role inside that client. That split keeps roles from becoming a pile of hundreds of global names.
+
+<Figure caption="Realm roles are shared across the realm; client roles live inside a specific client and matter only there.">
+  <Sketch viewBox="0 0 440 190" title="Realm roles vs client roles">
+    <SketchBox x={20} y={20} width={400} height={50} dashed />
+    <SketchLabel x={120} y={38} mono muted anchor="start">realm roles:</SketchLabel>
+    <SketchBox x={230} y={30} width={60} height={28} accent />
+    <SketchLabel x={260} y={48} size={12} accent>admin</SketchLabel>
+    <SketchBox x={300} y={30} width={60} height={28} accent />
+    <SketchLabel x={330} y={48} size={12} accent>user</SketchLabel>
+    <SketchBox x={20} y={100} width={190} height={70} />
+    <SketchLabel x={115} y={120} mono>client: shop-backend</SketchLabel>
+    <SketchBox x={45} y={132} width={140} height={26} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={149} size={12}>order:refund</SketchLabel>
+    <SketchBox x={230} y={100} width={190} height={70} />
+    <SketchLabel x={325} y={120} mono>client: hr-portal</SketchLabel>
+    <SketchBox x={255} y={132} width={140} height={26} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={325} y={149} size={12}>employee:edit</SketchLabel>
+  </Sketch>
+</Figure>
+
+Roles do not land in a token by themselves — a client **mapper** does that. By default Keycloak puts assigned roles in claim `realm_access.roles` (realm roles) and `resource_access.<client>.roles` (client roles). These are the fields the resource server reads when deciding whether to admit a request.
+
+## Groups and composite roles: scaling assignments
+
+Assigning roles one by one to every user does not scale. **Group** is a set of users with a shared role assignment: add someone to group `support` and they get all its roles at once. Groups form a hierarchy; a nested group inherits parent roles.
+
+Separately there is **composite role** — a role that includes other roles. Assigning composite role `manager` may automatically pull `order:read`, `order:refund`, and realm role `user`. Convenient, but dangerous: composite roles easily balloon, and a person gets more than the name suggests.
+
+## Edge case: one user, two clients, different roles
+
+What is not obvious: a user's client roles can differ per client, and the token only includes roles for clients relevant to the request. A user may be `admin` in `hr-portal` and have no roles in `shop-backend`.
+
+```text
+user alice:
+  resource_access.hr-portal.roles    = ["employee:edit"]
+  resource_access.shop-backend.roles = []
+```
+
+Practical rule: the resource server must check roles in *its* section `resource_access.<its-client>`, not anywhere else. If backend `shop-backend` admits by role `employee:edit` from `hr-portal`, it opens access to people who were never granted it in the shop context.
+
+## Common mistakes
+
+- **Putting application users in realm `master`.** `master` is for Keycloak administration; a user there may manage the server. Application users live in a separate realm.
+- **Making a public app confidential with an embedded secret.** A secret in a JS bundle or mobile binary is trivial to extract. SPAs and mobile clients are public clients with PKCE.
+- **Mixing realm roles and client roles by meaning.** Global permission (`admin`) is a realm role; app-specific permission (`order:refund`) is a client role of that app. Otherwise roles sprawl and lose meaning.
+- **Reading roles from the wrong token section.** The resource server must look at `resource_access.<its-client>.roles`, not another client's roles, or authorization leaks across applications.
+
+<Detail summary="Service account: the client as a user">
+
+For a confidential client you can enable **service account** — then the client itself becomes a "user without a human". That is for machine access: a background service calls an API in its own name, not as a person.
+
+The service account lives in the same realm, has its own assigned roles (via the Service account roles tab), and gets a token through the client credentials flow covered in the next section. In such a token subject (`sub`) points at the client itself, not a person, and claim `typ` helps the resource server tell machine access from user access. This is the standard way to give a service exactly the rights it needs without inventing a fake "person".
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Realm is an isolated space: its own users, clients, roles, and signing keys; different realms do not overlap.",
+    "Client is an app registration; confidential holds a secret (backend), public has no secret (SPA, mobile).",
+    "Realm roles are shared across the realm; client roles are defined inside one client and matter only there.",
+    "Roles enter the token via mappers, in claims realm_access.roles and resource_access.<client>.roles.",
+    "The resource server checks roles in its own resource_access.<its-client> section, not another client's roles.",
+    "Groups and composite roles simplify bulk assignment, but composite roles easily grow beyond what you expect.",
+  ]}
+/>
+
+## References
+
+- [Keycloak - Server Administration Guide](https://www.keycloak.org/docs/latest/server_admin/index.html)
+- [Keycloak - Realms and users](https://www.keycloak.org/docs/latest/server_admin/index.html#configuring-realms)
+- [Keycloak - Managing clients](https://www.keycloak.org/docs/latest/server_admin/index.html#assembly-managing-clients_server_administration_guide)
+- [Keycloak - Assigning permissions using roles and groups](https://www.keycloak.org/docs/latest/server_admin/index.html#assigning-permissions-using-roles-and-groups)

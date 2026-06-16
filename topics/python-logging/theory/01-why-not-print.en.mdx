@@ -1,0 +1,156 @@
+---
+conceptId: why-not-print
+title: "Why not print: what logging is for"
+estimatedMinutes: 45
+---
+
+# print speaks now, a log speaks later
+
+You wrote a payment handler, ran it locally, saw `processed order 42` in the terminal, and shipped to the server with confidence. A week later a complaint arrives: money was charged but the order never completed. You open the server terminal and it is empty - the process restarted long ago, your `print` vanished, and you cannot reconstruct that evening. Diagnostics existed only until they were needed.
+
+Logging solves exactly this: leave a trail that outlives the process and later answers "what happened here". By the end of this section you will understand how `logging` differs from `print` not cosmetically but in substance - severity levels, managed output streams, and the ability to turn diagnostics on and off without editing code. This is the foundation for the rest of the topic.
+
+## Mental model: print shouts to one place, logging sorts onto shelves
+
+`print` is brutally simple: take a string, put it on standard output, forget. It has no notion of importance (errors and debug noise look the same), no notion of destination (everything lands in one stream), and no off switch (to remove debug output you delete lines). Logging adds three things `print` lacks: message **level**, **routing** to a destination, and **control** over what is shown.
+
+<Figure caption="print sends a string to one stream without discrimination. logging sorts the message by severity and routes it to the right stream - some is dropped, some goes to the console, some to a file.">
+  <Sketch viewBox="0 0 460 230" title="print versus logging">
+    <SketchBox x={20} y={20} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={75} y={44} mono>print(msg)</SketchLabel>
+    <SketchArrow from={[130, 40]} to={[230, 40]} />
+    <SketchBox x={230} y={20} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={285} y={44} mono>stdout</SketchLabel>
+
+    <SketchBox x={20} y={110} width={110} height={40} accent />
+    <SketchLabel x={75} y={134} mono accent>log.error(msg)</SketchLabel>
+    <SketchArrow from={[130, 130]} to={[210, 110]} accent />
+    <SketchArrow from={[130, 130]} to={[210, 150]} accent />
+    <SketchBox x={210} y={90} width={120} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={270} y={112} mono>level filter</SketchLabel>
+    <SketchArrow from={[330, 108]} to={[400, 80]} accent />
+    <SketchArrow from={[330, 116]} to={[400, 145]} accent />
+    <SketchBox x={400} y={62} width={50} height={32} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={425} y={82} mono>file</SketchLabel>
+    <SketchBox x={400} y={130} width={50} height={32} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={425} y={150} mono>console</SketchLabel>
+    <SketchLabel x={130} y={200} muted anchor="start">messages dropped by level never pass the filter</SketchLabel>
+  </Sketch>
+</Figure>
+
+The main idea: a log message is not just printed - it passes through a severity filter and may go to several places or nowhere. That is the control `print` cannot offer.
+
+## Level: how important is this?
+
+Every log message carries a severity label. There are five standard levels from most verbose to most alarming: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. At first it is easiest to use the level functions on the module directly.
+
+```python
+import logging
+
+logging.warning("disk 90% full")
+logging.error("could not connect to database")
+```
+
+By default this prints lines like `WARNING:root:disk 90% full`. Already you see the difference from `print`: the level sits beside the text. Later you can say "on production show only WARNING and above" - and debug noise disappears without touching these lines.
+
+## One switch instead of deleting lines
+
+With `print` the only way to remove debug output is to find and delete lines. With logging you leave them forever and decide visibility with one setting. Messages below the threshold simply never reach output.
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logging.debug("counter value: 7")
+logging.info("service started")
+```
+
+Only `INFO:root:service started` prints. The `debug` line remains in code but the INFO threshold dropped it before output. Raise the threshold to WARNING and INFO disappears too. That is controllability: diagnostics are still there; you choose how loudly to listen.
+
+<Callout type="info">
+`logging.basicConfig` configures logging once per process lifetime. A repeat call changes nothing by default - the first configuration wins. A common source of "why did my level not apply"; we return to this in the configuration section.
+</Callout>
+
+## The log attaches context automatically
+
+Along with text, logging can glue useful details: time, module name, level. With `print` you would assemble that by hand in every line.
+
+```python
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logging.info("order placed")
+```
+
+The line looks like `2026-06-10 12:30:01,123 INFO order placed`. Time and level were added automatically by the `format` template. When you have a million such lines per day, timestamp and level are what let you find the right second in the noise.
+
+## Try levels by hand
+
+Run the code as-is: with threshold WARNING, `debug` and `info` are dropped; only `warning` and `error` show. Change `level=logging.WARNING` to `level=logging.DEBUG` and run again - all four lines appear. Then try `level=logging.ERROR` and confirm only the last remains.
+
+<PyDemo
+  title="The level threshold decides what is visible"
+  code={`import logging
+import sys
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+
+logging.debug("detail for debugging")
+logging.info("normal event")
+logging.warning("warning")
+logging.error("error")`}
+/>
+
+Note `force=True` and `stream=sys.stdout`: the first allows reconfiguring between demo runs, the second sends output to standard output so you see lines here. In real code you can ignore these - they are for the sandbox.
+
+## Edge case that will surprise you
+
+You might expect: "if I never configured logging, `logging.debug(...)` does nothing". Only partly true. If you call a level function **without** prior setup, the module silently enables emergency mode and creates a handler for WARNING and above.
+
+```python
+import logging
+
+logging.warning("I appear even without basicConfig")
+logging.info("you will not see me")
+```
+
+Only the warning prints: `WARNING:root:I appear even without basicConfig`. The `info` line is silent because the default threshold is WARNING. The surprise is that some output exists at all: the module does not want important messages lost because setup was forgotten, so it installs a last-resort handler.
+
+<MarginNote label="lastResort">This emergency handler is called `logging.lastResort`. It exists so warnings are not lost even when the application never configured logging.</MarginNote>
+
+## Common mistakes
+
+- **Building strings with f-strings on hot paths.** `logging.debug(f"x={compute()}")` always evaluates `compute()` and concatenates, even when DEBUG is off and the message will be dropped. Prefer `logging.debug("x=%s", value)`: substitution happens only if the record actually reaches output.
+- **Silencing errors with `print` in `except`.** `print("error:", e)` loses the traceback and drowns in the general stream. `logging.exception("failure")` inside `except` attaches the full traceback and marks the record ERROR.
+- **Thinking `print` is "faster and simpler".** For one line, yes. But once you need time, level, a file, or the ability to quiet noise in production, you end up building exactly what `logging` already provides.
+
+<Detail summary="Why logging.debug(msg, value) beats f-string - in detail">
+
+When the logger level is above DEBUG, `logging.debug(...)` must print nothing. But function arguments are evaluated **before** entry. So `logging.debug(f"state: {dump_huge_object()}")` calls `dump_huge_object()` anyway - the result is just discarded. With the parameterized form `logging.debug("state: %s", obj)` the object is passed as-is and expensive formatting happens inside only if the record passes the level filter. On hot paths with debug logging off, that saves real time.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "print writes a string now without discrimination; a log outlives the process and answers what happened.",
+    "Every message has a severity level: DEBUG, INFO, WARNING, ERROR, CRITICAL.",
+    "The level threshold is a switch: log lines stay in code while visibility is controlled by one setting.",
+    "The log appends context (time, level, name) via the format template - no manual assembly.",
+    "Without setup, level functions still show WARNING and above through the lastResort emergency handler.",
+    "For debug messages use logging.debug(\"x=%s\", value), not f-strings.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - logging module](https://docs.python.org/3/library/logging.html)
+- [Python documentation - Logging HOWTO](https://docs.python.org/3/howto/logging.html)
+- [Python documentation - logging.basicConfig](https://docs.python.org/3/library/logging.html#logging.basicConfig)

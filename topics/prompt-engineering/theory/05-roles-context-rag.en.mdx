@@ -1,0 +1,106 @@
+---
+conceptId: roles-context-rag
+title: Roles, context, RAG
+estimatedMinutes: 28
+---
+
+You ask the model about your company's internal policy and it confidently quotes a clause that does not exist. You ask about yesterday's release and get an answer about events a year old. The model is not lying on purpose: it answers from what it learned in training, and your policy and yesterday's release simply were not there. The fix is not a cleverer prompt but **giving the model the data it needs directly in the request** — grounding it on facts it does not already have.
+
+By the end of this section you will understand how role shapes tone and boundaries, how to supply context and constrain the model to it, and how RAG (retrieval-augmented generation) works — find relevant documents and put them in the prompt before generation.
+
+## Grounding: answer from data, not memory
+
+The key idea in this section is **grounding**: the answer should rest on data you put in the request, not on the model's static memory. Model memory is fixed, stops at the training cutoff, and does not know your private documents. Context in the prompt is fresh, precise, and yours. When the two sources disagree, a reliable prompt explicitly tells the model to trust the context.
+
+```text
+Answer ONLY based on the text in <documents>. If the answer is not there,
+say "the provided documents do not contain an answer" and do not invent.
+
+<documents>
+{retrieved fragments go here}
+</documents>
+
+Question: From what date does the new Business plan take effect?
+```
+
+Two things make this prompt reliable: the limiter "only based on documents" cuts the model off from guessing, and explicit permission to say "no answer" removes pressure to invent something. Without the second phrase, when it finds nothing, the model is more likely to make something up than admit ignorance.
+
+## Role shapes tone and boundaries
+
+Role from the first section [[prompt-anatomy]] works on grounding from another angle. The system layer sets not only "who answers" but **what counts as an acceptable answer**: which topics to handle, what tone, what to do with out-of-scope requests.
+
+<Compare
+  leftTitle="No role"
+  rightTitle="Role with boundaries"
+  left={<>“Answer the user's question.” The model will answer anything — about plans, writing poetry, or provocation — in any tone.</>}
+  right={<>System: “You are a hosting support assistant, answer only about our plans, politely and briefly; on off-topic requests steer back to plans.” Scope and tone set once for the whole dialogue.</>}
+  verdict="Role is not decoration but a boundary: it defines what the model agrees to answer at all."
+/>
+
+## How RAG works
+
+When there is too much data to keep in every prompt — a knowledge base, thousands of documents — use RAG. The idea: do not stuff everything into each request; on each question **find a few relevant fragments and substitute only those**. The pipeline has three steps.
+
+<Figure caption="RAG: the question triggers search, retrieved fragments go into the prompt, then the model generates a grounded answer.">
+  <PipelineFigure
+    stages={[
+      { label: 'Question', note: 'user query' },
+      { label: 'Search', note: 'find relevant fragments', active: true },
+      { label: 'Prompt assembly', note: 'fragments + question' },
+      { label: 'Generation', note: 'answer from retrieved text' },
+    ]}
+  />
+</Figure>
+
+The retrieval step usually works like this: documents and the question are turned into embedding vectors, and the closest vectors pick the best chunks — semantic search that catches meaning, not exact words. Retrieved fragments go into the prompt between delimiters, as in the example above, and only then you ask the model to answer. The model answers from what was supplied, not from memory — that is grounding at scale.
+
+<Callout type="info">
+RAG does not "teach" the model new data — weights do not change. It only selects the right context for a specific question. So a fresh document is available to the model as soon as it is indexed, without fine-tuning.
+</Callout>
+
+## Supplying context: what and in what order
+
+Good retrieval is useless if context is sloppily presented. A few rules.
+
+**Separate context with delimiters** and label sources so the model can cite them: "according to document 2…" That improves accuracy and lets you verify the answer.
+
+**Watch order.** On long context models use the middle worse than the start and end — the "lost in the middle" effect. Put the most important fragments near the edges, not buried in the center of a long block.
+
+**Do not overfill.** Twenty weakly relevant fragments are worse than three precise ones: extra text dilutes attention and raises the chance the model latches onto irrelevant text. Retrieval quality beats quantity.
+
+## Edge cases
+
+Retrieval can miss. If search returns off-topic fragments, the model will faithfully answer from them — confident nonsense grounded on wrong data. The limiter "if the answer is not in the documents, say so" helps partly but does not fix the case where retrieved text looks relevant but is not. RAG answer quality never exceeds retrieval quality.
+
+Resolve context vs. memory conflicts explicitly. If the model "knows" from training that a plan cost 500 but the fresh document says 700, without an explicit "trust the documents" instruction it may blend both numbers. State plainly which source wins.
+
+An overly strict limiter also hurts. "Answer only with verbatim quotes from documents" turns the assistant into a search engine unable to synthesize two fragments into one conclusion. Grounding means "rest on the data," not "forbidden to think."
+
+## Common mistakes
+
+- **Not allowing "no answer."** Without explicit permission to admit ignorance the model invents when it finds nothing. Always give a safe exit.
+- **Burying important text in the middle.** On long context the middle is used worse than the edges. Put key fragments near the start or end.
+- **Flooding the prompt with fragments.** Twenty weak chunks beat three precise ones. Improve search, do not inflate context.
+- **Not resolving source conflicts.** When memory and document disagree without "trust context" the model mixes data. Name the primary source explicitly.
+
+<Detail summary="RAG, long context, and fine-tuning — what to choose">
+
+Three ways to give a model knowledge. Fine-tuning changes weights — expensive, slow, and almost pointless for frequently changing facts: you cannot retrain on every tariff update. Long context — simply embed all needed text in the request; works while it fits the window and you pay per-token every time. RAG — compromise: keep a large base outside and load only what is relevant per question. In practice RAG wins when knowledge is large and changing: index a new document and it is available instantly, without retraining or bloating every request. Fine-tuning is saved for changing *behavior* and style, not stuffing fresh facts.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Grounding means the answer rests on data in the request, not static model memory; on conflict explicitly tell the model to trust context.",
+    "Role sets not only tone but boundaries: which topics the model agrees to answer.",
+    "RAG is search for relevant fragments, assembly into the prompt, and generation from what was found; weights do not change.",
+    "Always allow the model to say 'the documents do not contain an answer' — otherwise when it finds nothing it invents.",
+    "RAG answer quality never exceeds retrieval quality; three precise fragments beat twenty weak ones; keep important text near context edges.",
+  ]}
+/>
+
+## References
+
+- [Lewis et al., 2020 - Retrieval-Augmented Generation](https://arxiv.org/abs/2005.11401)
+- [Anthropic - Reduce hallucinations (ground in context)](https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/reduce-hallucinations)
+- [Liu et al., 2023 - Lost in the Middle](https://arxiv.org/abs/2307.03172)

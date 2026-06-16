@@ -25,3 +25,35 @@
 ## Среда выполнения
 
 `none` - тема теоретическая, без выполнения кода. Внутри уроков встроены интерактивные схемы и одна живая SQL-песочница для реляционной модели.
+
+---
+
+## English
+
+# Database Types
+
+A survey course on the database landscape: data models, how they work inside, what problems each solves, and where the tradeoffs bite. From historical hierarchical and network databases through relational to the NoSQL family - document, key-value, column, and graph - and how to choose a model for the job (CAP, OLTP vs OLAP, polyglot persistence).
+
+The course is conceptual: focus on structure and tradeoffs, not syntax of a specific DBMS. Each lesson includes interactive data model visualizations.
+
+### Concepts
+
+1. **Data models** - what a database is, how models differ, axes for comparison.
+2. **Hierarchical and network models** - navigational databases, trees and record graphs, why they were displaced and where they live today.
+3. **Relational databases** - tables and relationships, normalization, ACID, transactions.
+4. **Document databases** - JSON documents, flexible schema, aggregates and denormalization.
+5. **Key-value stores** - the simplest access model, cache and sessions, the price of simplicity.
+6. **Column and wide-column stores** - row vs column storage, analytics and scale.
+7. **Graph databases and model choice** - relationships as first-class objects, CAP, OLTP/OLAP, polyglot persistence.
+
+### Prerequisites
+
+None formally. The relational lesson is easier if you have completed SQL Fundamentals (`sql-fundamentals`), but it is not required.
+
+### Estimated time
+
+About 5.5 hours.
+
+### Runtime
+
+`none` - theoretical topic, no code execution. Lessons include interactive diagrams and one live SQL sandbox for the relational model.

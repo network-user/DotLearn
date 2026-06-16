@@ -1,5 +1,22 @@
-# MRO в Python
+# MRO in Python
 
-Глубокий разбор того, как Python выбирает, чей метод вызвать при наследовании: порядок разрешения методов (MRO), алгоритм C3-линеаризации, кооперативная работа `super()` по цепочке и ромбовидное наследование с миксинами.
+A deep dive into how Python chooses which method to call under inheritance: method resolution order (MRO), the C3 linearization algorithm, cooperative `super()` chains, and diamond inheritance with mixins.
 
-Generated via `lesson-forge`.
+## Concepts
+
+1. **What MRO is** - how Python flattens the ancestor graph into a flat list.
+2. **C3 linearization** - the algorithm that builds MRO and how to derive it by hand.
+3. **`super()`** - cooperative multiple inheritance and argument passing.
+4. **Diamond and mixins** - predictable composition without double calls.
+
+## Prerequisites
+
+- `python-oop`
+
+## Estimated effort
+
+About 3 hours.
+
+## Runtime
+
+`pyodide` - runs entirely in your browser. No setup.

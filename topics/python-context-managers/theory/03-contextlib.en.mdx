@@ -1,0 +1,149 @@
+---
+conceptId: contextlib
+title: "contextlib: contextmanager, suppress, ExitStack"
+estimatedMinutes: 45
+---
+
+# contextlib: context managers without classes
+
+Writing a class with `__enter__` and `__exit__` just to temporarily change one setting or measure elapsed time is heavy. Half the lines are protocol ritual while the useful work gets lost. The standard library offers `contextlib` - tools that turn an ordinary function into a context manager, suppress specific exceptions in one line, and manage a variable number of resources.
+
+By the end of this section you will write context managers with `@contextmanager` instead of classes, replace bulky `try/except/pass` with `suppress`, and assemble an unknown number of resources with `ExitStack`. This toolkit appears in every serious Python project.
+
+## Mental model: yield splits a function into before and after
+
+The main idea of `@contextmanager`: one `yield` in a function cuts it in two. Everything before `yield` is `__enter__` (acquire). Everything after is `__exit__` (release). The value passed to `yield` becomes what lands after `as`. One function, one keyword - protocol assembled automatically.
+
+<Figure caption="@contextmanager turns a function into a context manager: code before yield is __enter__, after yield is __exit__, and the yielded value goes to the variable after as.">
+  <Sketch viewBox="0 0 460 180" title="yield splits the function in half">
+    <SketchBox x={30} y={30} width={180} height={40} accent />
+    <SketchLabel x={120} y={55} mono accent>code before yield</SketchLabel>
+    <SketchLabel x={120} y={88} muted>role of __enter__</SketchLabel>
+    <SketchBox x={250} y={30} width={180} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={340} y={55} mono>yield value</SketchLabel>
+    <SketchLabel x={340} y={88} muted>value for as</SketchLabel>
+    <SketchBox x={140} y={120} width={180} height={40} accent />
+    <SketchLabel x={230} y={145} mono accent>code after yield</SketchLabel>
+    <SketchArrow from={[210, 50]} to={[248, 50]} accent />
+    <SketchArrow from={[340, 70]} to={[250, 118]} curve dashed />
+  </Sketch>
+</Figure>
+
+When execution reaches `yield`, the context manager "pauses" and hands control to the `with` body. When the body finishes, execution resumes in the function right after `yield` and runs to the end. Same acquire/release pair, written linearly as ordinary code.
+
+## @contextmanager: a function instead of a class
+
+Take a context manager that measures block duration. As a class that is two methods and a field for the start time. With `@contextmanager` it is one function.
+
+```python
+from contextlib import contextmanager
+import time
+
+@contextmanager
+def timer(label):
+    start = time.perf_counter()
+    yield
+    elapsed = time.perf_counter() - start
+    print(f"{label}: {elapsed:.4f}s")
+```
+
+Before `yield` we record start time - entry. After `yield` we compute the difference and print - exit. Usage looks like ordinary `with`:
+
+```python
+with timer("processing"):
+    total = sum(range(1_000_000))
+```
+
+The block runs and on exit elapsed time prints. Here `yield` sends no value because nothing is needed outside - the effect matters.
+
+## try/finally inside @contextmanager
+
+There is a catch. If an exception fires inside `with`, it "flies back" into the function at `yield` - and code after `yield` may not run, like in any function. To release on any outcome, wrap code after `yield` in `finally`.
+
+```python
+@contextmanager
+def opened(path):
+    f = open(path)
+    try:
+        yield f
+    finally:
+        f.close()
+```
+
+Now `f.close()` runs on normal completion and on exception inside the block. In `@contextmanager`, release almost always lives in `finally`. Here `yield f` exposes the open file, so `with opened(path) as f` gives a working file object.
+
+<Callout type="warning">
+Without `try/finally` your `@contextmanager` releases a resource only on successful block completion. An exception inside `with` skips code after `yield` and the resource leaks. If the manager releases something, wrap `yield` in `try/finally`.
+</Callout>
+
+## suppress: suppress a specific exception
+
+Sometimes an expected exception is normal. For example deleting a file that may not exist. The classic approach is `try/except/pass`, but it is verbose and easily hides too much. `contextlib.suppress` does the same in one line for only the listed types.
+
+```python
+from contextlib import suppress
+import os
+
+with suppress(FileNotFoundError):
+    os.remove("temp.txt")
+```
+
+If the file is missing, `FileNotFoundError` is suppressed and the program continues. Any other exception - for example `PermissionError` - passes through `suppress` untouched. That is its value over bare `except: pass`: it suppresses exactly what you name, nothing more.
+
+## ExitStack: a variable number of resources
+
+`with a, b, c` works when resources are known upfront. What if you must open files from a list whose length is discovered at runtime? Nested `with` in a loop does not compose. `ExitStack` is a stack you push context managers onto one at a time; it closes them all on exit in reverse order.
+
+```python
+from contextlib import ExitStack
+
+paths = ["a.txt", "b.txt", "c.txt"]
+with ExitStack() as stack:
+    files = [stack.enter_context(open(p)) for p in paths]
+    first_lines = [f.readline() for f in files]
+```
+
+`stack.enter_context(cm)` enters context manager `cm` and registers it for closing. However many files are in the list, leaving `with ExitStack()` closes them all - correctly even if opening one fails midway: already opened files are closed.
+
+## Edge case: @contextmanager yields a one-shot manager
+
+An object created by `@contextmanager` is meant for one use. It is a generator: it plays to `yield`, then after - and cannot be entered a second time.
+
+```python
+@contextmanager
+def once():
+    yield
+    print("played")
+
+cm = once()
+with cm:
+    pass
+with cm:
+    pass
+```
+
+The second `with cm` fails: the inner generator is exhausted. Call such managers fresh each time - `with once():`, not stored for reuse. A class with `__enter__`/`__exit__` does not have this limitation if written to allow re-entry.
+
+## Common mistakes
+
+- **Forgetting `try/finally` around `yield`.** Without it the resource is not released on exception in the block. In a closing `@contextmanager`, `finally` is mandatory.
+- **Replacing all `try/except` with `suppress`.** `suppress` suits expected, ignorable exceptions. If you must react (log, return a default) that is still `try/except`.
+- **Reusing a `@contextmanager` object.** It is one-shot. Call the function again for each `with`.
+- **Using `ExitStack` where `with a, b` suffices.** If the resource count is known and small, comma `with` reads better. `ExitStack` is for dynamic or conditional sets.
+
+<KeyTakeaways
+  items={[
+    "@contextmanager turns a generator function into a context manager: before yield is entry, after yield is exit.",
+    "The value from yield lands in the variable after as; wrap yield in try/finally so release runs on exception.",
+    "suppress(ExcType) suppresses only named exception types and reads better than try/except/pass.",
+    "ExitStack manages an unknown number of resources and closes them all in reverse order on exit.",
+    "Objects from @contextmanager are one-shot - call the function fresh for each with.",
+    "closing(obj) makes a context manager from an object that only has .close().",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - contextlib](https://docs.python.org/3/library/contextlib.html)
+- [Python documentation - contextlib.contextmanager](https://docs.python.org/3/library/contextlib.html#contextlib.contextmanager)
+- [Python documentation - contextlib.ExitStack](https://docs.python.org/3/library/contextlib.html#contextlib.ExitStack)

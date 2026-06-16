@@ -1,0 +1,125 @@
+---
+conceptId: decoding-output
+title: Decoding the output
+estimatedMinutes: 40
+---
+
+The network produced a tensor of numbers. Somewhere in it are boxes, classes, and confidences - but in "raw" form these aren't coordinates, they're correction parameters: `tx`, `ty`, `tw`, `th`, objectness logit, and class logits. To turn them into a box on the image you need decoding - a small but strict set of formulas. Mix up addition with multiplication or forget the sigmoid - and boxes drift off the frame edge.
+
+By the end of this section you'll understand why the center is decoded via sigmoid and addition with the cell index, while size uses exponent and multiplication by the anchor; how objectness and class probabilities combine into one confidence; and why these particular functions were chosen.
+
+## Raw output is corrections, not coordinates
+
+For each "cell plus anchor" pair the network outputs a vector: four geometry numbers `(tx, ty, tw, th)`, one objectness number, and one number per class. That's not a ready-made box. `tx, ty` are center offsets inside the cell, `tw, th` are size corrections relative to the anchor. Decoding translates corrections into coordinates by fixed formulas.
+
+Box center in grid coordinates:
+
+```python
+import math
+
+def sigmoid(t):
+    return 1 / (1 + math.exp(-t))
+
+def decode_center(t, cell_index):
+    return cell_index + sigmoid(t)
+
+print(decode_center(0, 2), decode_center(2, 0))
+```
+
+It prints `2.5 0.8807970779778823`: at `tx = 0` sigmoid gives exactly `0.5`, and the center lands in the middle of cell `2`, i.e. at `2.5`. At `tx = 2` sigmoid is about `0.88`, shifting the center toward the right edge of cell `0`.
+
+## Why sigmoid for the center
+
+Sigmoid squeezes any number into `(0, 1)`. That's exactly what the center needs: offset `bx = cell_x + sigmoid(tx)` is guaranteed to stay **inside its own cell**. Without sigmoid the network could predict a center in a neighboring cell, and responsibility for the object would "leak" where it wasn't expected. Sigmoid locks the center within the responsible cell's bounds - the prediction stays stable.
+
+<Figure caption="Perceptron with sigmoid activation: weighted sum of inputs passes through sigmoid and is squeezed into (0, 1). The same sigmoid locks the box center inside the cell.">
+  <PerceptronViz inputs={[1, 0.5, -1]} weights={[0.8, -0.4, 0.3]} bias={0.1} activation="sigmoid" />
+</Figure>
+
+Move the weights on the diagram: whatever the input, sigmoid output never leaves `(0, 1)`. That property carries over to center decoding - sum "cell index plus sigmoid" can't escape one cell.
+
+## Why exponent for size
+
+Size works differently: `bw = anchor_w * exp(tw)`. Here the correction doesn't shift, it **scales** the anchor. Exponent is chosen for two reasons. First, it's always positive, so width and height can't go negative for any `tw`. Second, it works multiplicatively: `tw = 0` gives multiplier `1` (anchor size unchanged), `tw > 0` grows, `tw < 0` shrinks, symmetrically on a log scale.
+
+```python
+import math
+
+def decode_size(t, anchor):
+    return anchor * math.exp(t)
+
+print(decode_size(0, 4), decode_size(1, 2))
+```
+
+It prints `4.0 5.43656...`: at `tw = 0` size equals anchor `4`; at `tw = 1` anchor `2` stretches by `e`, to about `5.44`. Log symmetry means `tw = 1` and `tw = -1` scale by `e` and `1/e` - multiply and divide, not plus-minus a constant.
+
+## Objectness and class probabilities
+
+Geometry is half the story. The other half is confidence. The network outputs an objectness logit (is there an object in this slot at all) and class logits. The objectness logit goes through sigmoid to get object probability `p_obj` in `(0, 1)`. Class probabilities come from softmax (or independent sigmoids in newer versions). Final confidence for a specific class is the **product**: `p_obj * p_class`.
+
+```python
+objectness = 0.8
+class_probs = [0.1, 0.7, 0.2]
+best_class = class_probs.index(max(class_probs))
+confidence = objectness * max(class_probs)
+print(best_class, round(confidence, 2))
+```
+
+It prints `1 0.56`: most likely class index `1` (its `p_class = 0.7`), and final confidence `0.8 * 0.7 = 0.56`. Product, not either factor alone: a slot with a confident class but low objectness still gets low final confidence - and vice versa.
+
+<Callout type="info">Confidence is the product of two probabilities, so it isn't greater than either one. High `p_class` alone means nothing if the network isn't confident there's an object in the slot at all.</Callout>
+
+## Try it yourself
+
+Assemble a full box from corrections. Run the code: with all `t = 0` the center sits in the cell middle and size matches the anchor. Change `tx` to `2` and watch the center shift right but stay inside the cell. Then set `tw = 1` - width grows by about `e`. Confirm negative `tw` shrinks the box instead of pushing it negative.
+
+<PyDemo
+  title="Building a box from raw corrections"
+  code={`import math
+
+def sigmoid(t):
+    return 1 / (1 + math.exp(-t))
+
+def decode_box(tx, ty, tw, th, gx, gy, aw, ah):
+    bx = gx + sigmoid(tx)
+    by = gy + sigmoid(ty)
+    bw = aw * math.exp(tw)
+    bh = ah * math.exp(th)
+    return [bx, by, bw, bh]
+
+print(decode_box(0, 0, 0, 0, 2, 3, 4, 2))`}
+/>
+
+## Where this surprises you
+
+Coordinates after decoding are in grid units, not pixels. Center `2.5` means "two and a half grid steps", not "two and a half pixels". To get pixels, multiply by grid step size (`image size / S`). Skip that rescaling - and the box lands in a corner: all coordinates sit in `0..S` instead of `0..image width`.
+
+Second surprise - forgotten sigmoid on objectness. Raw objectness logit can be negative or large positive; without sigmoid it isn't a probability. Multiplying raw logit by `p_class` gives "confidence" above one or negative.
+
+## Common mistakes
+
+- **Adding size to the anchor instead of multiplying.** Size is multiplicative: `bw = anchor_w * exp(tw)`, not `anchor_w + tw`. Addition breaks the scale nature of the correction and easily gives negative width.
+- **Forgetting sigmoid for the center.** Without squeezing to `(0, 1)` the center can escape the cell, and a neighbor cell accidentally claims the object.
+- **Mixing units.** Decoded coordinates are in grid steps; pixels come from multiplying by step size. Don't mix the two systems.
+- **Multiplying logits, not probabilities.** Final confidence is product of probabilities `p_obj * p_class`, and both must pass through sigmoid/softmax before multiplying.
+
+<Detail summary="Where these formulas came from">
+
+In YOLOv2 the authors replaced direct coordinate prediction with corrections to anchors with sigmoid for the center - and that noticeably stabilized early training. Sigmoid limits the center to its cell, so at the start when weights are random, predictions don't "scatter" across the frame. Exponent for size ensures positivity and multiplicative symmetry around the anchor. These two choices - sigmoid for offset and exponent for scale - became standard and survived in most later versions even when almost everything else changed.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Raw network output is corrections (tx, ty, tw, th) and logits, not ready coordinates; decoding turns them into a box.",
+    "Center: bx = cell_x + sigmoid(tx). Sigmoid locks the center inside its cell so responsibility doesn't leak to neighbors.",
+    "Size: bw = anchor_w * exp(tw). Exponent keeps size positive and scales the anchor multiplicatively around tw = 0.",
+    "Confidence = sigmoid(objectness) * p_class - product of two probabilities, so it isn't greater than either.",
+    "Decoded coordinates are in grid steps; pixels come from multiplying by step size (image size / S).",
+  ]}
+/>
+
+## References
+
+- [Redmon, Farhadi, YOLO9000 (2017) - direct location prediction](https://arxiv.org/abs/1612.08242)
+- [Redmon, Farhadi, YOLOv3: An Incremental Improvement (2018)](https://arxiv.org/abs/1804.02767)

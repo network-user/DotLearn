@@ -1,0 +1,155 @@
+---
+conceptId: closures
+title: Closures
+estimatedMinutes: 30
+---
+
+You returned a function from a function in the previous section and may not have noticed the oddity. The inner function used a variable that lived in the outer function. But the outer function had already finished by the time the inner one was called - its local variables should have disappeared. Yet the inner function keeps seeing them. This trick is called a closure, and without it a decorator could not remember which function it is wrapping.
+
+By the end of this section you will create function factories with "baked-in" configuration, understand that a closure captures a variable rather than its value at creation time, fix the classic "all lambdas in a loop return the same number" trap, and change captured state via `nonlocal`.
+
+## An inner function remembers where it was born
+
+When `def` creates a function inside another function, the new function remembers not values, but a reference to the scope where it was defined. This pairing of "function plus captured outer variables" is a closure. Variables the inner function takes from outside are called free variables.
+
+```python
+def make_adder(n):
+    def adder(x):
+        return x + n
+    return adder
+
+add5 = make_adder(5)
+add10 = make_adder(10)
+print(add5(100), add10(100))
+```
+
+This prints `105 110`. Each call to `make_adder` creates a fresh inner function and its own cell for `n`. `add5` holds a cell with value `5`, `add10` holds `10`, and they do not interfere even though both came from the same `def adder`.
+
+<Figure caption="Each factory call creates a separate function with its own captured n cell; two closed functions are independent.">
+  <ObjectMemoryFigure
+    objects={[
+      { name: 'add5', className: 'closure', attrs: { 'n (free)': '5' } },
+      { name: 'add10', className: 'closure', attrs: { 'n (free)': '10' } },
+    ]}
+  />
+</Figure>
+
+Free variables are visible explicitly too: a function has a `__closure__` attribute, and the names of captured variables live in `adder.__code__.co_freevars`. This is not magic and not global variables - they are cells tied to a specific function object.
+
+## A closure captures the variable, not the value
+
+Here is the key subtlety almost everyone trips on. The inner function holds a reference to the variable itself in the outer scope, not a snapshot of its value at creation time. If the variable's value changes after the closure is created, the closure sees the new value. This is called late binding: the name is resolved at call time, not at definition time.
+
+```python
+def make():
+    value = 1
+    def show():
+        return value
+    value = 99
+    return show
+
+print(make()())
+```
+
+This prints `99`, not `1`. By the time `show` is actually called, `value` in the outer scope is already `99`. `show` looks at the current contents of the cell, not what was there when it was defined.
+
+## Try the classic loop trap yourself
+
+Late binding turns into a bug in a loop. It seems like each lambda should "remember" its own `i`, but they all capture the same loop variable, and by call time it equals the last value. Run the code - instead of the expected `0 1 2` you get `2 2 2`. Then fix it: add a default parameter to the lambda `lambda i=i: i`, which snapshots `i` at lambda creation time, and confirm the output becomes `0 1 2`.
+
+<PyDemo
+  title="Late binding in a loop"
+  code={`funcs = []
+for i in range(3):
+    funcs.append(lambda: i)
+
+print([f() for f in funcs])`}
+/>
+
+Why the default parameter fixes the trap: a default argument value is computed when the function is created, so `i=i` takes the current `i` and stores it in the lambda's own parameter - a snapshot, not a reference to the shared variable.
+
+## nonlocal: changing a captured variable
+
+By default an inner function can read a free variable but not assign to it. Any assignment `count = count + 1` inside `inner` makes Python treat it as creating a new local `count`, and then reading `count` on the right fails with `UnboundLocalError`. To assign to the outer variable, declare it with `nonlocal`.
+
+```python
+def make_counter():
+    count = 0
+    def tick():
+        nonlocal count
+        count += 1
+        return count
+    return tick
+
+c = make_counter()
+print(c(), c(), c())
+```
+
+This prints `1 2 3`. `nonlocal count` says: "`count` is not mine locally - it belongs to the nearest outer function; assign there". Without that line, `count += 1` would fail because Python would see an assignment and treat `count` as local, but it does not exist yet on the right.
+
+<Callout type="warning">`nonlocal` is only needed when assigning to a free variable. If you only read it (as in `make_adder`), `nonlocal` is not required and would be redundant.</Callout>
+
+This closure counter is a miniature of what a decorator does: the wrapping function holds either the wrapped function itself or accumulated state (cache, call count) in a free variable and changes it via `nonlocal`.
+
+## When behavior surprises you
+
+Because a closure holds a reference, state survives the outer function's exit and persists between inner calls. For a counter that is exactly what you want, but sometimes it surprises: two different closures do not share state, but the same one does.
+
+```python
+def make_counter():
+    count = 0
+    def tick():
+        nonlocal count
+        count += 1
+        return count
+    return tick
+
+a = make_counter()
+b = make_counter()
+print(a(), a(), b())
+```
+
+This prints `1 2 1`. `a` and `b` are results of two different factory calls, each with its own `count` cell, so `b()` starts from zero and does not see what `a` counted. But if you wrote `b = a`, both names would point at the same closure and share one counter.
+
+## Common mistakes
+
+- **Capturing the loop variable.** `[lambda: i for i in range(3)]` gives three lambdas reading one variable `i`; after the loop they all return `2`. Snapshot with a default parameter: `lambda i=i: i`.
+- **Forgetting `nonlocal`.** Assigning to a free variable without `nonlocal` creates a new local, and reading before assignment fails with `UnboundLocalError`. Declare `nonlocal` before changing it.
+- **Expecting a value snapshot.** A closure sees the variable's current value at call time, not at definition time. To fix a value, pass it as a parameter or default argument.
+
+<Detail summary="How a closure differs from a global variable">
+
+Both a closure and a global variable let an inner function "remember" something between calls. The difference is isolation. A global variable is one for the whole program: any code can read and corrupt it. A cell captured by a closure is tied to a specific function object and is not accessible by name from outside - you cannot reach it from elsewhere in the module. So a closure counter is safer than a `global` counter: two independent counters do not conflict, and nobody else can reset their state.
+
+```python
+def make_counter():
+    count = 0
+    def tick():
+        nonlocal count
+        count += 1
+        return count
+    return tick
+
+print(make_counter().__code__.co_freevars)
+```
+
+This prints `('count',)`: the captured variable name lives on the function itself, not in global space.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A closure is an inner function together with captured variables from the outer scope (free variables); it survives the outer function's exit.",
+    "Each factory call creates a new function with its own captured variable cell; different closures do not share state.",
+    "A closure captures the variable, not its value: late binding resolves the name at call time, not definition time.",
+    "The classic trap - lambdas in a loop capturing the shared loop variable; snapshot with default parameter lambda i=i: i.",
+    "To assign to a free variable (not only read it), declare it with nonlocal, otherwise assignment creates a new local.",
+    "State in a closure is isolated: it is not accessible by name from outside, unlike global.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - the nonlocal statement](https://docs.python.org/3/reference/simple_stmts.html#the-nonlocal-statement)
+- [Python documentation - naming and binding rules](https://docs.python.org/3/reference/executionmodel.html#naming-and-binding)
+- [Python FAQ - why lambdas defined in a loop with different values all return the same result](https://docs.python.org/3/faq/programming.html#why-do-lambdas-defined-in-a-loop-with-different-values-all-return-the-same-result)

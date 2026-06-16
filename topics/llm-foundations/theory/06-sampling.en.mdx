@@ -1,0 +1,138 @@
+---
+conceptId: sampling
+title: Sampling and decoding
+estimatedMinutes: 30
+---
+
+# From distribution to text: choosing the next token
+
+The model produced a probability distribution over the vocabulary. Now you must turn it into one token - and how you do that determines dry repetition, lively prose, or incoherent drift. That step is decoding or sampling. It is not part of the neural network: the model outputs probabilities; you choose the token via request settings. The same probabilities under different settings yield very different answers.
+
+By the end of this section you will know greedy vs random sampling, what temperature does to a distribution, how top-k and top-p (nucleus) trim the unlikely tail, and why parameter advice depends on the task.
+
+## Greedy vs sampling
+
+The simplest approach is always take the highest-probability token. That is greedy decoding: deterministic but prone to dull, repetitive answers and loops. The alternative is draw a token randomly proportional to its probability: 0.6 probability means roughly 60% selection chance, 0.05 means rare picks. That adds variety and risk of inappropriate tokens.
+
+<Figure caption="Next-token probabilities: temperature sharpens or flattens the distribution; top-k and top-p trim the tail.">
+  <SamplingBars
+    candidates={[
+      ["coffee", 3.2],
+      ["tea", 2.7],
+      ["water", 2.1],
+      ["juice", 1.4],
+      ["compote", 0.6],
+      ["nothing", 0.2]
+    ]}
+  />
+</Figure>
+
+Play with the figure - it is the best way to feel sampling. All three sliders reshape the same underlying distribution; the footer shows how many candidates remain and how much probability mass survived. Each parameter is covered next.
+
+## Temperature: sharper or flatter
+
+Temperature `T` scales logits before softmax: each logit is divided by `T`. At `T < 1` the distribution sharpens - the favorite pulls ahead and choice is almost deterministic. At `T > 1` it flattens - rare tokens gain chance, text becomes more varied and riskier. At `T = 1` the distribution is unchanged.
+
+```python
+import math
+
+def temperature_prob(logits, temp, i):
+    scaled = [x / temp for x in logits]
+    m = max(scaled)
+    exps = [math.exp(s - m) for s in scaled]
+    return exps[i] / sum(exps)
+
+logits = [2.0, 1.0, 0.0]
+print(round(temperature_prob(logits, 1.0, 0), 3))
+print(round(temperature_prob(logits, 0.5, 0), 3))
+```
+
+This prints `0.665` and `0.867`: at temperature 0.5 the favorite takes a noticeably larger share than at 1.0. Lower temperature further and the distribution nearly collapses to one token; raise above one and gaps smooth out.
+
+<Callout type="warning">Temperature `T = 0` formally means division by zero; in practice it is treated as greedy - always the most probable token. Do not confuse temperature 0 with literal substitution into softmax; it is convention.</Callout>
+
+## top-k: keep only the k best
+
+Even at reasonable temperature thousands of silly tokens remain in the tail with nonzero total probability - eventually one gets picked. top-k trims bluntly: keep only the `k` most probable tokens, zero the rest, renormalize survivors to sum to one, then sample among what remains.
+
+```python
+def top_k_indices(logits, k):
+    order = sorted(range(len(logits)), key=lambda i: (-logits[i], i))
+    return sorted(order[:k])
+
+print(top_k_indices([3.0, 1.0, 2.0, 0.5], 2))
+```
+
+This prints `[0, 2]`: of four candidates the two highest logits survived (indices 0 and 2). Smaller `k` is safer and more uniform; larger `k` is more varied and riskier.
+
+## top-p (nucleus): keep the smallest set reaching mass p
+
+top-k has a weakness: fixed `k` ignores distribution shape. When the model is confident one token should suffice, top-k still keeps `k`; when uncertain, `k` may be too small. top-p (nucleus sampling) sorts by probability and keeps the smallest set whose total mass reaches threshold `p` (e.g. 0.9), discarding the rest. Nucleus size adapts to confidence.
+
+<Figure caption="top-p keeps the minimal token set reaching probability mass p; nucleus size changes with how sharp the distribution is.">
+  <SamplingBars
+    candidates={[
+      ["yes", 4.0],
+      ["no", 1.0],
+      ["maybe", 0.5],
+      ["unsure", 0.2]
+    ]}
+  />
+</Figure>
+
+Adjust top-p on the figure: sharp distributions keep one or two tokens; flat ones keep more. In practice temperature, top-k, and top-p are often combined - avoid cranking all three at once; effects stack.
+
+## Try it yourself
+
+Apply temperature end to end: see how one distribution changes with different `T`. Run the code, then try `temp = 0.2` and `temp = 3.0` and compare how dominant the favorite becomes.
+
+<PyDemo
+  title="Temperature reshapes the distribution"
+  code={`import math
+
+def temperatured(logits, temp):
+    scaled = [x / temp for x in logits]
+    m = max(scaled)
+    exps = [math.exp(s - m) for s in scaled]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+logits = [2.0, 1.0, 0.0]
+print([round(p, 3) for p in temperatured(logits, 1.0)])
+print([round(p, 3) for p in temperatured(logits, 0.5)])`}
+/>
+
+At `temp = 0.5` the favorite takes more mass; as temperature rises the distribution flattens. Temperature does not reorder tokens by probability - only sharpness.
+
+## When behavior surprises you
+
+Low temperature does not make answers more correct - more predictable. That helps factual prompts but hurts ideation where hard determinism breeds repeats and clichés. There is no universal best temperature; it depends on the task.
+
+A second surprise is parameter interaction. High temperature plus large top-k plus high top-p compound into incoherence. Change one knob at a time or you cannot tell what moved the output.
+
+## Common misconceptions
+
+- **Temperature 0 is softmax with T = 0.** That is division by zero; in practice T = 0 means greedy by convention.
+- **top-k and top-p do the same thing.** top-k keeps a fixed count; top-p keeps a variable set tuned to distribution shape - different tail-trimming strategies.
+- **Higher temperature means smarter and more creative.** Higher temperature means more variety and risk of incoherence; creativity and chaos are not synonyms.
+
+<Detail summary="Why sample instead of always taking the maximum">
+
+Greedy seems safe but is myopic. Taking the locally best token each step can land in a globally worse sequence than one that started with a slightly less likely token. Beam search partly fixes this by keeping several candidates but for open generation tends toward repetition and blandness. Sampling with temperature and nucleus usually yields livelier text, so chat models default to it over greedy or beam search.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Sampling chooses a token from the distribution; it is a request setting, not part of the network, and strongly changes the answer.",
+    "Greedy takes the max (deterministic but poorer); random sampling draws proportional to probability (more varied, riskier).",
+    "Temperature divides logits before softmax: T<1 sharpens, T>1 flattens; T=0 by convention means greedy.",
+    "top-k keeps the k most probable tokens and renormalizes; top-p (nucleus) keeps the minimal set reaching mass p, adapting to confidence.",
+    "No universal best parameters - they depend on the task; change one at a time to see what moved.",
+  ]}
+/>
+
+## References
+
+- [Holtzman et al., 2019 - The Curious Case of Neural Text Degeneration (nucleus sampling)](https://arxiv.org/abs/1904.09751)
+- [Hugging Face - How to generate text](https://huggingface.co/blog/how-to-generate)
