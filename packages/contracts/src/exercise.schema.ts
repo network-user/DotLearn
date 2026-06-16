@@ -137,6 +137,94 @@ export const PredictOutputExercise = BaseExercise.extend({
 });
 export type PredictOutputExercise = z.infer<typeof PredictOutputExercise>;
 
+export const GitGoalAssertion = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('commit-count'),
+    ref: z.string().min(1).default('HEAD'),
+    equals: z.number().int().min(0),
+  }),
+  z.object({
+    kind: z.literal('file-content'),
+    path: z.string().min(1),
+    equals: z.string(),
+    where: z.enum(['worktree', 'head']).default('worktree'),
+  }),
+  z.object({
+    kind: z.literal('file-tracked'),
+    path: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('file-absent'),
+    path: z.string().min(1),
+    where: z.enum(['worktree', 'head']).default('worktree'),
+  }),
+  z.object({
+    kind: z.literal('staged'),
+    path: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('branch-exists'),
+    name: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('branch-absent'),
+    name: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('head-on-branch'),
+    name: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('head-detached'),
+  }),
+  z.object({
+    kind: z.literal('head-at'),
+    ref: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('clean-tree'),
+  }),
+  z.object({
+    kind: z.literal('merged'),
+    branch: z.string().min(1),
+    into: z.string().min(1).default('HEAD'),
+  }),
+  z.object({
+    kind: z.literal('commit-message'),
+    ref: z.string().min(1).default('HEAD'),
+    index: z.number().int().min(0).default(0),
+    contains: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('tag-exists'),
+    name: z.string().min(1),
+  }),
+]);
+export type GitGoalAssertion = z.infer<typeof GitGoalAssertion>;
+
+export const GitChallengeSetup = z.object({
+  files: z.record(z.string(), z.string()).optional(),
+  commands: z.array(z.string()).optional(),
+});
+export type GitChallengeSetup = z.infer<typeof GitChallengeSetup>;
+
+export const GitChallengeVariant = z.object({
+  prompt: z.string().min(5).optional(),
+  setup: GitChallengeSetup.optional(),
+  goal: z.array(GitGoalAssertion).min(1).optional(),
+  solution: z.array(z.string().min(1)).min(1).optional(),
+});
+export type GitChallengeVariant = z.infer<typeof GitChallengeVariant>;
+
+export const GitChallengeExercise = BaseExercise.extend({
+  type: z.literal('git-challenge'),
+  setup: GitChallengeSetup.optional(),
+  goal: z.array(GitGoalAssertion).min(1),
+  solution: z.array(z.string().min(1)).min(1),
+  variants: z.array(GitChallengeVariant).min(1).optional(),
+});
+export type GitChallengeExercise = z.infer<typeof GitChallengeExercise>;
+
 export const Exercise = z.discriminatedUnion('type', [
   TheoryQuizExercise,
   SqlQueryExercise,
@@ -144,6 +232,7 @@ export const Exercise = z.discriminatedUnion('type', [
   JavascriptFunctionExercise,
   FillInBlanksExercise,
   PredictOutputExercise,
+  GitChallengeExercise,
 ]);
 export type Exercise = z.infer<typeof Exercise>;
 
@@ -160,6 +249,9 @@ export const isInteractiveExercise = (
   exercise.type === 'sql-query' ||
   exercise.type === 'python-function' ||
   exercise.type === 'javascript-function';
+
+export const isGitChallenge = (exercise: Exercise): exercise is GitChallengeExercise =>
+  exercise.type === 'git-challenge';
 
 export const exerciseVariantCount = (exercise: Exercise): number =>
   1 + (exercise.variants?.length ?? 0);

@@ -9,6 +9,8 @@ export type RunFailureCode =
   | 'predict-rows-mismatch'
   | 'cases-failed'
   | 'blanks-incorrect'
+  | 'git-command-error'
+  | 'git-goal-unmet'
   | 'invalid-answer';
 
 export type RunFailureParams = Record<string, string | number>;

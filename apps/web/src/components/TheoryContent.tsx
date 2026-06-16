@@ -54,6 +54,28 @@ import { MergeStepper } from '@/components/viz/MergeStepper';
 import { NetworkModelFigure } from '@/components/viz/NetworkModelFigure';
 import { RefCountViz } from '@/components/viz/RefCountViz';
 import { WideColumnFigure } from '@/components/viz/WideColumnFigure';
+import { CallStackViz } from '@/components/theory-viz/decorators/CallStackViz';
+import { DecoratorWrap } from '@/components/theory-viz/decorators/DecoratorWrap';
+import { AgentLoopDiagram } from '@/components/theory-viz/llm/AgentLoopDiagram';
+import { AttentionHeatmap } from '@/components/theory-viz/llm/AttentionHeatmap';
+import { ContextWindowViz } from '@/components/theory-viz/llm/ContextWindowViz';
+import { EmbeddingSpace } from '@/components/theory-viz/llm/EmbeddingSpace';
+import { McpDiagram } from '@/components/theory-viz/llm/McpDiagram';
+import { SamplingBars } from '@/components/theory-viz/llm/SamplingBars';
+import { TokenizerViz } from '@/components/theory-viz/llm/TokenizerViz';
+import { ChainOfThoughtViz } from '@/components/theory-viz/prompt/ChainOfThoughtViz';
+import { FewShotViz } from '@/components/theory-viz/prompt/FewShotViz';
+import { PromptAnatomy } from '@/components/theory-viz/prompt/PromptAnatomy';
+import { AnchorGridViz } from '@/components/theory-viz/yolo/AnchorGridViz';
+import { IoUViz } from '@/components/theory-viz/yolo/IoUViz';
+import { NmsViz } from '@/components/theory-viz/yolo/NmsViz';
+import { PrCurve } from '@/components/theory-viz/yolo/PrCurve';
+import { ActivationPlot } from '@/components/theory-viz/nn/ActivationPlot';
+import { GradientDescentViz } from '@/components/theory-viz/nn/GradientDescentViz';
+import { LossLandscape } from '@/components/theory-viz/nn/LossLandscape';
+import { NetworkDiagram } from '@/components/theory-viz/nn/NetworkDiagram';
+import { PerceptronViz } from '@/components/theory-viz/nn/PerceptronViz';
+import { GitTerminal } from '@/components/theory-viz/git/GitTerminal';
 
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
@@ -253,6 +275,7 @@ const diagramComponents = {
   LineChart,
   AreaChart,
   DistributionChart,
+  TokenizerViz,
 };
 
 const zoomableDiagrams: Record<string, ComponentType<Record<string, unknown>>> = Object.fromEntries(
@@ -367,6 +390,27 @@ const mdxComponents = {
   SketchBox,
   SketchHighlight,
   SketchLabel,
+  DecoratorWrap,
+  CallStackViz,
+  IoUViz,
+  AnchorGridViz,
+  NmsViz,
+  PrCurve,
+  AttentionHeatmap,
+  EmbeddingSpace,
+  SamplingBars,
+  ContextWindowViz,
+  AgentLoopDiagram,
+  McpDiagram,
+  PromptAnatomy,
+  FewShotViz,
+  ChainOfThoughtViz,
+  PerceptronViz,
+  ActivationPlot,
+  NetworkDiagram,
+  GradientDescentViz,
+  LossLandscape,
+  GitTerminal,
   ...zoomableDiagrams,
   img: LightboxImage,
 };

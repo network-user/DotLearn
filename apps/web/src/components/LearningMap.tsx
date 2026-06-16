@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
-import { Code2, Database, FileText, FlaskConical, Lock } from 'lucide-react';
+import { Code2, Database, FileText, FlaskConical, GitBranch, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
@@ -33,6 +33,7 @@ const runtimeIcon = (runtime: string) => {
   if (runtime === 'sql.js') return <Database size={13} />;
   if (runtime === 'pyodide') return <FlaskConical size={13} />;
   if (runtime === 'javascript') return <Code2 size={13} />;
+  if (runtime === 'git') return <GitBranch size={13} />;
   return <FileText size={13} />;
 };
 

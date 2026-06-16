@@ -1,6 +1,12 @@
 import { parse as parseYaml } from 'yaml';
 
-import { ExerciseFile, TopicManifest, type Exercise } from '@dotlearn/contracts';
+import {
+  ExerciseFile,
+  FlashcardDeck,
+  TopicManifest,
+  type Exercise,
+  type FlashcardDeck as FlashcardDeckType,
+} from '@dotlearn/contracts';
 
 import { TopicLoadError } from './source';
 
@@ -41,4 +47,29 @@ export const parseExerciseFile = (slug: string, filename: string, raw: string): 
     throw new TopicLoadError(slug, filename, `validation failed — ${issues}`);
   }
   return result.data.exercises;
+};
+
+export const parseFlashcardDeck = (
+  slug: string,
+  filename: string,
+  raw: string,
+): FlashcardDeckType => {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch (error) {
+    throw new TopicLoadError(
+      slug,
+      filename,
+      `invalid YAML: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const result = FlashcardDeck.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('; ');
+    throw new TopicLoadError(slug, filename, `validation failed — ${issues}`);
+  }
+  return result.data;
 };
