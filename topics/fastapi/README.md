@@ -14,3 +14,22 @@
 Нет. Достаточно знания Python: функции, типовые аннотации, классы, базовое представление об HTTP.
 
 Generated via `lesson-forge`.
+
+## English
+
+# FastAPI: routes, validation, async
+
+A practical walkthrough of how the FastAPI web framework works: how routes are declared and where the framework gets parameters (path, query, body), how Pydantic models turn incoming JSON into validated objects, how an `async def` handler differs from a regular one and when it actually speeds up the service, and how to return correct error statuses and plug in middleware. For anyone who knows Python and wants to write HTTP APIs confidently with FastAPI.
+
+## Concepts
+
+1. Routes: path, query, body
+2. Pydantic models and validation
+3. async and concurrency in FastAPI
+4. Errors, statuses, and middleware
+
+## Prerequisites
+
+None. Enough Python to read functions, type annotations, classes, and a basic picture of HTTP.
+
+Generated via `lesson-forge`.

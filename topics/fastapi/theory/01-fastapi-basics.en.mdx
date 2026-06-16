@@ -1,0 +1,168 @@
+---
+conceptId: fastapi-basics
+title: "Routes: path, query, body"
+estimatedMinutes: 45
+---
+
+# Where does FastAPI get the handler parameters from?
+
+You write the function `def get_item(item_id: int, q: str = None)`, bind it to the address with a decorator, start the server - and suddenly this particular function is called at the address `/items/42?q=header`, and `item_id` is already equal to the number `42`, and not the string `"42"`. No one clearly parsed the URL, got the query string, or provided the types. How did the framework know that `item_id` should be taken from the path, `q` from the query string, and where did it even decide that `item_id` is `int`?
+
+The answer is in the function signature. FastAPI reads the names and annotations of the handler parameters and, using a set of simple rules, decides where to take each value from: from the path pattern, from the query string, or from the request body. By the end of this section, you will understand these rules enough to be able to predict, using a single signature, which URL the handler will call, what will be in each parameter, and what the framework will do with incorrect input.
+
+## Mental model: signature is an entry contract
+
+A handler in FastAPI is a regular function bound to a pair of "HTTP method + path template" with a decorator like `@app.get("/items/{item_id}")`. When a request arrives, the framework looks at the function parameters and for each one decides the source according to three rules, which are applied in that order.
+
+The parameter name matches the curly brace in the path - this is the **path-parameter**. The type of the parameter is primitive (`int`, `str`, `float`, `bool`), but it is not in the path - it is a **query parameter**. Type - Pydantic model (or declared as `Body`) - this is the **request body**, the same JSON in `POST`. One handler can mix all three sources in one signature.
+
+<Figure caption="The same request is parsed into three sources: the path curly brace gives path, the tail after ? gives query, JSON body gives body. FastAPI distributes them according to function parameters.">
+  <Sketch viewBox="0 0 460 220" title="Handler Parameter Sources">
+    <SketchBox x={20} y={20} width={420} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={30} y={43} mono anchor="start" size={12}>POST /items/42?q=шапка  {`{"price": 9.9}`}</SketchLabel>
+
+    <SketchBox x={20} y={90} width={120} height={44} accent />
+    <SketchLabel x={80} y={108} mono accent>path</SketchLabel>
+    <SketchLabel x={80} y={124} mono size={11}>item_id = 42</SketchLabel>
+
+    <SketchBox x={170} y={90} width={120} height={44} accent />
+    <SketchLabel x={230} y={108} mono accent>query</SketchLabel>
+    <SketchLabel x={230} y={124} mono size={11}>q = "cap"</SketchLabel>
+
+    <SketchBox x={320} y={90} width={120} height={44} accent />
+    <SketchLabel x={380} y={108} mono accent>body</SketchLabel>
+    <SketchLabel x={380} y={124} mono size={11}>price = 9.9</SketchLabel>
+
+    <SketchArrow from={[80, 56]} to={[80, 90]} />
+    <SketchArrow from={[230, 56]} to={[230, 90]} />
+    <SketchArrow from={[380, 56]} to={[380, 90]} />
+
+    <SketchBox x={120} y={170} width={220} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={191} mono size={11}>handler(item_id, q, body)</SketchLabel>
+    <SketchArrow from={[80, 134]} to={[170, 170]} />
+    <SketchArrow from={[230, 134]} to={[230, 170]} />
+    <SketchArrow from={[380, 134]} to={[290, 170]} />
+  </Sketch>
+</Figure>
+
+The main thing in this model: you do not parse the request manually. You declare what the function needs, and FastAPI gets it from the right place and results in the declared type. A request is raw bytes, a signature is a contract, and a framework is an intermediary between them.
+
+## Path parameter: part of the address
+
+Let's start with the simplest source. The piece of path in curly braces goes into the function parameter of the same name.
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int):
+    return {"item_id": item_id}
+```
+
+A `GET /items/42` request will call `read_item` with `item_id == 42` - an integer, not the string `"42"`. The `int` annotation is not a decoration here: FastAPI uses it to convert the value from the URL. If you send `/items/abc`, the conversion to `int` will fail and the client will receive a `422 Unprocessable Entity` response with a description that `item_id` must be an integer. The handler will not be called at all.
+
+<Callout type="info">
+The name of the parameter in the function must match the name in the curly braces of the path. `{item_id}` in the path and `item_id` in the signature are a bunch by name, not by position.
+</Callout>
+
+## Query parameter: tail after the question
+
+If a function parameter is not mentioned in the path and is of a primitive type, FastAPI looks for it in the query string - the part of the URL after `?`.
+
+```python
+@app.get("/items/")
+def list_items(skip: int = 0, limit: int = 10):
+    return {"skip": skip, "limit": limit}
+```
+
+The request `GET /items/?skip=20&limit=5` will give `skip == 20`, `limit == 5`. The default value makes the parameter optional: `GET /items/` without query will return `skip=0, limit=10`. Remove `=0` and `skip` will become required - a request without it will receive `422`. The default value is the boundary between “required” and “no”.
+
+<Figure caption="The default parameter is optional and substitutes its own value; the non-default parameter is required, and its absence gives 422 even before calling the handler.">
+  <RowFilterFigure
+    columns={["parameter", "default", "if not in the request"]}
+    rows={[
+      { cells: ["skip: int = 0", "0", "0 is taken, the handler is called"], kept: true },
+      { cells: ["limit: int = 10", "10", "10 is taken, the handler is called"], kept: true },
+      { cells: ["q: str", "no", "response 422, handler not called"], kept: false },
+    ]}
+    condition="there is a default value"
+    title="Required query parameters"
+  />
+</Figure>
+
+The types of query parameters are also given. The `bool` parameter understands `true`, `1`, `yes`, `on` as true; `?active=1` will give `active == True`. This is convenient, but also a source of surprises - more on them below.
+
+## Body: JSON in the body of the request
+
+When the parameter is a Pydantic model, FastAPI reads the request body as JSON and assembles a model object from it.
+
+```python
+from pydantic import BaseModel
+
+class Item(BaseModel):
+    name: str
+    price: float
+
+@app.post("/items/")
+def create_item(item: Item):
+    return {"name": item.name, "total": item.price}
+```
+
+`POST /items/` with body `{"name": "header", "price": 9.9}` will arrive in the handler as an `Item` object, where `item.name == "header"`. If there is no `price` field in the JSON or it is not cast to `float`, FastAPI will return `422` indicating which field is invalid. A detailed analysis of Pydantic models is in the next section; All that matters here is that the model in the signature switches the source to the request body.
+
+## Three sources in one signature
+
+The most useful thing is to combine. This signature reads as “take `item_id` from the path, `q` from the query, collect the body in `Item`”.
+
+```python
+@app.put("/items/{item_id}")
+def update_item(item_id: int, item: Item, q: str = None):
+    return {"item_id": item_id, "q": q, "name": item.name}
+```
+
+`PUT /items/42?q=winter` with a JSON body `{"name": "header", "price": 9.9}` will be distributed like this: `item_id == 42` (path), `q == "winter"` (query), `item` - model object (body). The order of parameters in a function does not matter - the source is determined by the rules, not the position.
+
+## Edge cases
+
+Several places where intuition fails.
+
+**`bool` understands strings too loosely.** The Query parameter `flag: bool` will accept `?flag=1`, `?flag=true`, `?flag=on` as `True`, but `?flag=2` or `?flag=yes` will give `422`. But `?flag=False` (with capital) and `?flag=0` correctly give `False`. If you expect an arbitrary string from the client, do not declare it `bool`.
+
+**A slash in the path parameter breaks the route by default.** The `{file_path}` parameter with the value `docs/intro.txt` will not match `/files/{file_path}`: the slash is considered the boundary of the path segment. To accept a path with slashes, you need a `{file_path:path}` converter in the template.
+
+**The body of `GET` is ignored.** You can declare a model in a `GET` handler, but by HTTP convention the body is not passed in `GET`, and clients do not send it. Body parameters are about `POST`, `PUT`, `PATCH`.
+
+<Callout type="warning">
+`422` is not an error in your code, but a correct response to invalid input. If during tests you see `422` instead of the expected result, check not the handler, but the request form: the type of the path parameter, the presence of mandatory queries, the structure of the JSON body.
+</Callout>
+
+## Common mistakes
+
+- **The name of the query parameter did not match what the client sent.** The parameter is `limit`, and in the URL `?max=5` - FastAPI will not find `max`, and `limit` will remain default (or give `422`, if required). Source by name, case and spelling are important.
+- **Forgot that a path parameter without an annotation remains a string.** `def read(item_id):` without `: int` will put the string `"42"` in `item_id`, and the comparison `item_id == 42` will be false. An abstract is an instruction for type casting.
+- **Waiting for `200` if the input is incorrect.** Invalid path or missing required query gives `422` before calling the function. The body of the handler was not yet executed at this moment, so it is useless to look for a bug inside it.
+
+<Detail summary="Where does 422 come from and why exactly it?">
+
+FastAPI builds a Pydantic-based validation layer around each handler. Any value - from a path, query or body - first undergoes type checking and casting. If at least one value does not pass, the framework does not call the handler, but immediately generates a `422 Unprocessable Entity` response with a body that lists all errors: location (`loc`), error type and message. The `422` code is deliberate: `400 Bad Request` is too generic, and `422` from the WebDAV standard exactly means “the request syntax is correct, but the content does not pass validation.” The same machinery generates interactive documentation at `/docs` - the diagrams there are derived from the same annotations.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "FastAPI determines the source of each parameter by signature: path match - path, primitive outside the path - query, model - request body.",
+    "A type annotation is a casting instruction: an int in a path or query converts the URL string to a number, and on failure gives 422.",
+    "The default value makes the query parameter optional; its absence is the border between mandatory and optional.",
+    "The Pydantic model in the signature switches the source to the JSON body of the request; one handler can mix path, query and body.",
+    "422 is a correct response to invalid input generated before calling the handler, and not a failure of your code.",
+  ]}
+/>
+
+## Links
+
+- [FastAPI - Path Parameters](https://fastapi.tiangolo.com/tutorial/path-params/)
+- [FastAPI - Query Parameters](https://fastapi.tiangolo.com/tutorial/query-params/)
+- [FastAPI - Request Body](https://fastapi.tiangolo.com/tutorial/body/)
+- [FastAPI - Path Parameters and Numeric Validations](https://fastapi.tiangolo.com/tutorial/path-params-numeric-validations/)

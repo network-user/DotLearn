@@ -1,0 +1,144 @@
+---
+conceptId: errors-middleware
+title: "Errors, statuses and middleware"
+estimatedMinutes: 45
+---
+
+# Correct status and general layer around each request
+
+The processor found the product - returned it, and the client sees `200`. What if there is no product? Returning `200` with an empty body means lying: for the client, “successful, nothing found” and “not found” are indistinguishable, and its code will not be able to respond correctly. The HTTP status is not cosmetic, but part of the contract: according to it, the client decides whether to repeat the request, show an error to the user, or go to the login page. Confusing statuses turn a clear API into guesswork.
+
+The second half of the section is about the code that must be executed around each request, regardless of the handler: log, time, add a header, check the token. Duplicating this in every function is pointless. Middleware is a wrapper over the entire pipeline through which any request and any response passes. By the end of this section, you will be able to return correct statuses and errors and understand where middleware works in the request lifecycle and how it differs from exception handling.
+
+## Mental model: request in rings
+
+Imagine a request passing through several concentric rings on its way to and from a handler. The outer ring - middleware - sees the request first and the response last. Next comes the handler in the center. If something inside throws an `HTTPException`, FastAPI intercepts it and generates an HTTP response with the required status, which in the same way rises outside through the middleware rings.
+
+<Figure caption="The request enters through middleware, reaches the handler and returns out the same way. Middleware sees both the request as input and the response as output - including the error response collected from the HTTPException.">
+  <Sketch viewBox="0 0 460 200" title="Request Processing Rings">
+    <SketchBox x={30} y={30} width={400} height={140} fill="rgb(var(--surface-2))" radius={10} />
+    <SketchLabel x={45} y={50} anchor="start" mono size={11}>middleware</SketchLabel>
+    <SketchBox x={90} y={62} width={280} height={80} radius={8} />
+    <SketchLabel x={105} y={80} anchor="start" mono size={11}>router</SketchLabel>
+    <SketchBox x={150} y={92} width={160} height={36} accent radius={6} />
+    <SketchLabel x={230} y={114} mono accent size={11}>handler</SketchLabel>
+
+    <SketchArrow from={[15, 100]} to={[88, 100]} />
+    <SketchLabel x={20} y={92} muted size={10} anchor="start">запрос</SketchLabel>
+    <SketchArrow from={[372, 100]} to={[445, 100]} />
+    <SketchLabel x={388} y={92} muted size={10} anchor="start">ответ</SketchLabel>
+  </Sketch>
+</Figure>
+
+The "in the rings" model explains two different mechanisms. **Status and errors** - this is about what the handler in the center gives. **Middleware** is about a common ring that wraps any handler the same way. Both are needed for a neat API, but they solve different problems.
+
+## Default status and changing it
+
+Without instructions, a successful handler returns `200 OK`. To create a resource more honestly, `201 Created` is set in the decorator.
+
+```python
+from fastapi import FastAPI, status
+
+app = FastAPI()
+
+@app.post("/items/", status_code=status.HTTP_201_CREATED)
+def create_item(name: str):
+    return {"name": name}
+```
+
+`status_code=201` means “resource created”. The `status` module gives readable names instead of magic numbers: `status.HTTP_201_CREATED` is clearer than `201` and prevents typos in the code. This is the “happy path” status - FastAPI will set it when the handler has processed without exceptions.
+
+## The error is an HTTPException
+
+When the handler cannot fulfill the request - there is no resource, no rights - it throws `HTTPException` with the required status. FastAPI will intercept it and generate a correct error response.
+
+```python
+from fastapi import HTTPException
+
+items = {1: "шапка"}
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int):
+    if item_id not in items:
+        raise HTTPException(status_code=404, detail="товар не найден")
+    return {"name": items[item_id]}
+```
+
+`GET /items/99` will throw `HTTPException(404)` and the client will receive `404 Not Found` with body `{"detail": "item not found"}`. Important: this is `raise`, not `return`. The exception is interrupted by the handler at the point of being thrown - the code after it will not be executed, which is what is needed: there is no need to continue if there is no resource.
+
+<Figure caption="Each outcome has its own status. Returning 200 for a resource not found is a common mistake: the client cannot distinguish success from emptiness.">
+  <RowFilterFigure
+    columns={["situation", "status", "when to return"]}
+    rows={[
+      { cells: ["resource created", "201", "successful POST"], kept: true },
+      { cells: ["resource found", "200", "successful GET"], kept: true },
+      { cells: ["no resource", "404", "raise HTTPException"], kept: false },
+      { cells: ["no permissions", "403", "raise HTTPException"], kept: false },
+      { cells: ["invalid input", "422", "set by FastAPI itself"], kept: false },
+    ]}
+    condition="request successful"
+    title="Statuses by outcome"
+  />
+</Figure>
+
+Which status to choose is a matter of HTTP semantics, not taste. `400` - the request is syntactically bad. `401` - you are not authenticated. `403` - authenticated, but no rights. `404` - resource not available. `409` - conflict (for example, duplicate). `422` - the body is syntactically correct, but has not passed validation (this is set by FastAPI itself). `500` - broke on the server. Match the status to the meaning of the outcome, and the client code will become simpler.
+
+## Middleware: code around each request
+
+Middleware is a function that receives a request, passes it further through the rings via `call_next` and receives a response back. Before `call_next` you see the incoming request, after - the outgoing response.
+
+```python
+import time
+from fastapi import Request
+
+@app.middleware("http")
+async def add_timing(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start
+    response.headers["X-Process-Time"] = str(elapsed)
+    return response
+```
+
+This middleware measures the processing time and puts it in the response header - for any route, without changes to the handlers. Before `await call_next(request)` the “input” code is executed, after that the “output” code is executed. This is how end-to-end logic is put into one place: logging, metrics, header checking, adding CORS. The handlers do not know anything about middleware.
+
+<Callout type="info">
+Middleware is executed for each request in the order of registration at the input and in the reverse order at the output - like nested rings. Don’t put heavy blocking work into your middleware: it will lengthen absolutely every request, not just the one that needs it.
+</Callout>
+
+## Edge cases
+
+**`return HTTPException` instead of `raise` will do nothing.** If you write `return HTTPException(404)` by mistake, the exception will not be raised - FastAPI will try to serialize the exception object itself as the response body, and the client will receive a strange `200`. Errors are reported only via `raise`.
+
+**Middleware even sees error responses.** A response collected from `HTTPException` or from `422` validation still passes through the middleware on the output. Therefore, the logging middleware will also record unsuccessful requests - this is convenient, but remember that in `response.status_code` there will be `4xx`/`5xx`, and not just `200`.
+
+**Heading the error via `HTTPException` is also possible.** `HTTPException` has a `headers` parameter - for example, `raise HTTPException(401, headers={"WWW-Authenticate": "Bearer"})`. An error response is a full HTTP response, and the headers in it are just as legitimate as in a successful one.
+
+## Common mistakes
+
+- **Returns `200` to “not found”.** An empty body with `200` is indistinguishable to the client from success. Throw `404` via `HTTPException` - the client code will then be able to branch by status.
+- **They confuse `401` and `403`.** `401` - “you did not introduce yourself” (the token is missing or invalid), `403` - “you introduced yourself, but you can’t come here”. These are different outcomes, and the client reacts to them differently: on `401` it leads to the login, on `403` it shows “access denied”.
+- **They put blocking or heavy code in the middleware.** Since the middleware is on the path of each request, its delay is added to all. Log cheaply, take the heavy stuff out of the hot path.
+
+<Detail summary="HTTPException is not a failure, but a normal response">
+
+The word "exception" is confusing: it seems that `HTTPException` is about an accident. In fact, this is a standard mechanism to return a non-`2xx` response from any point in the handler, without dragging the error flag through all intermediate calls. By throwing `HTTPException(404)` deep inside a nested function, you immediately break the chain and return a `404` to the client - no need to return `None` to the top and check for it at every level. For errors that are repeated throughout the application (for example, your own domain “not found”), it is convenient to create your own exception class and register a handler for it via `@app.exception_handler` - then you throw a domain exception from the handlers, and transferring it to the desired HTTP status lives in one place.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "The HTTP status is part of the contract: according to it the client decides what to do, so 200 for a resource not found is a design error.",
+    "status_code in the decorator specifies the status of the successful path (for example, 201 for creation); the status module gives readable code names.",
+    "The error is returned via raise HTTPException(status, detail) - this interrupts the handler and generates a correct error response.",
+    "Distinguish between the semantics of the codes: 401 - not authenticated, 403 - no rights, 404 - no resource, 409 - conflict, 422 - validation failure.",
+    "Middleware wraps each request: before call_next the request is visible, after - the response; logging, metrics and headers are included here, but not heavy code.",
+  ]}
+/>
+
+## Links
+
+- [FastAPI - Handling Errors](https://fastapi.tiangolo.com/tutorial/handling-errors/)
+- [FastAPI - Response Status Code](https://fastapi.tiangolo.com/tutorial/response-status-code/)
+- [FastAPI - Middleware](https://fastapi.tiangolo.com/tutorial/middleware/)
+- [MDN - HTTP response status codes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status)
