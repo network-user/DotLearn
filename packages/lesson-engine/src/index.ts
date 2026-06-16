@@ -8,6 +8,7 @@ export { runPythonFunction } from './runners/python-function';
 export { runJavascriptFunction } from './runners/javascript-function';
 export { runFillInBlanks } from './runners/fill-in-blanks';
 export { runPredictOutput } from './runners/predict-output';
+export { runGitChallenge } from './runners/git-challenge';
 
 export type { SqlExecution, SqlRuntime } from './runtime/sql';
 export { SqlExecutionError } from './runtime/sql';
@@ -15,6 +16,19 @@ export type { PythonExecution, PythonRuntime } from './runtime/python';
 export { PythonExecutionError } from './runtime/python';
 export type { JavascriptExecution, JavascriptRuntime } from './runtime/javascript';
 export { inlineJavascriptRuntime } from './runtime/javascript';
+
+export { createGitRepo, evaluateGitGoals, GitError, GitRepo } from './runtime/git';
+export type {
+  CommitSnapshot,
+  ExecResult,
+  FileLocation,
+  GitRepoInit,
+  GoalEvaluation,
+  GoalResult,
+  HeadSnapshot,
+  RepoSnapshot,
+  StatusSnapshot,
+} from './runtime/git';
 
 export {
   compareRows,

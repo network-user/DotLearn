@@ -26,7 +26,7 @@ Every exercise object validates against `exercise.schema.json` and uses only a `
 
 Every exercise's `solution` must produce exactly `expected`.
 
-**What `pnpm validate` actually executes:** only `sql-query` gold solutions (base and every variant), via sql.js in node. `python-function` / `javascript-function` solutions are **not** executed by the CLI validator — there is no pyodide in the node pipeline. For those:
+**What `pnpm validate` actually executes:** `sql-query` gold solutions (base and every variant) via sql.js in node, and `git-challenge` gold solutions (base and every variant) via the deterministic git engine in node — the engine replays each `solution` and asserts every `goal` holds. `javascript-function` solutions are **not** executed by the CLI validator — there is no JS sandbox in the node pipeline. For those:
 
 1. Mentally trace each case against the solution while authoring.
 2. Before commit, run each new or changed python/javascript gold solution with its cases once in the web sandbox (open the topic page and use the exercise runner, or a `PyDemo` scratch block).

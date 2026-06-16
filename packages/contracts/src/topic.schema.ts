@@ -12,7 +12,7 @@ export type TopicLanguage = z.infer<typeof TopicLanguage>;
 export const TopicDifficulty = z.enum(['beginner', 'intermediate', 'advanced']);
 export type TopicDifficulty = z.infer<typeof TopicDifficulty>;
 
-export const TopicRuntime = z.enum(['sql.js', 'pyodide', 'javascript', 'none']);
+export const TopicRuntime = z.enum(['sql.js', 'pyodide', 'javascript', 'git', 'none']);
 export type TopicRuntime = z.infer<typeof TopicRuntime>;
 
 export const TopicLicense = z.enum(['MIT', 'Apache-2.0', 'CC-BY-4.0', 'CC-BY-SA-4.0']);

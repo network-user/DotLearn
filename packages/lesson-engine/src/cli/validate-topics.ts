@@ -1,11 +1,14 @@
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
 import { exerciseVariantCount, resolveExerciseVariant } from '@dotlearn/contracts';
 
 import { runSqlQuery } from '../runners/sql-query';
 import { runPythonFunction } from '../runners/python-function';
+import { runGitChallenge } from '../runners/git-challenge';
 import type { RunResult } from '../runners/result';
+import { parseFlashcardDeck } from '../loader/parse';
 import { TopicLoadError, TopicNotFoundError, type TopicBundle } from '../loader/source';
 import { createNodeTopicSource } from '../loader/node';
 import { createSqlJsNodeRuntime } from '../runtime/sql-js-node';
@@ -45,7 +48,11 @@ const validateGoldSolutions = async (
   for (const concept of bundle.concepts) {
     for (const exerciseFile of concept.exercises) {
       for (const exercise of exerciseFile.exercises) {
-        if (exercise.type !== 'sql-query' && exercise.type !== 'python-function') {
+        if (
+          exercise.type !== 'sql-query' &&
+          exercise.type !== 'python-function' &&
+          exercise.type !== 'git-challenge'
+        ) {
           continue;
         }
         const variantTotal = exerciseVariantCount(exercise);
@@ -60,6 +67,8 @@ const validateGoldSolutions = async (
             outcome = await runSqlQuery(resolved, resolved.solution, runtimes.sql);
           } else if (resolved.type === 'python-function') {
             outcome = await runPythonFunction(resolved, resolved.solution, runtimes.python);
+          } else if (resolved.type === 'git-challenge') {
+            outcome = runGitChallenge(resolved, resolved.solution);
           } else {
             continue;
           }
@@ -172,6 +181,30 @@ const validateVariantParity = (bundle: TopicBundle): GateFailure[] => {
   return failures;
 };
 
+const validateFlashcards = async (slug: string): Promise<GateFailure[]> => {
+  const flashcardsDir = join(TOPICS_DIR, slug, 'flashcards');
+  if (!existsSync(flashcardsDir)) {
+    return [];
+  }
+  const failures: GateFailure[] = [];
+  const entries = await readdir(flashcardsDir, { withFileTypes: true });
+  const deckFiles = entries
+    .filter((entry) => entry.isFile() && /\.ya?ml$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+  for (const filename of deckFiles) {
+    try {
+      parseFlashcardDeck(slug, `flashcards/${filename}`, await readFile(join(flashcardsDir, filename), 'utf-8'));
+    } catch (error) {
+      failures.push({
+        scope: `flashcards/${filename}`,
+        reason: error instanceof TopicLoadError ? error.message : String(error),
+      });
+    }
+  }
+  return failures;
+};
+
 const main = async (): Promise<number> => {
   if (!existsSync(TOPICS_DIR)) {
     console.log('No topics/ directory yet. Nothing to validate.');
@@ -195,13 +228,14 @@ const main = async (): Promise<number> => {
       const failures = [
         ...validateVariantParity(bundle),
         ...validateStaticChecks(bundle),
+        ...(await validateFlashcards(slug)),
         ...(await validateGoldSolutions(bundle, { sql, python })),
       ];
       if (failures.length === 0) {
         console.log(`OK  ${slug}`);
       } else {
         totalFailures += 1;
-        console.error(`FAIL ${slug} — ${failures.length} gold solution failure(s)`);
+        console.error(`FAIL ${slug} — ${failures.length} validation failure(s)`);
         console.error(formatFailures(failures));
       }
     } catch (error) {

@@ -61,6 +61,17 @@ const fillInBlanks: Exercise = {
   blanks: { 1: { accept: ['y'] } },
 };
 
+const gitChallenge: Exercise = {
+  id: 'g1',
+  concept: 'basics',
+  difficulty: 1,
+  prompt: 'Commit the file',
+  type: 'git-challenge',
+  setup: { files: { 'a.txt': 'x\n' }, commands: ['git init'] },
+  goal: [{ kind: 'commit-count', ref: 'HEAD', equals: 1 }],
+  solution: ['git add a.txt', 'git commit -m "init"'],
+};
+
 describe('runExercise', () => {
   it('rejects a non-array answer for theory-quiz', async () => {
     expect((await runExercise(theoryQuiz, 'a')).ok).toBe(false);
@@ -93,5 +104,15 @@ describe('runExercise', () => {
       javascript: inlineJavascriptRuntime,
     });
     expect(result.ok).toBe(true);
+  });
+
+  it('runs a git-challenge from an array of commands', async () => {
+    const result = await runExercise(gitChallenge, ['git add a.txt', 'git commit -m "init"']);
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a git-challenge answer that is neither string nor string[]', async () => {
+    const result = await runExercise(gitChallenge, 42);
+    expect(result.ok).toBe(false);
   });
 });

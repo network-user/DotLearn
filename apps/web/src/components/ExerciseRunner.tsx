@@ -7,6 +7,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { ExerciseCard } from '@/components/sandbox/ExerciseCard';
 
 import { FillInBlanksRunner } from './FillInBlanksRunner';
+import { GitChallengeRunner } from './GitChallengeRunner';
 import { PredictOutputRunner } from './PredictOutputRunner';
 import { PythonFunctionRunner } from './PythonFunctionRunner';
 import { SqlExerciseRunner } from './SqlExerciseRunner';
@@ -39,6 +40,9 @@ const RunnerDispatch = ({ topicSlug, exercise }: ExerciseRunnerProps) => {
   }
   if (exercise.type === 'python-function') {
     return <PythonFunctionRunner topicSlug={topicSlug} exercise={exercise} />;
+  }
+  if (exercise.type === 'git-challenge') {
+    return <GitChallengeRunner topicSlug={topicSlug} exercise={exercise} />;
   }
   return (
     <UnknownRunner type={exercise.type} difficulty={exercise.difficulty} prompt={exercise.prompt} />

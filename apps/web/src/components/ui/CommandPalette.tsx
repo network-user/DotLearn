@@ -12,6 +12,7 @@ import {
   Database,
   FileText,
   FlaskConical,
+  GitBranch,
   Hash,
   Inbox,
   Languages,
@@ -78,6 +79,7 @@ const runtimeIcon = (runtime: string) => {
   if (runtime === 'sql.js') return <Database size={14} />;
   if (runtime === 'pyodide') return <FlaskConical size={14} />;
   if (runtime === 'javascript') return <Code2 size={14} />;
+  if (runtime === 'git') return <GitBranch size={14} />;
   return <FileText size={14} />;
 };
 

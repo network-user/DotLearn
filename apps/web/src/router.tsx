@@ -53,6 +53,11 @@ const FlashcardReviewPage = lazy(() =>
     default: module.FlashcardReviewPage,
   })),
 );
+const FlashcardsPracticePage = lazy(() =>
+  import('./pages/FlashcardsPracticePage').then((module) => ({
+    default: module.FlashcardsPracticePage,
+  })),
+);
 const SandboxPage = lazy(() =>
   import('./pages/SandboxPage').then((module) => ({
     default: module.SandboxPage,
@@ -237,10 +242,30 @@ const progressRoute = new Route({
   component: ProgressPage,
 });
 
+export interface FlashcardsPracticeSearch {
+  mode?: 'topics' | 'interview' | 'random' | undefined;
+  category?: string | undefined;
+}
+
 const flashcardsRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/flashcards',
   component: FlashcardsIndexPage,
+});
+
+const flashcardsPracticeRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/flashcards/practice',
+  component: FlashcardsPracticePage,
+  validateSearch: (search: Record<string, unknown>): FlashcardsPracticeSearch => {
+    const mode =
+      search.mode === 'topics' || search.mode === 'interview' || search.mode === 'random'
+        ? search.mode
+        : undefined;
+    const category =
+      typeof search.category === 'string' && search.category.length > 0 ? search.category : undefined;
+    return { mode, category };
+  },
 });
 
 const flashcardReviewRoute = new Route({
@@ -290,6 +315,7 @@ const routeTree = rootRoute.addChildren([
   adminRoute,
   progressRoute,
   flashcardsRoute,
+  flashcardsPracticeRoute,
   flashcardReviewRoute,
   sandboxRoute,
   mapRoute,
