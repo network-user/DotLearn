@@ -58,6 +58,7 @@
 - [ ] Resizable split panel on TopicPage
 - [ ] Flashcard deck UI (driven by first topic that ships flashcards)
 - [ ] i18n for UI strings (the topic contract already supports `language` for content)
+- [ ] Theory text highlights — UI parked; see `docs/TODO-theory-highlights.md` (re-enable via `THEORY_HIGHLIGHTS_ENABLED`)
 
 ## Explicitly NOT in scope for MVP
 

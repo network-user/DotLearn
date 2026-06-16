@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Surface } from '@/components/ui/Surface';
 import { cx } from '@/components/ui/cx';
+import { THEORY_HIGHLIGHTS_ENABLED } from '@/lib/feature-flags';
 import type { BookmarkRecord, ConceptNoteRecord, HighlightRecord } from '@/lib/progress-db';
 import { removeHighlight, saveConceptNote, setBookmark } from '@/lib/progress-db';
 import { useAllHighlights, useAllNotes, useBookmarks } from '@/lib/use-learning';
@@ -14,7 +15,11 @@ import { useVisibleManifests } from '@/lib/use-manifests';
 
 type TabKey = 'highlights' | 'notes' | 'bookmarks';
 
-const TAB_KEYS: readonly TabKey[] = ['highlights', 'notes', 'bookmarks'] as const;
+const ALL_TAB_KEYS: readonly TabKey[] = ['highlights', 'notes', 'bookmarks'] as const;
+const TAB_KEYS: readonly TabKey[] = THEORY_HIGHLIGHTS_ENABLED
+  ? ALL_TAB_KEYS
+  : (['notes', 'bookmarks'] as const);
+const DEFAULT_TAB: TabKey = TAB_KEYS[0] ?? 'notes';
 
 interface ResolvedTitles {
   topicTitle: string;
@@ -48,7 +53,7 @@ export const LibraryPage = () => {
   const bookmarks = useBookmarks();
 
   const manifests = useVisibleManifests();
-  const [tab, setTab] = useState<TabKey>('highlights');
+  const [tab, setTab] = useState<TabKey>(DEFAULT_TAB);
   const [query, setQuery] = useState('');
 
   const resolveTitles = useMemo(() => {
