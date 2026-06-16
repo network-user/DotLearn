@@ -1,0 +1,204 @@
+---
+conceptId: real-world-decorators
+title: Decorators in practice
+estimatedMinutes: 30
+---
+
+All the mechanisms are in place: function as object, closure, `@` syntax, `wraps`, arguments, stacking, classes. Time to apply them to tasks that show up in every other project. Four recipes - caching results, retry on failure, timing, and automatic registration - cover a good share of why decorators exist at all. In this section we'll assemble them from bricks you already know.
+
+By the end of this section you'll have a working set: `memoize`, `retry`, `timed`, and `register` - plus an understanding of which ones already live in the standard library so you don't reinvent the wheel.
+
+## memoize: don't compute the same thing twice
+
+If a function is pure (same input gives same output) and expensive, there's no point recomputing it. `memoize` remembers the result by arguments in a dict and on a repeat serves the cached value.
+
+```python
+import functools
+
+def memoize(func):
+    cache = {}
+    @functools.wraps(func)
+    def wrapper(*args):
+        if args not in cache:
+            cache[args] = func(*args)
+        return cache[args]
+    return wrapper
+```
+
+Dict `cache` lives in the closure - one per function, surviving across calls. The key is tuple `args` (tuples are hashable, so they work as keys). The first call with given arguments computes and stores; later ones read from cache. Test on naive Fibonacci, which without cache calls itself exponentially many times:
+
+```python
+@memoize
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+print(fib(30))
+```
+
+It prints `832040` - almost instantly, because each `fib(k)` is computed once.
+
+<Callout type="tip">In real code, use `functools.lru_cache` (or `functools.cache` in Python 3.9+) instead of hand-rolled `memoize`: same idea, but with size limits, thread safety, and statistics. Hand-written `memoize` is useful to see what's inside.</Callout>
+
+## retry: try again on failure
+
+Network calls and disk access sometimes fail for random reasons, and a second attempt is enough. `retry(times)` retries the call up to `times` times, re-raising the exception only if all attempts are exhausted.
+
+```python
+import functools
+
+def retry(times):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for _ in range(times):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as error:
+                    last_error = error
+            raise last_error
+        return wrapper
+    return decorator
+```
+
+This is a decorator with an argument, so three levels. In a loop of `times` attempts `wrapper` tries to return a result; on exception it remembers it and goes to the next round. If there was no success, after the loop it re-raises the last error - so calling code learns about failure instead of getting silent `None`.
+
+<Figure caption="retry loops attempts: success on any iteration returns the result; exhausting attempts re-raises the last error.">
+  <CallStackViz frames={['@retry(3)', 'attempt']} innerLabel="func()" />
+</Figure>
+
+## Try it yourself
+
+Run the code: `flaky` fails on the first two calls and succeeds on the third (a counter in the closure simulates instability). Decorator `retry(3)` gives it exactly three attempts. Change `retry(3)` to `retry(2)` and confirm two attempts aren't enough - the exception breaks through.
+
+<PyDemo
+  title="retry in action"
+  code={`import functools
+
+def retry(times):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for _ in range(times):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as error:
+                    last_error = error
+            raise last_error
+        return wrapper
+    return decorator
+
+attempts = {"n": 0}
+
+@retry(3)
+def flaky():
+    attempts["n"] += 1
+    if attempts["n"] < 3:
+        raise ValueError("ещё не готово")
+    return "успех на попытке " + str(attempts["n"])
+
+print(flaky())`}
+/>
+
+It prints `успех на попытке 3`: the first two attempts raised `ValueError`, the third returned a result. With `retry(2)` the same first two attempts would exhaust the limit and `ValueError` would break through.
+
+## timed: how long did it take
+
+A profiler decorator measures call duration. It doesn't change the result - only prints (or collects) the elapsed time. Here use `time.perf_counter` - monotonic clocks for intervals, not `time.time`, which can jump when system time syncs.
+
+```python
+import functools, time
+
+def timed(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        print(f"{func.__name__}: {elapsed:.6f} с")
+        return result
+    return wrapper
+```
+
+`start` is taken before the call, the difference after - classic "before/after" wrapping from the first decorator section, only with a measurement between. `func.__name__` is readable here precisely because `functools.wraps` is in place: without it every timing would print `wrapper`.
+
+## register: collect handlers in a registry
+
+The last recipe is registration. Instead of a manual handler list, a decorator adds the function to a registry at definition time. Same pattern as with classes in the previous section, but for functions - that's how command routers and web routes are built.
+
+```python
+COMMANDS = {}
+
+def command(name):
+    def decorator(func):
+        COMMANDS[name] = func
+        return func
+    return decorator
+
+@command("hello")
+def say_hello():
+    return "привет"
+
+@command("bye")
+def say_bye():
+    return "пока"
+
+print(COMMANDS["hello"]())
+```
+
+It prints `привет`. `command("hello")` is a factory: it captures the name and returns a decorator that puts the function in the dict under that name and returns the function untouched. Adding a new command now means just writing `@command("...")`, and it lands in the registry by itself.
+
+## When behavior surprises you
+
+Hand-rolled `memoize` with key `args` can't cache calls with keyword arguments and breaks on unhashable arguments (list, dict). That's not an oversight in the example - it's a real boundary of the technique.
+
+```python
+import functools
+
+def memoize(func):
+    cache = {}
+    @functools.wraps(func)
+    def wrapper(*args):
+        if args not in cache:
+            cache[args] = func(*args)
+        return cache[args]
+    return wrapper
+
+@memoize
+def total(items):
+    return sum(items)
+
+print(total([1, 2, 3]))
+```
+
+It crashes with `TypeError: unhashable type: 'list'`: the key became tuple `([1, 2, 3],)`, which contains a list, and a list can't be hashed, so `args not in cache` can't run. That's why `lru_cache` also requires hashable arguments - caching by nature needs a comparable, immutable key.
+
+## Common mistakes
+
+- **`retry` that swallows the error.** If you don't re-raise after exhausting attempts, the call returns `None` and failure goes unnoticed. Save the last error and raise it.
+- **`timed` on `time.time`.** For intervals use `time.perf_counter`; `time.time` is tied to system clocks and can jump. Difference in precision and reliability.
+- **`memoize` without hashability in mind.** Cache by `args` crashes on lists and dicts and doesn't distinguish positional and keyword arguments. For production use `functools.lru_cache` and remember its limits.
+
+<Detail summary="What's already in the standard library">
+
+Before writing a decorator, look in `functools`. There's already `lru_cache`/`cache` (memoization with limits and stats via `cache_info()`), `cached_property` (lazy cached property), `total_ordering` (fill in comparison operators), `singledispatch` (dispatch by type of first argument), and `partial` (partial application). For retries with exponential backoff and jitter there are mature third-party libraries like `tenacity`. Hand-written versions are good for learning and when you need exactly one small tweak; otherwise reuse what's proven.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "memoize caches the result by arguments in a closure dict; the key is tuple args, so arguments must be hashable.",
+    "In real code use functools.lru_cache / functools.cache instead of hand-rolled memoize - same idea with limits, thread safety, and statistics.",
+    "retry(times) is a decorator with an argument (three levels): retries the call in a loop and re-raises the last error if all attempts fail.",
+    "timed measures the interval via time.perf_counter (monotonic clocks), not time.time, and returns the function result unchanged.",
+    "register/command adds a function to a registry at definition time - how command routers and web routes are built without a manual list.",
+    "Caching by nature needs a hashable key: memoize and lru_cache crash on lists and dicts in arguments.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - functools.lru_cache](https://docs.python.org/3/library/functools.html#functools.lru_cache)
+- [Python documentation - time.perf_counter](https://docs.python.org/3/library/time.html#time.perf_counter)
+- [Python documentation - functools.singledispatch](https://docs.python.org/3/library/functools.html#functools.singledispatch)

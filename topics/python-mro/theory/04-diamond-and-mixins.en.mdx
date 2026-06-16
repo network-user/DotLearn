@@ -1,0 +1,197 @@
+---
+conceptId: diamond-and-mixins
+title: Diamond and mixins
+estimatedMinutes: 45
+---
+
+# Diamond, mixins, and why base order is everything
+
+Diamond inheritance is the configuration C3 was invented for. Four classes form a diamond: a common ancestor on top, two independent classes on the sides, and a descendant inheriting both. Naive languages stumble on this figure - either calling the common ancestor twice or forcing the programmer to resolve the conflict manually. Python traverses the diamond exactly once in a predictable order - but only if you understand how MRO assembles classes and why the order of base classes in the declaration is not cosmetic but part of the contract.
+
+By the end of this section you will read a diamond by its MRO, design mixins so they compose without surprises, and recognize when Python refuses to build MRO and raises `TypeError`.
+
+## Diamond: one ancestor, two paths, one pass
+
+The classic diamond looks like this: `Base` on top, `Left` and `Right` inherit `Base`, and `Both` inherits both.
+
+```python
+class Base:
+    def __init__(self):
+        print("base")
+
+class Left(Base):
+    def __init__(self):
+        print("left")
+        super().__init__()
+
+class Right(Base):
+    def __init__(self):
+        print("right")
+        super().__init__()
+
+class Both(Left, Right):
+    def __init__(self):
+        print("both")
+        super().__init__()
+
+Both()
+print([c.__name__ for c in Both.__mro__])
+```
+
+MRO of `Both` is `[Both, Left, Right, Base, object]`. Because each class calls `super().__init__()`, calling `Both()` walks the list exactly once: prints `both`, `left`, `right`, `base`. The main point: `Base` ran **once**, although two paths lead to it - through `Left` and through `Right`. That is what breaks in naive schemes: there `Base.__init__` would run twice.
+
+<Figure caption="Diamond: two paths from Both to Base, but C3 places Base after both descendants, so super() passes through it once.">
+  <Sketch viewBox="0 0 420 180" title="Diamond hierarchy">
+    <SketchBox x={165} y={8} width={90} height={36} accent />
+    <SketchLabel x={210} y={30} mono accent>Base</SketchLabel>
+    <SketchBox x={40} y={72} width={90} height={36} />
+    <SketchLabel x={85} y={94} mono>Left</SketchLabel>
+    <SketchBox x={290} y={72} width={90} height={36} />
+    <SketchLabel x={335} y={94} mono>Right</SketchLabel>
+    <SketchBox x={165} y={136} width={90} height={36} />
+    <SketchLabel x={210} y={158} mono>Both</SketchLabel>
+    <SketchArrow from={[195, 136]} to={[105, 110]} />
+    <SketchArrow from={[225, 136]} to={[315, 110]} />
+    <SketchArrow from={[105, 72]} to={[180, 46]} />
+    <SketchArrow from={[315, 72]} to={[240, 46]} />
+  </Sketch>
+</Figure>
+
+Why did `Base` not run twice? C3 invariant: an ancestor always stands in MRO **after** all its descendants. `Base` has two descendants - `Left` and `Right` - so it is delayed until both are in the list. When the `super()` flow reaches `Base`, it is the last substantive class before `object`, and it can be traversed only once.
+
+## Why naive traversal breaks the diamond
+
+If Python walked the hierarchy by simple depth-first search left to right, MRO of `Both` would be `[Both, Left, Base, Right, object]` - `Base` would sit immediately after `Left`, **before** `Right`. Two consequences, both bad.
+
+<Compare
+  leftTitle="Naive DFS"
+  rightTitle="C3"
+  left={<>
+
+`[Both, Left, Base, Right, object]`
+
+`Base` comes before its descendant `Right`. `super()` from `Left` goes straight to `Base`, skipping `Right` - the cooperative chain breaks, and the common ancestor may run twice.
+
+  </>}
+  right={<>
+
+`[Both, Left, Right, Base, object]`
+
+`Base` stands after both descendants. `super()` from `Left` goes to `Right`, then to `Base`. The ancestor is traversed exactly once.
+
+  </>}
+  verdict="C3 preserves 'descendant before ancestor' and monotonicity - naive DFS violates both."
+/>
+
+First, `Base` would appear before `Right`, its descendant - violating "descendant before ancestor." Second, the cooperative chain would break: `super()` from `Left` would go straight to `Base`, and `Right` would never run. C3 places `Base` after both, and the baton passes through `Right`. The detailed algorithm was in the C3 section - here the consequence matters: a predictable diamond is possible only with correct linearization.
+
+## Mixins: small classes adding one capability
+
+A mixin is a class not meant for standalone use. It adds one narrow capability to the class it is mixed into and relies on cooperative `super()` to slot into someone else's method chain. Mixins are the main practical reason Python uses multiple inheritance at all.
+
+```python
+class LoggingMixin:
+    def save(self):
+        print(f"saving {self.__class__.__name__}")
+        return super().save()
+
+class TimestampMixin:
+    def save(self):
+        self.updated = True
+        return super().save()
+
+class Model:
+    def save(self):
+        return "stored"
+
+class User(LoggingMixin, TimestampMixin, Model):
+    pass
+
+u = User()
+print(u.save(), u.updated)
+```
+
+MRO of `User` is `[User, LoggingMixin, TimestampMixin, Model, object]`. Calling `u.save()` runs logging, then timestamping, then real save in `Model`. Prints `stored True` (plus a log line). Each mixin did its narrow part and passed the baton via `super()`.
+
+<Callout type="tip" title="Mixin order rule">
+Put mixins **to the left** of the base class: `class User(Mixin1, Mixin2, Base)`. Then in MRO they appear before the base, can intercept the call, add behavior, and forward via super() to the base. Put a mixin to the right of the base - the base intercepts first and the mixin never runs.
+</Callout>
+
+## Try order yourself
+
+Run the diamond. Then change `class User(LoggingMixin, TimestampMixin, Model)` to `class User(Model, LoggingMixin, TimestampMixin)` and see that `Model.save()` no longer calls `super()` (as the base it need not) - and both mixins silently never run. Order of bases is not style but who intercepts whom.
+
+<PyDemo
+  title="Mixins and base order"
+  code={`class LoggingMixin:
+    def save(self):
+        print("log:", self.__class__.__name__)
+        return super().save()
+
+class TimestampMixin:
+    def save(self):
+        self.updated = True
+        return super().save()
+
+class Model:
+    def save(self):
+        return "stored"
+
+class User(LoggingMixin, TimestampMixin, Model):
+    pass
+
+u = User()
+print(u.save(), u.updated)
+print([c.__name__ for c in User.__mro__])`}
+/>
+
+## When Python refuses to build MRO
+
+Not every combination of bases is linearizable. If two base classes impose incompatible order requirements, C3 finds no good candidate and Python raises `TypeError` at class declaration time - not at call time.
+
+```python
+class A:
+    pass
+
+class B(A):
+    pass
+
+class X(A, B):
+    pass
+```
+
+This fails with `TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B`. Reason: `B` inherits `A`, so `B` must stand in MRO **before** `A` (descendant before ancestor). But in `X(A, B)` you listed `A` before `B`, demanding the opposite. The requirements conflict; no linearization exists. Fix by reordering: `class X(B, A)` correctly gives `[X, B, A, object]`.
+
+<Callout type="warning">
+MRO errors happen at `class ...:` time, not at use time. If code fails "on import" mentioning consistent method resolution order - look for a base class listed before its own descendant.
+</Callout>
+
+## Typical mistakes
+
+- **Putting a mixin to the right of the base class.** Then the base is earlier in MRO, intercepts the call, and (if it does not call super) breaks the chain - the mixin never runs. Mixins go on the left.
+- **Expecting the diamond's common ancestor to run once "by itself".** That is true only if all intermediate classes call `super()`. Hard-coding `Base.__init__(self)` bypassing MRO in a diamond leads to `Base` running twice.
+- **Trying to "fix" MRO TypeError by repeating a class in bases.** Listing a class and its descendant together in any order that violates "descendant before ancestor" is useless - fix the order, do not duplicate.
+- **Making a mixin depend on a specific base.** A good mixin does not know what it is mixed into and talks to the rest of the chain only via `super()` and a documented method contract.
+
+<Detail summary="How to check linearizability without running the whole module">
+
+If you doubt a base combination is valid, you need not wait for import. Create a class dynamically with `type("X", (A, B), {})` inside a guarded `try/except TypeError` - that localizes an MRO problem without loading the rest of the module. For an existing class, `Cls.__mro__` (tuple) or `Cls.mro()` (list) always shows the final order any `super()` will follow.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A diamond is a common ancestor, two independent classes, and a common descendant; C3 traverses it once via 'ancestor after all descendants'.",
+    "Naive DFS would put the ancestor before the second descendant - double ancestor calls and a broken cooperative chain.",
+    "A mixin adds one capability and slots in via super(); place mixins to the left of the base class.",
+    "Base class order determines who intercepts first - it is part of the contract, not formatting.",
+    "If base order requirements conflict, Python raises TypeError about MRO at class declaration time.",
+    "Cls.__mro__ shows the final order - the first thing to check when debugging multiple inheritance.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - MRO (C3)](https://docs.python.org/3/howto/mro.html)
+- [Raymond Hettinger - Super considered super!](https://rhettinger.wordpress.com/2011/05/26/super-considered-super/)
+- [Python Glossary - method resolution order](https://docs.python.org/3/glossary.html#term-method-resolution-order)

@@ -1,0 +1,213 @@
+exercises:
+  - id: side-what-is-001
+    concept: import-side-effects
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Which of the following is an import side effect?"
+    choices:
+      - id: a
+        text: "Printing a line with `print(...)` at module level."
+      - id: b
+        text: "Defining a function `def worker(): ...`."
+      - id: c
+        text: "Defining a class `class Job: ...`."
+      - id: d
+        text: "Declaring a constant `MAX = 100`."
+    correct: [a]
+    explanation: "A side effect is an observable action in the outside world (printing, writing, starting a process). Definitions only create objects and «do nothing» by themselves."
+    variants:
+      - prompt: "Which of these actions is NOT an import side effect?"
+        choices:
+          - id: a
+            text: "Defining a function `def record(event): ...`."
+          - id: b
+            text: "Opening a file `open(\"audit.log\", \"a\")` at module level."
+          - id: c
+            text: "A network request at module level."
+          - id: d
+            text: "Starting a process with `Process(...).start()` at module level."
+        correct: [a]
+        explanation: "`def` creates a function object but does not call it — no observable action. The other three run on import and change the outside world."
+      - prompt: "Why is `open(\"audit.log\", \"a\")` at module level an import side effect?"
+        choices:
+          - id: a
+            text: "The file opens already at `import`, even if no module function was called."
+          - id: b
+            text: "Because `open` always raises on import."
+          - id: c
+            text: "Because Python forbids `open` outside functions."
+          - id: d
+            text: "It is not a side effect: `open` runs only when you run the file."
+        correct: [a]
+        explanation: "Module level runs on import, so `open` runs at `import` and leaves an open descriptor — an observable action."
+
+  - id: side-mp-reimport-001
+    concept: import-side-effects
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Why does `multiprocessing` with the `spawn` start method re-import your main module in a child process?"
+    choices:
+      - id: a
+        text: "The child process starts from scratch and imports the module to get the worker function code."
+      - id: b
+        text: "To re-read command-line arguments for each process."
+      - id: c
+        text: "To check whether the file on disk changed between runs."
+      - id: d
+        text: "That is an implementation accident; import usually does not repeat."
+    correct: [a]
+    explanation: "`spawn` starts a clean interpreter. To reach the worker function the child process imports the main module again — and executes its body top to bottom again."
+    variants:
+      - prompt: "Why did `multiprocessing` code on old Linux often «work» without a guard?"
+        choices:
+          - id: a
+            text: "The `fork` method copied parent memory and did not re-import the main module."
+          - id: b
+            text: "Linux automatically added a guard for the programmer."
+          - id: c
+            text: "On Linux `multiprocessing` does not start child processes at all."
+          - id: d
+            text: "Because the guard is only needed in the Windows Python build."
+        correct: [a]
+        explanation: "`fork` gives the child a copy of parent memory, so the main module is not re-imported. The same code breaks with `spawn` — platform luck, not correctness."
+      - prompt: "What happens to unguarded line `Process(target=worker).start()` at module level when `multiprocessing` with `spawn` re-imports this module in a child process?"
+        choices:
+          - id: a
+            text: "It runs again and creates another process — that is how a process flood starts."
+          - id: b
+            text: "It is skipped: module level does not run on import."
+          - id: c
+            text: "It runs but `multiprocessing` silently forbids creating new processes."
+          - id: d
+            text: "The child runs only function `worker` without touching the module body."
+        correct: [a]
+        explanation: "Re-import executes the module body top to bottom, so unguarded `start()` fires in each child and spawns more children. The guard hides that line and breaks the chain reaction."
+
+  - id: side-predict-spawn-001
+    concept: import-side-effects
+    type: predict-output
+    difficulty: 3
+    prompt: "We model re-import. Function `simulate` repeats guard logic. What does the program print?"
+    snippet: |
+      def spawn():
+          return "spawning process"
+
+      def simulate(current_name):
+          if current_name == "__main__":
+              return spawn()
+          return "import: skipped"
+
+      print(simulate("__main__"))
+      print(simulate("worker"))
+    expected:
+      kind: stdout
+      value: |-
+        spawning process
+        import: skipped
+    hints:
+      - "The first call passes the main module name, the second a name as on import. Which `if` branch does each take?"
+      - "With `\"__main__\"` the run branch returns `\"spawning process\"`; with `\"worker\"` the import branch."
+    variants:
+      - snippet: |
+          def simulate(current_name):
+              if current_name == "__main__":
+                  return "run"
+              return "skipped"
+
+          for name in ["__main__", "child", "child"]:
+              print(simulate(name))
+        expected:
+          kind: stdout
+          value: |-
+            run
+            skipped
+            skipped
+
+  - id: side-blanks-mp-001
+    concept: import-side-effects
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Protect process startup with a guard so re-import does not spawn a flood of processes."
+    template: |
+      from multiprocessing import Process
+
+      def worker():
+          print("working")
+
+      if __name__ == {{value}}:
+          Process(target=worker).start()
+    blanks:
+      value:
+        accept: ["\"__main__\"", "'__main__'"]
+    hints:
+      - "Under the guard you hide the action — starting a process. Compare with the same fixed value as always."
+    variants:
+      - template: |
+          from multiprocessing import Process
+
+          def worker():
+              print("working")
+
+          if {{var}} == "__main__":
+              Process(target=worker).start()
+        blanks:
+          var:
+            accept: ["__name__"]
+      - template: |
+          import multiprocessing as mp
+          print(mp.{{func}}())
+        blanks:
+          func:
+            accept: ["get_start_method"]
+
+  - id: side-move-effect-001
+    concept: import-side-effects
+    type: python-function
+    difficulty: 3
+    prompt: "Complete `run_if_main(name)`: return `\"processes started\"` only if `name` equals `\"__main__\"`; for any other name (as in a child process on import) return `\"skipped\"`. That is how the guard breaks the chain reaction."
+    starter: |
+      def run_if_main(name):
+          ...
+    cases:
+      - call: "run_if_main('__main__')"
+        expect: "processes started"
+      - call: "run_if_main('__mp_main__')"
+        expect: "skipped"
+      - call: "run_if_main('worker_module')"
+        expect: "skipped"
+    hints:
+      - "Startup should happen in exactly one case — when the module is main. All other names (including internal ones) mean import."
+      - "One comparison `name == \"__main__\"` splits the two outcomes: run and skip."
+    solution: |
+      def run_if_main(name):
+          if name == "__main__":
+              return "processes started"
+          return "skipped"
+
+  - id: side-cascade-001
+    concept: import-side-effects
+    type: python-function
+    difficulty: 5
+    prompt: "Model the chain reaction without a guard. Complete `count_spawns(depth)`: the main process at level 0 spawns `2` children; each child, on re-«importing» the unguarded module, spawns `2` again. Return the total number of CREATED processes through depth `depth` inclusive (the main process is not counted as created). For `depth` levels without a guard this is a flood."
+    starter: |
+      def count_spawns(depth):
+          ...
+    cases:
+      - call: "count_spawns(0)"
+        expect: 0
+      - call: "count_spawns(1)"
+        expect: 2
+      - call: "count_spawns(2)"
+        expect: 6
+      - call: "count_spawns(3)"
+        expect: 14
+    hints:
+      - "At each next level there are twice as many processes as the previous. Count how many new processes appear at each level from 1 to depth."
+      - "At level `k`, `2**k` processes are created. The sum over levels 1 through depth is a geometric series."
+      - "The sum `2 + 4 + ... + 2**depth` equals `2**(depth+1) - 2`. At depth=0 zero processes are created."
+    solution: |
+      def count_spawns(depth):
+          total = 0
+          for level in range(1, depth + 1):
+              total += 2 ** level
+          return total

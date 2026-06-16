@@ -1,0 +1,125 @@
+---
+conceptId: loss-functions
+title: Loss functions
+estimatedMinutes: 30
+---
+
+# One number that says how wrong the network was
+
+The network produced an answer. Is it good or bad? Until you turn "how far the answer is from correct" into one concrete number, there is nothing to train on: the optimizer needs a quantity it can decrease. That number is **loss** — a measure of gap between the network's prediction and the true answer. Lower loss means a better job. In this section you unpack the two main loss functions — MSE for regression and cross-entropy for classification — and understand why different tasks need different error measures.
+
+## Loss is the compass of training
+
+Training a network is searching for weights where loss is minimal. The loss function compares prediction `y_pred` to true value `y_true` and returns a number: zero means a perfect hit, a large value means a gross error. All training (gradient descent from the next section) boils down to rolling weights in the direction where this number falls. Choosing a loss function is not a detail: it defines what the network counts as "error" and where it will move.
+
+<Figure caption="The loss function compresses all predictions and answers into one number — distance from correct. Training moves weights so that number falls.">
+  <Sketch viewBox="0 0 420 170" title="Loss function">
+    <SketchBox x={20} y={30} width={120} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={57} mono>y_pred</SketchLabel>
+    <SketchBox x={20} y={95} width={120} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={122} mono>y_true</SketchLabel>
+    <SketchBox x={200} y={62} width={110} height={46} accent />
+    <SketchLabel x={255} y={90} mono accent>loss</SketchLabel>
+    <SketchArrow from={[140, 52]} to={[200, 78]} accent />
+    <SketchArrow from={[140, 118]} to={[200, 92]} accent />
+    <SketchBox x={355} y={62} width={45} height={46} />
+    <SketchLabel x={377} y={90} mono>number</SketchLabel>
+    <SketchArrow from={[310, 85]} to={[355, 85]} />
+  </Sketch>
+</Figure>
+
+## MSE — mean squared error for regression
+
+When the network predicts a number (price, temperature, coordinate), a natural error measure is how far the prediction is from truth. **MSE** (mean squared error) takes the difference, squares it, and averages over all examples:
+
+```
+MSE = mean( (y_pred - y_true)^2 )
+```
+
+Squaring does two things: removes the sign (missing high and missing low are equally bad) and punishes large errors harder — a miss of 10 contributes 100, a miss of 1 only 1. MSE especially dislikes outliers.
+
+```python
+def mse(predictions, targets):
+    total = 0.0
+    for p, t in zip(predictions, targets):
+        total += (p - t) ** 2
+    return total / len(predictions)
+
+print(mse([2.0, 3.0], [2.0, 5.0]))
+```
+
+The first example is exact (contribution 0), the second misses by 2 (contribution 4). The mean is `2.0`. If both were exact, MSE would be 0.
+
+Averaging here is not cosmetic. Without it loss would depend on batch size: 10 examples would give ten times the sum of 1 example at the same average error, and runs would not be comparable. Dividing by the number of examples makes loss comparable across batches of different lengths — hence "mean" in the name. Sometimes RMSE (the square root of MSE) is used to return error to original units (dollars, degrees): it does not change the optimum but makes the number interpretable.
+
+## Cross-entropy — loss for classification
+
+For classification MSE fits poorly: the network outputs class probabilities (via softmax), and what matters is not "distance" but how confidently it named the right class. **Cross-entropy** looks at the probability assigned to the true class and punishes lack of confidence:
+
+```
+loss = -log(p_correct_class)
+```
+
+The logic is simple: if the network gave probability 1.0 to the right class, loss is `-log(1) = 0` — perfect. If it gave 0.5, loss is `-log(0.5) ≈ 0.69`. If it gave nearly 0 (confidently wrong), `-log` shoots up — a harsh penalty for confident mistakes.
+
+```python
+from math import log
+
+def cross_entropy(prob_true_class):
+    return -log(prob_true_class)
+
+print(round(cross_entropy(1.0), 4))
+print(round(cross_entropy(0.5), 4))
+print(round(cross_entropy(0.1), 4))
+```
+
+This prints `0.0`, `0.6931`, `2.3026`: the lower the probability on the correct class, the worse the loss. That sharpness is what teaches a classifier to be confident in the right answer.
+
+## Try it yourself
+
+Run the code — it computes cross-entropy for three confidence levels. Substitute a probability for the correct class close to zero (for example, `0.01`) and watch loss spike; then use `0.99` and confirm it nearly vanishes. That asymmetry — steep penalty near zero, gentle near one — is the essence of cross-entropy.
+
+<PyDemo
+  title="Cross-entropy punishes lack of confidence in the correct class"
+  code={`from math import log
+
+def cross_entropy(prob_true_class):
+    return -log(prob_true_class)
+
+for p in [1.0, 0.9, 0.5, 0.1]:
+    print(p, round(cross_entropy(p), 4))`}
+/>
+
+## When behavior surprises you
+
+Cross-entropy is undefined at probability exactly 0: `log(0)` is negative infinity. If softmax due to rounding outputs exactly 0 for the correct class, loss becomes infinite and training breaks. In practice probability is clamped to a small corridor (for example, not below `1e-7`) so the logarithm stays finite. Libraries bake this into stable implementations.
+
+A second surprise is using MSE for classification. It can be computed, but training goes sluggishly: MSE weakly punishes confident mistakes compared to cross-entropy, and its gradient is "flat" for this task. Simple rule: regression — MSE, classification — cross-entropy.
+
+## Common mistakes
+
+- **Swapping argument order in the difference.** In `(y_pred - y_true)^2` the sign does not matter because of the square, so MSE forgives swapping. But cross-entropy uses the probability of the **correct** class — swapping with the predicted class's probability computes the wrong loss.
+- **Forgetting averaging in MSE.** Returning the sum of squares instead of the mean makes loss depend on batch size and runs cannot be compared. MSE is a mean, not a sum.
+- **Cross-entropy for regression or MSE for classification.** Each measure is tuned to its answer type; swapping slows or breaks training.
+
+<Detail summary="Where the minus-logarithm in cross-entropy comes from">
+
+Cross-entropy comes from information theory: `-log(p)` is the "surprise" of an event with probability `p`. A confidently predicted event that happens (p near 1) barely surprises, loss is small. An event the network thought unlikely but that happened (p near 0) surprises a lot, loss is large. Minimizing cross-entropy teaches the network not to be surprised by correct answers — to assign them high probability. For several classes the full formula sums `-y_true * log(p)` over all classes, but with one-hot labels (true class marked 1, rest 0) only `-log(p_correct_class)` remains.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A loss function compresses prediction and true answer into one number: zero is perfect, larger is worse; training minimizes this number.",
+    "MSE = mean of squared differences; squaring removes sign and punishes large errors harder — the measure for regression.",
+    "Cross-entropy = -log(probability of correct class): harsh on confident mistakes, gentle on confident hits.",
+    "Regression — MSE, classification — cross-entropy; swapping measures slows or breaks training.",
+    "Cross-entropy is undefined at probability 0, so in practice probability is clamped to a small corridor.",
+  ]}
+/>
+
+## References
+
+- [Wikipedia - Mean squared error](https://en.wikipedia.org/wiki/Mean_squared_error)
+- [Wikipedia - Cross-entropy](https://en.wikipedia.org/wiki/Cross-entropy)
+- [CS231n - Loss functions](https://cs231n.github.io/linear-classify/#loss)

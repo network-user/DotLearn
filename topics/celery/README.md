@@ -14,3 +14,24 @@
 Нет.
 
 Generated via `lesson-forge`.
+
+---
+
+## English
+
+# Background tasks with Celery
+
+A topic for Python backend developers who hit slow HTTP responses and want to move heavy work (sending email, processing files, calling external APIs) out of the request cycle. We cover why background task queues exist, how Celery is built (broker, worker, result backend), how to survive failures with retries and idempotency, and how to compose tasks into chains and groups without stepping on common pitfalls.
+
+## Concepts
+
+1. Why background task queues
+2. Celery architecture: broker, worker, backend
+3. Retries, errors, and task idempotency
+4. Patterns (chains, groups) and pitfalls
+
+## Prerequisites
+
+None.
+
+Generated via `lesson-forge`.

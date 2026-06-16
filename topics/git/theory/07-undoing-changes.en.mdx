@@ -1,0 +1,129 @@
+---
+conceptId: undoing-changes
+title: Undoing changes
+estimatedMinutes: 32
+---
+
+# "Undo" in Git means four different questions
+
+A beginner looks for one "undo" button. Git has none, and that is for the best: "undo" can mean very different things. Discard an edit in a file before commit? Remove a file from stage? Move a branch back one commit? Create a new commit that reverses an old one without rewriting history? Four operations, four commands — confusing them means losing work someday.
+
+By the end of this section you will confidently choose between `git restore`, the three modes of `git reset`, and `git revert`, knowing for each what it touches — working tree, index, or history — and which are safe versus irreversible.
+
+## Map: what each command touches
+
+All undo operations fit one table: which of the three areas — working tree, index, history — each command changes. Keep this map in mind and the right command becomes obvious.
+
+<Figure caption="Each undo command touches its own set of areas. reset --hard is the only one that rewrites all three at once and loses uncommitted edits.">
+  <Compare
+    leftTitle="Safe (do not lose commits)"
+    rightTitle="Dangerous (may lose edits)"
+    left={<ul><li><b>git restore file</b> — return file to version from index/commit</li><li><b>git restore --staged</b> — remove from stage</li><li><b>git revert</b> — new commit undoing an old one</li><li><b>git reset --soft</b> — move branch, keep everything in index</li></ul>}
+    right={<ul><li><b>git reset --hard</b> — rewrite index <i>and</i> working tree, discarding uncommitted work</li></ul>}
+    verdict="reset --hard is the only truly destructive one: uncommitted edits vanish without trace."
+  />
+</Figure>
+
+## restore: undo at file level
+
+`git restore <file>` answers "discard my edits in this file, return it to how it was". It takes the file from the index (or last commit) and overwrites the working tree. Uncommitted changes to that file are lost — that is the point.
+
+```bash
+git restore config.txt
+```
+
+If the file was only modified (not staged), `git restore` returns it to the last commit version. The separate form `git restore --staged <file>`, which you saw in [[first-commit]], does not touch file contents — it only removes the file from stage. Two forms, two tasks: one rolls back file text, the other undoes staging.
+
+## reset: moving a branch and three depths
+
+`git reset <commit>` moves the current branch pointer to another commit. Most often used to "undo the last commit" — move the branch to `HEAD~1`. What happens to changes from the undone commit depends on the mode.
+
+<Figure caption="Three reset modes differ in depth: --soft moves only the branch, --mixed also resets the index, --hard also rewrites the working tree.">
+  <PipelineFigure
+    title="Depth of three reset modes"
+    stages={[
+      { label: "--soft", note: "moves branch; edits in index" },
+      { label: "--mixed", note: "+ resets index; edits in tree", active: true },
+      { label: "--hard", note: "+ rewrites tree; edits lost" },
+    ]}
+  />
+</Figure>
+
+**`--soft`** moves only the branch pointer. Contents of the undone commit stay in the index, ready for a new commit. Ideal for "rebuild the last commit": roll back, adjust contents, commit again.
+
+**`--mixed`** (default) moves the branch *and* resets the index. Changes from the undone commit remain in the working tree but are no longer on stage — you must add them again. Useful when you want to rearrange edits across commits.
+
+**`--hard`** moves the branch, resets the index *and* rewrites the working tree to match the target commit. All changes from the undone commit and any uncommitted edits **vanish**. The only mode that truly loses data.
+
+```bash
+git reset --soft HEAD~1
+git reset --mixed HEAD~1
+git reset --hard HEAD~1
+```
+
+Experiment. The repository has two commits; the second added a line to `a.txt`. Run `git reset --soft HEAD~1` and `git status` — one commit again, but the edit waits on stage. The check goal is one commit in history and `a.txt` staged.
+
+<GitTerminal
+  initial={{
+    files: { 'a.txt': 'версия 1\n' },
+    commands: [
+      'git init',
+      'git add a.txt',
+      'git commit -m "first"',
+      'echo версия 2 > a.txt',
+      'git add a.txt',
+      'git commit -m "second"',
+    ],
+  }}
+  goal={[
+    { kind: 'commit-count', equals: 1 },
+    { kind: 'staged', path: 'a.txt' },
+  ]}
+/>
+
+## revert: undo without rewriting history
+
+`git reset` rewrites history — moves the branch and the old commit drops off it. That is dangerous for commits you already shared: others' repositories still reference the "undone" commit. For public history there is a safe alternative — `git revert`.
+
+`git revert <commit>` does not delete a commit. It creates a **new** commit with reverse changes — as if you manually rolled back those edits and recorded the rollback. History grows forward, nothing is rewritten, and everyone with the repository gets the new commit calmly.
+
+```bash
+git revert HEAD
+```
+
+After that history has one more commit: the original "bad" commit remains, followed by a "Revert ..." commit restoring state. That is the standard way to undo what already reached a shared branch.
+
+## When behavior surprises you
+
+The main pain source is `git reset --hard`. It asks no confirmation and erases uncommitted edits permanently: they are in no commit, so nothing to restore. The habit: do not run `--hard` until `git status` confirms nothing valuable remains in the working tree. Commits undone this way can be found for a while via `reflog` ([[tags-reflog]]), but uncommitted edits cannot.
+
+<Callout type="warning">git reset --hard erases uncommitted changes with no recovery. Before running it check git status: everything valuable should be in a commit or outside the reset zone.</Callout>
+
+## Common mistakes
+
+- **Using `git reset --hard` when `--soft` or `restore` would suffice.** Wanted to rebuild the last commit — use `--soft`, it keeps edits. `--hard` is rare and deliberate only.
+- **`reset` on already published commits.** If a commit reached a shared branch, `reset` desynchronizes your history from others'. For shared history undo with `revert`.
+- **Confusing `git restore file` and `git restore --staged file`.** The first discards file edits; the second only removes from stage without touching contents. Mix them up and you either lose an edit or miss the effect you wanted.
+
+<Detail summary="Why --mixed is the default mode">
+
+When you write `git reset HEAD~1` with no flag, Git applies `--mixed`. That is a reasonable middle: the branch rolls back, changes from the undone commit stay in the working tree (you do not lose them) but leave the stage so you rebuild the commit deliberately. `--soft` would leave them on stage (good if commit contents were fine); `--hard` would discard them entirely. By default Git picks the least destructive among modes that move the branch while making you rethink commit contents.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Undo in Git is four operations: restore (file), reset (branch), revert (new undo commit), and restore --staged (unstage).",
+    "git restore file discards uncommitted file edits, returning a version from index or commit.",
+    "git reset moves the branch pointer; mode sets depth: --soft (branch only), --mixed (+ index), --hard (+ working tree).",
+    "reset --soft keeps edits in index (rebuild commit); --mixed in working tree; --hard loses them permanently.",
+    "git revert does not rewrite history: it creates a new commit undoing an old one — safe for published commits.",
+    "reset --hard is the only destructive undo command: uncommitted changes vanish with no recovery.",
+  ]}
+/>
+
+## Links
+
+- [Pro Git - Undoing Things](https://git-scm.com/book/en/v2/Git-Basics-Undoing-Things)
+- [Pro Git - Reset Demystified](https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified)
+- [git revert documentation](https://git-scm.com/docs/git-revert)

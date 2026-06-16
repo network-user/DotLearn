@@ -1,14 +1,22 @@
-# Логирование в Python
+# Logging in Python
 
-Практическое введение в стандартный модуль `logging` для тех, кто пока выводит диагностику через `print`. Тема показывает, зачем нужны уровни и потоки логов, как устроена связка Logger - Handler - Formatter, как работают propagation и иерархия логгеров, и как перейти к структурным логам и конфигурации приложения. Подойдёт начинающим Python-разработчикам и всем, кто пишет backend и хочет видеть, что происходит в коде на проде.
+A practical introduction to the standard `logging` module for developers who still diagnose with `print`. The topic shows why levels and log streams matter, how the Logger - Handler - Formatter trio works, how propagation and the logger hierarchy behave, and how to move to structured logs and application configuration. For beginning Python developers and anyone writing backend code who wants to see what happens in production.
 
-Концепты:
+## Concepts
 
-1. Почему не print: зачем логирование
-2. Logger, Handler, Formatter
-3. Уровни и propagation
-4. Структурные логи и конфигурация
+1. **Why not print: what logging is for**
+2. **Logger, Handler, Formatter**
+3. **Levels and propagation**
+4. **Structured logs and configuration**
 
-Prerequisites: нет.
+## Prerequisites
 
-Generated via `lesson-forge`.
+None.
+
+## Estimated effort
+
+About 3 hours.
+
+## Runtime
+
+`pyodide` - runs entirely in your browser. No setup.

@@ -1,0 +1,149 @@
+---
+conceptId: tokens-validation
+title: JWT, validation, and refresh
+estimatedMinutes: 45
+---
+
+# JWT: a document you verify, not re-query
+
+You got a token — but what is that string and why does the resource server trust it? If every API request made the resource server run to Keycloak and ask "is this token still valid?", you get a bottleneck: one extra network call per request, and the identity provider becomes a single point of failure. JWT solves this differently: the token carries what you need inside and is signed so the resource server checks it *locally*, without calling Keycloak.
+
+That convenience has a price. Because the token is verified offline, it cannot be revoked instantly — it is valid until expiry. So sessions do not live forever and users do not log in every five minutes, there is a pair: access_token (short) and refresh_token (long, for renewal). By the end of this section you will understand JWT structure, the mandatory validation checklist, and why two tokens instead of one.
+
+## Mental model: three parts separated by dots
+
+**JWT** (JSON Web Token) is a string of three dot-separated parts: `header.payload.signature`. The first two are JSON encoded in Base64URL; **anyone can read them**. The third is a signature Keycloak attaches to the first two with its private key.
+
+```text
+eyJhbGciOiJSUzI1Ni…  .  eyJzdWIiOiJhbGljZ…  .  Q1f7kQ…
+     header                   payload              signature
+```
+
+**Header** says which algorithm signed the token (e.g. `RS256`) and which key (`kid`). **Payload** carries claims: who (`sub`), issuer (`iss`), audience (`aud`), expiry (`exp`), plus roles. **Signature** is the result of signing header and payload with Keycloak's private key; you verify it with the public key and cannot forge it without the private key.
+
+<Figure caption="JWT is three dot-separated parts: header and payload are openly readable in Base64URL; signature binds them with a private key and is checked with the public key.">
+  <Sketch viewBox="0 0 460 150" title="JWT structure">
+    <SketchBox x={20} y={40} width={120} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={62} mono>header</SketchLabel>
+    <SketchLabel x={80} y={80} size={11} muted>alg, kid</SketchLabel>
+    <SketchBox x={160} y={40} width={130} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={225} y={62} mono>payload</SketchLabel>
+    <SketchLabel x={225} y={80} size={11} muted>sub, iss, aud, exp</SketchLabel>
+    <SketchBox x={310} y={40} width={130} height={50} accent />
+    <SketchLabel x={375} y={62} mono accent>signature</SketchLabel>
+    <SketchLabel x={375} y={80} size={11} accent>private key</SketchLabel>
+    <SketchLabel x={150} y={68} muted>.</SketchLabel>
+    <SketchLabel x={300} y={68} muted>.</SketchLabel>
+    <SketchLabel x={230} y={120} size={12} muted>readable by all ←→ verified by key</SketchLabel>
+  </Sketch>
+</Figure>
+
+Main takeaway from this picture: **payload is not encrypted, it is signed**. Anyone can read email and roles from an intercepted token. What protects you is the inability to change content — any edit breaks the signature. So JWTs always travel over HTTPS and must not carry what must stay secret.
+
+## Validation: what the resource server must check
+
+Receiving a JWT in header `Authorization: Bearer <token>`, the resource server validates it itself. Minimum mandatory checks:
+
+1. **Signature** — with Keycloak's public key (from `jwks_uri` via discovery). Mismatch — forged or corrupted token.
+2. **`exp`** — not expired. Expired token is rejected.
+3. **`iss`** — issued by the expected issuer (your realm address). Wrong issuer — wrong token.
+4. **`aud`** — intended for this resource server. A token issued for another recipient must not be accepted.
+
+```text
+Authorization: Bearer eyJhbGci…
+checks: signature ok, exp ok, iss == https://kc/realms/corp, aud ok
+```
+
+Skipping any check is a hole. Especially treacherous is skipping `aud`: without it the resource server accepts any validly signed token of this realm, even one issued to another application with different rights.
+
+<Callout type="warning">
+Not verifying the signature and trusting payload "because it is our Keycloak" is a grave mistake. JWT without signature verification is forged in seconds: change `"role":"user"` to `"role":"admin"` and without signature check the resource server will accept it.
+</Callout>
+
+## Keys and kid: how to find what to verify with
+
+Keycloak signs tokens with a private key; the resource server verifies with the public key. Where does it get the public key? From **JWKS** (JSON Web Key Set) published at `jwks_uri`. The set may contain several keys; the token header carries `kid` — the id of the key that signed this token.
+
+```text
+header: { "alg": "RS256", "kid": "key-A" }
+JWKS:   [ { "kid": "key-A", ... }, { "kid": "key-B", ... } ]
+        → verify with key-A
+```
+
+This supports **key rotation**: Keycloak introduces a new key; for a while JWKS holds old and new, and the token is verified with the key whose `kid` is listed. The resource server caches JWKS but re-reads the set on an unknown `kid` — otherwise after rotation all tokens would fail validation.
+
+## Access and refresh: short pass and long mandate
+
+Because JWT is verified offline, you cannot revoke it before `exp`. The fix is to make access_token short (minutes) so the window for a stolen token is small. But making users log in every five minutes is impossible. So alongside it you get **refresh_token** — a long-lived token whose only job is to obtain a new access_token when the old one expires.
+
+```text
+POST /token  grant_type=refresh_token&refresh_token=<refresh>
+  → new access_token (+ usually new refresh_token)
+```
+
+Do not send refresh_token to the API — store it carefully and show it only to Keycloak's token endpoint. Unlike access_token, refresh can be revoked: on logout or compromise Keycloak invalidates refresh_token and renewal stops, though the last issued access_token lives until its `exp`.
+
+<Figure caption="Short access_token expires quickly; long refresh_token only serves to get a new access_token at the token endpoint.">
+  <Sketch viewBox="0 0 440 140" title="Access and refresh token">
+    <SketchBox x={30} y={30} width={150} height={40} accent />
+    <SketchLabel x={105} y={47} mono accent>access_token</SketchLabel>
+    <SketchLabel x={105} y={63} size={11} accent>minutes, goes to API</SketchLabel>
+    <SketchBox x={30} y={90} width={150} height={40} />
+    <SketchLabel x={105} y={107} mono>refresh_token</SketchLabel>
+    <SketchLabel x={105} y={123} size={11} muted>hours/days, Keycloak only</SketchLabel>
+    <SketchBox x={300} y={60} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={355} y={84} mono>token endpoint</SketchLabel>
+    <SketchArrow from={[180, 110]} to={[300, 85]} />
+    <SketchLabel x={210} y={95} size={11} muted>renewal</SketchLabel>
+    <SketchArrow from={[300, 70]} to={[180, 50]} dashed accent />
+    <SketchLabel x={210} y={40} size={11} accent>new access</SketchLabel>
+  </Sketch>
+</Figure>
+
+This pair is the compromise between offline verification convenience and session control. access_token is fast but non-revocable and short; refresh_token is revocable but must not go to the API. Together they give both performance and a way to end a session.
+
+## Edge case: clock skew and `exp`
+
+What surprises in production: a token Keycloak just issued is sometimes rejected as "not yet valid" or "already expired". The cause is not code but clocks. Checking `exp` (and `nbf`, not before) compares token time to the resource server's local clock. If servers drift by ten seconds, borderline tokens flip between accepted and rejected.
+
+```text
+exp = 12:00:00, resource server clock = 12:00:07  → "expired" 7 seconds early
+```
+
+So validators allow a small **clock skew** — a few seconds slack when comparing time. And on servers handling tokens, NTP-synced time is mandatory: time drift shows up as flaky authorization errors.
+
+## Common mistakes
+
+- **Trusting payload without verifying signature.** Header and payload are openly editable; without signature check anyone can grant themselves role `admin`. Always verify signature.
+- **Not checking `aud` and `iss`.** Without `aud` the resource server accepts a token issued to another app; without `iss` — a token from another realm. Both checks are mandatory.
+- **Putting secrets in payload.** JWT is signed, not encrypted: all content is readable from an intercepted token. Passwords, keys, and private data in claims are forbidden.
+- **Sending refresh_token to the API or storing it carelessly.** refresh_token is a long-lived mandate for new access_tokens; its place is only in exchange with the token endpoint, not in a request to the resource server.
+
+<Detail summary="Offline verification vs introspection">
+
+The resource server has two ways to check an access_token. **Local (offline) verification** — parse the JWT and verify signature with the public key as above. Fast, no network, but no instant revocation: a revoked token counts as valid until `exp`.
+
+**Token introspection** (RFC 7662) — ask Keycloak directly via `/introspect` whether the token is active. Sees revocation immediately but adds a network call per check and dependency on Keycloak availability.
+
+The trade-off: most APIs use offline verification with short access_tokens — stolen token window is small and Keycloak is not a bottleneck. Introspection is for cases where instant revocation is critical (e.g. money operations) and you can tolerate the extra call. Often combined: offline on the hot path, introspection on sensitive operations.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "JWT is header.payload.signature: header and payload are openly readable in Base64URL; signature binds them and is verified with a key.",
+    "Payload is signed, not encrypted: content is visible from an intercepted token, so secrets in claims are forbidden.",
+    "Minimum validation on the resource server: signature, exp, iss, and aud; skipping aud accepts another app's tokens in this realm.",
+    "Public key comes from JWKS at jwks_uri; kid in the header picks the key and enables rotation.",
+    "Short access_token goes to the API and is not revocable until exp; long refresh_token lives at the token endpoint and renews access.",
+    "Clock drift breaks exp/nbf checks — use NTP sync and a small clock skew allowance.",
+  ]}
+/>
+
+## References
+
+- [RFC 7519 - JSON Web Token (JWT)](https://datatracker.ietf.org/doc/html/rfc7519)
+- [RFC 7515 - JSON Web Signature (JWS)](https://datatracker.ietf.org/doc/html/rfc7515)
+- [RFC 7517 - JSON Web Key (JWK)](https://datatracker.ietf.org/doc/html/rfc7517)
+- [RFC 7662 - OAuth 2.0 Token Introspection](https://datatracker.ietf.org/doc/html/rfc7662)
+- [Keycloak - Server Administration Guide](https://www.keycloak.org/docs/latest/server_admin/index.html)

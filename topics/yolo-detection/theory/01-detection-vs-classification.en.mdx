@@ -1,0 +1,84 @@
+---
+conceptId: detection-vs-classification
+title: Detection vs Classification
+estimatedMinutes: 30
+---
+
+# From "what's in the image" to "what and where"
+
+A classifier answers one question: which class does this image belong to? Feed it a photo and you get a label like "cat" and maybe a probability of 0.97. That is enough when a single object fills the frame. But on a real surveillance frame there are three people, two cars, and a dog, and the label "street" is useless. You need a different kind of answer: not "what is it" but "what and exactly where."
+
+By the end of this section you will understand how object detection differs from classification, what a bounding box is and what numbers it consists of, why a naive "sliding classifier" is too expensive, and the core idea behind YOLO for finding all objects in a single network pass.
+
+## Detection = localization + classification
+
+Object detection splits into two subtasks solved at once. The first is **localization**: point to where the object is on the image with a rectangular box. The second is **classification**: say which class the object belongs to. A detector's output is a list: for each found object, one box plus a class label plus a confidence score.
+
+A box is defined by four numbers. In center-size format that is `(cx, cy, w, h)`: center coordinates plus width and height. In corner-corner format it is `(x1, y1, x2, y2)`: top-left and bottom-right corners. Both describe the same rectangle, and converting between them is simple arithmetic. We return to formats in the next section; for now, the key point is that a box is just four coordinates, not a pixel mask.
+
+<Figure caption="The image is divided into an SxS grid. An object is assigned to the cell that contains its center; that cell is responsible for predicting the box.">
+  <AnchorGridViz
+    grid={5}
+    anchors={[{ w: 0.85, h: 0.35 }, { w: 0.4, h: 0.85 }, { w: 0.6, h: 0.6 }]}
+    object={{ cx: 0.62, cy: 0.46, w: 0.34, h: 0.5 }}
+  />
+</Figure>
+
+In the figure the frame is split into a grid. YOLO (You Only Look Once) looks at the entire image exactly once: the network produces predictions for all grid cells in a single pass. The highlight marks the cell that contains the object's center — that cell "owns" the object. We cover this mechanism in detail in the grid and decoding sections; for now, hold on to the main idea — one pass, not thousands.
+
+## Why not a sliding classifier
+
+The most straightforward way to turn a classifier into a detector is to slide a window across the image and ask the classifier at each position: "is there an object here?" That is **sliding window** detection. The idea works, but the cost is brutal: an object can be any size and aspect ratio, so you must run the window at many scales and aspect ratios, and each position requires a separate network run.
+
+A rough estimate: suppose there are 50 window positions horizontally and 50 vertically, and you check 6 scales. That is 50 times 50 times 6 classifier runs on a single frame.
+
+<PyDemo
+  title="How many runs does sliding window need"
+  code={`positions_x = 50
+positions_y = 50
+scales = 6
+
+windows = positions_x * positions_y * scales
+print(windows)`}
+/>
+
+That is 15,000 network passes on a single frame — real-time is out of the question. Change `scales` to 10 or increase the position grid and watch how fast the number grows: cost is linear in the number of windows, and there are more windows the more precisely you want to cover scales. Single-stage detectors like YOLO remove this multiplier: the network runs **once**, and all boxes come from its output immediately.
+
+## What a detector actually outputs
+
+Before post-processing, a detector's output is not a tidy list of objects but a redundant set of "raw" predictions: many overlapping boxes, each with its own confidence. The same car easily produces five or six nearly identical boxes from neighboring cells. So a separate step at the end suppresses redundant boxes (Non-Maximum Suppression), keeping one box per object. That has its own section; here it is enough to know that raw output is always redundant.
+
+<Callout type="info">Detector confidence is not a single number. Usually it is the product of "there is an object here" (objectness) and "and it is class c" (class probability). We break confidence into these factors when decoding output.</Callout>
+
+## Where this surprises you
+
+Detection cannot answer "the object occupies exactly these pixels" — only "the object is inside this rectangle." For a tilted or curved object, a rectangular box captures a lot of background: a box around a diagonal bicycle is half asphalt. If you need pixel-level accuracy, the task is called segmentation, and it has a different output (a mask, not four numbers).
+
+A second surprise is the order of numbers in a box. `(cx, cy, w, h)` and `(x1, y1, x2, y2)` look similar, but swapping them is a typical cause of "boxes drifting to the corner." Always fix the format explicitly.
+
+## Common mistakes
+
+- **Treating detection as classification with multiple answers.** A classifier with labels `[cat, dog]` only says which classes are *present*; it gives no coordinates. Detection must return a box for every instance — two dogs in the frame means two boxes, not one label "dog."
+- **Ignoring coordinate units.** A box can be in pixels or in fractions of the frame size (0..1). Mixing normalized and pixel coordinates means getting a box 0.3 pixels wide.
+- **Expecting a mask from a detector.** A rectangle is not the object's contour. If the task is about shape, not position, you need a segmenter.
+
+<Detail summary="Where the name You Only Look Once comes from">
+
+The first YOLO paper (Redmon et al., 2016) contrasted its approach with two-stage detectors of the time, which first generated thousands of candidate regions and then classified each one. YOLO frames detection as a single regression task: one convolutional network pass over the entire image simultaneously produces box coordinates and class probabilities. Hence "looks once" — as opposed to "looks at each region separately." Modern versions of the family are more complex, but this single-pass principle remains.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Classification answers \"what is in the image\"; detection answers \"what and where\": one box plus class plus confidence per object.",
+    "A bounding box is four numbers: either (cx, cy, w, h) or (x1, y1, x2, y2); it is a rectangle, not a pixel mask.",
+    "Sliding window is expensive: cost grows as positions times scales, thousands of network runs per frame.",
+    "YOLO looks at the image once: a single network pass over an SxS grid outputs all boxes at once.",
+    "Raw detector output is redundant — many overlapping boxes, so a separate suppression step is needed at the end.",
+  ]}
+/>
+
+## References
+
+- [Redmon et al., You Only Look Once: Unified, Real-Time Object Detection (2016)](https://arxiv.org/abs/1506.02640)
+- [COCO - object detection format and task](https://cocodataset.org/#detection-eval)

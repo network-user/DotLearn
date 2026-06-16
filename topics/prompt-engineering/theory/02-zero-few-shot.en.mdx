@@ -1,0 +1,123 @@
+---
+conceptId: zero-few-shot
+title: Zero-shot and few-shot
+estimatedMinutes: 28
+---
+
+You ask the model to label review sentiment: "positive," "negative," "neutral." Back comes "positive tone," "rather negative," or a whole sentence — "this review expresses disappointment." Substantively the model is right, but your code expecting exactly three labels breaks on every other line. The issue is not that the model misunderstands the task. The issue is that you never showed it what a correct answer looks like.
+
+By the end of this section you will understand the difference between zero-shot (task in words, no samples) and few-shot (task plus several "input → output" examples), know when examples fix the problem and when they only burn tokens, and why format consistency across examples matters more than their count.
+
+## Examples set the template the model continues
+
+Zero-shot is a request where you explain the task only in words: "determine review sentiment." The model relies on what it learned in training and often succeeds — but chooses the answer form itself. Few-shot adds several solved examples to the instruction, and that changes the interaction: the model stops guessing format and starts **continuing the given template**.
+
+The key intuition: a language model is a text continuation machine. When three "review → label" pairs lie before it in the same shape, the most likely continuation for a fourth review is a label in the same shape. Examples work not because they "teach" the model from scratch, but because they set a template that is statistically profitable to continue uniformly.
+
+<Figure caption="Three examples set the shape 'review → one word.' For a new query the model continues the same template and outputs 'negative,' not a free paraphrase.">
+  <FewShotViz
+    shots={[
+      { input: 'great service, everything fast', output: 'positive' },
+      { input: 'item arrived broken', output: 'negative' },
+      { input: 'fine, nothing special', output: 'neutral' },
+    ]}
+    query="waited two weeks for delivery, awful"
+    prediction="negative"
+  />
+</Figure>
+
+Run the figure and follow the flow: examples go into the model one by one, then a new query arrives — and its output matches the samples exactly. That is the whole few-shot mechanism.
+
+## Comparison on one task
+
+Look at the same request in two modes. Left — instruction only; right — instruction with three examples.
+
+<Compare
+  leftTitle="Zero-shot"
+  rightTitle="Few-shot"
+  left={<>“Determine sentiment: ‘waited two weeks for delivery, awful’.” The answer may come as “Negative,” “unfavorable,” “1/5,” or a full sentence — format changes every time.</>}
+  right={<>The same three “review → label” pairs before the query fix the vocabulary (“positive”/“negative”/“neutral”) and form (one word). The answer is “negative,” stable from request to request.</>}
+  verdict="Few-shot does not make the model smarter — it makes its answer uniform and machine-readable."
+/>
+
+A full few-shot prompt for this task looks like: instruction first, then a block of examples in one shape, and at the very end the new query with a blank for the answer. That last line, broken off at "→," hints that continuation in the same form is expected.
+
+```text
+Determine review sentiment: positive, negative, or neutral.
+
+Review: great service, everything fast → positive
+Review: item arrived broken → negative
+Review: fine, nothing special → neutral
+Review: waited two weeks for delivery, awful →
+```
+
+Notice that the instruction in words and the examples reinforce each other: instruction names allowed labels, examples show them in action. One layer sets vocabulary, the other — line shape.
+
+## Consistency beats quantity
+
+The most common few-shot mistake is thinking more examples always help. In practice **consistency** decides. If one example has a capitalized label, another lowercase, a third a full phrase — you taught the model that inconsistency is acceptable and get inconsistency back.
+
+```text
+Review: all great → Positive
+Review: awful → negative tone
+Review: so-so → Neutral rating
+```
+
+This set is worse than one careful example because there is no single form to continue. A fixed version uses one case, one label vocabulary, and the same line structure:
+
+```text
+Review: all great → positive
+Review: awful → negative
+Review: so-so → neutral
+```
+
+Second rule — **cover class boundaries**. If all examples are bright "positive" and "negative," the model will not know where to put "fine, but expensive." One example per hard borderline case beats three easy identical ones.
+
+<Callout type="warning">
+Example order and composition affect the answer. If few-shot accidentally overweighted one class (five "negative" and one "positive"), the model picks up that skew and labels "negative" more often. Balance classes in the example set the way you would balance a training set.
+</Callout>
+
+## When examples hurt instead of help
+
+Few-shot is not free. Each example is tokens in every request: higher cost, higher latency, and on long context it also dilutes attention. Three situations where examples are better omitted.
+
+First — a task the model already handles confidently in zero-shot: translation, simple summarization, factual Q&A. Here examples burn tokens without improving anything.
+
+Second — when you need reasoning, not form. For arithmetic or logic, it is better to ask the model to reason step by step (see [[chain-of-thought]]) than to show ready "problem → answer" pairs: from those pairs the model learns to output the answer without reasoning — and errs.
+
+Third — when format is better enforced by schema. If you need strict JSON, modern models support structured output by schema directly (see [[structured-output]]) — more reliable than hinting at shape with examples.
+
+## Edge cases
+
+An overly strong template can outweigh meaning. If all three examples happen to be about delivery, the model may decide the task is "about delivery" and ignore reviews on other topics. Vary example topics while keeping format identical.
+
+Another trap — leakage through examples. Few-shot where the "input" suspiciously resembles the current query pushes the model to copy the nearest example's output instead of solving anew. If answers became identical regardless of input, check whether examples are too close to real queries.
+
+## Common mistakes
+
+- **Inconsistent example format.** Different case, vocabulary, and line structure teach the model that inconsistency is fine. Normalize all examples to one form.
+- **Only easy examples.** Without borderline cases the model does not know how to label ambiguous items. Add one example per hard class.
+- **Class imbalance in the set.** Skewed examples become answer skew. Balance composition.
+- **Examples where zero-shot suffices.** For translation and simple summarization examples only burn tokens. First check whether the model already handles it.
+
+<Detail summary="Why few-shot works without fine-tuning">
+
+With few-shot the model's weights do not change — it is not "learning" in the usual sense. The ability to pick up a template straight from context is called in-context learning. Modern models are trained so that a few examples in the prompt sharply shift the next-token distribution toward those examples' form. So even one or two careful samples often deliver most of the stability gain; a tenth adds little — the "benefit vs. number of examples" curve flattens fast. Practical takeaway: start with two or three perfectly consistent examples, not ten sloppy ones.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Zero-shot states the task in words only; few-shot adds several 'input → output' pairs and the model continues their template.",
+    "Examples do not make the model smarter — they fix answer format and vocabulary, making it stable and machine-readable.",
+    "Example consistency beats count: inconsistency in case and structure teaches inconsistent answers.",
+    "Cover borderline cases in examples and balance classes, or the model will mislabel ambiguous items and inherit skew.",
+    "Do not add examples where zero-shot is already reliable or where format is better set by structured output schema.",
+  ]}
+/>
+
+## References
+
+- [Anthropic - Multishot prompting (use examples)](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/multishot-prompting)
+- [OpenAI - Few-shot prompting](https://platform.openai.com/docs/guides/prompt-engineering)
+- [Brown et al., 2020 - Language Models are Few-Shot Learners](https://arxiv.org/abs/2005.14165)

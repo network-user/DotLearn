@@ -1,0 +1,103 @@
+---
+conceptId: relational
+title: "Relational databases: tables, keys, and the ACID promise"
+estimatedMinutes: 50
+---
+
+# Relational databases: tables, keys, and the ACID promise
+
+The relational model has ruled the data world for more than forty years, and not from inertia. It solved two problems navigational databases stumbled on: decoupling queries from storage layout and giving strict guarantees under concurrent changes. You write *what* you want - the engine chooses how to fetch it. You transfer money between accounts - the database guarantees it will not debit one without crediting the other, even if the power fails mid-operation. This article is about how tables and relationships work and what hides behind the acronym ACID.
+
+## A table is a set of rows
+
+At the base of the model is a relation, which in practice you see as a table: a fixed set of typed columns and as many rows as you need. The schema is rigid (*schema-on-write*): declare that `age` is an integer and you cannot insert text there. The database catches the error at write time, not six months later on read.
+
+The key idea that separates relational from tree models: relationships do not live inside a row. An order is not nested in a user - it lives in its own table and references the user by key value. User with `id = 1`, order with `user_id = 1` - that is the whole link. They are joined at read time with `JOIN`.
+
+<JoinViz />
+
+Toggle the join mode on the diagram. `INNER JOIN` keeps only matching pairs, `LEFT JOIN` keeps users without orders, filling `NULL`. Many-to-many, which broke the hierarchical model, is painless here: add a third link table with two foreign keys. No duplication.
+
+## Normalization: each fact in one place
+
+Laying data across tables so each fact is stored exactly once is called *normalization*. It is direct medicine for the update anomalies from the previous lesson. A user's name lives once in `users`; all orders reference it by `user_id`. The name changes - you edit one row, and all orders automatically "see" the new value because the name is not physically duplicated anywhere.
+
+```sql
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, item TEXT);
+```
+
+`PRIMARY KEY` guarantees each row has a unique identifier. Foreign key `user_id` links an order to a user. Let's gather orders with their owners' names:
+
+<SideSql
+  title="Sandbox: users and their orders"
+  editable
+  live
+  fixture={`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, item TEXT);
+INSERT INTO users VALUES (1, 'Anna'), (2, 'Boris'), (3, 'Vera');
+INSERT INTO orders VALUES (10, 1, 'Book'), (11, 1, 'Coffee'), (12, 3, 'Umbrella');`}
+  query={`SELECT users.name, orders.item
+FROM users
+JOIN orders ON orders.user_id = users.id;`}
+/>
+
+The query returns three name-item pairs. Change `JOIN` to `LEFT JOIN` and predict what happens to Boris, who has no orders: his row appears with `NULL` in the item column. That is how the relational model answers "who ordered nothing at all."
+
+## ACID: four letters that hold up money
+
+The main promise of relational databases is transactions with ACID guarantees. A transaction is a group of operations the database executes as one unit.
+
+**Atomicity** - all or nothing. Transferring money is two steps: debit one account, credit another. Atomicity guarantees you never get "debited but not credited." If the second step fails, the first rolls back entirely.
+
+**Consistency** - the database moves from one valid state to another without breaking declared rules: constraints, foreign keys, uniqueness. A transaction that tried to create an order with a nonexistent `user_id` is rejected.
+
+**Isolation** - concurrent transactions do not see each other's half-done intermediate states. Two cashiers withdrawing from the same account at once do not overwrite each other's work.
+
+**Durability** - if the database confirmed a write, the data survives power loss. Confirmed means on disk.
+
+<Callout type="tip" title="Why this matters even if you are not building a bank">
+ACID helps far beyond finance. User registration, placing an order, moving a task between statuses - anywhere several changes must happen together or not at all, a transaction saves you from manual rollback halfway through.
+</Callout>
+
+## Where the model hits limits
+
+The relational model is not free. Normalization spreads data across many tables, and putting it back together needs `JOIN` - costlier with more tables and rows. At huge scale and with horizontal sharding, `JOIN` across the network between shards becomes the bottleneck - and that is where NoSQL territory begins.
+
+The second crack is *impedance mismatch*: an object in code (a user with orders inside) and flat tables are different shapes, and you constantly translate between them. ORMs do that work, with their own cost, covered in other courses.
+
+<Callout type="warning" title="Relational is not slow by default">
+Slowness rumors usually come from a denormalized schema without indexes or a query that accidentally `JOIN`s five tables on unindexed columns. By primary key a relational database is as fast as a key-value store. Indexes and query plan first, then conclusions about speed.
+</Callout>
+
+## Common mistakes
+
+**Over-normalizing.** A schema taken to absurdity needs a dozen tables glued for one screen card. Sometimes controlled denormalization (intentional duplication for read speed) is justified - but that is a conscious trade, not laziness.
+
+**Forgetting indexes.** Without an index, `WHERE email = ...` scans the whole table. With an index - find the row almost instantly. Most "slow SQL" complaints are fixed by an index.
+
+**Storing everything in one JSON column.** Stuffing the whole object into one text column throws away exactly why you chose relational: types, constraints, indexable fields, and `JOIN`.
+
+**Confusing ACID consistency and CAP consistency.** C in ACID is about obeying schema rules inside one transaction. C in CAP is about whether nodes in a distributed system see the same data. Same letter, different things.
+
+<Detail summary="How an index finds a row: B-tree in two words">
+
+Most relational databases keep indexes in a B-tree - a balanced tree where data is sorted and height grows logarithmically. Finding a row on an indexed column costs about `log(N)` steps: on a million rows that is roughly twenty comparisons instead of a million on full scan. You pay in disk space and slightly slower writes (the index must update). Index what you search on often, not every column by default.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Data is tables; relationships live in matching key values, assembled with JOIN at read time.",
+    "Normalization stores each fact exactly once and kills update anomalies.",
+    "ACID gives transactions: atomicity (all or nothing), rule consistency, isolation of concurrent operations, and durability of confirmed writes.",
+    "The price is expensive JOINs at scale, hard horizontal scaling, and impedance mismatch with objects.",
+    "Slow SQL almost always means missing indexes or a bad query, not a flaw in the model itself.",
+  ]}
+/>
+
+## References
+
+- [PostgreSQL: transaction documentation](https://www.postgresql.org/docs/current/tutorial-transactions.html)
+- [SQLite: understanding ACID](https://www.sqlite.org/transactional.html)
+- [SQL Fundamentals course in this project - query practice](https://www.postgresql.org/docs/current/sql-select.html)

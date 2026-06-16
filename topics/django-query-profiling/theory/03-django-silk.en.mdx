@@ -1,0 +1,129 @@
+---
+conceptId: django-silk
+title: "django-silk: profiler and SQL inspection"
+estimatedMinutes: 45
+---
+
+# When manual counting is not enough
+
+`connection.queries` and `assertNumQueries` work well when you know *where* to look: wrap the suspect block, count, lock in a test. But a real slow page does not arrive labeled "N+1 here". It passes through middleware, views, services, serializers, and templates, and queries appear all along that path. Wrapping every section by hand is tedious. You need a tool that captures all queries for an entire HTTP request and shows them with timings and stack traces. That is django-silk.
+
+By the end of this section you will understand how silk fits into Django via middleware, what it records per HTTP request, and how to read its UI to find in a minute the endpoint doing a hundred queries instead of two. Fixes come later - first we learn to capture and read a profile.
+
+## Mental model: middleware on request entry and exit
+
+silk is middleware in the HTTP request pipeline. Django passes each request through middleware top to bottom, hands it to the view, and runs the response back bottom to top. silk sits in that chain, timestamps on entry, intercepts every SQL executed during handling, and timestamps on exit. It stores all of this in its database tables - one record per HTTP request.
+
+<Figure caption="silk middleware wraps request handling: timestamps on entry, captures all SQL inside view and serializer, saves on exit.">
+  <Sketch viewBox="0 0 460 200" title="Silk in middleware pipeline">
+    <SketchBox x={20} y={80} width={70} height={40} />
+    <SketchLabel x={55} y={104} size={11}>request</SketchLabel>
+    <SketchBox x={110} y={70} width={90} height={60} accent />
+    <SketchLabel x={155} y={96} size={11} accent>silk</SketchLabel>
+    <SketchLabel x={155} y={112} size={10} accent muted>start time</SketchLabel>
+    <SketchBox x={220} y={70} width={110} height={60} />
+    <SketchLabel x={275} y={92} size={11}>view +</SketchLabel>
+    <SketchLabel x={275} y={108} size={11}>serializer</SketchLabel>
+    <SketchBox x={350} y={70} width={90} height={60} accent />
+    <SketchLabel x={395} y={96} size={11} accent>silk</SketchLabel>
+    <SketchLabel x={395} y={112} size={10} accent muted>save record</SketchLabel>
+    <SketchArrow from={[90, 100]} to={[110, 100]} />
+    <SketchArrow from={[200, 100]} to={[220, 100]} />
+    <SketchArrow from={[330, 100]} to={[350, 100]} accent />
+    <SketchLabel x={275} y={150} size={11} muted>every SQL inside lands in silk log</SketchLabel>
+  </Sketch>
+</Figure>
+
+Important from this picture: silk sees *all* queries for the HTTP request, including those from templates and serializers - where you would wrap `connection.queries` by hand. The profile builds itself without editing view code.
+
+## Installation and setup
+
+Install silk as a package and wire it with three setting changes: add the app, insert middleware, and run migrations for its tables.
+
+```python
+INSTALLED_APPS = [
+    "silk",
+]
+
+MIDDLEWARE = [
+    "silk.middleware.SilkyMiddleware",
+]
+```
+
+Then run `python manage.py migrate` - silk creates tables for profiles - and wire URLs for the UI at `/silk/`.
+
+```python
+urlpatterns = [
+    path("silk/", include("silk.urls", namespace="silk")),
+]
+```
+
+<Callout type="warning">
+Middleware order matters: silk should sit high enough to wrap views but respect auth and gzip middleware. silk also writes to the database per request, so in production keep it off or strictly limited - under load it becomes a query source itself.
+</Callout>
+
+## What silk records per request
+
+For each HTTP request silk saves metadata plus the list of SQL queries. Key fields appear in the request list UI.
+
+| Field | What it shows |
+|---|---|
+| Path | URL and HTTP method |
+| Time | total handling time |
+| Queries | SQL query count for this HTTP request |
+| Time spent on queries | sum of time in the database |
+
+The **Queries** column is your automatic query counter for the whole path. An endpoint showing `101` is an N+1 candidate before you open details. Time spent on queries shows how much of total time was SQL vs Python.
+
+## Reading the profile: from list to single request
+
+Opening a request in the UI shows all executed SQL with text, time, and stack trace pointing to your code where the query originated. N+1 is visible: a long list of nearly identical SELECTs differing only in `WHERE` values.
+
+```text
+SELECT ... FROM orders                          1.2 ms
+SELECT ... FROM customers WHERE id = 1          0.4 ms
+SELECT ... FROM customers WHERE id = 2          0.4 ms
+SELECT ... FROM customers WHERE id = 3          0.4 ms
+... 97 more like this
+```
+
+When you see this list the diagnosis is set: one SELECT for the list and a hundred identical ones for the relation. Identical stack traces on repeats point to one line in template or serializer where lazy access happens. silk counts and leads you to the fix.
+
+<Callout type="tip">
+Sort silk's request list by Queries descending. Top entries are usually your N+1 endpoints. Total time may not be largest: a hundred fast queries sum slower than one medium query, but each alone looks fast.
+</Callout>
+
+## Edge case: silk distorts its own measurements
+
+silk writes profiles to the same database as the app on every request. Enabled silk adds queries and time - absolute milliseconds in profiles are slightly inflated vs production without silk. Beginners are surprised: "I optimized by silk numbers but production differs." Trust silk relatively: application *query count* is accurate (silk's own queries are not attributed to your view); use absolute time for before/after in the same environment, not as ground truth.
+
+Under real load configure sampling - profile a fraction of requests - or silk's own writes become the bottleneck. A profiler that changes system behavior is always a tradeoff; silk is no exception.
+
+## Typical mistakes
+
+- **Leaving silk on for 100% of production requests.** It writes to the DB per request and becomes load. Use sampling in prod or keep silk in dev/staging only.
+- **Treating silk absolute time as truth.** Profiler overhead inflates milliseconds. Compare before/after in the same environment, not silk numbers to production.
+- **Looking only at total time, ignoring Queries.** N+1 shows as high query count; total time can look tolerable while data is small. Query count is an earlier, more reliable signal than seconds.
+
+<Detail summary="How silk differs from django-debug-toolbar">
+
+Both show Django SQL but solve different problems. debug-toolbar is a panel on an HTML page showing queries for the *current* rendered page - handy for manual HTML view debugging. silk stores request history in the database with a separate UI, good for APIs without HTML and for past requests from other machines. Roughly: toolbar is "what is on this page right now"; silk is "a scrollable, sortable log of all requests". For REST API profiling silk is usually easier because APIs have no page to attach a panel to.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "silk is middleware: it wraps HTTP handling and captures all SQL for that time, including template and serializer queries.",
+    "Setup: app in INSTALLED_APPS, SilkyMiddleware in MIDDLEWARE, migrations, and /silk/ URLs.",
+    "Queries column is automatic query count for the whole path; a large number is an N+1 candidate.",
+    "Request details show SQL with timings and stack traces; dozens of nearly identical SELECTs signal N+1 and traces point to lazy access.",
+    "silk writes to the DB per request, inflating absolute time; use sampling or disable in production.",
+    "Sort by query count, not time: a hundred fast queries are slower in sum than they look individually.",
+  ]}
+/>
+
+## References
+
+- [django-silk - documentation and README](https://github.com/jazzband/django-silk)
+- [Django - Middleware](https://docs.djangoproject.com/en/stable/topics/http/middleware/)
+- [Django - Database access optimization](https://docs.djangoproject.com/en/stable/topics/db/optimization/)

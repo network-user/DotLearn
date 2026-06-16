@@ -1,0 +1,149 @@
+---
+conceptId: websocket-lifecycle
+title: "WebSocket API and connection lifecycle"
+estimatedMinutes: 45
+---
+
+# Four states, four events, and one ordering trap
+
+You don't write the protocol from the last section by hand in the browser. You create a `WebSocket` object, subscribe to events, and call `send`. But behind that simple facade hides a finite state machine: the connection moves through strictly defined states, and trying to send data in the wrong state fails silently or throws. Most "it sometimes doesn't arrive" bugs in realtime code come from ignoring which state the connection is in.
+
+By the end of this section you'll read and write client WebSocket code confidently: know the four `readyState` values, understand when and in what order `open`, `message`, `error`, and `close` fire, tell a clean shutdown from a drop, and see how ping/pong keep the connection alive underneath while you handle business logic on top.
+
+## Mental model: the connection is a finite state machine
+
+The `WebSocket` object has a `readyState` property that takes exactly four values. `CONNECTING (0)` - handshake in progress, not ready yet. `OPEN (1)` - channel established, you can send and receive. `CLOSING (2)` - shutdown started, exchange winding down. `CLOSED (3)` - done, channel dead. Transitions are one-way: there's no path back from `CLOSED` to `OPEN`; you need a new object.
+
+<Figure caption="The connection moves forward only: from CONNECTING to OPEN, then through CLOSING to CLOSED; the only way back to OPEN is a new WebSocket object.">
+  <Sketch viewBox="0 0 470 130" title="WebSocket states">
+    <SketchBox x={10} y={45} width={100} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={60} y={72} size={11} mono>CONNECTING</SketchLabel>
+    <SketchArrow from={[110, 67]} to={[150, 67]} />
+    <SketchBox x={150} y={45} width={90} height={45} accent />
+    <SketchLabel x={195} y={72} size={11} accent mono>OPEN</SketchLabel>
+    <SketchArrow from={[240, 67]} to={[280, 67]} />
+    <SketchBox x={280} y={45} width={85} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={322} y={72} size={11} mono>CLOSING</SketchLabel>
+    <SketchArrow from={[365, 67]} to={[400, 67]} />
+    <SketchBox x={400} y={45} width={60} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={430} y={72} size={11} mono>CLOSED</SketchLabel>
+    <SketchLabel x={235} y={25} size={11} muted>transitions go one way only</SketchLabel>
+  </Sketch>
+</Figure>
+
+These constants - `WebSocket.OPEN` and so on - are available as static fields. In practice you compare `socket.readyState === WebSocket.OPEN` before sending, because sending in any other state is the most common source of bugs.
+
+## Creation and the open event
+
+The constructor starts the handshake immediately, but it's asynchronous: while the lines after `new WebSocket(...)` run, the connection is still in `CONNECTING`. Readiness is signaled by the `open` event.
+
+```js
+const socket = new WebSocket("wss://example.com/chat");
+
+socket.addEventListener("open", () => {
+  socket.send("hello");
+});
+```
+
+Inside the `open` handler, `readyState === OPEN` is guaranteed, so `send` is safe. Here's trap number one: the temptation to call `socket.send(...)` right after the constructor, on the next line. At that moment the connection is almost certainly still in `CONNECTING`, and the browser throws `InvalidStateError`. Any send belongs inside `open` or after checking `readyState`.
+
+<Callout type="warning">
+`new WebSocket(url)` does not open the connection by the time the constructor returns. Calling `send` on the next line throws `InvalidStateError`. Send only from the `open` handler or after checking `readyState === WebSocket.OPEN`.
+</Callout>
+
+## Receiving data: the message event
+
+Every incoming data frame becomes a `message` event. The payload is in `event.data`. For text frames it's a string; for binary frames it's a `Blob` or `ArrayBuffer` (depends on the `binaryType` property).
+
+```js
+socket.addEventListener("message", (event) => {
+  const payload = JSON.parse(event.data);
+  render(payload);
+});
+```
+
+Important: WebSocket delivers exactly what the other side sent, in order - the protocol over TCP preserves ordering. But it knows nothing about meaning. `event.data` is always a raw string or bytes; JSON parsing, routing by event type, schema validation - all your code. Socket.IO automates that manual work in the next section.
+
+## Closing: clean and not so clean
+
+Either side can close with `close()`. That moves `readyState` to `CLOSING`, the sides exchange close control frames, and `CLOSED` arrives with a `close` event. The event has a `code` (numeric reason) and `wasClean` - a flag that separates a proper shutdown from a drop.
+
+```js
+socket.addEventListener("close", (event) => {
+  if (event.wasClean) {
+    console.log("closed cleanly, code", event.code);
+  } else {
+    reconnectLater();
+  }
+});
+```
+
+`wasClean === true` means both sides exchanged close frames - a polite goodbye. `wasClean === false` means the connection broke: network lost, server crashed, Wi-Fi dropped. That difference matters for reconnect logic: after a clean close you usually don't reconnect; after a drop you do, ideally with backoff.
+
+<Figure caption="A clean close goes through close-frame exchange and yields wasClean=true; on a network drop the close frame never arrives and close carries wasClean=false.">
+  <Sketch viewBox="0 0 460 170" title="Clean close vs abrupt drop">
+    <SketchBox x={20} y={20} width={180} height={130} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={110} y={42} size={11} weight="bold">clean</SketchLabel>
+    <SketchArrow from={[40, 70]} to={[180, 70]} />
+    <SketchLabel x={110} y={63} size={10} muted>close frame</SketchLabel>
+    <SketchArrow from={[180, 100]} to={[40, 100]} />
+    <SketchLabel x={110} y={93} size={10} muted>close frame</SketchLabel>
+    <SketchLabel x={110} y={135} size={11} accent mono>wasClean = true</SketchLabel>
+    <SketchBox x={250} y={20} width={190} height={130} hatched />
+    <SketchLabel x={345} y={42} size={11} weight="bold">drop</SketchLabel>
+    <SketchArrow from={[270, 80]} to={[360, 80]} dashed />
+    <SketchLabel x={360} y={84} size={10} muted>network lost</SketchLabel>
+    <SketchLabel x={345} y={135} size={11} mono>wasClean = false</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Surprise: `error` almost never tells you what happened
+
+The `error` event feels like the right place for diagnostics. In practice the spec deliberately hides details: the error object in the browser carries no code or message - for security, so a page can't scan someone else's network by probing different URLs. After `error`, `close` always follows, and **`close.code`** carries the real reason. Build diagnostics around `close`; use `error` only as a signal that something went wrong.
+
+```js
+socket.addEventListener("error", () => {
+  console.warn("WebSocket error, waiting for close with code");
+});
+```
+
+Close codes are standardized: `1000` - normal, `1001` - going away (tab closed), `1006` - abnormal drop without a close frame (you see this on network loss), `1011` - server internal error. `1006` is especially telling: it can't be sent in a close frame; the browser sets it when the connection dies silently.
+
+## Ping, pong, and why the connection "stays alive"
+
+A TCP connection can die quietly so neither side knows: packets stop arriving but `close` never fires. The protocol provides ping and pong control frames. One side sends ping, the other must reply with pong; if there's no reply within a timeout, the connection is considered dead and closes.
+
+In the browser API you can't send ping/pong directly - the browser and server handle them. But knowing they exist matters: they're what detect "stuck" connections, not your code. The application layer (Socket.IO, for example) often adds its own heartbeat on top so it doesn't depend on browser settings.
+
+<Callout type="tip">
+Don't try to detect "is the connection alive?" by sending empty `send` calls. Ping/pong at the protocol level and heartbeat at the library level exist for that. Your job is to react correctly to `close` with code `1006`, not invent your own pulse.
+</Callout>
+
+## Common mistakes
+
+- **Calling `send` right after the constructor.** The connection is still in `CONNECTING`; send throws `InvalidStateError`. Send from `open` or after checking `readyState`.
+- **Diagnosing failures from the `error` event.** It's intentionally empty. The reason is in `close.code`; build handling around `close`, not `error`.
+- **Not distinguishing `wasClean`.** Reconnecting after a clean `close` (`wasClean === true`) means knocking on a door you closed yourself. Reconnect after a drop, ideally with exponential backoff.
+- **Sending in `CLOSING`/`CLOSED`.** In a long-lived app, check `readyState` before every send, or some messages vanish silently.
+
+<Detail summary="Buffering: bufferedAmount and backpressure">
+
+`send` has a hidden side: data doesn't always hit the network instantly. If you send faster than the channel allows, data piles up in an internal buffer whose size is visible in `socket.bufferedAmount`. On a slow link or when streaming, that buffer grows and consumes memory. Serious apps check `bufferedAmount` before sending large volumes and throttle manually, implementing backpressure - the browser won't stop the sender for you. For chat that's fine; for telemetry streams or files it's critical.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "readyState moves forward through four states only: CONNECTING(0) → OPEN(1) → CLOSING(2) → CLOSED(3); the only way back to OPEN is a new WebSocket object.",
+    "Send data only in OPEN: send right after the constructor throws InvalidStateError because the handshake is still running.",
+    "Incoming data arrives as message events in event.data as a string or bytes; parsing and routing are your code.",
+    "The error event is intentionally empty; the real reason is close.code (1000 normal, 1006 abnormal drop, 1011 server error), and wasClean separates goodbye from break.",
+    "Ping/pong at the protocol level and heartbeat at the library level keep the connection alive; your job is to handle close correctly, especially code 1006.",
+  ]}
+/>
+
+## References
+
+- [MDN - WebSocket (object and events)](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
+- [MDN - CloseEvent and close codes](https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent/code)
+- [RFC 6455, section 7 - Closing the Connection](https://datatracker.ietf.org/doc/html/rfc6455#section-7)

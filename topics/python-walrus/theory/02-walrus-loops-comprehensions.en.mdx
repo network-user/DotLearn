@@ -1,0 +1,137 @@
+---
+conceptId: walrus-loops-comprehensions
+title: "Walrus in loops and comprehensions"
+estimatedMinutes: 45
+---
+
+# Where the walrus really pays off
+
+Assignment with a value looks like a small convenience until you hit a read loop. Previously, to read from a file, queue, or network in chunks, you had to write an "infinite" `while True` with a check and `break` in the middle of the body — read a block, check whether it is empty, then process. You got a ragged structure where the exit condition hides in the body instead of the loop header. The walrus puts the exit condition back where it belongs — right in `while`.
+
+By the end of this section you will rewrite a "read until sentinel" loop with `while (chunk := read())`, use `:=` inside a `comprehension` to avoid computing the same thing twice, and recognize where a walrus in a comprehension is safe versus where it causes subtle scope bugs.
+
+## Mental model: condition and its data in one place
+
+A `while` loop checks its condition *before* each iteration. The problem with the classic read loop is that the data used to decide "continue or not" is obtained inside the body but checked in the header. Those two points are separated, and between them you usually have a duplicate "first read" before the loop.
+
+The walrus pulls reading and checking into one point — the `while` condition. On each iteration, `chunk := read()` runs first (read and remember), then the result is checked as the loop condition. The body receives a ready `chunk`.
+
+<Figure caption="Reading and the exit condition are pulled into the while header; the body works with a ready value, and the duplicate first read is gone.">
+  <PipelineFigure
+    title="Read loop with walrus"
+    stages={[
+      { label: "chunk := read()", note: "read and remember", active: true },
+      { label: "chunk empty?", note: "check in while" },
+      { label: "process chunk", note: "loop body" },
+    ]}
+  />
+</Figure>
+
+The figure shows three stages repeating on each pass: assign, check, process. The key point is that the first two stages now both live in the `while` line, not scattered across the body and a preamble.
+
+## Walkthrough: read loop until a sentinel value
+
+Compare two forms of one loop that reads lines until it hits an empty one. First without walrus: reading must be duplicated (once before the loop, once at the end of the body) or you build `while True` with `break`.
+
+```python
+line = source.readline()
+while line != "":
+    process(line)
+    line = source.readline()
+```
+
+`source.readline()` appears twice, and it is easy to forget to update `line` at the end of the body — you get an infinite loop. With the walrus, reading happens exactly once, right in the condition.
+
+```python
+while (line := source.readline()) != "":
+    process(line)
+```
+
+The body shrinks to the essentials, and the exit condition ("while the line is not empty") is readable again in the loop header. This is the most common and least controversial walrus use case.
+
+<MarginNote label="Sentinel value">A "sentinel" is a special value meaning "data is finished": an empty string for `readline`, empty bytes for `read`, `None` from `input` through a wrapper. The walrus is especially convenient with sentinels.</MarginNote>
+
+## Try the loop yourself
+
+Run the code: the loop takes two characters at a time from the string `data` until it is empty. The assignment `chunk := data[:2]` and the "not empty" check sit in one `while`. Change the chunk size (use `data[:3]` instead of `data[:2]`) or the text in `data` and run again — watch how the iteration count changes without touching the exit condition.
+
+<PyDemo
+  title="Reading in blocks with walrus"
+  code={`data = "abcdefg"
+parts = []
+
+while (chunk := data[:2]):
+    parts.append(chunk)
+    data = data[2:]
+
+print(parts)`}
+/>
+
+## Walrus in comprehension: do not compute twice
+
+The second strong walrus spot is `comprehensions`. Often in a comprehension you need both to filter elements by the result of an expensive function and to put that same result in the output. Without the walrus you call the function twice: once in the `if` condition, again in the left-hand expression.
+
+```python
+def transform(x):
+    return x * x - 1
+
+result = [transform(x) for x in range(6) if transform(x) > 0]
+print(result)
+```
+
+Prints `[3, 8, 15, 24]`, but `transform` is called twice per `x`. The walrus lets you compute it once, store it in a variable, and use it in both the condition and the result.
+
+```python
+def transform(x):
+    return x * x - 1
+
+result = [y for x in range(6) if (y := transform(x)) > 0]
+print(result)
+```
+
+Prints the same `[3, 8, 15, 24]`, but `transform` is called exactly once per element. Note the order: `if (y := transform(x))` sits in the `if` part, and the ready `y` is used on the left. Here the walrus saves not only calls but also removes the risk that two calls diverge (for example if the function becomes non-deterministic later).
+
+## Edge case that will surprise you: the variable survives the comprehension
+
+In Python 3 an ordinary loop variable inside a comprehension lives in its own invisible scope — after `[x for x in range(3)]` the name `x` does not appear outside. But a name bound through walrus inside a comprehension **leaks into the surrounding function** and stays available after it. That is a deliberate PEP 572 decision, not an accident.
+
+```python
+values = [y for x in range(4) if (y := x * 10) < 25]
+print(values)
+print(y)
+```
+
+Prints `[0, 10, 20]` and then `30`. The list stopped at `25`, but `y` holds the last assigned value — `30`, the one where the condition became false (`30 < 25` is false). The variable `x`, by contrast, is not available after the comprehension. This asymmetry surprises almost everyone: walrus names "leak," loop counter names do not.
+
+<Callout type="warning">
+Leaking a walrus name from a comprehension is not a bug, but not something to rely on. If you need a variable after a comprehension, it is safer to assign it with an explicit line. Relying on "the last value from the comprehension" is fragile — it depends on exactly where the loop stopped.
+</Callout>
+
+## Common mistakes
+
+- **Putting `:=` in the result expression while checking the bare function in `if`.** Then there is no savings: the walrus must sit in `if`, and the ready variable must be used on the left. Order matters.
+- **Keeping an old `while True` with `break` when `while (x := ...)` fits.** If the exit condition is "while reading has not returned a sentinel," the walrus expresses it directly in the header and reads better than a break in the middle of the body.
+- **Relying on a leaked comprehension variable as a documented contract.** The name does remain, but trusting its last value is error-prone — it depends on the exact break point. If you need a variable afterward, assign it separately.
+- **Calling an expensive function twice out of habit.** If a comprehension needs the function result for both filter and value, the walrus removes the second call — that is its direct purpose.
+
+<Detail summary="Why the walrus name leaks but the counter does not">
+
+In Python 3 a comprehension has its own implicit wrapper function — that is why the loop variable (`x` in `[... for x in ...]`) does not pollute the surrounding scope: it is local to that hidden function. The walrus was designed differently: its name is intentionally bound in the **nearest enclosing ordinary** scope (function or module), jumping over the comprehension wrapper. PEP 572 did this on purpose — so a walrus in a comprehension can, for example, accumulate into an outer variable. The price is the asymmetry where `x` is local but the walrus name is not. Details are in the "Scope of the target" section of PEP 572.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "The main walrus scenario is a read loop: while (chunk := read()) != sentinel puts reading and the exit condition in one place and removes the duplicate first read.",
+    "In a comprehension the walrus lets you compute an expensive function once and use the result in both the if filter and the left-hand value expression.",
+    "In a comprehension the walrus must sit in the if part, and the ready variable on the left; otherwise there is no call savings.",
+    "A walrus name in a comprehension leaks into the surrounding function and is available after it, while the counter name is not.",
+    "Relying on the last value of a leaked variable is fragile — it depends on where the loop stopped; if you need a variable afterward, assign it explicitly.",
+  ]}
+/>
+
+## References
+
+- [PEP 572 - Assignment Expressions](https://peps.python.org/pep-0572/)
+- [PEP 572 - Scope of the target](https://peps.python.org/pep-0572/#scope-of-the-target)
+- [Python documentation - List, set and dict comprehensions](https://docs.python.org/3/tutorial/datastructures.html#list-comprehensions)

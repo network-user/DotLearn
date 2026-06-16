@@ -1,0 +1,101 @@
+---
+conceptId: wide-column
+title: "Column and wide-column stores: storage for analytics and scale"
+estimatedMinutes: 45
+---
+
+# Column and wide-column stores: storage for analytics and scale
+
+Ask a relational database "what is the average price across fifty million orders" and it pulls all fifty million rows whole, even though it cares about one column out of ten. Ninety percent of what it reads is garbage for that query. Columnar storage flips how data lies on disk and removes that garbage. Under the umbrella label "columnar" hide two different things worth separating immediately: column-oriented analytic databases and distributed wide-column stores. They share the word "column" but solve different problems.
+
+## Layout decides everything
+
+Relational theory says nothing about byte order on disk. Row storage (*row-store*) puts data row by row: all fields of record one, then record two. Column storage (*column-store*) puts column by column: all values of column one in sequence, then column two.
+
+<WideColumnFigure />
+
+Toggle layout on the diagram and follow the highlighted column. In row storage its cells are scattered: reading one column means walking whole rows and dragging extras. In column storage the same column is one continuous block - an analytic query reads exactly that and nothing more. For "average, sum, max on one column" the difference in bytes read from disk is orders of magnitude.
+
+<Figure caption="Disk read volume for AVG(price): row storage pulls all columns; column storage pulls only the one needed.">
+  <BarChart
+    title="Read from disk (relative units)"
+    data={[
+      { label: "row-store", value: 100 },
+      { label: "column-store", value: 14 },
+    ]}
+    unit=" units"
+    highlight={["column-store"]}
+  />
+</Figure>
+
+Savings on read add compression. A column holds one type and often similar values (thousands of identical cities, a narrow price range). That compresses far better than a row mixing number, text, and date. Fewer bytes on disk - less read - faster query. So column-oriented databases (ClickHouse, Vertica, Parquet format) are analytic tools, OLAP: heavy aggregates on few columns and billions of rows.
+
+## OLTP versus OLAP
+
+Behind this sits a fundamental split in workloads. OLTP (*online transaction processing*) is short operations on individual records: create an order, update a profile, decrement stock. You need the whole row; row storage fits naturally. OLAP (*online analytical processing*) is heavy aggregates over huge volumes: revenue by region for a year, average ticket by segment. You need few columns whole; column storage wins.
+
+<Callout type="warning" title="Column stores are poor for OLTP">
+Inserting one row in column storage touches every column block at once - expensive. Point updates to individual records are hard too. Column databases are not placed under transactional load: they live beside the OLTP database, periodically pulling data for analytics.
+</Callout>
+
+## Wide-column: columns for scale, not analytics
+
+The second family under the same label is wide-column stores: Apache Cassandra, HBase, Google Bigtable. They also think in columns, but the goal is not analytics - it is horizontal scale and huge write throughput on a cluster of many machines.
+
+Data is grouped into *column families* and split across nodes by *partition key*: the key decides which machine holds the row. Different rows can have different column sets - flexible schema like document models, but in a flat "wide" form, hence the name. Cassandra by default picks the AP corner of the CAP triangle: during a network partition nodes keep answering, and consistency is eventual and tunable per query. Writes are optimized for streams: data lands in an LSM-tree friendly to bulk inserts, unlike relational B-trees.
+
+The cost is the query model. Cassandra has no arbitrary `JOIN` and no cheap queries on non-key columns. You design the schema *from queries*: list the reads your system needs and lay out data for each, deliberately denormalizing and duplicating. That inverts the relational habit of "normalized schema first, any query later."
+
+<Compare
+  leftTitle="Column analytics (ClickHouse)"
+  rightTitle="Wide-column (Cassandra)"
+  left={<>
+
+- Goal: fast aggregates, OLAP
+- Columns contiguous for read and compression
+- Few columns, billions of rows
+- Poor for point writes
+
+  </>}
+  right={<>
+
+- Goal: scale and write throughput
+- Partitions by key across nodes
+- Flexible column families, AP
+- Schema designed from queries
+
+  </>}
+  verdict="The shared word column hides different jobs: one speeds analytics, the other scales writes."
+/>
+
+## Common mistakes
+
+**Putting column analytics under transactions.** A stream of single inserts and updates is the worst case for column-store. Use row storage for OLTP; keep column storage beside it for reports.
+
+**Expecting `JOIN` and ad hoc queries from Cassandra.** They are absent by design. A query on a column not in the key is impossible or scans the whole cluster. Model from queries.
+
+**Confusing the two column families.** "We'll take a column database, it's fast" - and the team puts ClickHouse where transactional writes are needed, or Cassandra where ad hoc analytics are needed. First decide which of the two problems you solve.
+
+**Designing Cassandra like relational.** A normalized schema in wide-column becomes impossible queries or full-cluster scans. Denormalization for specific reads is normal here, not a sin.
+
+<Detail summary="LSM-tree versus B-tree: why one loves writes">
+
+Relational databases usually store data in a B-tree: reads and point updates are cheap, but each write goes to its place in a sorted structure. An LSM-tree (log-structured merge-tree), used by Cassandra and many column engines, buffers writes in memory and flushes them to disk in large sequential batches, merging periodically. Sequential disk write is much faster than random, so LSM holds huge insert streams where B-tree would choke. The price is costlier reads (data may sit in several layers) and background compaction.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Column storage puts each column contiguously: analytic queries read only needed columns and save heavily on disk.",
+    "A column of uniform values compresses well - another reason column stores are fast in OLAP.",
+    "OLTP (short row operations) favors row storage; OLAP (heavy aggregates) favors column storage.",
+    "Wide-column stores (Cassandra) use columns for scale and write streams: partition by key, flexible column families, AP, and LSM-tree.",
+    "Wide-column has no arbitrary JOIN: you design schema from queries, deliberately denormalizing.",
+  ]}
+/>
+
+## References
+
+- [ClickHouse: why column DBMS are fast for analytics](https://clickhouse.com/docs/en/intro)
+- [Apache Cassandra: data model](https://cassandra.apache.org/doc/latest/cassandra/data_modeling/intro.html)
+- [Google Bigtable: original paper](https://research.google/pubs/pub27898/)

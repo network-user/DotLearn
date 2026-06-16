@@ -1,0 +1,92 @@
+---
+conceptId: advanced-patterns
+title: Advanced patterns
+estimatedMinutes: 28
+---
+
+A single prompt — "input, answer" — hits a ceiling on tasks that require acting, self-checking, or assembling an answer from several stages. The model will not fetch a fresh exchange rate from the internet inside one reply, notice its own arithmetic mistake, or split a large document into analysis and draft in one pass. To break that ceiling you stop thinking of the prompt as one string and build several turns: the model reasons, acts, observes the result, and continues. These techniques form recognizable patterns, and knowing them separates someone who "writes queries" from someone who designs LLM systems.
+
+By the end of this section you will understand five patterns — ReAct, self-consistency, prompt chains, meta-prompting, and evaluators (LLM-as-judge) — and know which problem each solves and what it costs.
+
+## ReAct: reason and act in a loop
+
+ReAct (reasoning + acting) combines chain of thought from [[chain-of-thought]] with actions via tools. Instead of answering from memory, the model runs a loop: think what to do → call a tool (search, calculator, API) → read the result (observation) → think again until ready to answer. That way the model crosses the limits of its memory: exchange rates, file contents, external service replies come from tools, not invention.
+
+<Figure caption="Agent loop: the model thinks, calls a tool, observes the result, repeats — and answers only after gathering enough data. Run it and follow the cycle.">
+  <AgentLoopDiagram />
+</Figure>
+
+That is the basis of agents. ReAct usefulness grows with tool quality and with how clearly the prompt describes when to call which tool. And here returns the risk from [[failures-injection]]: the more tools and rights an agent has, the worse the consequences of a hijacked instruction — the think-act loop will obediently execute harmful commands from observations too.
+
+## Self-consistency: vote instead of one try
+
+One reasoning chain can drift to a wrong answer — as in [[chain-of-thought]]. Self-consistency fights that with statistics: run the same task several times at non-zero temperature, get several independent chains, and take the **majority answer**. Different reasoning paths more often converge on the correct answer than on the same wrong one, so voting raises accuracy.
+
+<Compare
+  leftTitle="Single attempt"
+  rightTitle="Self-consistency"
+  left={<>One chain run. If reasoning turned wrong mid-way, a wrong answer comes out with no error signal.</>}
+  right={<>Five independent runs, majority answer. One random error drowns among correct ones — accuracy rises at five times the cost.</>}
+  verdict="Self-consistency trades tokens for reliability: more expensive but more resilient to random reasoning failure."
+/>
+
+The cost is direct — N times more requests. So self-consistency is saved for tasks where error is expensive, not enabled by default.
+
+## Prompt chains: one step, one request
+
+When a task splits into stages, it is more reliable not to ask for everything in one prompt but to build a **prompt chain**: one request's output becomes the next input. Parse document → plan from parse → draft from plan → edit draft — four simple requests instead of one overloaded one.
+
+The gain is not only per-step quality. The chain can be debugged link by link: you see which stage failed and fix only that. One giant prompt is a black box; a chain is a pipeline with checkpoints. That extends decomposition from [[chain-of-thought]] into separate model calls.
+
+```text
+Request 1: "Extract parties, term, and penalties from the contract as JSON."
+Request 2: "From this JSON list the three main risks."
+Request 3: "Rewrite the risks in plain language for a non-technical client."
+```
+
+## Meta-prompting and evaluators
+
+Two patterns use the model on the process itself.
+
+**Meta-prompting** is a "prompt that writes a prompt." You ask the model to improve or generate an instruction for another task: "here is my task and a failed prompt, suggest a better one." The model is decent at fixing vague wording, adding missing layers from [[prompt-anatomy]], and suggesting examples. It speeds iteration but does not replace testing: a generated prompt must be tried on real data.
+
+An **evaluator (LLM-as-judge)** is a separate model call that scores an answer against criteria: "rate coherence 1–5," "are there invented facts," "which of two answers is better." That automates quality control where there is no single gold standard — summarization, text generation, dialogue. Give the judge a clear rubric and ideally example scores; without a rubric its ratings drift like any unconstrained answer.
+
+<Callout type="warning">
+The evaluator inherits model weaknesses: bias (e.g. preferring longer or first-listed answers) and its own errors. LLM-as-judge is a cheap scalable quality signal but not a replacement for spot human review, especially on high-stakes decisions.
+</Callout>
+
+## Edge cases
+
+Patterns combine and stack cost. Self-consistency on top of a ReAct agent with a judge at every step is dozens of model calls per task. Sometimes worth it, often not. Start with the simplest thing that solves the task and add complexity only when you hit a real ceiling.
+
+Chain length is two-edged. Each link adds a checkpoint but also a place for error to accumulate: if the first request distorts data, all following ones faithfully work on the distortion. The longer the chain, the more important validating each link's output, not only the final answer.
+
+## Common mistakes
+
+- **Over-engineering early.** ReAct and self-consistency are expensive. If a single prompt solves the task, patterns only burn money and time.
+- **Running self-consistency at zero temperature.** Without randomness all runs are identical — nothing to vote on. Non-zero temperature is needed for diverse chains.
+- **Trusting an evaluator without a rubric.** "Rate quality" without criteria yields vague scores. Give the judge a clear scale and examples.
+- **Not validating chain links.** An early error silently flows to the end. Check each link's output, not only the final answer.
+
+<Detail summary="Where the line runs between 'prompt' and 'system'">
+
+A simple prompt fits in one text string; all engineering is wording. Patterns in this section move engineering outside the prompt: ReAct needs a runtime that executes tool calls and returns observations; self-consistency needs orchestrating multiple requests and aggregation; chains need state between steps; evaluators need a separate scoring pipeline. So a production LLM app is not "one genius prompt" but a system: request routing, tools with limited rights, output checks, quality evaluators, logging. Prompt engineering stays the core of each node, but value is created by architecture around it. That naturally continues what you saw on injection: safety and reliability live in the system, not only in prompt text.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "ReAct runs a loop of think → call tool → observe → repeat, crossing memory limits; it is the basis of agents.",
+    "Self-consistency runs several independent chains at non-zero temperature and takes the majority answer — more accurate but N times more expensive.",
+    "A prompt chain makes each stage a separate request: better per-step quality and debugging link by link.",
+    "Meta-prompting uses the model to improve prompts; an evaluator (LLM-as-judge) scores answers by rubric but inherits model bias.",
+    "Patterns stack cost; start with the simplest solution and add complexity only when you hit a real ceiling.",
+  ]}
+/>
+
+## References
+
+- [Yao et al., 2022 - ReAct: Synergizing Reasoning and Acting](https://arxiv.org/abs/2210.03629)
+- [Wang et al., 2022 - Self-Consistency Improves Chain of Thought](https://arxiv.org/abs/2203.11171)
+- [Anthropic - Chain complex prompts](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/chain-prompts)

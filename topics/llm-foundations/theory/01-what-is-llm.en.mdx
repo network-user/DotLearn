@@ -1,0 +1,113 @@
+---
+conceptId: what-is-llm
+title: What is an LLM
+estimatedMinutes: 26
+---
+
+# An LLM is a machine that guesses the next token
+
+You open a chat, type "The capital of France is" and get "Paris." It feels like the model pulled a fact from a database. What actually happened is different: the model looked at your text and predicted which text chunk is most likely to come next. "Paris" had the highest probability, so it was appended. Then the same step repeats again and again. All visible LLM magic grows from one operation repeated many times.
+
+By the end of this section you will understand that an LLM is a function from text to a probability distribution over the next token, why generation proceeds one token at a time (autoregression), where the feeling that the model is thinking comes from, and why the same question can get different answers.
+
+## One function: context → probabilities
+
+A large language model (LLM) is a very large function. It takes a sequence of tokens on input (for now, treat a token as a piece of a word) and outputs one number per vocabulary token - a score for how likely that token is next. A modern vocabulary has tens or hundreds of thousands of tokens, so the output is tens of thousands of numbers that sum to one after normalization. That is the next-token probability distribution.
+
+<Figure caption="The model does not look up an answer - it scores every candidate for the next token and chooses among them.">
+  <SamplingBars
+    candidates={[
+      ["Paris", 4.1],
+      ["city", 1.9],
+      ["capital", 1.6],
+      ["located", 1.2],
+      ["beautiful", 0.7]
+    ]}
+  />
+</Figure>
+
+Look at the figure: for context "The capital of France is" the token "Paris" is far more probable than the rest, but other options are nonzero. The model does not pick a single correct answer - it builds a distribution, then one token is drawn from it. Play with the temperature slider: at low temperature "Paris" takes almost all probability; at high temperature the distribution flattens and even unlikely words get a chance. How a token is drawn from the distribution is covered in [[sampling]].
+
+## Autoregression: the answer is built one token at a time
+
+The distribution gives one token. How do you get an answer of dozens of words? Autoregressively: predict a token, append it to the context, feed everything back into the same function, get the next distribution, draw the next token. And so on until an end token. Autoregression here literally means the model conditions on its own prior output.
+
+<Figure caption="Each generated token returns to the input; the next step sees a longer context.">
+  <Sketch viewBox="0 0 460 150" title="Autoregressive generation">
+    <SketchBox x={20} y={50} width={150} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={70} mono>The capital of France is</SketchLabel>
+    <SketchLabel x={95} y={88} muted size={11}>context</SketchLabel>
+    <SketchBox x={210} y={50} width={90} height={48} accent />
+    <SketchLabel x={255} y={78} mono accent>model</SketchLabel>
+    <SketchBox x={340} y={50} width={100} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={390} y={78} mono>Paris</SketchLabel>
+    <SketchArrow from={[170, 74]} to={[208, 74]} accent />
+    <SketchArrow from={[300, 74]} to={[338, 74]} accent />
+    <SketchArrow from={[390, 100]} to={[95, 100]} curve={-40} dashed />
+    <SketchLabel x={240} y={138} muted size={11}>token appended to input and step repeats</SketchLabel>
+  </Sketch>
+</Figure>
+
+Two non-obvious consequences follow. First: the model does not plan a whole sentence upfront - at each step it only knows what was already written and picks one next token. Long coherent answers happen because each local choice sees all prior text. Second: longer answers mean more passes through the model, so generation flows word by word instead of appearing instantly.
+
+## Why the same question gets different answers
+
+Because the output is a distribution, not a single token, generation has randomness. If you sample proportionally at each step, two runs diverge. If you always take the most probable token (greedy decoding), the answer becomes deterministic but often dull and repetitive. Developers tune this balance with temperature and other sampling settings - covered in [[sampling]].
+
+<Callout type="info">When people say the model hallucinates, they usually mean it produced confident-sounding but false text token by token. That is not a broken mechanism - it works as designed: it predicts plausible continuations, and plausible is not always true.</Callout>
+
+## Try it yourself
+
+Below is a tiny toy model: a short vocabulary and fixed logits for one context. The function turns logits into probabilities via softmax and shows which token is most likely. Run as-is, then raise the logit for tea above coffee and watch the favorite token change.
+
+<PyDemo
+  title="From logits to probabilities"
+  code={`import math
+
+vocab = ["кофе", "чай", "воду", "сок"]
+logits = [3.0, 2.0, 1.0, 0.5]
+
+m = max(logits)
+exps = [math.exp(x - m) for x in logits]
+total = sum(exps)
+probs = [e / total for e in exps]
+
+for token, p in zip(vocab, probs):
+    print(token, round(p, 3))`}
+/>
+
+Note: you cannot read probabilities directly from logits - they can be any numbers, including negative. Softmax exponentiates and normalizes arbitrary scores into a distribution that sums to one. Subtracting the max before exp is a numerical stability trick; it does not change the result. You will meet the same softmax inside attention in [[attention]].
+
+## When intuition misleads
+
+The most common mistake is thinking the model searches a database. There is no database inside: knowledge is encoded in billions of weights from training and appears only as shifts in token probabilities. So the model will confidently continue a made-up fact if it sounds statistically plausible.
+
+A second trap is thinking the model understands the question like a human. It operates on tokens and their statistical links. That is often enough for useful answers, but the line between learned pattern and genuine understanding is debated, not settled.
+
+## Common misconceptions
+
+- **The model remembers the whole prior conversation.** It sees exactly the text that fits in the context window and nothing beyond it (see [[embeddings-context]]). Memory across sessions is external plumbing, not the model itself.
+- **If the answer is deterministic, the model is confident.** Greedy decoding only takes the distribution maximum; the model can be nearly tied (two candidates at 0.34 and 0.33) yet output one token.
+- **More parameters always means smarter.** Size helps, but data quality, training, and fine-tuning matter at least as much; see [[training-llms]] and [[fine-tuning-alignment]].
+
+<Detail summary="What counts as one generation step">
+
+One step is one full forward pass of the network on the current context, yielding one distribution and one new token. In practice passes are accelerated with a KV cache: intermediate results for already-processed tokens are reused instead of recomputed, so each new token costs less than reprocessing the whole context from scratch. What gets cached is covered in [[attention]].
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An LLM is a function: token sequence in, probability distribution over the next token across the vocabulary out.",
+    "Text is generated autoregressively: predict a token, append to input, repeat - so answers flow one token per step.",
+    "softmax turns arbitrary logits into probabilities summing to one; you cannot read probability directly from logits.",
+    "Sampling randomness explains different answers to the same question; greedy takes the max and is deterministic but poorer.",
+    "There is no fact database inside - knowledge lives in weights as probability shifts, so confident hallucinations are possible.",
+  ]}
+/>
+
+## References
+
+- [Andrej Karpathy - Intro to Large Language Models](https://www.youtube.com/watch?v=zjkBMFhNj_g)
+- [The Illustrated GPT-2 (Jay Alammar)](https://jalammar.github.io/illustrated-gpt2/)
+- [Anthropic - Core Views on AI Safety](https://www.anthropic.com/news/core-views-on-ai-safety)

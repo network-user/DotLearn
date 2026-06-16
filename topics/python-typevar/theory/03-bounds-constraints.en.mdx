@@ -1,0 +1,161 @@
+---
+conceptId: bounds-constraints
+title: TypeVar bound and constraints
+estimatedMinutes: 45
+---
+
+# Narrowing TypeVar: bound and constraints
+
+A plain `TypeVar` is too permissive. Write a function that returns the larger of two arguments — and the analyzer refuses to allow `a > b`: after all, `T` could be anything, and "anything" is not required to support comparison. You have genericity without obligations: you cannot assume anything about `T`, so inside the function you can do almost nothing with it.
+
+Sometimes genericity is needed not "over all types" but "over all types that can do something." `TypeVar` offers two tools to narrow the set of allowed types: `bound` (an upper bound — the type must be a subtype of something) and constraints (a closed list — the type must be exactly one of the listed types). By the end of this section you will understand how they differ in meaning and in what the analyzer infers, and when to choose which.
+
+## Mental Model: Upper Bound vs Closed List
+
+`bound=Base` says: "`T` is `Base` or any of its subtypes." The set of allowed types is open downward: `Base` itself, its subclasses, subclasses of those — all qualify. Inside the function you may use everything declared on `Base`, because any allowed `T` is guaranteed to support it.
+
+Constraints — written `TypeVar("T", int, str)` — say otherwise: "`T` is **exactly** `int` or **exactly** `str`, nothing else." The set is closed and explicitly enumerated. Subtypes are not in the list: if you pass a subclass of `str`, the analyzer "promotes" it to `str` without adding anything to the list itself.
+
+<Figure caption="bound opens the set downward through the hierarchy (Base and all its subtypes); constraints list exactly the allowed types, without their subtypes.">
+  <Sketch viewBox="0 0 480 210" title="bound vs constraints">
+    <SketchLabel x={120} y={20} weight="bold">bound=Number</SketchLabel>
+    <SketchBox x={70} y={35} width={100} height={36} accent />
+    <SketchLabel x={120} y={57} mono size={12}>Number</SketchLabel>
+    <SketchBox x={20} y={110} width={90} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={65} y={132} mono size={11}>int</SketchLabel>
+    <SketchBox x={130} y={110} width={90} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={175} y={132} mono size={11}>Fraction</SketchLabel>
+    <SketchArrow from={[100, 110]} to={[110, 73]} />
+    <SketchArrow from={[150, 110]} to={[135, 73]} />
+    <SketchLabel x={120} y={175} size={11} muted>and any subtype of Number</SketchLabel>
+    <SketchLabel x={370} y={20} weight="bold">(int, str)</SketchLabel>
+    <SketchBox x={300} y={70} width={70} height={36} accent />
+    <SketchLabel x={335} y={92} mono size={12}>int</SketchLabel>
+    <SketchBox x={390} y={70} width={70} height={36} accent />
+    <SketchLabel x={425} y={92} mono size={12}>str</SketchLabel>
+    <SketchLabel x={380} y={140} size={11} muted>exactly these two,</SketchLabel>
+    <SketchLabel x={380} y={156} size={11} muted>no subtypes</SketchLabel>
+  </Sketch>
+</Figure>
+
+The difference is subtle but determines what the analyzer infers. With `bound` the function result has the bound type (or preserved `T`), and you can compare values of different subtypes with each other. With constraints `T` in each call "collapses" to one of the listed types, and you cannot mix `int` with `str` in one call.
+
+## bound: Guarantee a Method Exists
+
+Back to the "larger of two" function. To make comparison valid, limit `T` from above to a type that supports comparison. Declare a protocol with an `__lt__` method and use it as `bound` (protocols in detail come in the next section; for now it is enough that this is "a type that has `__lt__`").
+
+```python
+from typing import TypeVar, Protocol
+
+class Comparable(Protocol):
+    def __lt__(self, other: object) -> bool: ...
+
+C = TypeVar("C", bound=Comparable)
+
+def larger(a: C, b: C) -> C:
+    return a if b < a else b
+```
+
+Now `larger` accepts any two values that compare via `<`, and returns the same type it received. `larger(3, 7)` gives `int`, `larger("a", "b")` gives `str`. But `larger(object(), object())` the analyzer rejects: bare `object` has no `__lt__`, it is not a subtype of `Comparable`.
+
+Without `bound`, the line `b < a` would be an error: for an unrestricted `T` the analyzer does not know it has `__lt__`. The bound is a promise "every allowed `T` definitely has this method," and it unlocks using the method inside the function.
+
+Note that `bound` does not narrow the function to one concrete type: `larger` is still generic and preserves the input–output link. Pass two `int`s, the result is `int`; pass two `Fraction`s (also comparable), the result is `Fraction`. The bound only cuts off from below everything that fails the protocol; among allowed types `T` remains a full type variable. That is why `bound` is the default tool when you need "generic, but with a guaranteed interface": you list behavior, not types, and any type with that behavior passes automatically.
+
+## constraints: Choose from a Closed Set
+
+When only a few concrete types are allowed and mixing them is wrong, use a constraint list. The classic example is a function that works with both `str` and `bytes` but must not accidentally mix them.
+
+```python
+from typing import TypeVar
+
+AnyStr = TypeVar("AnyStr", str, bytes)
+
+def concat(a: AnyStr, b: AnyStr) -> AnyStr:
+    return a + b
+```
+
+`concat("foo", "bar")` returns `str`, `concat(b"foo", b"bar")` returns `bytes`. But `concat("foo", b"bar")` the analyzer rejects: in one call `AnyStr` must collapse to one type from the list, not be "string or bytes at once." That protection is exactly what constraints provide — they forbid mixing listed types within one call.
+
+Compare this to what `bound` would give. If you declared `T = TypeVar("T", bound=object)` (effectively unrestricted) or even a `bound` on some common ancestor of `str` and `bytes`, nothing would stop calling `concat("foo", b"bar")`: with `bound` the result type is computed as the least common supertype of the arguments, and mixing is swallowed. Constraints require an exact match to one list entry — and that is their only but important role. Choose constraints exactly when mixing the listed types in one call would be a domain error, not harmless genericity.
+
+<Callout type="info">
+`AnyStr` is not a made-up example — it is a real `TypeVar` from `typing`, defined exactly as `TypeVar("AnyStr", str, bytes)`. The standard library uses it in signatures of functions that work the same with strings and bytes.
+</Callout>
+
+## Try Bounds by Hand
+
+Run the code: `larger` works on numbers and strings because both support `<`. Now change one call to `larger([3], [1, 2])` — lists are comparable too, and the function runs. But replace with something incomparable or mix types in `concat` — at run time Python either succeeds by duck typing or crashes, but the analyzer would have caught the `bound`/constraints violation before run time.
+
+<PyDemo
+  title="bound allows comparison; constraints forbid mixing types"
+  code={`def larger(a, b):
+    return a if b < a else b
+
+def concat(a, b):
+    return a + b
+
+print(larger(3, 7))
+print(larger("a", "b"))
+print(concat("foo", "bar"))
+print(concat(b"foo", b"bar"))`}
+/>
+
+At run time everything passes: Python compares and concatenates by fact, ignoring annotations. The value of `bound` and constraints is that violations (`larger(object(), object())`, `concat("foo", b"bar")`) are flagged before the code reaches users.
+
+## Edge Case: constraints Do Not Preserve Subtypes
+
+This may surprise you: with constraints a subtype of a listed type loses its "subclass-ness" in inference. If `T = TypeVar("T", str, bytes)` and you pass an instance of a `str` subclass, the analyzer infers the result as `str`, not as your subclass.
+
+```python
+from typing import TypeVar
+
+S = TypeVar("S", str, bytes)
+
+def echo(value: S) -> S:
+    return value
+
+class MyStr(str):
+    pass
+```
+
+For the analyzer `echo(MyStr("x"))` has type `str`, not `MyStr`: constraints "promote" the argument to the nearest listed type. With `bound=str` behavior differs — the subtype would be preserved and the result would stay `MyStr`. That is a key practical reason to choose `bound` when you must not lose a concrete subclass.
+
+## How to Choose: A Short Rule
+
+In practice the fork is decided by two questions. First: do you know the full closed list of allowed types in advance, and is forbidding their mixture in one call important? If yes — constraints, like `AnyStr` where mixing `str` and `bytes` is truly wrong. If the first answer is no, ask the second: is it enough that the type simply "can" a certain set of methods, and the concrete type family does not matter? Then use `bound`, usually via a protocol.
+
+In the vast majority of tasks `bound` wins: it is open to extension (someone adds a new comparable type tomorrow and `larger` accepts it without changes), preserves subtypes, and expresses requirements through behavior, not enumeration. Constraints are a narrower, rarer tool; reach for them only when a closed list and a ban on mixing are part of the task itself, not an accident. When in doubt, start with `bound`: loosening a requirement later is easier than discovering a constraint list blocks adding a new type.
+
+## Common Mistakes
+
+- **Using `bound` when you need constraints (and vice versa).** `bound=Comparable` means "a subtype of that and we preserve the subtype"; a list `(int, str)` means "exactly one of these, subtype is lost." Confusion leads to unexpected type inference.
+- **Putting one type in constraints.** `TypeVar("T", int)` is an error: a constraint list requires at least two types. If one type with subtypes is allowed, use `bound=int`, not a list.
+- **Expecting constraints to allow mixing.** `concat("a", b"b")` with `AnyStr` is a type error: in one call `T` equals exactly one listed type. Constraints deliberately forbid mixing variants.
+- **Losing a subtype because of constraints.** If you need to return the exact passed subclass, not its base, choose `bound`: constraints promote the argument to the listed type.
+
+<Detail summary="Protocol bound vs concrete class bound">
+
+A bound `bound=SomeClass` limits `T` to subclasses of a concrete class — nominal typing: only those who literally inherit `SomeClass` qualify. A bound `bound=SomeProtocol` limits `T` to everything with the required methods, regardless of hierarchy — structural typing.
+
+In practice a protocol bound is almost always more convenient: `larger` should not require inheriting from some common ancestor, it only needs `__lt__` on the argument. Numbers, strings, lists, your own classes with `__lt__` — all qualify without inheriting anything. A nominal `bound` fits when you truly want one class family. Structural typing and protocols are covered in the next section.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A plain TypeVar guarantees nothing about T, so inside a function you can do almost nothing with it.",
+    "bound=Base opens the set downward: T is Base or any subtype, and Base methods are available inside the function.",
+    "constraints (TypeVar('T', int, str)) define a closed list: T equals exactly one listed type, without their subtypes.",
+    "bound preserves the concrete subtype in inference; constraints promote the argument to the nearest listed type.",
+    "constraints forbid mixing listed types in one call — that is their main protection.",
+    "A constraint list requires at least two types; for one type with subtypes use bound.",
+  ]}
+/>
+
+## References
+
+- [Python documentation — typing.TypeVar (bound and constraints)](https://docs.python.org/3/library/typing.html#typing.TypeVar)
+- [Python documentation — typing.AnyStr](https://docs.python.org/3/library/typing.html#typing.AnyStr)
+- [mypy — Type variables with upper bounds](https://mypy.readthedocs.io/en/stable/generics.html#type-variables-with-upper-bounds)
+- [mypy — Type variables with value restriction](https://mypy.readthedocs.io/en/stable/generics.html#type-variables-with-value-restriction)

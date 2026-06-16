@@ -1,0 +1,198 @@
+---
+conceptId: abstractions
+title: "Abstractions: ABC and Protocol"
+estimatedMinutes: 45
+---
+
+# An abstraction is a promise, not an implementation
+
+Imagine you are writing a report that must save its result somewhere: to a file, a database, the cloud. If inside the report function you open a file directly, the report is permanently tied to the filesystem. Want to save to S3 instead — you must rewrite the report function itself, even though it still computes the same thing. The problem is not the save code, but that the report *knows too much* about who receives it. It only needs one thing: "there is something I can call `save(data)` on." Who exactly saves and how — not its concern.
+
+That "there is something that can `save`" is an abstraction: a contract without implementation. In this section you will learn to describe such contracts in two ways built into Python — through `abc.ABC` (explicit inheritance) and `typing.Protocol` (structural typing) — and understand when each fits. This is the foundation of dependency injection: you cannot inject a dependency until you have described *what shape* it must have.
+
+## Mental model: socket and plug
+
+An abstraction works like an electrical socket. The socket does not know and does not want to know what you plug in — kettle, laptop, or charger. It defines the *shape of the contact*: two pins at a certain distance under a certain voltage. Any device whose pins match that shape works. Code that "draws power" from the socket is written once and does not change when you swap the kettle for a laptop.
+
+<Figure caption="High-level code depends on the shape of the contact (abstraction), not on a specific device. Any implementation with matching pins connects without changing the socket.">
+  <Sketch viewBox="0 0 460 200" title="Socket and plugs">
+    <SketchBox x={30} y={70} width={120} height={60} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={90} y={95} mono>Report</SketchLabel>
+    <SketchLabel x={90} y={115} size={11} muted>high level</SketchLabel>
+    <SketchBox x={195} y={75} width={70} height={50} accent dashed />
+    <SketchLabel x={230} y={97} mono accent size={12}>Storage</SketchLabel>
+    <SketchLabel x={230} y={115} size={10} muted>contract</SketchLabel>
+    <SketchArrow from={[150, 100]} to={[193, 100]} />
+    <SketchBox x={320} y={20} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={44} mono size={12}>FileStorage</SketchLabel>
+    <SketchBox x={320} y={80} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={104} mono size={12}>S3Storage</SketchLabel>
+    <SketchBox x={320} y={140} width={110} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={164} mono size={12}>MemoryStorage</SketchLabel>
+    <SketchArrow from={[320, 40]} to={[267, 90]} dashed accent />
+    <SketchArrow from={[320, 100]} to={[267, 100]} dashed accent />
+    <SketchArrow from={[320, 160]} to={[267, 112]} dashed accent />
+  </Sketch>
+</Figure>
+
+In code, the shape of the contact is an interface: a set of methods with known names and signatures. An implementation is a concrete device that fits the shape. `Report` depends on the shape of `Storage`, and `FileStorage`, `S3Storage`, and `MemoryStorage` all fit that shape. The whole question is how to *write down* that shape in Python. Languages like Java do it with `interface`. Python has two tools, and they work differently.
+
+## First approach: abc.ABC and explicit contract
+
+`abc.ABC` (abstract base class) describes a contract as a base class that implementations must inherit from. A method marked with `@abstractmethod` is declared but not implemented: the subclass *must* override it, or Python will not let you create an instance.
+
+```python
+from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self, data: str) -> None:
+        ...
+```
+
+`Storage` here is not a store — it is the contract of a store: "you must have a method `save(data)`." It is useless on its own, and Python emphasizes that — calling `Storage()` fails immediately. The contract exists so others can conform to it.
+
+```python
+class FileStorage(Storage):
+    def save(self, data: str) -> None:
+        self.last = data
+
+fs = FileStorage()
+fs.save("report")
+print(fs.last)
+```
+
+Prints `report`. `FileStorage` inherited from `Storage` and implemented `save`, so the contract is satisfied and the instance can be created. The link is *explicit*: `(Storage)` appears in the class header, and anyone reading the code sees the promise.
+
+<Callout type="info">
+An abstract class can also contain ordinary methods with implementations — subclasses inherit them. Only what the subclass *must* define further is abstract. Shared code lives in the base; differences live in subclasses.
+</Callout>
+
+## What happens if you forget a method
+
+The main benefit of `@abstractmethod` is that you cannot forget the implementation — Python catches the error when the object is created, not deep inside on the first call.
+
+```python
+from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self, data: str) -> None: ...
+
+class Broken(Storage):
+    pass
+
+Broken()
+```
+
+Fails with `TypeError: Can't instantiate abstract class Broken with abstract method save`. The subclass claimed to be `Storage` but did not fulfill the contract — and Python refuses to hand out a knowingly broken object. This is an early, clear error instead of a mysterious `AttributeError` ten calls later.
+
+## Second approach: Protocol and structural typing
+
+`abc.ABC` requires explicit inheritance: the implementation must *know* about the contract and write `(Storage)` in the class header. Sometimes that is awkward or impossible — for example, an object comes from a third-party library you cannot make inherit from your class. Here `typing.Protocol` helps: it checks not lineage but *shape* — whether the object has the required methods, regardless of what it inherits from.
+
+```python
+from typing import Protocol
+
+class Storage(Protocol):
+    def save(self, data: str) -> None: ...
+
+class S3Storage:
+    def save(self, data: str) -> None:
+        self.bucket = data
+```
+
+`S3Storage` never mentions `Storage` and inherits from nothing, but it *structurally* fits the protocol: it has `save(data) -> None`. For a static analyzer (mypy, pyright) and for type annotations, `S3Storage` is a `Storage` because the shape matches. This is "duck typing with type checking": if it quacks like the interface, it is the interface.
+
+<Figure caption="ABC checks lineage (explicit inheritance); Protocol checks shape (set of methods). An implementation under Protocol does not have to know about the contract.">
+  <Compare
+    leftTitle="abc.ABC"
+    rightTitle="typing.Protocol"
+    left={<ul><li>Explicit link: <code>class Impl(Contract)</code></li><li>Checked at instance creation, at runtime</li><li>Implementation knows about the contract</li><li>Cannot adapt a foreign class</li></ul>}
+    right={<ul><li>Structural link: matching methods</li><li>Checked statically (mypy/pyright)</li><li>Implementation does not know about the contract</li><li>Works with any class of the right shape</li></ul>}
+    verdict="ABC — when you own the hierarchy and want a hard runtime guarantee. Protocol — when you fit independent or foreign classes to a contract."
+  />
+</Figure>
+
+In plain terms: `ABC` asks "are you my subclass?", and `Protocol` asks "can you do what I need?" The second question is more liberal and often closer to the spirit of Python.
+
+## Try the contracts yourself
+
+Run the code. Both implementations — `FileStorage` through inheritance and `S3Storage` with no inheritance at all — fit cleanly into `make_backup`, which only knows about the `save` method. Now experiment: add a third class `MemoryStorage` with its own `save` that, say, stores data in a list, and pass it to `make_backup`. You will see that `make_backup` did not need a single line changed — that is the whole point.
+
+<PyDemo
+  title="One consumer, different implementations"
+  code={`from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self, data: str) -> None: ...
+
+class FileStorage(Storage):
+    def save(self, data):
+        print("to file:", data)
+
+class S3Storage:
+    def save(self, data):
+        print("to S3:", data)
+
+def make_backup(storage, data):
+    storage.save(data)
+
+make_backup(FileStorage(), "report-1")
+make_backup(S3Storage(), "report-2")`}
+/>
+
+Notice that `make_backup` accepts `storage` without any annotation and works with both classes. At runtime Python simply calls `.save`, and it does not care whether this is a `Storage` subclass — as long as the method exists. The contract here works at the level of discipline and type hints, not as a hard check on every call.
+
+## register makes isinstance lie
+
+You can register a class as a "virtual subclass" of an ABC without any inheritance — via `Storage.register(SomeClass)`. After that, `isinstance(obj, Storage)` returns `True`, even though `SomeClass` did not inherit and the contract was *not verified*.
+
+```python
+from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self, data: str) -> None: ...
+
+class Sneaky:
+    pass
+
+Storage.register(Sneaky)
+print(isinstance(Sneaky(), Storage))
+```
+
+Prints `True` — even though `Sneaky` has no `save` method at all. `register` makes a promise on behalf of the class but does not force it to fulfill the contract. So `isinstance` against an ABC is a weak guarantee: it says "this class declared itself compatible", not "this class definitely implements everything needed." Relying on the method call itself is more reliable than relying on the type check.
+
+## Common mistakes
+
+- **Creating an instance of an abstract class.** `Storage()` fails with `TypeError`. An abstract class is a contract with no useful behavior; only concrete subclasses work.
+- **Thinking `Protocol` checks shape at runtime.** By default `Protocol` is a static checking tool. `isinstance(obj, MyProtocol)` fails unless you mark the protocol with `@runtime_checkable`, and even then only method presence is checked, not signatures.
+- **Adding an abstraction for its own sake.** If a contract will forever have exactly one implementation, an interface is an extra layer. An abstraction pays off when there are two or more implementations or when one must be swapped in tests (covered in the testing concept).
+- **Putting business logic in an abstract method.** `@abstractmethod` declares shape, not behavior. Put shared logic in ordinary base methods; leave only extension points abstract.
+
+<Detail summary="Why ABC catches the error exactly when creating an instance">
+
+The mechanics live in the `ABCMeta` metaclass. When you define a class with `@abstractmethod`, the metaclass collects names of all unimplemented abstract methods into the `__abstractmethods__` attribute. When you try `Cls()`, the `object.__new__` constructor looks at that set: if it is non-empty, creation is blocked with `TypeError`.
+
+A subclass "closes" an abstract method by overriding it — then the name drops from the child's `__abstractmethods__`. When the set is empty, the instance is created. So the error does not happen when declaring class `Broken` (it defines fine) or on the first call to `save`, but exactly at `Broken()` — the earliest moment Python can guarantee the object is valid.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An abstraction is a contract (a set of methods without implementation) that high-level code depends on instead of a concrete class.",
+    "abc.ABC defines a contract through explicit inheritance and checks it at runtime: you cannot create an instance with an unimplemented @abstractmethod.",
+    "typing.Protocol defines a contract structurally: any class with the required methods fits, no inheritance required; checking is static.",
+    "Choose ABC when you own the hierarchy and want a hard guarantee; choose Protocol when fitting independent or foreign classes to a contract.",
+    "isinstance against ABC is a weak guarantee: register declares compatibility without verifying it, so relying on the method call itself is safer.",
+    "An abstraction pays off with two or more implementations or when swapping a dependency in tests; it is not worth it for a single eternal implementation.",
+  ]}
+/>
+
+## References
+
+- [Python documentation — abc module](https://docs.python.org/3/library/abc.html)
+- [Python documentation — typing.Protocol](https://docs.python.org/3/library/typing.html#typing.Protocol)
+- [PEP 544 — Protocols: Structural subtyping](https://peps.python.org/pep-0544/)

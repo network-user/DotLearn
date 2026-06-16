@@ -1,14 +1,22 @@
-# Контекстные менеджеры в Python
+# Context Managers in Python
 
-Разбор того, как оператор `with` гарантирует освобождение ресурсов и почему он надёжнее ручного `try/finally`: протокол `__enter__`/`__exit__`, инструменты модуля `contextlib` (`@contextmanager`, `suppress`, `ExitStack`) и реальные паттерны - файлы, блокировки, транзакции. Тема для тех, кто уже знаком с классами Python и хочет писать код, который не оставляет за собой открытых файлов и захваченных lock.
+How the `with` statement guarantees resource cleanup and why it is more reliable than manual `try/finally`: the `__enter__`/`__exit__` protocol, tools from `contextlib` (`@contextmanager`, `suppress`, `ExitStack`), and real patterns - files, locks, transactions. For developers who already know Python classes and want code that does not leave open files or held locks behind.
 
-Концепты:
+## Concepts
 
-1. Оператор with: зачем он нужен
-2. Протокол `__enter__`/`__exit__`
-3. `contextlib`: `contextmanager`, `suppress`, `ExitStack`
-4. Реальные паттерны: ресурсы, блокировки, транзакции
+1. **The `with` statement: why it exists**
+2. **The `__enter__`/`__exit__` protocol**
+3. **`contextlib`: `contextmanager`, `suppress`, `ExitStack`**
+4. **Real patterns: resources, locks, transactions**
 
-Prerequisites: `python-oop`.
+## Prerequisites
 
-Generated via `lesson-forge`.
+- `python-oop`
+
+## Estimated effort
+
+About 3 hours.
+
+## Runtime
+
+`pyodide` - runs entirely in your browser. No setup.

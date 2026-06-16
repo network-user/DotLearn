@@ -1,0 +1,285 @@
+exercises:
+  - id: depends-what-is-001
+    concept: di-in-fastapi
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does `Depends(get_db)` do in a FastAPI handler signature?"
+    choices:
+      - id: a
+        text: "Tells the framework to call get_db before the handler and pass its result into this parameter."
+      - id: b
+        text: "Reads the parameter value from the request body by the name get_db."
+      - id: c
+        text: "Caches the handler in the database for the lifetime of the application."
+      - id: d
+        text: "Forbids calling the handler while the database is unavailable."
+    correct: [a]
+    explanation: "Depends(f) declares the parameter as the result of function f: FastAPI calls f itself before the handler and passes the result. The handler depends on the result, not on how the dependency is built."
+    variants:
+      - prompt: "How does a dependency through Depends differ from an ordinary FastAPI handler argument?"
+        choices:
+          - id: a
+            text: "An ordinary argument comes from the request (path, query, body); Depends is the result of another function the framework will execute."
+          - id: b
+            text: "A Depends dependency always comes from the Authorization header."
+          - id: c
+            text: "There is no difference: Depends is just another way to write an ordinary argument."
+          - id: d
+            text: "A Depends parameter is not passed into the function body, only logged."
+        correct: [a]
+        explanation: "FastAPI reads an ordinary argument from the request; Depends(f) turns the parameter into the result of calling f, which the framework runs for you."
+      - prompt: "Who acts as the 'injector' that assembles handler dependencies in FastAPI?"
+        choices:
+          - id: a
+            text: "FastAPI itself: it walks the dependency graph and passes computed values."
+          - id: b
+            text: "The developer, manually calling get_db() at the start of every handler."
+          - id: c
+            text: "The operating system through system calls."
+          - id: d
+            text: "The client browser, passing objects in the request body."
+        correct: [a]
+        explanation: "Same DI, only the injector is FastAPI, not you: you declare the need through Depends, the framework computes dependencies and plugs them in."
+
+  - id: depends-mistakes-001
+    concept: di-in-fastapi
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Why is `Depends(get_db())` (with parentheses) almost always a mistake?"
+    choices:
+      - id: a
+        text: "That way get_db is evaluated once at app startup and the single result is frozen for all requests."
+      - id: b
+        text: "FastAPI cannot accept functions in Depends — only their results."
+      - id: c
+        text: "Parentheses force FastAPI to call get_db twice on every request."
+      - id: d
+        text: "This is the correct form; Depends does not work without parentheses."
+    correct: [a]
+    explanation: "Pass the function get_db itself to Depends, not its call. With `get_db()` you substitute one precomputed result for all requests instead of calling on each request."
+    variants:
+      - prompt: "What is true about dependency caching in FastAPI?"
+        choices:
+          - id: a
+            text: "By default a dependency is computed once per request and reused; the cache resets between requests."
+          - id: b
+            text: "A dependency is cached forever and survives all application requests."
+          - id: c
+            text: "FastAPI has no dependency caching — each reference is computed anew."
+          - id: d
+            text: "The dependency cache is shared by all users simultaneously."
+        correct: [a]
+        explanation: "FastAPI caches a dependency's result within one request by dependency function; the next request starts fresh. use_cache=False disables caching."
+      - prompt: "How does a dependency with `yield` behave in FastAPI?"
+        choices:
+          - id: a
+            text: "Like a context manager: code before yield runs on entry, code after (in finally) runs when the request completes; the handler receives the yielded value."
+          - id: b
+            text: "Like an ordinary function: returns the generator itself, and cleanup happens right after yield."
+          - id: c
+            text: "yield in FastAPI dependencies is forbidden and raises an error."
+          - id: d
+            text: "Code after yield never runs."
+        correct: [a]
+        explanation: "A yield dependency is a context: before yield prepares the resource, after (in finally) releases it when the request completes in any outcome. The handler gets the yielded value."
+
+  - id: depends-predict-basic-001
+    concept: di-in-fastapi
+    type: predict-output
+    difficulty: 2
+    prompt: "What will this program print? (mini-engine reproduces the essence of Depends)"
+    snippet: |
+      class Depends:
+          def __init__(self, func):
+              self.func = func
+
+      def solve(func, cache):
+          if func in cache:
+              return cache[func]
+          kwargs = {}
+          for name, dep in getattr(func, "deps", {}).items():
+              kwargs[name] = solve(dep.func, cache)
+          result = func(**kwargs)
+          cache[func] = result
+          return result
+
+      def get_db():
+          return {"users": ["ana", "boris"]}
+
+      def list_users(db=None):
+          return db["users"]
+
+      list_users.deps = {"db": Depends(get_db)}
+      print(solve(list_users, {}))
+    expected:
+      kind: stdout
+      value: "['ana', 'boris']"
+    hints:
+      - "solve recursively computes dependencies: first get_db, then passes the result to list_users as db. What will list_users return with that dict?"
+    variants:
+      - snippet: |
+          class Depends:
+              def __init__(self, func):
+                  self.func = func
+
+          def solve(func, cache):
+              if func in cache:
+                  return cache[func]
+              kwargs = {}
+              for name, dep in getattr(func, "deps", {}).items():
+                  kwargs[name] = solve(dep.func, cache)
+              result = func(**kwargs)
+              cache[func] = result
+              return result
+
+          def get_token():
+              return "abc"
+
+          def get_user(token=None):
+              return "user-" + token
+
+          get_user.deps = {"token": Depends(get_token)}
+          print(solve(get_user, {}))
+        expected:
+          kind: stdout
+          value: "user-abc"
+      - snippet: |
+          class Depends:
+              def __init__(self, func):
+                  self.func = func
+
+          def solve(func, cache):
+              if func in cache:
+                  return cache[func]
+              kwargs = {}
+              for name, dep in getattr(func, "deps", {}).items():
+                  kwargs[name] = solve(dep.func, cache)
+              result = func(**kwargs)
+              cache[func] = result
+              return result
+
+          def get_settings():
+              return {"page_size": 10}
+
+          def get_limit(settings=None):
+              return settings["page_size"] * 2
+
+          get_limit.deps = {"settings": Depends(get_settings)}
+          print(solve(get_limit, {}))
+        expected:
+          kind: stdout
+          value: "20"
+
+  - id: depends-predict-cache-001
+    concept: di-in-fastapi
+    type: predict-output
+    difficulty: 3
+    prompt: "What will this program print? The dependency appears twice but is cached within the request."
+    snippet: |
+      class Depends:
+          def __init__(self, func):
+              self.func = func
+
+      def solve(func, cache):
+          if func in cache:
+              return cache[func]
+          kwargs = {}
+          for name, dep in getattr(func, "deps", {}).items():
+              kwargs[name] = solve(dep.func, cache)
+          result = func(**kwargs)
+          cache[func] = result
+          return result
+
+      def get_db():
+          print("opened connection")
+          return object()
+
+      def report(a=None, b=None):
+          return a is b
+
+      report.deps = {"a": Depends(get_db), "b": Depends(get_db)}
+      print(solve(report, {}))
+    expected:
+      kind: stdout
+      value: "opened connection\nTrue"
+    hints:
+      - "get_db appears twice (a and b), but solve caches the result by function within one 'request'. How many times does get_db's body actually run?"
+      - "Since the result is one and the same object, a and b refer to it. What prints first, and what second (a is b)?"
+
+  - id: depends-fill-declare-001
+    concept: di-in-fastapi
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete the dependency declaration in a FastAPI handler: db should come as the result of function get_db."
+    template: |
+      from fastapi import Depends, FastAPI
+
+      app = FastAPI()
+
+      def get_db():
+          return {"users": ["ana"]}
+
+      @app.get("/users")
+      def list_users(db = {{depends}}({{func}})):
+          return db["users"]
+    blanks:
+      depends:
+        accept: ["Depends"]
+      func:
+        accept: ["get_db"]
+    hints:
+      - "Pass the dependency function itself to Depends, not the result of calling it — no parentheses after the name."
+    variants:
+      - prompt: "Complete the nested dependency: get_user depends on the result of get_token."
+        template: |
+          def get_token(authorization: str = ""):
+              return authorization.removeprefix("Bearer ")
+
+          def get_user(token: str = Depends({{inner}})):
+              return {"id": token}
+        blanks:
+          inner:
+            accept: ["get_token"]
+      - prompt: "Complete a yield dependency so the resource is guaranteed to close."
+        template: |
+          def get_db():
+              db = {"conn": "open"}
+              try:
+                  {{kw}} db
+              {{block}}:
+                  db["conn"] = "closed"
+        blanks:
+          kw:
+            accept: ["yield"]
+          block:
+            accept: ["finally"]
+
+  - id: depends-engine-001
+    concept: di-in-fastapi
+    type: python-function
+    difficulty: 4
+    prompt: "Implement `solve(func, cache)` — the core of mini-Depends. If func's result is already in cache, return it. Otherwise recursively compute dependencies from `func.deps` (dict name -> object with `.func` attribute), call func with those kwargs, store the result in cache keyed by func, and return it. Treat missing deps as an empty dict."
+    starter: |
+      def solve(func, cache):
+          ...
+    cases:
+      - call: "solve((lambda: 7), {})"
+        expect: 7
+      - call: "(lambda f, g: (setattr(g, 'deps', {'x': type('D', (), {'func': staticmethod(f)})()}), solve(g, {}))[-1])((lambda: 5), (lambda x=None: x + 1))"
+        expect: 6
+      - call: "(lambda calls: (lambda leaf: (lambda f: (setattr(f, 'deps', {'a': type('D', (), {'func': staticmethod(leaf)})(), 'b': type('D', (), {'func': staticmethod(leaf)})()}), solve(f, {}), len(calls))[-1])((lambda a=None, b=None: a + b)))((lambda: calls.append(1) or 9)))([])"
+        expect: 1
+    hints:
+      - "Per-request cache is the key property: the same dependency listed twice must be computed once. What should you check first when entering solve?"
+      - "First check cache by func. Then for each name/dependency pair in func.deps recursively call solve on dep.func. Use getattr(func, 'deps', {}) so leaf functions work."
+      - "After collecting kwargs call func(**kwargs), put the result in cache[func], and return. Storing in cache before return is required or reuse will not work."
+    solution: |
+      def solve(func, cache):
+          if func in cache:
+              return cache[func]
+          kwargs = {}
+          for name, dep in getattr(func, "deps", {}).items():
+              kwargs[name] = solve(dep.func, cache)
+          result = func(**kwargs)
+          cache[func] = result
+          return result

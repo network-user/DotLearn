@@ -1,0 +1,140 @@
+---
+conceptId: typing-basics
+title: "Type Annotations: Why and How"
+estimatedMinutes: 45
+---
+
+# Type Annotations: Hints That More Than Humans Read
+
+You open someone else's function `def process(data):` and immediately stumble: what is `data` — a list, a dict, an object with some methods? To find out, you have to read the whole body, hunt for call sites, sometimes fire up the debugger. The argument name hints at intent, but guarantees nothing: you can pass anything in, and Python stays silent until an `AttributeError` blows up three levels deep.
+
+Type annotations are a way to write directly in the signature what a function expects and what it returns. By the end of this section you will read and write annotations for variables, arguments, and return values, understand why the interpreter does not check them, and use an external type checker that catches mismatches before run time.
+
+## Mental Model: An Annotation Is a Contract, Not a Check
+
+The main thing to grasp about annotations in Python: the interpreter does **not** execute them. Writing `age: int` does not make Python reject a string — it only declares intent. A separate tool does the real checking — a static analyzer (mypy, pyright, the one built into your IDE) — which reads code without running it and compares actual usage to the declared contract.
+
+<Figure caption="Annotations are input for the static analyzer; at run time the interpreter ignores them and stores them only in __annotations__.">
+  <Sketch viewBox="0 0 460 200" title="Two readers of annotations">
+    <SketchBox x={20} y={75} width={130} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={85} y={104} mono>age: int</SketchLabel>
+    <SketchBox x={290} y={20} width={150} height={50} accent />
+    <SketchLabel x={365} y={42} accent>type checker</SketchLabel>
+    <SketchLabel x={365} y={59} size={11} muted>checks before run</SketchLabel>
+    <SketchBox x={290} y={130} width={150} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={365} y={152}>interpreter</SketchLabel>
+    <SketchLabel x={365} y={169} size={11} muted>ignores type</SketchLabel>
+    <SketchArrow from={[150, 90]} to={[288, 45]} accent />
+    <SketchArrow from={[150, 110]} to={[288, 155]} dashed />
+  </Sketch>
+</Figure>
+
+A non-obvious consequence follows: a program with wrong annotations still runs and may finish without errors. Annotations are documentation that a machine can read, not a run-time validator. Their value is catching mismatches earlier — not in production on real data, but in the editor while you type.
+
+## Basic Syntax: Variables, Arguments, Return
+
+A variable annotation is a name, a colon, and a type. An argument annotation lives in the same form inside parentheses, and the return type goes after the arrow `->`.
+
+```python
+name: str = "Anna"
+age: int = 34
+
+def greet(person: str, times: int) -> str:
+    return f"Hello, {person}! " * times
+```
+
+Here the signature documents itself: `greet` takes a string and an int, and returns a string. Anyone who calls `greet(34, "Anna")` with swapped arguments gets a complaint from the analyzer — even though Python would run that call and return an absurd but non-crashing result.
+
+A function with no return value is annotated as `-> None`. That is not the same as omitting the arrow: `-> None` explicitly says "I return nothing useful," while a missing arrow means "type not specified."
+
+```python
+def log(message: str) -> None:
+    print(f"[log] {message}")
+```
+
+## Compound Types: Containers and Optional
+
+For containers a bare name is not enough — you must say what is inside. Since Python 3.9 built-in collections are parameterized directly: `list[int]`, `dict[str, int]`, `tuple[int, str]`. The square brackets read as "a list **of** int," "a dict **from** str to int."
+
+```python
+scores: list[int] = [10, 20, 30]
+ages: dict[str, int] = {"Anna": 34, "Boris": 29}
+
+def total(values: list[int]) -> int:
+    return sum(values)
+```
+
+`dict` takes two parameters — key type and value type — so `dict[str, int]` reads as "string keys, numeric values." For a fixed-length tuple each element is annotated separately: `tuple[int, str]` is a pair where the first element is int and the second is str, and the analyzer will catch if the order is wrong. The more precise the container parameters, the more errors are caught before run time — for example, putting a string into `list[int]` or accessing a nonexistent third element of `tuple[int, str]`.
+
+When a value can be something or `None`, write it as `| None` (or `Optional[T]` from `typing` in the older style). `str | None` means "string or nothing" and makes the analyzer require a `None` check before use. That is not cosmetic: while the type is `str | None`, the analyzer will not let you call a string method directly and will demand you rule out `None` first — for example via `if result is not None`.
+
+```python
+def find_user(user_id: int) -> str | None:
+    table = {1: "Anna", 2: "Boris"}
+    return table.get(user_id)
+```
+
+<Callout type="tip">
+`dict.get` returns `None` when the key is missing, so an honest result annotation is `str | None`, not `str`. After that the analyzer will not let you call a string method on the result until you rule out `None`.
+</Callout>
+
+## Try Types by Hand
+
+Annotations do not vanish without a trace: the interpreter stores them in the `__annotations__` attribute, available at run time. Run the code below to see what ends up there. Then pass a number to `person` instead of a string — the program still runs, because Python does not check types. That is "contract without enforcement" in plain sight.
+
+<PyDemo
+  title="Annotations are visible at run time but not checked"
+  code={`def greet(person: str, times: int) -> str:
+    return f"Hello, {person}! " * times
+
+print(greet.__annotations__)
+print(greet("Anna", 2))
+print(greet(99, 2))`}
+/>
+
+The third line of output proves that Python ignored the `person: str` annotation: a number `99` went in instead of a string, and the function calmly built `"Hello, 99! "` and repeated it twice. The analyzer would reject that call, but the interpreter does not care.
+
+## Edge Case: An Annotation Does Not Coerce the Type
+
+This may surprise you: assignment with an annotation does not convert the value. If you write `x: int = "5"`, no conversion to a number happens — `x` stays a string, and only the analyzer notices the mismatch.
+
+```python
+x: int = "5"
+print(type(x))
+print(x + "0")
+```
+
+It prints `<class 'str'>` and `50`. Variable `x` is declared as `int`, but actually holds the string `"5"`, and `+` worked as string concatenation. An annotation is a promise, not a cast; you and the analyzer are responsible for keeping it, not the interpreter.
+
+## Common Mistakes
+
+- **Expecting Python to check types on its own.** It will not. Without a type checker (mypy, pyright, IDE checking) annotations give no guarantees — only documentation. Run the analyzer in CI, or nobody enforces the contract.
+- **Annotating `list` instead of `list[int]`.** Bare `list` means "list of anything," and the analyzer cannot catch that you put strings in. Specify the container parameter when you know it.
+- **Forgetting `None` in the return type.** A function that sometimes returns a value and sometimes `None` (via bare `return` or `dict.get`) should declare `T | None`. Otherwise the analyzer assumes `None` is impossible and misses the error.
+- **Confusing `-> None` with a missing arrow.** `-> None` is an explicit contract "I return nothing useful"; a missing annotation means "type not specified." For procedure-style functions, write `-> None` explicitly.
+
+<Detail summary="Where annotation syntax came from and why it is optional">
+
+Function annotations appeared in Python 3.0 (PEP 3107) as a purely syntactic feature: the language allowed arbitrary expressions after colons and arrows, but gave them no meaning. Only in 3.5 (PEP 484) were they agreed on for types and the `typing` module appeared. Variable annotations arrived in 3.6 (PEP 526).
+
+The authors' key decision: typing in Python stays **gradual**. You can annotate nothing, part of the code, or everything — and any of those is valid. Unannotated code is treated as having a "dynamic" type and the analyzer does not complain. That lets you add types to an existing project gradually, file by file, without rewriting everything at once.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An annotation is a contract for the static analyzer, not a run-time check: the interpreter does not execute it.",
+    "Syntax: name: type for variables and arguments, -> type after parentheses for return; a function with no return uses -> None.",
+    "Containers are parameterized: list[int], dict[str, int]; bare list means \"anything inside.\"",
+    "A value that may be absent is annotated as T | None and requires a None check before use.",
+    "Assignment with an annotation does not coerce the type: x: int = \"5\" leaves a string in x.",
+    "Without a type checker (mypy, pyright) annotations give no guarantees — run the analyzer in CI.",
+  ]}
+/>
+
+## References
+
+- [Python documentation — typing](https://docs.python.org/3/library/typing.html)
+- [PEP 484 — Type Hints](https://peps.python.org/pep-0484/)
+- [PEP 526 — Syntax for Variable Annotations](https://peps.python.org/pep-0526/)
+- [mypy — Getting started](https://mypy.readthedocs.io/en/stable/getting_started.html)

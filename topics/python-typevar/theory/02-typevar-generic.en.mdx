@@ -1,0 +1,151 @@
+---
+conceptId: typevar-generic
+title: TypeVar and Generic
+estimatedMinutes: 45
+---
+
+# TypeVar: Tie Input Type to Output Type
+
+Write a function that returns the first element of a list. With annotations from the previous section you have two bad options. You can declare the input as `list[int]` — but then the function only works for lists of ints, and you need a copy for lists of strings. You can declare the input as `list[object]` and the return as `object` — the function becomes universal, but the analyzer "forgets" what is inside: call it on `list[str]` and you get a result of type `object` with no string methods. Universality bought at the price of lost type information.
+
+What is missing is a way to say: "whatever type is in the list on input, the same type comes out" — without naming a concrete type, but linking input and output in one variable. That is what `TypeVar` does. By the end of this section you will write generic functions where the result type is inferred from the argument type, and your own generic container classes via `Generic`.
+
+## Mental Model: TypeVar Is a Variable for a Type
+
+An ordinary variable holds a value that becomes known at call time. `TypeVar` holds a **type** that becomes known at the call site. You declare `T = TypeVar("T")` and use `T` in the signature several times; the analyzer understands that the same type must appear in all those places and substitutes it when it sees a concrete call.
+
+<Figure caption="T is a placeholder: at the call site it is replaced by a concrete type, and linked positions get the same type.">
+  <Sketch viewBox="0 0 470 210" title="TypeVar substitution at the call site">
+    <SketchBox x={20} y={20} width={210} height={60} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={125} y={45} mono size={12}>def first(items: list[T])</SketchLabel>
+    <SketchLabel x={125} y={64} mono size={12}>-&gt; T</SketchLabel>
+    <SketchBox x={20} y={130} width={210} height={55} accent />
+    <SketchLabel x={125} y={153} mono size={12}>first(["a", "b", "c"])</SketchLabel>
+    <SketchLabel x={125} y={172} size={11} muted>T = str</SketchLabel>
+    <SketchBox x={300} y={130} width={150} height={55} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={153}>result: str</SketchLabel>
+    <SketchLabel x={375} y={172} size={11} muted>not object</SketchLabel>
+    <SketchArrow from={[125, 80]} to={[125, 128]} dashed />
+    <SketchArrow from={[230, 157]} to={[298, 157]} accent />
+  </Sketch>
+</Figure>
+
+The key difference from `object`: `object` erases the type forever, while `T` remembers it and carries it to the output. When you call `first(["a", "b"])`, the analyzer fixes `T = str` for that call and promises the result is exactly `str`, not a vague `object`. The name `T` is just convention; any name works, but single uppercase letters (`T`, `K`, `V`) are traditional.
+
+## Your First Generic Function
+
+Let us build that "first element" function. Declare `TypeVar`, use it twice — in the argument type and the return type.
+
+```python
+from typing import TypeVar
+
+T = TypeVar("T")
+
+def first(items: list[T]) -> T:
+    return items[0]
+```
+
+One function now serves any list, and the result type is precise each time. For the analyzer, `first([1, 2, 3])` returns `int`, `first(["a", "b"])` returns `str`. No copies per type, and no lost information.
+
+The link works both ways and across several arguments. A function that returns one of two passed objects requires both to be the same type `T`, and promises to return that same `T`.
+
+```python
+def pick(a: T, b: T, use_first: bool) -> T:
+    return a if use_first else b
+```
+
+Calling `pick(1, 2, True)` gives `int`; `pick("x", "y", False)` gives `str`. But `pick(1, "x", True)` the analyzer rejects: `T` cannot be both `int` and `str` at once.
+
+## Generic Classes via Generic
+
+`TypeVar` is not only for functions. To write your own container that remembers the type of its contents, inherit the class from `Generic[T]`. Then `T` becomes a class parameter: you specify it at construction time, and all methods get consistent types.
+
+```python
+from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+class Box(Generic[T]):
+    def __init__(self, item: T) -> None:
+        self._item = item
+
+    def get(self) -> T:
+        return self._item
+```
+
+`Box[int]` is a box whose `get()` returns `int`; `Box[str]` is one whose `get()` returns `str`. One class, parameterized by type, just like built-in `list[int]`. Annotating at creation, `box: Box[int] = Box(42)`, fixes the parameter, and the analyzer will catch if you put a string in that box.
+
+<MarginNote label="PEP 695">Python 3.12 added syntax `def first[T](items: list[T]) -> T:` and `class Box[T]:` without an explicit `TypeVar`. It is shorter, but under the hood it is the same mechanism. The older style from this section works everywhere and is still more common.</MarginNote>
+
+## Try Generics by Hand
+
+Run the code: `Box` stores and returns a value of any type, and at run time no `T` exists — you can see that both boxes are the same class. Then change `Box(42)` to `Box([1, 2, 3])` or `Box("hello")` and run again: the container accepts anything, because all "genericity" lives in annotations, not at run time. The analyzer would infer a different `get()` type for each case.
+
+<PyDemo
+  title="A generic container accepts any type"
+  code={`from typing import Generic, TypeVar
+
+T = TypeVar("T")
+
+class Box(Generic[T]):
+    def __init__(self, item):
+        self._item = item
+    def get(self):
+        return self._item
+
+number_box = Box(42)
+text_box = Box("hello")
+print(number_box.get(), text_box.get())
+print(type(number_box) is type(text_box))`}
+/>
+
+The second line prints `True`: from the interpreter's view `Box(42)` and `Box("hello")` are objects of the same class `Box`. The difference between `Box[int]` and `Box[str]` exists only for the analyzer.
+
+## Edge Case: TypeVar Cannot Be Shared Across Unrelated Contexts
+
+This may surprise you: `T` in one signature and `T` in another are independent, even if it is literally the same `TypeVar` object. The analyzer freshly "solves" what `T` equals for each call. So a shared `T = TypeVar("T")` is fine across dozens of functions: each gets its own substitution, no conflict.
+
+```python
+T = TypeVar("T")
+
+def head(items: list[T]) -> T:
+    return items[0]
+
+def repeat(value: T, n: int) -> list[T]:
+    return [value] * n
+```
+
+`head` and `repeat` share one name `T`, but that does not link them: in `head(["a"])` you get `T = str`, in `repeat(7, 3)` you get `T = int`. The link exists only inside one signature, between its own `T` positions.
+
+## Common Mistakes
+
+- **Using `object` where you need `TypeVar`.** `def first(items: list[object]) -> object` makes the function universal but erases the result type. If the output should match the input type — use `TypeVar`, not `object`.
+- **Forgetting to inherit from `Generic[T]`.** Simply using `T` in class methods is not enough — without `class Box(Generic[T])` the analyzer will not understand the class is parameterized, and `Box[int]` will be an error.
+- **Expecting `T` at run time.** At run time `Box[int]` and `Box[str]` are one class, and `T` is stored nowhere. You cannot "ask an object for its `T`"; type erasure means that information never reaches run time.
+- **Accidentally tying different types with one `T`.** If two arguments should be different types, they need different `TypeVar`s (`K` and `V`). One `T` for both forces the analyzer to require matching types.
+
+<Detail summary="Type erasure: why Python generics are not like C++ generics">
+
+In languages like C++ templates generate separate machine code for each concrete type: `vector<int>` and `vector<string>` are two different generated classes. Python is different. `Generic` and `TypeVar` exist only at the annotation level; at run time `Box[int]` is the same class object as `Box`, and the type parameter is erased.
+
+Practical consequence: you cannot write `if T is int` inside a method — there is no `T` variable at run time. If behavior must depend on type at run time, pass it as an ordinary value argument (for example a factory or the class itself), not by trying to read it from a generic parameter. Annotations and execution are two worlds, and `TypeVar` lives entirely in the first.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "TypeVar is a variable for a type: it links positions in a signature so input and output get the same type.",
+    "Unlike object, TypeVar does not erase the type but carries it to the result: first(['a']) returns str, not object.",
+    "A generic class inherits from Generic[T]; the parameter is fixed at construction, like built-in list[int].",
+    "One TypeVar can be used in many functions — the link exists only inside one signature, not between them.",
+    "Types are erased: at run time Box[int] and Box[str] are one class, and T is stored nowhere.",
+    "If arguments should be different types, use separate TypeVars (K, V), not one T for both.",
+  ]}
+/>
+
+## References
+
+- [Python documentation — typing.TypeVar](https://docs.python.org/3/library/typing.html#typing.TypeVar)
+- [Python documentation — typing.Generic](https://docs.python.org/3/library/typing.html#typing.Generic)
+- [PEP 484 — Generics](https://peps.python.org/pep-0484/#generics)
+- [mypy — Generics](https://mypy.readthedocs.io/en/stable/generics.html)

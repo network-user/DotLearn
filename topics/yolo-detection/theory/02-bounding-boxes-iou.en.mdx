@@ -1,0 +1,121 @@
+---
+conceptId: bounding-boxes-iou
+title: Bounding Boxes and IoU
+estimatedMinutes: 35
+---
+
+The detector predicted a box, the annotator drew the ground truth. They almost match but not pixel-perfect. Is this a good prediction or a miss? "Looks close by eye" is not a metric; training and evaluation need one number that rises when boxes align and falls when they diverge. That number is IoU, and without it matching predictions to ground truth, suppressing redundant boxes, and computing mAP all break down.
+
+By the end of this section you will freely convert boxes between `xywh` and `xyxy` formats, compute the intersection area of two rectangles via axis overlap, derive IoU as intersection over union, and handle the case where boxes do not intersect at all.
+
+## Two formats for one box
+
+A rectangle can be specified two ways, and both appear in detector code at every step.
+
+- **`xyxy`** — two corners: `(x1, y1, x2, y2)`, top-left and bottom-right. Convenient for intersections: the intersection is defined by max of left edges and min of right edges.
+- **`xywh`** — center and size: `(cx, cy, w, h)`. Convenient for network prediction: the model outputs center offset and dimensions.
+
+Converting between them is pure arithmetic. From center to corners: `x1 = cx - w/2`, `y1 = cy - h/2`, `x2 = cx + w/2`, `y2 = cy + h/2`. Back: `cx = (x1 + x2)/2`, `w = x2 - x1`. For intersections we work everywhere in `xyxy`, because the intersection formula is more direct that way.
+
+```python
+def xywh_to_xyxy(cx, cy, w, h):
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+print(xywh_to_xyxy(10, 10, 4, 6))
+```
+
+This prints `(8.0, 7.0, 12.0, 13.0)`: center `(10, 10)` with sides `4` and `6` gives corners `(8, 7)` and `(12, 13)`.
+
+## IoU: intersection divided by union
+
+IoU (Intersection over Union) is the ratio of the intersection area of two boxes to their union area. If boxes match, intersection equals union and IoU = 1. If they do not touch, intersection is zero and IoU = 0. Everything in between is between zero and one, and more overlap means closer to one.
+
+<Figure caption="IoU = intersection area / union area. Drag the predicted box and watch the value change: full overlap gives 1, divergence pulls toward 0.">
+  <IoUViz boxA={{ x: 36, y: 44, w: 150, h: 120 }} boxB={{ x: 120, y: 86, w: 150, h: 110 }} />
+</Figure>
+
+Move the predicted box in the figure. When it overlaps the ground truth, the shaded intersection grows and IoU climbs; when it moves away, IoU drops. Note: at half overlap IoU is far from 0.5. That is an important intuition — IoU is "stricter" than naive expectation because the denominator is the union, which is always at least as large as the intersection.
+
+## Intersection area via axis overlap
+
+The intersection of two `xyxy` rectangles is also a rectangle (or empty). Its left edge is the rightmost of the two left edges, i.e. `max(ax1, bx1)`. Its right edge is the leftmost of the two right edges, `min(ax2, bx2)`. Same vertically. The overlap width along an axis can be negative if the boxes have separated.
+
+```python
+def overlap(a1, a2, b1, b2):
+    lo = max(a1, b1)
+    hi = min(a2, b2)
+    return max(0, hi - lo)
+
+print(overlap(0, 4, 2, 6), overlap(0, 2, 5, 7))
+```
+
+This prints `2 0`: segments `[0,4]` and `[2,6]` overlap by `2`; `[0,2]` and `[5,7]` do not intersect, and `max(0, ...)` clips the negative width to zero. This `max(0, ...)` is the heart of a correct implementation: without it, non-overlapping boxes yield a false positive area.
+
+Intersection area is the product of overlaps along both axes. Union area is the sum of areas minus intersection (otherwise the shared part is counted twice).
+
+```python
+def iou(box_a, box_b):
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+    iw = max(0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0, min(ay2, by2) - max(ay1, by1))
+    inter = iw * ih
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+print(iou((0, 0, 4, 4), (2, 2, 6, 6)))
+```
+
+This prints `0.142857...`: intersection `(2,2)-(4,4)` has area `4`, each box has area `16`, union `16 + 16 - 4 = 28`, and `4/28 = 1/7`. Half the height and half the width overlap — yet IoU is only about `0.14`: another reminder that the union in the denominator makes the metric strict.
+
+## Try it yourself
+
+Run the calculation. Right now the boxes overlap by exactly one quarter of each area. Shift the second box to `(0, 0, 4, 4)` — you get IoU = 1.0 (full match). Then separate them to `(0, 0, 4, 4)` and `(10, 10, 14, 14)` — you get 0.0. Check an intermediate case: how far below 1 is IoU when boxes overlap by three quarters?
+
+<PyDemo
+  title="IoU of two boxes"
+  code={`def iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    iw = max(0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0, min(ay2, by2) - max(ay1, by1))
+    inter = iw * ih
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+print(iou((0, 0, 4, 4), (2, 2, 6, 6)))`}
+/>
+
+## Where this surprises you
+
+Non-overlapping boxes without `max(0, ...)` cause catastrophe. If boxes have separated on both axes, both "overlap widths" are negative, their product is **positive**, and without clipping you get a fabricated intersection area. The metric reports positive IoU where boxes do not even touch. Always clip overlap along each axis to zero before multiplying.
+
+A second surprise is nested boxes. If a small box lies entirely inside a large one, intersection equals the small box area and union equals the large box area. IoU of small-in-large equals the area ratio and can be far from one, even though the small box landed exactly inside.
+
+## Common mistakes
+
+- **Multiplying negative overlaps.** Without `max(0, ...)` along each axis, two negative numbers give a positive "area." Clip to zero **before** multiplying, not after.
+- **Forgetting to subtract intersection from union.** `union = area_a + area_b` inflates the denominator: the shared part is counted twice. Correct: `area_a + area_b - inter`.
+- **Computing IoU in different formats.** Feeding an `xywh` box into the `xyxy` formula means interpreting `w` as `x2`. Convert both boxes to one format before calculating.
+- **Dividing by zero.** If both boxes are degenerate (zero area), union is zero. Return `0.0` when `union == 0`, do not crash with an error.
+
+<Detail summary="GIoU, DIoU, CIoU — why plain IoU is not enough for training">
+
+Plain IoU has a blind spot: for two non-overlapping boxes it is always exactly zero, regardless of whether they are one pixel apart or half a frame apart. That is fine for an evaluation metric, but as a gradient descent signal it is poor: zero IoU does not hint which direction to move the box. So training adds variants that stay informative at zero overlap: GIoU considers the smallest box enclosing both, DIoU — distance between centers, CIoU — also aspect ratio agreement. The evaluation metric itself remains plain IoU.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A box is specified as xywh (center-size) or xyxy (corner-corner); converting between them is simple arithmetic with a half-size shift.",
+    "IoU = intersection area / union area: 1 on match, 0 with no contact, everything in between.",
+    "Intersection in xyxy: width along an axis = min of right edges minus max of left edges, clipped to zero via max(0, ...).",
+    "Union = area A plus area B minus intersection — otherwise you count the shared part twice.",
+    "At half overlap IoU is noticeably below 0.5, because the union in the denominator is always at least as large as the intersection.",
+  ]}
+/>
+
+## References
+
+- [Rezatofighi et al., Generalized Intersection over Union (2019)](https://arxiv.org/abs/1902.09630)
+- [COCO - detection evaluation metrics and IoU thresholds](https://cocodataset.org/#detection-eval)

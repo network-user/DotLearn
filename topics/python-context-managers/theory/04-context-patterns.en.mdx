@@ -1,0 +1,135 @@
+---
+conceptId: context-patterns
+title: "Real patterns: resources, locks, transactions"
+estimatedMinutes: 45
+---
+
+# Where context managers solve real problems
+
+A file in `with` is a teaching example for explaining the protocol. Real value shows up where "forgetting to release" means not a descriptor leak but a hung process or broken data integrity. A lock that is acquired and never released hangs every waiting thread. A transaction neither committed nor rolled back leaves the database inconsistent. These failures are expensive to find and easy to prevent with the same technique.
+
+This section covers three patterns that appear constantly in production: lock management, all-or-nothing transactions, and temporary state changes with guaranteed restoration. All three are variations of one idea: a paired operation where the second half must not be skipped.
+
+## Mental model: symmetry of acquire and rollback
+
+Each pattern has a "forward" action on entry and a matching "reverse" on exit. Acquire lock - release lock. Begin transaction - commit or rollback. Substitute a setting - restore the old value. A context manager makes the pair inseparable: the reverse action is tied to leaving the block and runs even if everything collapsed in the middle.
+
+<Figure caption="Three patterns, one shape: entry does the forward action, exit does the paired reverse. The reverse cannot be skipped because it is tied to leaving the block.">
+  <Sketch viewBox="0 0 460 220" title="Symmetry of acquire and rollback">
+    <SketchLabel x={60} y={28} muted anchor="start">entry</SketchLabel>
+    <SketchLabel x={400} y={28} muted anchor="end">exit</SketchLabel>
+    <SketchBox x={30} y={40} width={130} height={34} accent />
+    <SketchLabel x={95} y={62} mono accent>acquire lock</SketchLabel>
+    <SketchBox x={300} y={40} width={130} height={34} accent />
+    <SketchLabel x={365} y={62} mono accent>release lock</SketchLabel>
+    <SketchArrow from={[160, 57]} to={[298, 57]} dashed />
+    <SketchBox x={30} y={95} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={117} mono>begin tx</SketchLabel>
+    <SketchBox x={300} y={95} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={365} y={117} mono>commit / rollback</SketchLabel>
+    <SketchArrow from={[160, 112]} to={[298, 112]} dashed />
+    <SketchBox x={30} y={150} width={130} height={34} accent />
+    <SketchLabel x={95} y={172} mono accent>set value</SketchLabel>
+    <SketchBox x={300} y={150} width={130} height={34} accent />
+    <SketchLabel x={365} y={172} mono accent>restore value</SketchLabel>
+    <SketchArrow from={[160, 167]} to={[298, 167]} dashed />
+  </Sketch>
+</Figure>
+
+Keep this symmetry in mind: anything that looks like "do something, then must undo" belongs in a context manager.
+
+## Locks: the lock releases itself
+
+In multithreaded code `threading.Lock` protects shared state. You can acquire manually with `acquire()` and `release()`, but `release()` is easy to skip on exception - and then the lock stays taken forever. `Lock` is itself a context manager: `with lock` acquires on entry and guaranteed-releases on exit.
+
+```python
+import threading
+
+lock = threading.Lock()
+shared_total = 0
+
+def add(n):
+    global shared_total
+    with lock:
+        shared_total += n
+```
+
+Inside `with lock` access to `shared_total` is protected, and it does not matter whether the block ends normally or with an exception - `release()` runs either way.
+
+<Callout type="warning">
+A lock that is acquired and never released is one of the worst bug classes: the program does not crash but hangs quietly while another thread waits forever. `with` removes that risk by tying `release()` to leaving the block.
+</Callout>
+
+## Transactions: commit on success, rollback on error
+
+A transaction must apply entirely or not at all. A context manager states that rule directly: on exit it inspects whether there was an exception and chooses `commit` or `rollback`. Here the `__exit__` arguments matter for the first time in earnest.
+
+```python
+class Transaction:
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        self.db.begin()
+        return self.db
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.db.commit()
+        else:
+            self.db.rollback()
+        return False
+```
+
+If the block finished without error, `exc_type` is `None` - commit changes. If an exception occurred inside, `exc_type` is set - roll back to the state before `begin()`. Returning `False` means the exception still propagates after rollback: rolling back and hiding the cause are different jobs, and the cause should not be hidden.
+
+## Temporary state substitution
+
+The third pattern temporarily changes something and guaranteed-restores it afterward. Changed directory, substituted setting, raised limit - then reverted on exit. With `@contextmanager` this writes especially cleanly.
+
+```python
+from contextlib import contextmanager
+
+settings = {"debug": False}
+
+@contextmanager
+def temporary(key, value):
+    saved = settings[key]
+    settings[key] = value
+    try:
+        yield
+    finally:
+        settings[key] = saved
+```
+
+Before `yield` we remember the old value and set the new one. After `yield`, in `finally`, we restore the saved value - for any block outcome. Inside `with temporary("debug", True)` the flag is on; immediately after exit it is back to what it was, even if an exception fired inside.
+
+## Edge case: a resource opened in __init__ is not protected
+
+It is tempting to open a resource in the constructor and simply `return self` from `__enter__`. That works while object creation and `with` happen together. But if the object is created and `with` is never reached - an exception between creation and `with` - the resource is already acquired and nobody will call `__exit__`.
+
+Reliable pattern: acquire in `__enter__`, not in `__init__`. Then acquire and guaranteed release always go together. The constructor should only store parameters.
+
+## Common mistakes
+
+- **Acquiring a resource in `__init__`.** Release is tied to leaving `with`, but constructor acquisition happens before entry. An exception between them leaks the resource. Acquire in `__enter__`.
+- **Suppressing exceptions in a transaction.** Transaction `__exit__` should roll back and return `False` so the caller learns why rollback happened. `return True` hides the cause.
+- **Manual `acquire`/`release` for locks.** An exception between them skips `release` and the thread hangs. `with lock` fixes that automatically.
+- **Forgetting `finally` on temporary substitution.** Without `finally`, an exception in the block leaves the substituted value forever. Restoration always lives in `finally` (or `__exit__`).
+
+<KeyTakeaways
+  items={[
+    "Locks are context managers: with lock guaranteed-calls release() and prevents threads hanging on a held lock.",
+    "Transaction __exit__ commits when exc_type is None and rolls back on exception - the main use of __exit__ arguments.",
+    "Transaction __exit__ returns False: rollback and hiding the error cause are different tasks.",
+    "Temporary state changes use @contextmanager with restoration in finally - value returns on any outcome.",
+    "Acquire resources in __enter__, not __init__, or they can leak before with is entered.",
+    "Nested contexts release in reverse acquisition order; put the outer resource first so it closes last.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - threading.Lock as context manager](https://docs.python.org/3/library/threading.html#using-locks-conditions-and-semaphores-in-the-with-statement)
+- [Python documentation - contextlib utilities](https://docs.python.org/3/library/contextlib.html)
+- [Python documentation - sqlite3 Connection as context manager](https://docs.python.org/3/library/sqlite3.html#sqlite3-connection-context-manager)

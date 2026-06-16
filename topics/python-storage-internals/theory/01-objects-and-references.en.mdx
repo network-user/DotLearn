@@ -1,0 +1,166 @@
+---
+conceptId: objects-and-references
+title: Objects and references
+estimatedMinutes: 50
+---
+
+# A variable in Python is a label, not a box
+
+In many languages a variable is like a box: you put a number in it, and the number physically lives "inside" the variable. Python works differently, and until that difference clicks, things like "why did the list I never touched change?" or "why are two lists suddenly one?" feel like magic. There is no magic: in Python a variable is a name stuck on an object that lives on its own somewhere in memory.
+
+By the end of this section you will confidently tell a name from an object, understand what object identity is and how `is` differs from `==`, see the difference between mutable and immutable types, and avoid two classic traps: aliasing and a mutable default argument.
+
+## Names, references, and objects
+
+In Python everything is an object: the number `42`, the string `"hi"`, a list, a function, even a class itself. Each object lives in memory and has three things: a type, a value, and identity — a unique "address" that does not change for the object's entire lifetime. The `id()` function returns this identifier (in CPython, the object's address in memory).
+
+A variable stores nothing. Assignment `x = 42` does not "put 42 in x"; it creates the object `42` and binds the name `x` to it. A name is a reference, an arrow pointing at an object. Several names can point at the same object.
+
+```python
+x = [1, 2, 3]
+y = x
+print(x is y)
+```
+
+This prints `True`: `y = x` does not copy the list; it attaches a second name to the same object. Both names, `x` and `y`, are arrows to the same memory cell. In the figure below, that is two labels on one object, not two objects.
+
+<Figure caption="y = x does not create a copy: both names point at the same object. Name a points at a separate object with the same value.">
+  <ObjectMemoryFigure
+    objects={[
+      { name: 'x', className: 'list', attrs: { items: '[1, 2, 3]' } },
+      { name: 'y', className: '(same)', attrs: { items: '[1, 2, 3]' } },
+      { name: 'a', className: 'list', attrs: { items: '[1, 2, 3]' } },
+    ]}
+  />
+</Figure>
+
+Since `x` and `y` are one object, a change through one name is visible through the other. That is aliasing.
+
+```python
+x = [1, 2, 3]
+y = x
+y.append(4)
+print(x)
+```
+
+This prints `[1, 2, 3, 4]` even though you never touched `x`. One object, two names.
+
+## is vs ==: identity vs equality
+
+These two operators answer different questions. `a is b` asks: "is this literally the same object?" — do their `id()` values match? `a == b` asks: "are their values equal?" — and for that it calls `__eq__`.
+
+```python
+a = [1, 2, 3]
+b = [1, 2, 3]
+print(a == b, a is b)
+```
+
+This prints `True False`: the lists are equal in content but are two different objects in memory. Use `is` only when you care about object identity — the classic case is checking `x is None`.
+
+<Callout type="warning">Never write `x == None` or compare a singleton with `==`. Use `is None`: `None` exists in a single instance, and `is` checks identity directly without calling `__eq__`, which a foreign object could lie about.</Callout>
+
+## Mutable and immutable objects
+
+Objects fall into two camps. Immutable ones — for example `int`, `float`, `complex`, `str`, `bytes`, `tuple`, `frozenset` (and `bool`, which subclasses `int`) — cannot be changed after creation; any "modification" creates a new object. Mutable ones — `list`, `dict`, `set`, instances of ordinary classes — can change in place while keeping their identity.
+
+```python
+n = 10
+print(id(n))
+n += 1
+print(id(n))
+```
+
+The two `id()` values differ: `n += 1` does not change the object `10`; it creates the object `11` and rebinds the name `n` to it. The object `10` is unchanged. Compare with a list:
+
+```python
+nums = [1, 2]
+before = id(nums)
+nums += [3]
+print(id(nums) == before)
+```
+
+This prints `True`: for a list, `nums += [3]` is in-place `extend`, and identity is preserved. The same operator `+=` behaves differently for mutable and immutable objects — the root of many surprises.
+
+## Try it yourself
+
+Run the code and look at the difference between `is` and `==`. Then change `b = a[:]` to `b = a` and watch `a is b` become `True` and changes to `b` start affecting `a`. The slice `a[:]` creates a new list — a shallow copy.
+
+<PyDemo
+  title="Copy or the same object?"
+  code={`a = [1, 2, 3]
+b = a[:]
+b.append(99)
+print('a ==', a)
+print('b ==', b)
+print('a is b ==', a is b)`}
+/>
+
+## Copies: shallow vs deep
+
+The slice `a[:]`, `list(a)`, and `a.copy()` create a shallow copy: a new list, but the elements are the same objects as in the original. While elements are immutable, the difference is invisible. But if mutable objects sit inside, a shallow copy shares them with the original.
+
+```python
+import copy
+original = [[1, 2], [3, 4]]
+shallow = original[:]
+shallow[0].append(99)
+print(original[0])
+```
+
+This prints `[1, 2, 99]`: the outer list was copied, but the nested lists were not — they are shared. To copy the whole structure you need a deep copy that recursively duplicates all contents.
+
+```python
+import copy
+original = [[1, 2], [3, 4]]
+deep = copy.deepcopy(original)
+deep[0].append(99)
+print(original[0])
+```
+
+This prints `[1, 2]`: the deep copy is independent. The rule is simple: a shallow copy is enough while only immutable objects live inside; for nested mutable structures use `deepcopy`.
+
+## When behavior surprises you
+
+Python's most famous trap is a mutable default argument. The default value is computed once, when the function is defined, not on every call.
+
+```python
+def add_item(item, bucket=[]):
+    bucket.append(item)
+    return bucket
+
+print(add_item("a"))
+print(add_item("b"))
+```
+
+This prints `['a']`, then `['a', 'b']`. The list `bucket` was created once and lives between calls, accumulating everything put into it. The fix is default `None` and creating the real list inside the function.
+
+<Callout type="tip">The pattern against this trap: `def add_item(item, bucket=None):` and in the body `if bucket is None: bucket = []`. That way a new list is born on every call.</Callout>
+
+## Common mistakes
+
+- **Thinking assignment copies.** `b = a` for a list does not copy — both names look at one object. Need a copy? Use `a[:]`, `list(a)`, `a.copy()`, or `copy.deepcopy(a)`.
+- **Using `==` instead of `is` for `None`.** Technically `x == None` usually works, but it relies on a correct `__eq__`; the idiom is `x is None`.
+- **Relying on `is` for numbers and strings.** `a is b` for two `int` or `str` values is sometimes `True`, sometimes `False` — it depends on interning (see the optimizations section). For comparing values always use `==`.
+
+<Detail summary="What id() actually shows">
+
+`id()` returns an integer guaranteed to be unique and constant for an object during its lifetime. In CPython that is the object's address in memory, but the language does not promise that: another implementation (PyPy, Jython) may return anything as long as uniqueness and constancy hold. So you cannot rely on specific `id()` values — only on comparing `id(a) == id(b)`, which is what `is` does. Also note: after an object dies its `id` may be reused by a new object, so comparing saved "old" ids is meaningless.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A variable in Python is a name (reference) to an object, not a container holding a value; assignment binds a name to an object without copying it.",
+    "Every object has a type, a value, and identity; id() returns identity — in CPython, the address in memory.",
+    "is compares identity (whether it is the same object), == compares values via __eq__; for None use is.",
+    "Immutable objects (int, str, tuple) create a new object when 'modified'; mutable ones (list, dict, set) change in place and keep their id.",
+    "A shallow copy duplicates the outer container but shares nested objects; for an independent copy of nested structures use copy.deepcopy.",
+    "A mutable default argument is created once when the function is defined and lives between calls — use None as the default value.",
+  ]}
+/>
+
+## References
+
+- [Python docs - Data model: objects, values and types](https://docs.python.org/3/reference/datamodel.html#objects-values-and-types)
+- [Python docs - id()](https://docs.python.org/3/library/functions.html#id)
+- [Python docs - copy module](https://docs.python.org/3/library/copy.html)

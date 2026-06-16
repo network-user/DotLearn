@@ -1,0 +1,129 @@
+---
+conceptId: modules-and-name
+title: Modules and the __name__ variable
+estimatedMinutes: 45
+---
+
+# How Python knows whether you ran it or imported it
+
+You wrote a file `greet.py`, double-clicked it, and saw a greeting in the console. Later the same file was needed in another script, you wrote `import greet` — and the greeting printed again even though you did not run anything, you only wanted one function from it. The same file behaved differently, and you need some way to tell the two scenarios apart from inside the code. Python gives you exactly one tool for that: every module automatically gets a variable `__name__`, and its value depends on how the file entered execution.
+
+By the end of this section you will understand that any `.py` file is a module, that import makes Python execute it top to bottom, and that `__name__` holds either the string `"__main__"` or the module name. That is the foundation on which the `if __name__ == "__main__"` idiom builds in the next sections.
+
+## Mental model: a file is a module, import is running the file
+
+The main thing that trips up beginners: import feels lightweight, like "give me a function from the neighboring file." In reality `import greet` means "find `greet.py`, execute it entirely top to bottom, and give me access to what remains in its namespace." Function and class definitions are created during that execution but not called — yet any "bare" line like `print(...)` at module level runs immediately, because at the level of executing the file body Python does not distinguish "run" from "import". The only difference is one variable.
+
+<Figure caption="Import is not «fetch a function» but «execute the whole file top to bottom». You can tell the two scenarios apart only by the value of __name__.">
+  <Sketch viewBox="0 0 460 210" title="Run vs import">
+    <SketchBox x={20} y={20} width={180} height={70} accent />
+    <SketchLabel x={110} y={42} mono accent>python greet.py</SketchLabel>
+    <SketchLabel x={110} y={66} size={12} muted>__name__ == "__main__"</SketchLabel>
+    <SketchBox x={260} y={20} width={180} height={70} />
+    <SketchLabel x={350} y={42} mono>import greet</SketchLabel>
+    <SketchLabel x={350} y={66} size={12} muted>__name__ == "greet"</SketchLabel>
+    <SketchBox x={140} y={140} width={180} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={170} mono>greet.py body</SketchLabel>
+    <SketchArrow from={[110, 90]} to={[200, 140]} />
+    <SketchArrow from={[350, 90]} to={[260, 140]} />
+  </Sketch>
+</Figure>
+
+The figure above captures the intuition for this section: both paths lead to executing the file body, but they arrive with different values of `__name__`. Next we look at which lines actually run.
+
+## What Python puts in `__name__`
+
+The variable `__name__` appears in every module automatically; you do not declare it. The rule is simple: if the file is run as the main program, `__name__` holds the string `"__main__"`; if the file is imported, it holds the module name under which it was imported.
+
+```python
+print("My name is:", __name__)
+```
+
+Put this line in a file `who.py`. Run it with `python who.py` — it prints `My name is: __main__`. Now from another file or the interactive console run `import who` — it prints `My name is: who`. Same `print`, same file body, but `__name__` is different.
+
+<MarginNote label="Why «__main__»">Double underscores around a name are Python's convention for "magic" names set by the interpreter itself. `__main__` reads as "main module", the program entry point.</MarginNote>
+
+## The name on import is the module name, not the filename on disk
+
+When a module is imported, `__name__` gets not the file path or "anything", but exactly the name you used in `import`. For a simple neighboring file that is its name without the extension.
+
+```python
+import math
+print(math.__name__)
+```
+
+This prints `math`: any imported module exposes `__name__` from the outside as `module.__name__`. It is the same variable that inside the module is visible simply as `__name__`. In other words, `__name__` is not a secret internal detail but an ordinary module attribute you can read from outside.
+
+## Import runs only once
+
+One more detail without which the picture is incomplete: Python executes a module body on import only on the **first** import. The result is cached, and repeated `import` of the same module takes the ready module from cache without executing it again.
+
+```python
+import who
+import who
+import who
+```
+
+If `who.py` has a top-level `print`, with three such lines it prints exactly once. That explains why imports in a large program do not cause a flood of repeated executions: the module runs once, then lives in `sys.modules`.
+
+<Callout type="info">
+The cache of imported modules lives in `sys.modules` — an ordinary dict. If you remove an entry, the next `import` will execute the module body again. You should not do that in normal code, but it shows that "once" is not magic, just a lookup in a dict.
+</Callout>
+
+## Try `__name__` yourself
+
+Below are two functions and a couple of lines that print `__name__`. Run the code as-is: since the sandbox executes this fragment as the main program, `__name__` equals `"__main__"`. Change the comparison line — for example check `__name__ == "greet"` instead of `"__main__"` — and see which branch fires. That is exactly the check we cover in the next section.
+
+<PyDemo
+  title="What __name__ holds right now"
+  code={`def greet(name):
+    return f"Hello, {name}"
+
+print("__name__ equals:", repr(__name__))
+
+if __name__ == "__main__":
+    print("This is the main module")
+else:
+    print("I was imported as", __name__)`}
+/>
+
+Note that `__name__` is an ordinary string, and `repr(__name__)` shows it in quotes. The comparison in `if` is ordinary string comparison, nothing magical.
+
+## Surprise: module name changes when imported from a package
+
+Here is something that surprises even experienced Python developers. The value of `__name__` for an imported module depends on **where** it was imported from. If `helpers.py` lives inside package `tools`, then on `import tools.helpers` its `__name__` becomes not `"helpers"` but `"tools.helpers"` — the full dotted name.
+
+```python
+import tools.helpers
+print(tools.helpers.__name__)
+```
+
+This prints `tools.helpers`. So `__name__` reflects the module's place in the import tree, not the filename on disk. The same `helpers.py` file imported directly and through a package gets different `__name__` values. Remember this: later it explains why comparing `__name__` to a hardcoded module name is a bad idea, while comparing to `"__main__"` is reliable.
+
+## Common mistakes
+
+- **Thinking import "just fetches a function".** Import executes the whole file. Any `print`, file open, or network request at module level runs on import — even if you only wanted one function from there.
+- **Confusing filename and `__name__`.** Inside a run file `__name__` equals `"__main__"`, not the filename. The filename without extension lands in `__name__` only on import.
+- **Expecting the module body to run on every import.** It runs once; repeated imports take the module from the `sys.modules` cache.
+
+<Detail summary="What __name__ is in an interactive session and in a notebook">
+
+When you start Python without a file — just `python` in a terminal or a cell in Jupyter — code also runs in a module named `"__main__"`. So in an interactive session `__name__` equals `"__main__"`, as if you ran a script. That is convenient: code written for `if __name__ == "__main__"` in a notebook behaves like a main program, while code imported from a neighboring file behaves like a module. Detail from the official docs: when launching via `python -m package.module` the main module name still becomes `"__main__"`, not `"package.module"` — the `-m` flag runs the module as the entry point.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Any .py file is a module; import executes its body top to bottom, not just «fetch a function».",
+    "Every module automatically has __name__: when you run the file it equals \"__main__\", on import it equals the module name.",
+    "The name on import is the module name in the import tree (with dots for packages), not the path on disk.",
+    "The module body runs once on first import; after that the module comes from the sys.modules cache.",
+    "__name__ == \"__main__\" is ordinary string comparison that underpins the entry-point idiom.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation — Modules](https://docs.python.org/3/tutorial/modules.html)
+- [Python documentation — `__main__` — Top-level code environment](https://docs.python.org/3/library/__main__.html)
+- [Python documentation — The import system](https://docs.python.org/3/reference/import.html)

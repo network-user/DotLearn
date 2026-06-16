@@ -1,0 +1,149 @@
+---
+conceptId: kafka-model
+title: "Kafka: log, partitions, offset, consumer groups"
+estimatedMinutes: 45
+---
+
+# Kafka: not a queue, but a log that remembers order
+
+RabbitMQ thinks in queues: a message arrives, someone takes it, and it is gone. Kafka is built so differently that applying queue intuition to it is the first and most expensive mistake. Kafka is a distributed log: new records are only appended at the end, nothing is inserted in the middle, and nothing is deleted on read. A consumer does not "take" a message - it reads the log from where it stopped and moves its bookmark forward. A read record stays in the log and is available to the next reader.
+
+This model shift - from "a queue that empties" to "a log that grows" - pulls everything else with it: partitions for scale, offset as read position, consumer groups for parallelism. By the end of this section you will understand why order in Kafka is guaranteed only inside a partition, why a message key matters, and why adding more consumers than partitions is pointless.
+
+## Mental model: append-only log with bookmarks
+
+A topic in Kafka is a log split into partitions. Each partition is an independent sequence of records numbered in order: 0, 1, 2, 3... That number is the offset - the position of a record in the partition. A producer appends to the end of a partition, and the offset of a new record is always one more than the previous. A consumer keeps its offset - a bookmark saying "I have read up to here". Reading does not delete records; it only moves the bookmark forward.
+
+<Figure caption="A partition is an append-only log: the producer writes at the end (offset grows), two consumers independently keep their bookmarks and read the same records at their own pace.">
+  <Sketch viewBox="0 0 460 180" title="Partition as a log with offset">
+    <SketchLabel x={60} y={24} weight="bold">Partition 0</SketchLabel>
+    <SketchBox x={20} y={40} width={50} height={44} />
+    <SketchLabel x={45} y={66} mono size={11}>0</SketchLabel>
+    <SketchBox x={72} y={40} width={50} height={44} />
+    <SketchLabel x={97} y={66} mono size={11}>1</SketchLabel>
+    <SketchBox x={124} y={40} width={50} height={44} />
+    <SketchLabel x={149} y={66} mono size={11}>2</SketchLabel>
+    <SketchBox x={176} y={40} width={50} height={44} accent />
+    <SketchLabel x={201} y={66} mono accent size={11}>3</SketchLabel>
+    <SketchBox x={228} y={40} width={50} height={44} accent />
+    <SketchLabel x={253} y={66} mono accent size={11}>4</SketchLabel>
+    <SketchBox x={280} y={40} width={50} height={44} dashed />
+    <SketchLabel x={305} y={66} muted size={11}>5</SketchLabel>
+
+    <SketchLabel x={360} y={50} mono size={10}>producer</SketchLabel>
+    <SketchArrow from={[345, 62]} to={[305, 62]} accent />
+    <SketchLabel x={375} y={68} muted size={9}>append</SketchLabel>
+
+    <SketchArrow from={[97, 130]} to={[97, 86]} />
+    <SketchLabel x={97} y={148} mono size={9}>C-A: offset 1</SketchLabel>
+    <SketchArrow from={[201, 130]} to={[201, 86]} accent />
+    <SketchLabel x={210} y={148} mono accent size={9}>C-B: offset 3</SketchLabel>
+  </Sketch>
+</Figure>
+
+On the diagram two bookmarks sit at different places in one partition: consumer A read up to offset 1, consumer B up to offset 3. They do not interfere and do not "consume" records - the same records 0..4 are available to both. Meanwhile the producer prepares record with offset 5 at the end. Remember this picture: in Kafka data does not disappear on read; it lives in the log for the retention period, no matter who read it or how many times.
+
+## Partitions: the unit of parallelism and order
+
+One partition is a strictly ordered sequence, but also a bottleneck: only one consumer in a group reads it. To scale, a topic is split into several partitions, and then several consumers read them in parallel. The price of parallelism is order. Kafka guarantees record order **only inside one partition**. There is no order between partitions.
+
+```text
+topic "orders" with 3 partitions:
+  P0: [order-7] [order-7] [order-3]
+  P1: [order-2] [order-9]
+  P2: [order-5] [order-1] [order-5]
+```
+
+Inside P0, order-7 events go strictly in write order. But order-2 (in P1) and order-5 (in P2) are not ordered relative to each other - they are in different partitions. If you need strict order for a specific order's events, all its events must land in one partition. A message key controls that.
+
+<Callout type="info">
+Order in Kafka is a property of a partition, not a topic. "Messages arrive in order" is true only for records with the same key, which therefore sit in one partition.
+</Callout>
+
+## Message key picks the partition
+
+A producer can set a message key. Kafka takes hash(key) modulo the number of partitions and picks a partition that way: the same key always goes to the same partition, and therefore guaranteed order for that key.
+
+```text
+partition = hash(key) % partition_count
+key="order-7" -> always P0 -> all order-7 events are ordered
+key=null      -> round-robin distribution, order not guaranteed
+```
+
+Choosing a key is a design decision. Key `order_id` collects all events of one order into one partition and preserves their order. Key `user_id` orders one user's events. But a key with one or two values (for example flag `is_premium`) piles almost all messages into one or two partitions and kills parallelism - that is partition skew.
+
+<Figure caption="hash(key) % 3 spreads keys across partitions: order-7 and order-2 landed in different partitions, both order-7 events in one, so their order is preserved.">
+  <BarChart
+    title="Messages per partition with an even key"
+    data={[
+      { label: "P0", value: 34 },
+      { label: "P1", value: 33 },
+      { label: "P2", value: 33 },
+    ]}
+    unit=" msgs"
+  />
+</Figure>
+
+The chart shows healthy distribution: with a key that has many values, load lands on partitions almost evenly. Skew would look like one bar to the ceiling and two near the floor - and then "parallel" processing degrades to one overloaded consumer.
+
+## Consumer groups: parallelism without duplication
+
+A consumer group is a set of consumers with a shared group name that divide topic partitions among themselves. Kafka assigns partitions to group members so that **each partition is read by exactly one consumer in the group**. Add a consumer - Kafka rebalances and gives it a share. That gives horizontal scaling: more partitions and consumers - higher throughput.
+
+```text
+topic 3 partitions, group of 2 consumers:
+  C1 reads P0, P1
+  C2 reads P2
+add C3:
+  C1 -> P0, C2 -> P1, C3 -> P2  (one each)
+add C4:
+  C4 idles - only 3 partitions
+```
+
+Hence the rule: the number of partitions is the ceiling on group parallelism. A group can have fewer consumers than partitions (then someone reads several), but more is pointless: extras idle with no partition. If you hit throughput limits and every partition is already assigned, adding consumers is useless - you need more partitions (and that has consequences for key order).
+
+<Callout type="tip">
+Plan partition count with room to grow: you cannot shrink it, and increasing it reshuffles key distribution across partitions and breaks order for existing keys. Better to start with, say, 12 partitions than painfully repartition later.
+</Callout>
+
+## Edge case: one message, many groups
+
+Here is what breaks queue intuition. In RabbitMQ a message given to one consumer disappears for the rest. In Kafka the same record is read independently by as many groups as you want. The billing service (group `billing`) and analytics service (group `analytics`) both read topic `orders` entirely, each with its own bookmark, without interfering.
+
+```text
+topic "orders":
+  group "billing"   : its own bookmark, sees all records
+  group "analytics" : its own bookmark, sees all the same records
+```
+
+Inside a group a partition goes to one consumer (parallelism without duplicates); between groups it is full broadcast (each group sees the whole stream). That combination - queue inside a group and subscription between groups - is what makes Kafka both a task queue and an event bus at once. One topic serves both models.
+
+## Common mistakes
+
+- **Expecting global order across a topic.** Order exists only inside a partition. If logic requires strict order for an entity's events, put them in one partition via a shared key - otherwise order is not guaranteed.
+- **Having more consumers than partitions.** Extra consumers in a group idle: a partition goes to exactly one member. Parallelism is capped by partition count, not process count.
+- **Choosing a key with few values.** A flag key or country key with two popular values creates skew: one partition overflows, others sit empty, and parallel processing turns sequential.
+
+<Detail summary="Where old data goes and who stores offset">
+
+Kafka deletes old records not on read, but by retention policy: by time (for example 7 days) or log size. While a record is within retention, you can reread it by moving offset back - that is the strength of a log as source of truth. Group offsets are stored in internal topic `__consumer_offsets`: when a consumer commits an offset, it essentially writes to Kafka "group G read partition P up to position N". So on restart the consumer continues from the committed position, not from the start. A separate mode is log compaction: instead of deleting by time Kafka keeps the latest value per key, turning the topic into a permanent key-to-current-state table.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Kafka is an append-only log: records are not deleted on read; they live for retention and are available to all readers.",
+    "A topic is split into partitions; offset is the sequential record number inside a partition and the consumer's bookmark.",
+    "Order is guaranteed only inside a partition; for entity event order you need a shared message key.",
+    "Key picks partition via hash(key) % partition_count; a key with few values causes skew.",
+    "In a consumer group each partition is read by exactly one consumer; partition count is the group's parallelism ceiling.",
+    "Different groups read one topic independently, each with its own bookmark - broadcast on top of a queue.",
+  ]}
+/>
+
+## Links
+
+- [Apache Kafka - Design and Implementation](https://kafka.apache.org/documentation/#design)
+- [Apache Kafka - Consumer Groups and Partitions](https://kafka.apache.org/documentation/#intro_consumers)
+- [Confluent - Kafka Partitions and Keys](https://developer.confluent.io/courses/apache-kafka/partitions/)
+- [Apache Kafka - Log Compaction](https://kafka.apache.org/documentation/#compaction)

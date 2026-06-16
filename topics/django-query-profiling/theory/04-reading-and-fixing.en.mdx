@@ -1,0 +1,144 @@
+---
+conceptId: reading-and-fixing
+title: Reading profiles and fixing N+1
+estimatedMinutes: 45
+---
+
+# A hundred queries into one: where N+1 collapses
+
+You learned to count queries manually, lock counts in tests, and capture profiles with silk. Now the useful part: turn diagnosis into a fix. Most N+1 in Django is fixed with two queryset methods - `select_related` and `prefetch_related` - and the choice depends on relation type. Knowing which to apply matters more than syntax: the wrong method either fails or adds extra queries.
+
+By the end of this section you will pick the right prefetch strategy from a profile with dozens of identical SELECTs, distinguish relations that fold into JOIN from those that need a separate query, and verify with the same counter that found the problem. That closes the loop: find - fix - lock with a test.
+
+## Mental model: load relations upfront, one plan
+
+N+1 happens because the ORM learns it needs related data too late - already in a loop, one object at a time. The fix is one idea: tell the ORM upfront which relations you need so it loads them with the main queryset. Instead of "list query plus per-row queries" you get "list query with relations."
+
+<Figure caption="Left naive queryset: N+1 queries. select_related folds relation into JOIN (1 query); prefetch_related loads it in a second query (2 queries, independent of N).">
+  <Sketch viewBox="0 0 470 220" title="Three relation loading strategies">
+    <SketchLabel x={75} y={22} weight="bold" size={12}>all()</SketchLabel>
+    <SketchBox x={20} y={34} width={110} height={26} accent />
+    <SketchLabel x={75} y={51} mono size={10}>1 for list</SketchLabel>
+    <SketchBox x={20} y={66} width={110} height={22} />
+    <SketchBox x={20} y={92} width={110} height={22} />
+    <SketchBox x={20} y={118} width={110} height={22} dashed />
+    <SketchLabel x={75} y={158} size={11}>1 + N</SketchLabel>
+    <SketchLabel x={235} y={22} weight="bold" size={12}>select_related</SketchLabel>
+    <SketchBox x={175} y={48} width={120} height={50} accent />
+    <SketchLabel x={235} y={68} mono size={10} accent>SELECT ... JOIN</SketchLabel>
+    <SketchLabel x={235} y={84} mono size={10} accent>customers</SketchLabel>
+    <SketchLabel x={235} y={158} size={11}>1 query</SketchLabel>
+    <SketchLabel x={400} y={22} weight="bold" size={12}>prefetch_related</SketchLabel>
+    <SketchBox x={345} y={42} width={110} height={28} accent />
+    <SketchLabel x={400} y={60} mono size={10} accent>SELECT orders</SketchLabel>
+    <SketchBox x={345} y={78} width={110} height={28} />
+    <SketchLabel x={400} y={96} mono size={10}>SELECT items IN (..)</SketchLabel>
+    <SketchLabel x={400} y={158} size={11}>2 queries</SketchLabel>
+  </Sketch>
+</Figure>
+
+The difference is not stylistic. `select_related` folds the relation into a JOIN in the same query; `prefetch_related` runs a second query and stitches in Python. Relation shape picks the method, not preference.
+
+## select_related: to-one relations via JOIN
+
+`select_related` works when an object has exactly one related object: `ForeignKey` and `OneToOneField`. That relation can join into the same query - one result row carries both order and customer.
+
+```python
+orders = Order.objects.select_related("customer")
+for order in orders:
+    print(order.customer.name)
+```
+
+The whole loop is one query: ORM added `JOIN customers` and filled `order.customer` immediately. `order.customer.name` no longer hits the database - the object is already in memory. With `Order.objects.all()` the same loop would N+1; only adding `select_related("customer")` removes all N extra queries.
+
+<Callout type="tip">
+Simple rule: for to-one (ForeignKey, OneToOne) use `select_related`. JOIN does not multiply rows because each order has one customer, and everything fits in one query.
+</Callout>
+
+## prefetch_related: to-many relations in a separate query
+
+For to-many relations - `ManyToManyField` and reverse `ForeignKey` (`customer.orders`) - JOIN is wrong: it would multiply rows and pull a Cartesian product. `prefetch_related` runs a separate query for all related objects and stitches by key in Python.
+
+```python
+customers = Customer.objects.prefetch_related("orders")
+for customer in customers:
+    print(customer.name, len(customer.orders.all()))
+```
+
+Two queries regardless of customer count: one for customers, one for all their orders via `WHERE customer_id IN (...)`. Without `prefetch_related` each `customer.orders.all()` would query separately - N+1 on the reverse relation. Two queries instead of 1+N, and count does not grow with data.
+
+<Callout type="warning">
+`prefetch_related` loads the relation in a second query immediately. But `customer.orders.filter(...)` inside the loop runs a *new* query bypassing prefetch cache - N+1 returns. Filter upfront with `Prefetch(...)`, not in the loop.
+</Callout>
+
+## Edge case: fixed N+1 but made the page slower
+
+Prefetch is not free, and naive "add select_related everywhere" can hurt. `select_related` with several ForeignKeys builds JOINs across tables - with many relations one query becomes heavy and pulls more data than needed. `select_related` on to-many relations cannot fold into one query - wrong relation shape.
+
+You can remove N+1 and still slow the page. If you `prefetch_related("orders")` but the template never uses orders, the second query was wasted - you loaded unused data. Prefetch only relations the code actually reads. The profiler decides again: after the fix check total query count dropped and one query did not become absurdly large.
+
+```python
+orders = (
+    Order.objects
+    .select_related("customer")
+    .prefetch_related("items")
+)
+```
+
+Combine both: customer to-one via JOIN, order items to-many via a second query. Result: constant query count regardless of orders and line items.
+
+## Close the loop: verify with the profiler
+
+A fix without verification is a hypothesis. The same `assertNumQueries` that caught N+1 confirms it is gone: wrap code in expected constant count and ensure it does not grow with fixture size.
+
+```python
+def test_list_is_constant_queries(self):
+    c = Customer.objects.create(name="Ada")
+    Order.objects.create(customer=c, total=10)
+    Order.objects.create(customer=c, total=20)
+    with self.assertNumQueries(1):
+        for o in Order.objects.select_related("customer"):
+            _ = o.customer.name
+```
+
+Add third and fourth orders - the test should stay green with the same `assertNumQueries(1)`. If query count does not grow with rows, N+1 is truly gone, not masked on small data. Criterion: constant queries, not a function of N.
+
+## Typical mistakes
+
+- **Using `select_related` on to-many relations.** For `ManyToMany` and reverse `ForeignKey` use `prefetch_related`. Pick by relation shape, not guesswork.
+- **Filtering prefetched relations in a loop.** `prefetch_related("orders")` then `customer.orders.filter(...)` in the loop misses cache and brings back N+1. Prepare filtered relations with `Prefetch` upfront.
+- **Prefetching unused relations.** Extra `prefetch_related` adds a query for data the code never reads. Load only what you access and verify total query count dropped.
+
+<Detail summary="Prefetch: filtering and renaming prefetch">
+
+`Prefetch` controls *what* and *where* is prefetched. Narrow the related queryset and store result in a separate attribute to avoid confusing with the full relation:
+
+```python
+from django.db.models import Prefetch
+
+big_orders = Order.objects.filter(total__gt=100)
+customers = Customer.objects.prefetch_related(
+    Prefetch("orders", queryset=big_orders, to_attr="big_orders")
+)
+```
+
+Now `customer.big_orders` is a list of only expensive orders loaded in one extra query, not filtered in the loop. Correct way to filter to-many without N+1: filter goes into the second prefetch query, not repeated each iteration.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Fix N+1 by prefetching: tell the ORM which relations you need upfront so they load with the main queryset.",
+    "select_related folds to-one relations (ForeignKey, OneToOne) into JOIN - one query for the whole list.",
+    "prefetch_related loads to-many relations (ManyToMany, reverse ForeignKey) in a second query - two total regardless of N.",
+    "Choose by relation shape: to-one select_related, to-many prefetch_related; combine both.",
+    "Filtering prefetched relations in a loop brings back N+1; use Prefetch with queryset upfront.",
+    "Verify with the same counter: assertNumQueries should stay constant as fixture grows.",
+  ]}
+/>
+
+## References
+
+- [Django - select_related](https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related)
+- [Django - prefetch_related and Prefetch](https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related)
+- [Django - Database access optimization](https://docs.djangoproject.com/en/stable/topics/db/optimization/)

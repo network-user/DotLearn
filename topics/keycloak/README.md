@@ -14,3 +14,22 @@
 Нет.
 
 Generated via `lesson-forge`.
+
+## English
+
+# Authentication: OAuth2, OIDC, and Keycloak
+
+A practical walkthrough of how modern applications delegate login and issue access: the OAuth2 protocol and its roles, the OpenID Connect layer with `id_token`, the Keycloak model (realm, client, roles), key flows (authorization code + PKCE, client credentials), and how JWTs are structured, validated, and refreshed. For backend and frontend developers who need to integrate login through an identity provider and understand what happens behind redirects and the `Authorization` header.
+
+## Concepts
+
+1. OAuth2 and OIDC basics
+2. Keycloak model: realm, client, roles
+3. Flows: authorization code + PKCE, client credentials
+4. JWT, validation, and refresh
+
+## Prerequisites
+
+None.
+
+Generated via `lesson-forge`.

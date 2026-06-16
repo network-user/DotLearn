@@ -1,0 +1,113 @@
+---
+conceptId: tokenization
+title: Tokenization and BPE
+estimatedMinutes: 30
+---
+
+# The model sees tokens, not words
+
+You already know an LLM predicts the next token. But what is a token, and why not just a word? Splitting on words gives an infinite vocabulary: every new name, typo, or rare form becomes unknown. Splitting on characters makes sequences enormous and forces the model to glue letters into words. Tokenization seeks the middle ground - chunks large enough to be meaningful and small enough to compose any word.
+
+By the end of this section you will know how a token differs from a word, why the same text tokenizes differently across languages, how byte pair encoding (BPE) works, and why billing and context limits count tokens, not characters.
+
+## A token is a frequent text chunk
+
+Modern models use subword tokenization: frequent whole words become one token; rare words split into pieces. A leading space is often part of the token, so " world" and "world" differ.
+
+<Figure caption="The same text becomes a token chain; each token gets a vocabulary id. Spaces shown as dots.">
+  <TokenizerViz text="Large language models read text token by token." />
+</Figure>
+
+The figure shows the main idea: fewer tokens than characters, more than words. Each token is a vocabulary entry with a numeric id; the model receives those ids, not raw text. The tokenizer translates between text and ids both ways.
+
+## Why Russian costs more tokens than English
+
+Most tokenizers train predominantly on English, so English words more often map whole while Russian and other languages split into more pieces. The same meaning in Russian often costs 1.5-2× the tokens of English. That is not punishment for a language - it follows which chunks were frequent in tokenizer training data.
+
+<Callout type="info">Billing and limits count tokens, not characters or words. Token count drives request cost (almost always per token) and whether text fits the context window. Lots of text is not the same as lots of tokens.</Callout>
+
+## How BPE builds a vocabulary
+
+Where do tokens come from? The most common approach is byte pair encoding (BPE). Start from individual characters and repeatedly merge the most frequent adjacent pair into a new token.
+
+<Steps>
+  <li>Split all words in the training corpus into characters.</li>
+  <li>Count which adjacent token pair appears most often.</li>
+  <li>Merge that pair into one new token and record a merge rule.</li>
+  <li>Repeat until the vocabulary reaches the target size.</li>
+</Steps>
+
+Walk through one merge by hand. Suppose after character split we have `l o w e r` and pair `e r` is most frequent. Apply the merge: each adjacent `e` `r` becomes `er`.
+
+```python
+tokens = ["l", "o", "w", "e", "r"]
+pair = ("e", "r")
+merged = []
+i = 0
+while i < len(tokens):
+    if i < len(tokens) - 1 and tokens[i] == "e" and tokens[i + 1] == "r":
+        merged.append("er")
+        i += 2
+    else:
+        merged.append(tokens[i])
+        i += 1
+print(merged)
+```
+
+This prints `['l', 'o', 'w', 'er']`: five tokens became four. After many such steps frequent pieces (`er`, `ing`, `est`, short whole words) become tokens, and any new word composes from known pieces down to individual characters in the worst case. A BPE tokenizer has no unknown words: even nonsense letter runs become tokens.
+
+## Try it yourself
+
+Below is a function that applies one BPE merge to a token list. Run as-is, then change the pair to `("o", "w")` and try your own symbol list - watch one rule glue neighbors and shorten the sequence.
+
+<PyDemo
+  title="One BPE merge"
+  code={`def apply_merge(tokens, a, b):
+    out, i, glued = [], 0, a + b
+    while i < len(tokens):
+        if i < len(tokens) - 1 and tokens[i] == a and tokens[i + 1] == b:
+            out.append(glued)
+            i += 2
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out
+
+print(apply_merge(["n", "e", "w", "e", "s", "t"], "e", "s"))`}
+/>
+
+Output is `['n', 'e', 'w', 'es', 't']`: only the `e s` pair merged. In practice the vocabulary is built once on a corpus, then the same merge rules encode any new text at inference - tokenization does not learn on the fly.
+
+## When tokenization surprises you
+
+The main surprise: the model does not count the way you think. A number like `1234` may become tokens `12` and `34`, and arithmetic on those chunks is harder than for humans. Hence famous failures on questions like how many r's are in strawberry: the model sees a few tokens, not letters, and cannot recount characters inside a token.
+
+A second surprise is sensitivity to spaces and case. `hello`, `Hello`, and ` hello` often tokenize differently, so prompt formatting can unexpectedly change behavior.
+
+## Common misconceptions
+
+- **A token is a word.** Often it is part of a word or a word plus leading space. Long rare words almost always split.
+- **Character length equals token length.** The ratio depends on language and content; Russian usually needs more tokens than word count suggests.
+- **The model can count characters inside a word reliably.** It operates on tokens; per-letter tasks are unnatural, hence errors.
+
+<Detail summary="BPE vs WordPiece and Unigram">
+
+BPE is not the only algorithm. WordPiece (used in BERT) picks merges by corpus likelihood gain, not raw frequency. Unigram LM (SentencePiece) starts large and prunes weak tokens. All three yield similar subword vocabularies; modern GPT- and Claude-like models usually use byte-level BPE variants that encode any text, including emoji and rare symbols.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A token is a frequent text chunk between letter and word; the model sees numeric token ids, not raw text.",
+    "Subword tokenization avoids an infinite vocabulary: rare words compose from known pieces; there are no unknown words.",
+    "BPE builds a vocabulary by repeatedly merging the most frequent adjacent pair into a new token.",
+    "Billing and context limits count tokens; their number drives cost and whether text fits the window.",
+    "Russian usually splits into more tokens than English; numbers and per-letter tasks inside tokens are hard for models.",
+  ]}
+/>
+
+## References
+
+- [Sennrich et al., 2016 - Neural Machine Translation of Rare Words with Subword Units (BPE)](https://arxiv.org/abs/1508.07909)
+- [Hugging Face - Byte-Pair Encoding tokenization](https://huggingface.co/learn/nlp-course/chapter6/5)
+- [The Illustrated GPT-2 (Jay Alammar)](https://jalammar.github.io/illustrated-gpt2/)

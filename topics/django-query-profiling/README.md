@@ -1,16 +1,22 @@
-# Профилирование запросов: query counter и Silk
+# Query Profiling: Query Counter and Silk
 
-Тема о том, как находить и устранять лишние SQL-запросы в Django-приложении. Вы научитесь распознавать проблему N+1, считать запросы вручную и в тестах (`connection.queries`, `assertNumQueries`), снимать профиль с помощью django-silk и читать его, чтобы превратить десятки одинаковых запросов в один. Подойдёт backend-разработчику, который уже умеет писать ORM-запросы, но видит, что страницы тормозят, и хочет понять почему.
+How to find and eliminate extra SQL queries in a Django application. You will learn to recognize the N+1 problem, count queries manually and in tests (`connection.queries`, `assertNumQueries`), capture profiles with django-silk, and read them to turn dozens of identical queries into one. For backend developers who already write ORM queries but see slow pages and want to know why.
 
-## Концепты
+## Concepts
 
-1. **Зачем считать запросы: проблема N+1** - откуда берутся лишние запросы и почему один цикл по queryset превращается в N+1 обращений к базе.
-2. **Подсчёт запросов: connection.queries, assertNumQueries** - как измерить число запросов в коде и зафиксировать его в тестах.
-3. **django-silk: профайлер и инспекция SQL** - установка, middleware, чтение списка запросов и таймингов в UI.
-4. **Чтение профиля и устранение N+1** - как по профилю найти дублирующиеся запросы и убрать их через `select_related` / `prefetch_related`.
+1. **Why count queries: the N+1 problem** - where extra queries come from and why one loop over a queryset becomes N+1 database round-trips.
+2. **Counting queries: connection.queries, assertNumQueries** - measuring query count in code and locking it in with tests.
+3. **django-silk: profiler and SQL inspection** - setup, middleware, reading the query list and timings in the UI.
+4. **Reading profiles and fixing N+1** - finding duplicate queries in a profile and removing them with `select_related` / `prefetch_related`.
 
 ## Prerequisites
 
 - `python-orm`
 
-Generated via `lesson-forge`.
+## Estimated effort
+
+About 3 hours.
+
+## Runtime
+
+No runtime required - examples are code and numbers; profiling tools are introduced along the way.

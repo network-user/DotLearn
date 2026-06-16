@@ -1,0 +1,128 @@
+---
+conceptId: graph
+title: "Graph databases and choosing a model for the job"
+estimatedMinutes: 50
+---
+
+# Graph databases and choosing a model for the job
+
+There is a class of questions where relational databases start to choke - not from volume but from link depth. "Friends of my friends," "shortest chain of acquaintances to this person," "which accounts connect through a chain of transfers to a suspicious one." Each step along a link in the relational model is a `JOIN`, and the deeper you go, the more tables you glue and the faster the query becomes unbearable. Graph databases are built around exactly that job: they make a relationship a first-class object and walk it at constant cost per step. On them we close the model survey - and move straight to the course's main practical question: how to pick a model for a concrete task.
+
+## Nodes, edges, and traversal
+
+A graph has nodes (vertices), edges (relationships), and properties on both. A node is an entity (person, account, product); an edge is a named directed link ("friends with," "transferred money," "bought together with"). The best-known example is Neo4j with the Cypher query language.
+
+<GraphTraversalFigure />
+
+Run traversal on the diagram. From the start node a wave spreads level by level: direct neighbors first, then neighbors of neighbors. That is "friends of friends" - breadth-first walk along links. The trick that gives graph databases speed is called *index-free adjacency*: each node physically stores pointers to its neighbors. Moving to a neighbor costs about one step - and that cost does not depend on whether the graph has a million nodes or a billion. In a relational database the same hop is a `JOIN` whose cost grows with table size.
+
+<Compare
+  leftTitle="Deep traversal in a relational database"
+  rightTitle="Same traversal in a graph database"
+  left={<>
+
+- Each link step is a JOIN
+- Depth N means N table joins
+- Cost grows with table size
+- "Friends of friends of friends" explodes
+
+  </>}
+  right={<>
+
+- Node points directly to neighbors
+- Edge step is roughly O(1)
+- Cost does not depend on graph size
+- Deep traversal stays cheap
+
+  </>}
+  verdict="Graph databases win not on storing links but on walking them in depth."
+/>
+
+Hence scenarios where the graph model shines: social networks (friend recommendations, degrees of separation), recommender systems ("bought with this product"), fraud ring detection (accounts linked by transfer chains), knowledge graphs, dependency analysis. Everywhere the link itself is what you study, not just a foreign key.
+
+<Callout type="warning" title="Not every relationship needs a graph database">
+Relational databases handle shallow joins fine: one or two `JOIN`s on indexed keys are fast. Graph databases pay off when traversal goes many levels deep or when paths themselves are the query subject. Neo4j for "an order has a user" is overkill.
+</Callout>
+
+The model has weak spots too. Mass analytic aggregates ("sum of all orders") suit graphs worse than column stores. Horizontal scaling of a graph is hard: splitting a tightly connected graph across nodes so traversals do not constantly cross the network is a hard problem. Graphs are strong in link depth, not in volume of uniform rows.
+
+## How to choose a model
+
+You covered six families. Now assemble one practical skill - choice. The main principle repeated all course: **choose the model by access pattern, not hype**. First answer which operations in your system are most frequent; only then look at the model that makes them cheap.
+
+<Figure caption="A rough choice map: start with what matters most in your data - links, a whole aggregate, analytics, or complex queries with transactions.">
+  <Sketch viewBox="0 0 470 210" title="Model choice map">
+    <SketchBox x={170} y={8} width={130} height={36} accent />
+    <SketchLabel x={235} y={30} mono accent>What matters?</SketchLabel>
+
+    <SketchBox x={6} y={84} width={104} height={44} />
+    <SketchLabel x={58} y={100} mono>Links</SketchLabel>
+    <SketchLabel x={58} y={118} size={11} muted>in depth</SketchLabel>
+
+    <SketchBox x={124} y={84} width={104} height={44} />
+    <SketchLabel x={176} y={100} mono>Aggregate</SketchLabel>
+    <SketchLabel x={176} y={118} size={11} muted>by key</SketchLabel>
+
+    <SketchBox x={242} y={84} width={104} height={44} />
+    <SketchLabel x={294} y={100} mono>Analytics</SketchLabel>
+    <SketchLabel x={294} y={118} size={11} muted>by columns</SketchLabel>
+
+    <SketchBox x={360} y={84} width={104} height={44} />
+    <SketchLabel x={412} y={100} mono>Queries</SketchLabel>
+    <SketchLabel x={412} y={118} size={11} muted>+ transactions</SketchLabel>
+
+    <SketchArrow from={[200, 44]} to={[58, 84]} />
+    <SketchArrow from={[222, 44]} to={[176, 84]} />
+    <SketchArrow from={[248, 44]} to={[294, 84]} />
+    <SketchArrow from={[270, 44]} to={[412, 84]} />
+
+    <SketchLabel x={58} y={160} size={12}>graph</SketchLabel>
+    <SketchLabel x={176} y={160} size={12}>document / KV</SketchLabel>
+    <SketchLabel x={294} y={160} size={12}>columnar</SketchLabel>
+    <SketchLabel x={412} y={160} size={12}>relational</SketchLabel>
+  </Sketch>
+</Figure>
+
+The map is deliberately rough - it asks the first question, not the final verdict. Then the familiar axes kick in. Need strict consistency and transactions across entities - relational remains the default. System is distributed and must survive partitions - remember CAP and decide what to sacrifice: consistency (CP) or availability (AP). Transactional or analytic load - the OLTP versus OLAP fork.
+
+## Polyglot persistence: not one database but several
+
+The course's counterintuitive conclusion: the right answer is often not "which single database" but "which combination." Mature systems are almost always *polyglot*: each family covers what it is good at.
+
+A typical e-commerce backend might run a relational database for orders and payments (transactions and integrity), Redis for cache and sessions (speed by key), a column store for sales analytics (aggregates), a search engine for catalog, and a graph database for recommendations. That is not excess but specialization: you do not stretch one model over every access pattern; you give each pattern a fitting tool.
+
+<Callout type="info" title="Polyglot has a cost">
+Several databases means several systems to deploy, monitor, back up, and keep aligned (the same data in relational and cache must not diverge). Polyglot pays when specialization benefit beats operational complexity. A small project often needs only one relational database - a normal, mature choice.
+</Callout>
+
+## Common mistakes
+
+**Reaching for a graph for shallow links.** One or two relational `JOIN`s are fine. Graphs pay off on deep traversals, not every foreign key pair.
+
+**Searching for "the one best database."** It does not exist. There is a database best for a specific access pattern. "Postgres or Mongo" without a scenario is meaningless.
+
+**Jumping into polyglot too early.** Five databases on three users is five pain sources instead of one. Start with one; add a specialized store when a concrete access pattern hits a wall.
+
+**Choosing by hype, not pattern.** The thread-through mistake of the whole course. Most frequent operations first - then the model that makes them cheap.
+
+<Detail summary="OLTP and OLAP in one system">
+
+Often one system needs both loads: take orders (OLTP) and report on them (OLAP). The classic fix is not to torture one database with both roles but to split: transactions go to relational OLTP; data periodically moves (ETL) to column OLAP for analytics. Modern HTAP systems try to combine both in one engine, but splitting OLTP and OLAP storage remains the most common, predictable approach.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Graph databases make relationships first-class; index-free adjacency gives ~O(1) edge steps regardless of graph size.",
+    "Graphs win on deep traversals (friends of friends, fraud rings, recommendations) but are weak at mass analytics and horizontal scale.",
+    "Model choice starts with access pattern: links, whole aggregate by key, column analytics, or complex queries with transactions.",
+    "Distribution brings back CAP; workload type brings the OLTP versus OLAP fork - axes that refine the choice.",
+    "Mature systems are polyglot: each family covers its pattern, but specialization costs operational complexity.",
+  ]}
+/>
+
+## References
+
+- [Neo4j: property graph model and index-free adjacency](https://neo4j.com/docs/getting-started/graph-database/)
+- [Martin Fowler on polyglot persistence](https://martinfowler.com/bliki/PolyglotPersistence.html)
+- [Neo4j: Cypher query language](https://neo4j.com/docs/cypher-manual/current/introduction/)

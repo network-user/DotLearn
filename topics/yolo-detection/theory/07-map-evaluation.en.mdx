@@ -1,0 +1,114 @@
+---
+conceptId: map-evaluation
+title: mAP metrics
+estimatedMinutes: 35
+---
+
+Two detection models, and you need to say which is better. "Accuracy" is misleading here: a detector can output hundreds of boxes and almost all miss, yet find every object; or output one box and never err. You need a metric that simultaneously accounts for how many predictions are correct and how many objects are found. Precision and recall capture that balance, folded into one number via AP - area under the PR curve. Averaged over classes it becomes mAP, the main detection metric.
+
+By the end of this section you'll understand precision and recall in detection terms, what counts as a correct hit via IoU threshold, how a PR curve is built, why AP is area under it, and what averaging adds in mAP.
+
+## Precision and recall: two sides of quality
+
+Each detector prediction is either a hit or a miss. A predicted box is a **true positive** if its IoU with a ground-truth box of the same class is at least the threshold (classically `0.5`) and that ground truth isn't already "taken" by another prediction. Otherwise it's a **false positive**. A ground truth no prediction matched is a **false negative**.
+
+From these three counts come two metrics:
+
+- **Precision** = `TP / (TP + FP)` - what fraction of predictions are correct. Falls when the detector "hallucinates" extra boxes.
+- **Recall** = `TP / (TP + FN)` - what fraction of objects were found. Falls when the detector misses objects.
+
+```python
+tp, fp, fn = 4, 1, 2
+precision = tp / (tp + fp)
+recall = tp / (tp + fn)
+print(round(precision, 2), round(recall, 2))
+```
+
+It prints `0.8 0.67`: of five predictions four are correct (precision `0.8`), of six objects four were found (recall `0.67`). These two metrics pull in opposite directions: easy to get high precision by outputting only the most confident boxes, but then recall drops, and vice versa.
+
+## PR curve: precision as a function of recall
+
+One pair of numbers depends on where you set the confidence threshold. Lower the threshold - the detector outputs more boxes: recall rises (found more), precision usually falls (more junk among them). Sweeping all thresholds from high to low gives a curve of precision as a function of recall - the **PR curve**. It describes detector behavior as a whole, not at one point.
+
+<Figure caption="PR curve: precision vertical, recall horizontal. AP is area under the curve (shaded). The toggle shows the interpolation used to compute AP.">
+  <PrCurve points={[[0, 1], [0.2, 0.92], [0.4, 0.86], [0.6, 0.78], [0.8, 0.55], [1, 0.3]]} />
+</Figure>
+
+An ideal detector holds precision `1` up to recall `1` - the curve runs along the top, area under it equals `1`. A real detector loses precision as recall grows, and the curve sags. Toggle interpolation on the figure: standard AP isn't computed on the "raw" jagged curve but on its right maximum - at each recall level take the greatest precision to the right, smoothing the sawtooth.
+
+## AP is area under the curve
+
+Average Precision (AP) is area under the PR curve, a number from 0 to 1. Geometrically: split the recall axis into segments, at each take precision height and sum rectangle areas. A continuous curve collapses into one "overall quality at all thresholds" number.
+
+```python
+def average_precision(points):
+    ap = 0.0
+    prev_recall = 0.0
+    for recall, precision in points:
+        ap += (recall - prev_recall) * precision
+        prev_recall = recall
+    return ap
+
+print(average_precision([(0.5, 1.0), (1.0, 0.5)]))
+```
+
+It prints `0.75`: first rectangle - width `0.5` (recall 0 to 0.5) at height `1.0`, area `0.5`; second - width `0.5` at height `0.5`, area `0.25`; sum `0.75`. Each term is "recall increment times precision on that segment".
+
+## Try it yourself
+
+Run the AP calculation. The two-point curve now gives `0.75`. Replace points with `[(1.0, 1.0)]` - get `1.0`, perfect detector: precision stays at one until full recall. Then try `[(0.5, 0.5), (1.0, 0.25)]` - area drops to `0.375`. Watch how precision height on each recall segment sets its contribution to total area.
+
+<PyDemo
+  title="AP as area under the PR curve"
+  code={`def average_precision(points):
+    ap = 0.0
+    prev_recall = 0.0
+    for recall, precision in points:
+        ap += (recall - prev_recall) * precision
+        prev_recall = recall
+    return ap
+
+print(average_precision([(0.5, 1.0), (1.0, 0.5)]))`}
+/>
+
+## From AP to mAP
+
+AP is computed for one class. **mAP (mean Average Precision)** is mean AP over all classes: compute AP for "cat", "dog", "car", average. One class the detector may catch well, another poorly; mAP doesn't let a strong class mask a weak one.
+
+There's a second averaging - over IoU threshold. COCO metric `mAP@[.5:.95]` averages mAP over IoU thresholds from `0.5` to `0.95` in steps of `0.05` (ten thresholds). High threshold requires not just "find the object" but outline it precisely. So `mAP@0.5` is usually noticeably higher than `mAP@[.5:.95]`: at strict thresholds slightly inaccurate boxes stop counting.
+
+<Callout type="info">When people say just "mAP", clarify the threshold. `mAP@0.5` (old Pascal VOC standard) and `mAP@[.5:.95]` (COCO) are different numbers for the same model, and the second is never greater than the first.</Callout>
+
+## Where this surprises you
+
+Duplicates are punished as false positives. If the detector drew two boxes on one object, the first (with higher IoU) is true positive, the second false positive: one ground truth counts for only one prediction. So skipping NMS hits precision directly - extra duplicates inflate FP. Metrics and post-processing are more tightly linked than it seems.
+
+Second surprise - sorting by confidence affects AP. AP is built by passing predictions from most to least confident; if confident junk comes before correct boxes, the early part of the curve sags and area falls. Confidence calibration isn't cosmetic - it moves AP.
+
+## Common mistakes
+
+- **Computing only precision or only recall.** High precision with low recall (found little but accurately) and the reverse are both bad extremes. AP accounts for them jointly across the full PR curve.
+- **Forgetting IoU threshold when defining TP.** "Correct hit" is defined relative to IoU threshold; without it it's unclear how precise the box must be. `mAP@0.5` and `mAP@0.75` evaluate different strictness.
+- **Not collapsing duplicates before counting.** Multiple boxes on one object inflate FP and lower precision. Run NMS before evaluation.
+- **Averaging AP wrong.** mAP is mean AP over classes (and in COCO, over IoU thresholds). Pooling TP/FP across all classes into one pot isn't mAP - it's micro-averaging, giving a different number.
+
+<Detail summary="Why COCO uses mAP@[.5:.95], not just mAP@0.5">
+
+Pascal VOC measured detectors at a single IoU threshold `0.5` for a decade. The problem: at `0.5` a box that roughly covers the object counts the same as one sitting precisely. As detectors improved that stopped distinguishing models: everyone cleared `0.5` easily. COCO introduced averaging over ten thresholds from `0.5` to `0.95`: to get high `mAP@[.5:.95]` finding the object isn't enough - you must localize it precisely, since at threshold `0.9` only near-perfect boxes count. That made the metric sensitive to localization quality, not just detection, and `mAP@[.5:.95]` became the main number in modern papers.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Precision = TP/(TP+FP) - fraction of correct predictions; recall = TP/(TP+FN) - fraction of objects found; they pull in opposite directions.",
+    "A prediction is true positive if IoU with same-class ground truth is at least the threshold and that ground truth isn't taken yet; otherwise false positive.",
+    "PR curve - precision as a function of recall at all confidence thresholds; AP - area under it, a number from 0 to 1.",
+    "AP is sum of rectangles: recall increment times precision on the segment, by standard with right maximum.",
+    "mAP is mean AP over classes; COCO additionally averages over IoU thresholds 0.5..0.95, so mAP@[.5:.95] is not greater than mAP@0.5.",
+  ]}
+/>
+
+## References
+
+- [Everingham et al., The Pascal VOC Challenge (AP@0.5)](http://host.robots.ox.ac.uk/pascal/VOC/)
+- [COCO - detection metrics, mAP@[.5:.95]](https://cocodataset.org/#detection-eval)

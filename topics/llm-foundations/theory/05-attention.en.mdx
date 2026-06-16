@@ -1,0 +1,133 @@
+---
+conceptId: attention
+title: Attention mechanism
+estimatedMinutes: 32
+---
+
+# Attention: every token asks the others what matters
+
+In the last section we said self-attention is where tokens exchange information. Now look inside. Take "the bank closed because it went bankrupt." To resolve "it," that token must look back and find "bank." Attention lets each token decide which other tokens to attend to and how strongly, then gather information from them. No links are hand-written - the model learns them.
+
+By the end of this section you will understand query, key, and value, how scaled dot-product compatibility is computed, why scores are divided by sqrt(dimension), and how softmax turns scores into attention weights that sum to one.
+
+## Three roles: query, key, value
+
+From each token embedding the model forms three vectors by multiplying by three learned matrices. Think of a library search:
+
+- **Query** - what the current token is looking for: "I need a masculine noun to the left."
+- **Key** - how each token advertises itself: "I am a noun, masculine, I am bank."
+- **Value** - what the token contributes if selected: the actual content.
+
+The token compares its query to every other token key. Stronger match means more attention and a larger share of that token value in the result.
+
+<Figure caption="Attention as search: the token query is compared to each key; match strength sets how much of that token value enters the result.">
+  <Sketch viewBox="0 0 420 200" title="Query, Key, Value">
+    <SketchBox x={20} y={80} width={90} height={40} accent />
+    <SketchLabel x={65} y={104} mono accent>query</SketchLabel>
+    <SketchLabel x={65} y={140} muted size={11}>token it</SketchLabel>
+    <SketchBox x={200} y={20} width={90} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={245} y={42} mono>key: bank</SketchLabel>
+    <SketchBox x={200} y={82} width={90} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={245} y={104} mono>key: closed</SketchLabel>
+    <SketchBox x={200} y={144} width={90} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={245} y={166} mono>key: because</SketchLabel>
+    <SketchArrow from={[110, 96]} to={[198, 40]} accent />
+    <SketchArrow from={[110, 100]} to={[198, 100]} dashed />
+    <SketchArrow from={[110, 104]} to={[198, 160]} dashed />
+    <SketchBox x={330} y={80} width={70} height={40} accent />
+    <SketchLabel x={365} y={104} mono accent>value</SketchLabel>
+    <SketchArrow from={[290, 38]} to={[330, 92]} accent />
+    <SketchLabel x={150} y={196} muted size={10}>query matched key bank strongest - most of its value in the result</SketchLabel>
+  </Sketch>
+</Figure>
+
+On the diagram the query for "it" matches the key for "bank" best (solid arrow), so bank value dominates the attention output for "it." The token pulls the context it needs.
+
+## Compatibility score is a dot product
+
+How do you measure query-key match? Dot product. More aligned vectors yield a larger product and a higher score. One query against many keys gives one score per key.
+
+```python
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+q = [1, 0]
+keys = [[1, 0], [0, 1], [1, 1]]
+scores = [dot(q, k) for k in keys]
+print(scores)
+```
+
+This prints `[1, 0, 1]`: query `[1, 0]` aligns best with the first and third keys, not the second. These are raw scores - not yet probabilities and not necessarily positive.
+
+## Why divide by sqrt(dimension)
+
+There is a subtlety. Long vectors (models use tens or hundreds of dimensions) produce large dot products. Large inputs to softmax become almost one-hot - the distribution too sharp and gradients vanish in training. The fix is to divide each score by sqrt(key dimension). Hence scaled dot-product attention.
+
+<Callout type="info">Dividing by sqrt(dimension) is not cosmetic. Without it at large dimension softmax almost always saturates on one token and the model loses soft attention across several tokens.</Callout>
+
+## softmax turns scores into weights
+
+Scaled scores pass through familiar softmax (see [[what-is-llm]]). Output: attention weights - nonnegative numbers summing to one. Each weight says what fraction of the corresponding value to take. The attention result for a token is the weighted sum of all values.
+
+<Figure caption="Attention weights after softmax: row is query token, column is key token, brightness is weight. Each row sums to one.">
+  <AttentionHeatmap tokens={["bank", "closed", "because", "it", "bankrupt"]} />
+</Figure>
+
+Each row is one query token attention distribution over keys. Hover a cell for a specific query → key weight. Attention here is causal, so tokens cannot look right at future tokens - the upper-right is empty.
+
+## Try it yourself
+
+Build scaled dot-product attention for one query: compute scores, divide by sqrt(dimension), apply softmax. Run the code, then set `q` to `[0, 1]` and watch weights shift toward the second key.
+
+<PyDemo
+  title="Attention weights for one query"
+  code={`import math
+
+def attention_weights(q, keys):
+    d = len(q)
+    scores = [sum(a * b for a, b in zip(q, k)) / math.sqrt(d) for k in keys]
+    m = max(scores)
+    exps = [math.exp(s - m) for s in scores]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+q = [1, 0]
+keys = [[1, 0], [0, 1]]
+print([round(w, 3) for w in attention_weights(q, keys)])`}
+/>
+
+Output is `[0.67, 0.33]`: the query aligned more with the first key, so its weight is higher, but the second is not zero. Weights sum to one - the attention distribution. Multiply each weight by its value and sum to get the attention output for that token.
+
+## When behavior surprises you
+
+It seems like a token has one attention pattern. In each block there are several attention heads running in parallel with different Q/K/V matrices. One head may track syntax, another long-range links, another something we cannot name. Their outputs are combined - several views on context at once.
+
+A second surprise is cost. Every token compares to every token, so compute grows roughly with the square of context length. That drives the cost of very long prompts from [[embeddings-context]] and motivates much attention acceleration research.
+
+## Common misconceptions
+
+- **Query, key, and value are different tokens.** They are three vectors of the same token from three matrices; confusing their roles is a common mistake.
+- **Attention weights fully explain model decisions.** Weights show where information was gathered, not a complete or always honest why; literal interpretation is risky.
+- **You can skip dividing by sqrt(dimension).** Without scaling softmax saturates and training suffers; it is part of the definition, not optional.
+
+<Detail summary="Why sqrt(dimension) specifically">
+
+If query and key components are independent with unit variance, variance of their dot product grows linearly with dimension d, and standard deviation like sqrt(d). Dividing by sqrt(d) keeps score scale stable across dimensions so softmax does not saturate. That is the factor from the original transformer paper.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Attention: each token uses a query to ask what matters, compares to every key, and takes values proportional to match strength.",
+    "Query, key, and value are three vectors of one token from three learned matrices.",
+    "Compatibility is the dot product of query and key; more alignment means higher score.",
+    "Scores are divided by sqrt(dimension) (scaled dot-product) or softmax saturates at large dimension and training breaks.",
+    "softmax turns scaled scores into weights summing to one; attention output is the weighted sum of values.",
+  ]}
+/>
+
+## References
+
+- [Vaswani et al., 2017 - Attention Is All You Need](https://arxiv.org/abs/1706.03762)
+- [The Illustrated Transformer (Jay Alammar)](https://jalammar.github.io/illustrated-transformer/)
+- [Anthropic - In-context Learning and Induction Heads](https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html)

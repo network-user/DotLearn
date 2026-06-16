@@ -1,0 +1,121 @@
+---
+conceptId: forward-pass
+title: Forward pass
+estimatedMinutes: 34
+---
+
+# A layer is a batch of neurons computed with one matrix multiply
+
+One neuron cannot do much. A network's strength is neurons arranged in layers, where one layer's output becomes the next layer's input. That path from input to answer is the **forward pass**. The good news: nothing new compared to one neuron — same weighted sum plus activation, just computed for every neuron in the layer at once with one matrix multiply. In this section you see how a layer turns an input vector into an output vector, build a multi-layer perceptron (MLP), and run a number through it by hand.
+
+## From neuron to layer: one matrix instead of a stack of vectors
+
+In earlier sections a neuron computed `z = w·x + b` — one number from an input vector and a weight vector. A layer has several such neurons, each with its own weight vector and bias. Stack all weight vectors as rows of matrix `W` and the whole layer's outputs come from one operation:
+
+```
+z = W @ x + b
+a = activation(z)
+```
+
+Here `x` is the input vector, `W` is the weight matrix (one row per neuron), `b` is the bias vector, `@` is matrix multiplication, and `a` is the layer output after activation. Dimensions must match: if the input has 3 numbers and the layer has 4 neurons, `W` has shape `4 x 3` and the output has 4 numbers. The figure shows the signal lighting up layer by layer — each next layer feeds on the previous layer's output.
+
+<Figure caption="Forward pass: input enters the first layer, its output feeds the second, and so on to the output layer. Press play and follow activation moving left to right.">
+  <NetworkDiagram layers={[3, 4, 4, 2]} layerNames={['input', 'hidden', 'hidden', 'output']} />
+</Figure>
+
+## Multi-layer perceptron (MLP)
+
+An MLP is several fully connected layers in a row: every neuron in a layer connects to every output of the previous layer. Nonlinear activation sits between layers (otherwise, as we remember, everything collapses to one layer). Compute in a chain: the first layer's output becomes the second layer's input, and so on to the end.
+
+```python
+def layer(x, weights, biases):
+    z = []
+    for neuron_weights, b in zip(weights, biases):
+        s = sum(xi * wi for xi, wi in zip(x, neuron_weights))
+        z.append(s + b)
+    return z
+```
+
+Here `weights` is a list of weight vectors (one per neuron) and `biases` is a list of biases. The function returns the layer's raw sums `z`. Activation is applied next and the result feeds the following layer.
+
+```python
+def relu(vec):
+    return [max(0.0, v) for v in vec]
+
+x = [1.0, 2.0]
+W1 = [[0.5, -0.5], [1.0, 0.0]]
+b1 = [0.0, 1.0]
+
+hidden = relu(layer(x, W1, b1))
+print(hidden)
+```
+
+The first neuron gives `0.5*1 + (-0.5)*2 + 0 = -0.5`, after ReLU — `0.0`. The second gives `1.0*1 + 0.0*2 + 1 = 2.0`, ReLU leaves `2.0`. This prints `[0.0, 2.0]` — input for the next layer.
+
+## Tracking dimensions
+
+It helps to keep in mind how vector length changes along the pass. An input of length 2 enters a layer of 2 neurons — out comes a vector of length 2. Feed that into a layer of 3 neurons — out comes length 3. The number of neurons in a layer sets its output length; input length must match the number of weights per neuron. Dimension mismatch is the most common reason a forward pass crashes.
+
+From here you see why hidden layers get a "wide bottleneck": a network can take a vector of 2 numbers, expand it to 64 in inner layers, and compress back to 2 at the output. Intermediate size is room where the network unpacks features; more hidden neurons mean more expressiveness but more parameters to train. Choosing these sizes (layer width and depth) is architecture design, not data.
+
+## Try it yourself
+
+Run the code — it passes input through two layers and prints the network output. Experiment: change the first layer's weights so the first hidden neuron does not zero out (make both weights positive) and see how the final output changes. Then add a third input to `x` without updating `W1` and watch the pass break from dimension mismatch.
+
+<PyDemo
+  title="Forward pass through a two-layer MLP"
+  code={`def layer(x, weights, biases):
+    z = []
+    for neuron_weights, b in zip(weights, biases):
+        s = sum(xi * wi for xi, wi in zip(x, neuron_weights))
+        z.append(s + b)
+    return z
+
+def relu(vec):
+    return [max(0.0, v) for v in vec]
+
+x = [1.0, 2.0]
+W1 = [[0.5, -0.5], [1.0, 0.0]]
+b1 = [0.0, 1.0]
+W2 = [[1.0, 1.0]]
+b2 = [0.0]
+
+hidden = relu(layer(x, W1, b1))
+output = layer(hidden, W2, b2)
+print(hidden)
+print(output)`}
+/>
+
+## When behavior surprises you
+
+Forward pass is only computing an answer — no learning happens. Weights are taken as-is and do not change: to make them meaningful you need the backward pass and gradient descent ([[backprop-gradient-descent]]). A fresh, randomly initialized network will honestly run forward and output nonsense — that is normal.
+
+A second surprise: the order "sum, then activation" cannot be violated inside a layer, but the **last** layer's activation is chosen separately from hidden layers. Hidden layers usually use ReLU; the output uses softmax (classification) or no activation (regression). Putting ReLU on a classifier output is a common mistake.
+
+## Common mistakes
+
+- **Transposing the weight matrix.** For input length `n` and a layer of `m` neurons the matrix must be `m x n` (one row per neuron). The transposed shape `n x m` gives a dimension error or, worse, a silently wrong result.
+- **Forgetting activation between layers.** Two layers `layer(layer(x))` without activation in the middle equal one layer. Nonlinearity goes after every hidden layer or depth is useless.
+- **Using the output layer's activation on hidden layers by habit.** softmax belongs only on a classifier output; inside the network between layers it is unnecessary and harmful.
+
+<Detail summary="Why practice uses batches">
+
+In our example we passed one vector `x`. In practice a network processes a **batch** of examples at once. Input becomes matrix `X` (one row per example) and the whole layer computes as `X @ W.T + b` in one matrix multiply for the entire batch. That is faster (one large multiply instead of a loop over examples) and needed for training: gradient is averaged over the batch. Libraries like PyTorch are built around this matrix view so accelerators (GPUs) stay busy with useful work.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A layer computes all its neuron outputs at once: z = W @ x + b, then a = activation(z).",
+    "Dimensions must match: for input length n and m neurons, W has shape m x n and output has length m.",
+    "An MLP is several fully connected layers with nonlinear activation between them; one layer's output is the next layer's input.",
+    "Forward pass only computes an answer and does not train: with random weights it honestly outputs nonsense.",
+    "Hidden layers usually use ReLU; output activation (softmax / none) is chosen separately for the task.",
+  ]}
+/>
+
+## References
+
+- [CS231n - Neural Networks Part 1: layers](https://cs231n.github.io/neural-networks-1/#layers)
+- [3Blue1Brown - But what is a neural network?](https://www.3blue1brown.com/lessons/neural-networks)
+- [PyTorch - nn.Linear](https://pytorch.org/docs/stable/generated/torch.nn.Linear.html)

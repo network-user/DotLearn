@@ -1,0 +1,169 @@
+---
+conceptId: c3-linearization
+title: The C3 linearization algorithm
+estimatedMinutes: 50
+---
+
+# C3: how one list emerges from an ancestor graph
+
+In the previous section MRO appeared as a ready-made list Python puts in `__mro__`. But where does that order come from? Why does `Widget(Mixin, Base)` give `[Widget, Mixin, Base, object]` and not, say, `[Widget, Base, Mixin, object]`? Behind the order stands a specific algorithm - **C3 linearization**. It is not a heuristic or "whatever works": it is a deterministic procedure with three guarantees, and understanding its mechanics is the difference between "MRO as a black box" and "I can derive MRO on paper faster than I can print it."
+
+By the end of this section you will linearize any hierarchy by hand with the merge operation, explain head and tail, and understand why naive depth-first search from old Python gave the wrong answer where C3 gives the right one.
+
+## Three promises C3 keeps
+
+C3 builds an order such that three conditions hold at once:
+
+1. **A class before its ancestors.** If `B` inherits `A`, then `B` appears earlier in the list than `A`.
+2. **Preserving parent order.** If a class is declared as `class D(B, C)`, then `B` appears before `C` (this order is called *local precedence order*).
+3. **Monotonicity.** The order C3 gives for a class is consistent with the orders of all its ancestors: no descendant "flips" a parent's linearization.
+
+If no list satisfies all three conditions, Python refuses to build the class - more on that in the diamond section. For now: C3 is not "walk and record" but "merge several ordered lists without breaking any of them."
+
+## The merge operation: head, tail, and a good candidate
+
+The linearization `L[C]` of class `C` with parents `B1, B2, ..., Bn` is defined as:
+
+```text
+L[C] = C + merge(L[B1], L[B2], ..., L[Bn], [B1, B2, ..., Bn])
+```
+
+That is: the class `C` itself, then the result of merging the linearizations of all parents plus the list of parents themselves. The base case is `L[object] = [object]`.
+
+All the work is in `merge`. It takes several lists and merges them into one step by step. On each step:
+
+- **head** - the first element of a list; **tail** - everything else.
+- Take the head of the first non-empty list. It is a **good candidate** if it does not appear in the tail of *any* of the lists being merged.
+- If the candidate is good - append it to the result and remove it from all lists. Start the step again.
+- If the first list's head is bad - try the head of the next list.
+- If all lists are empty - merge is done. If no head is good while lists remain non-empty - linearization is impossible.
+
+"A candidate in another list's tail" means: somewhere there is a class that must come *before* the candidate. Placing the candidate now would break someone's order. So that head is skipped.
+
+<Figure caption="One merge step: the first list's head is checked against the tails of the others. C is in the second list's tail, so it is too early; try the next head.">
+  <Sketch viewBox="0 0 460 200" title="One step of merge">
+    <SketchLabel x={20} y={30} mono muted anchor="start">list 1:</SketchLabel>
+    <SketchHighlight x={120} y={14} width={40} height={26} />
+    <SketchBox x={120} y={14} width={40} height={26} accent />
+    <SketchLabel x={140} y={31} mono accent>C</SketchLabel>
+    <SketchBox x={164} y={14} width={40} height={26} />
+    <SketchLabel x={184} y={31} mono>A</SketchLabel>
+    <SketchLabel x={300} y={31} muted anchor="start">head = C</SketchLabel>
+
+    <SketchLabel x={20} y={80} mono muted anchor="start">list 2:</SketchLabel>
+    <SketchBox x={120} y={64} width={40} height={26} />
+    <SketchLabel x={140} y={81} mono>B</SketchLabel>
+    <SketchBox x={164} y={64} width={40} height={26} hatched />
+    <SketchLabel x={184} y={81} mono>C</SketchLabel>
+    <SketchLabel x={300} y={81} muted anchor="start">C in tail → bad</SketchLabel>
+
+    <SketchLabel x={20} y={140} muted anchor="start">result:</SketchLabel>
+    <SketchLabel x={120} y={140} anchor="start">C too early, try list 2's head</SketchLabel>
+    <SketchArrow from={[140, 44]} to={[140, 60]} accent />
+  </Sketch>
+</Figure>
+
+## Hand trace: linearizing a diamond
+
+Take the classic diamond and walk through merge by hand. Declarations:
+
+```python
+class A: pass
+class B(A): pass
+class C(A): pass
+class D(B, C): pass
+```
+
+First the linearizations we already know (single inheritance is trivial):
+
+```text
+L[A] = [A, object]
+L[B] = [B, A, object]
+L[C] = [C, A, object]
+```
+
+Now `D`:
+
+```text
+L[D] = D + merge(L[B], L[C], [B, C])
+     = D + merge([B, A, object], [C, A, object], [B, C])
+```
+
+Step by step. The candidate is the head of the first list.
+
+<Steps>
+  <li>head = <code>B</code>. Is <code>B</code> in any list's tail? Not in <code>[A, object]</code>, not in <code>[C, A, object]</code>, not in <code>[C]</code>. Good. Take <code>B</code>, remove it everywhere. Result: <code>[B]</code>.</li>
+  <li>Remaining: <code>[A, object]</code>, <code>[C, A, object]</code>, <code>[C]</code>. head = <code>A</code>. But <code>A</code> is in the second list's tail <code>[C, <strong>A</strong>, object]</code>. Bad. Try the next list's head.</li>
+  <li>Second list's head = <code>C</code>. Is <code>C</code> in anyone's tail? No. Good. Take <code>C</code>. Result: <code>[B, C]</code>.</li>
+  <li>Remaining: <code>[A, object]</code>, <code>[A, object]</code>, <code>[]</code>. head = <code>A</code>, no longer in any tail. Good. Result: <code>[B, C, A]</code>.</li>
+  <li>Remaining: <code>[object]</code>, <code>[object]</code>. head = <code>object</code>, good. Result: <code>[B, C, A, object]</code>. Lists empty - merge done.</li>
+</Steps>
+
+Step through the same merge yourself - the "step" button picks the next valid head; rejected ones are highlighted in red:
+
+<MergeStepper />
+
+Result: `L[D] = [D, B, C, A, object]`. Let's verify Python agrees.
+
+```python
+class A: pass
+class B(A): pass
+class C(A): pass
+class D(B, C): pass
+
+print([c.__name__ for c in D.__mro__])
+```
+
+This prints `['D', 'B', 'C', 'A', 'object']` - exactly what we got by hand. Note the key moment in step 2: `A` did not follow `B` immediately even though in `L[B]` it was second. C3 delayed `A` until *all* its descendants (`B` and `C`) were in place - that is what preserving "class before ancestors" means.
+
+## Try linearization yourself
+
+Run the code and compare `__mro__` with the trace above. Then change `D` to `class D(C, B)` (swap parents) and run again. The diamond stays, but `B` and `C` swap in the list - watch how reordering parents in the declaration flows into merge order.
+
+<PyDemo
+  title="C3 on a diamond"
+  code={`class A: pass
+class B(A): pass
+class C(A): pass
+class D(B, C): pass
+
+print([c.__name__ for c in D.__mro__])`}
+/>
+
+## Why naive DFS broke
+
+Before C3 (and in old-style Python 2 classes) MRO was built by naive depth-first search left to right: descend into the first parent until stuck, then the second. For diamond `D(B, C)` that walk gave `D, B, A, object, C, A, object`, and after removing duplicates from the left - `[D, B, A, C, object]`.
+
+See the problem? `A` ended up *before* `C`, even though `C` is a descendant of `A`. If `A` and `C` both define `method`, naive order would call the version from `A` and ignore the more specialized one in `C`. Overriding in `C` silently stopped working. That is exactly what C3 fixes: its second tail check prevents an ancestor from appearing before a descendant.
+
+<Callout type="warning">
+Naive DFS violates the basic invariant "descendant before ancestor." C3 preserves it at the cost of a more complex merge. In Python 3, where only C3 remains, overrides in a diamond work predictably.
+</Callout>
+
+## Typical mistakes in hand linearization
+
+- **Checking the candidate only in "its own" list.** A good candidate must not appear in the tail of *any* merged list, including the parent list `[B1, ..., Bn]`. Forget one list - wrong order.
+- **Treating head in tail when it is first there.** The candidate is the head itself; "in the tail" means any position except first in any *other* list. First position (also head) does not count as a conflict.
+- **Stopping at the first bad head and declaring failure.** A bad head in the first list is not fatal: try the next list's head. Failure is declared only when *all* heads are bad while lists remain non-empty.
+
+<Detail summary="Where the name C3 comes from">
+
+"C3" is not a version number or Python codename. The algorithm authors named it that in a paper on linearization in the Dylan language: three "C"s correspond to three properties it guarantees at once (consistency with ancestor order, consistency with local parent order, and monotonicity). Python adopted it for new-style classes starting in 2.3. The canonical write-up with proofs is the official document [The Python 2.3 Method Resolution Order](https://docs.python.org/3/howto/mro.html).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "C3 produces MRO while holding three invariants: class before ancestors, preserving parent order, monotonicity.",
+    "L[C] = C + merge(parent linearizations + parent list); all work is in merge.",
+    "On each merge step, take a list's head if it does not appear in any list's tail.",
+    "A bad head is skipped; try the next list's head; error only when all heads are bad.",
+    "Naive DFS put an ancestor before a descendant and broke overrides in a diamond - C3 fixed that.",
+    "Hand linearization of diamond D(B, C) gives [D, B, C, A, object]: A is delayed until both descendants B and C are placed.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - The Python 2.3 Method Resolution Order](https://docs.python.org/3/howto/mro.html)
+- [Python documentation - type.mro()](https://docs.python.org/3/library/stdtypes.html#class.mro)

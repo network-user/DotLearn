@@ -1,0 +1,315 @@
+exercises:
+  - id: patterns-symmetry-001
+    concept: context-patterns
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What do the lock, transaction, and temporary-setting patterns have in common?"
+    choices:
+      - id: a
+        text: "Each has a forward action on entry and a paired reverse on exit that must not be skipped."
+      - id: b
+        text: "All three must suppress exceptions in `__exit__`."
+      - id: c
+        text: "All three acquire resources in `__init__`, not `__enter__`."
+      - id: d
+        text: "All three work only in single-threaded programs."
+    correct: [a]
+    explanation: "Variations of one idea: a paired operation where the second half (release, commit/rollback, restore) cannot be skipped. A context manager ties it to leaving the block."
+    variants:
+      - prompt: "Why is `with lock` safer than manual `acquire()` / `release()`?"
+        choices:
+          - id: a
+            text: "Because `release()` is tied to leaving the block and runs even on exception."
+          - id: b
+            text: "Because `with lock` forbids exceptions inside the block."
+          - id: c
+            text: "Because `with lock` speeds up lock acquisition."
+          - id: d
+            text: "Because `with lock` makes the lock reentrant."
+        correct: [a]
+        explanation: "Manual `release()` is easy to skip on exception - and the thread hangs forever. `with` ties release to leaving the block."
+      - prompt: "Why does transaction `__exit__` usually return `False`?"
+        choices:
+          - id: a
+            text: "To roll back the transaction but not hide the error cause from calling code."
+          - id: b
+            text: "So the transaction always commits regardless of error."
+          - id: c
+            text: "Because `__exit__` must return `False` by Python rules."
+          - id: d
+            text: "So the transaction can be reused."
+        correct: [a]
+        explanation: "Rolling back and hiding the cause are different jobs. `return False` propagates the exception so the caller learns why rollback happened."
+
+  - id: patterns-lock-001
+    concept: context-patterns
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete protecting a shared counter with a lock via `with`."
+    template: |
+      import threading
+
+      lock = threading.Lock()
+      total = 0
+
+      def add(n):
+          global total
+          {{stmt}} lock:
+              total += n
+    blanks:
+      stmt:
+        accept: ["with"]
+    variants:
+      - prompt: "Complete the transaction class: what to call on entry and what to return?"
+        template: |
+          class Transaction:
+              def __init__(self, db):
+                  self.db = db
+
+              def __enter__(self):
+                  self.db.{{begin}}()
+                  return self.db
+
+              def __exit__(self, exc_type, exc, tb):
+                  if exc_type is None:
+                      self.db.commit()
+                  else:
+                      self.db.rollback()
+                  return False
+        blanks:
+          begin:
+            accept: ["begin"]
+      - prompt: "Complete temporary substitution via @contextmanager: where is the old value restored?"
+        template: |
+          from contextlib import contextmanager
+
+          settings = {"debug": False}
+
+          @contextmanager
+          def temporary(key, value):
+              saved = settings[key]
+              settings[key] = value
+              try:
+                  yield
+              {{block}}:
+                  settings[key] = saved
+        blanks:
+          block:
+            accept: ["finally"]
+
+  - id: patterns-transaction-001
+    concept: context-patterns
+    type: predict-output
+    difficulty: 3
+    prompt: "What does this program print?"
+    snippet: |
+      class FakeDB:
+          def __init__(self):
+              self.value = 0
+              self._saved = None
+
+          def begin(self):
+              self._saved = self.value
+
+          def set(self, v):
+              self.value = v
+
+          def commit(self):
+              print("commit", self.value)
+
+          def rollback(self):
+              self.value = self._saved
+              print("rollback", self.value)
+
+
+      class Transaction:
+          def __init__(self, db):
+              self.db = db
+
+          def __enter__(self):
+              self.db.begin()
+              return self.db
+
+          def __exit__(self, exc_type, exc, tb):
+              if exc_type is None:
+                  self.db.commit()
+              else:
+                  self.db.rollback()
+              return False
+
+
+      db = FakeDB()
+
+      with Transaction(db) as conn:
+          conn.set(10)
+
+      try:
+          with Transaction(db) as conn:
+              conn.set(99)
+              raise RuntimeError("fail")
+      except RuntimeError:
+          pass
+
+      print("final", db.value)
+    expected:
+      kind: stdout
+      value: "commit 10\nrollback 10\nfinal 10"
+    hints:
+      - "In `__exit__` the decision uses `exc_type`: `None` means commit, otherwise rollback. What happened in each block?"
+      - "The second block failed on `raise`, so the transaction rolled back to the value saved in `begin()` - which is 10 from the first committed block."
+
+  - id: patterns-temporary-001
+    concept: context-patterns
+    type: predict-output
+    difficulty: 3
+    prompt: "What does this program print?"
+    snippet: |
+      from contextlib import contextmanager
+
+      settings = {"debug": False}
+
+      @contextmanager
+      def temporary(key, value):
+          saved = settings[key]
+          settings[key] = value
+          try:
+              yield
+          finally:
+              settings[key] = saved
+
+      print(settings["debug"])
+      try:
+          with temporary("debug", True):
+              print(settings["debug"])
+              raise ValueError("oops")
+      except ValueError:
+          pass
+      print(settings["debug"])
+    expected:
+      kind: stdout
+      value: "False\nTrue\nFalse"
+    hints:
+      - "Restoration lives in `finally`, so it runs on any block outcome including exception."
+      - "Inside the block the flag is substituted to `True`; on exit `finally` restores the saved original value."
+
+  - id: patterns-init-vs-enter-001
+    concept: context-patterns
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Why is acquiring a resource in `__init__` (not `__enter__`) unreliable?"
+    choices:
+      - id: a
+        text: "If an exception occurs between object creation and entering `with`, the resource is already acquired but `__exit__` will not run."
+      - id: b
+        text: "Because `__init__` cannot open files."
+      - id: c
+        text: "Because `__enter__` has no access to `self`."
+      - id: d
+        text: "Because acquisition in `__init__` suppresses all exceptions in the block."
+    correct: [a]
+    explanation: "`__exit__` runs only on leaving `with`. If you never enter the block, release from `__exit__` never runs while the resource from `__init__` stays held. Acquire in `__enter__` keeps acquire and release paired."
+    hints:
+      - "`__exit__` is tied to leaving the `with` block. What if you never enter the block?"
+      - "Compare acquisition moment (constructor) and guaranteed release moment (leaving `with`): an error can slip between them."
+
+  - id: patterns-nesting-order-001
+    concept: context-patterns
+    type: predict-output
+    difficulty: 4
+    prompt: "What does this program print?"
+    snippet: |
+      class Step:
+          def __init__(self, name):
+              self.name = name
+
+          def __enter__(self):
+              print("enter", self.name)
+              return self
+
+          def __exit__(self, exc_type, exc, tb):
+              print("exit", self.name)
+              return False
+
+      with Step("lock"), Step("tx"):
+          print("work")
+    expected:
+      kind: stdout
+      value: "enter lock\nenter tx\nwork\nexit tx\nexit lock"
+    hints:
+      - "Several contexts in one `with` are acquired left to right. In what order are they released?"
+      - "Release is reverse of acquisition: inner (`tx`) closes before outer (`lock`). Put the outer resource first so it closes last."
+    variants:
+      - snippet: |
+          from contextlib import contextmanager
+
+          @contextmanager
+          def step(name):
+              print("enter", name)
+              try:
+                  yield
+              finally:
+                  print("exit", name)
+
+          with step("outer"), step("inner"):
+              print("body")
+        expected:
+          kind: stdout
+          value: "enter outer\nenter inner\nbody\nexit inner\nexit outer"
+
+  - id: patterns-managed-resource-001
+    concept: context-patterns
+    type: python-function
+    difficulty: 5
+    prompt: "Implement `class Managed`: a context manager around shared log `events` (passed to the constructor with a name). On entry append `f\"acquire {name}\"`, on exit append `f\"rollback {name}\"` if the block had an exception and `f\"commit {name}\"` if not; then always append `f\"release {name}\"`. Do NOT suppress exceptions. Function `transfer(events, fail)` enters `with Managed('tx', events)` and if `fail` is true raises `ValueError` inside; return log `events`. On error the exception is caught outside the function; nothing extra is written to the log."
+    starter: |
+      class Managed:
+          def __init__(self, name, events):
+              ...
+          def __enter__(self):
+              ...
+          def __exit__(self, exc_type, exc, tb):
+              ...
+
+      def transfer(events, fail):
+          try:
+              with Managed("tx", events):
+                  if fail:
+                      raise ValueError("boom")
+          except ValueError:
+              pass
+          return events
+    cases:
+      - call: "transfer([], False)"
+        expect: ["acquire tx", "commit tx", "release tx"]
+      - call: "transfer([], True)"
+        expect: ["acquire tx", "rollback tx", "release tx"]
+      - call: "transfer(['start'], False)"
+        expect: ["start", "acquire tx", "commit tx", "release tx"]
+    hints:
+      - "Combines commit/rollback by block outcome plus unconditional release. Which `__exit__` argument distinguishes success from error?"
+      - "`exc_type is None` means no exception. Order in `__exit__`: commit or rollback first, then release always."
+      - "Save `name` and `events` in the constructor. In `__exit__` choose commit or rollback by `exc_type`, then append release, and return `False`."
+    solution: |
+      class Managed:
+          def __init__(self, name, events):
+              self.name = name
+              self.events = events
+          def __enter__(self):
+              self.events.append(f"acquire {self.name}")
+              return self
+          def __exit__(self, exc_type, exc, tb):
+              if exc_type is None:
+                  self.events.append(f"commit {self.name}")
+              else:
+                  self.events.append(f"rollback {self.name}")
+              self.events.append(f"release {self.name}")
+              return False
+
+      def transfer(events, fail):
+          try:
+              with Managed("tx", events):
+                  if fail:
+                      raise ValueError("boom")
+          except ValueError:
+              pass
+          return events

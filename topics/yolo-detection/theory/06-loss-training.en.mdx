@@ -1,0 +1,100 @@
+---
+conceptId: loss-training
+title: Loss and training
+estimatedMinutes: 30
+---
+
+A detector learns not from one error but from three at once: it can miss with the box, confuse "object here" with "background here", or get the class wrong. YOLO loss folds these three misses into one number the optimizer minimizes. But there's a subtlety without which training falls apart: the vast majority of network slots are empty background, and if you count them equally with objects, the network simply learns to say "no background everywhere".
+
+By the end of this section you'll understand the three components of detection loss and what each is for, how positive slots differ from negative, why background-object imbalance is dangerous and how it's handled, and how components are weighted in the sum.
+
+## Three components of one loss
+
+Detection loss is a sum of three terms, each for its own error:
+
+- **Localization loss** - how inaccurate the box is: error in coordinates `(tx, ty, tw, th)` relative to ground truth. Computed only for slots with an object.
+- **Objectness (confidence) loss** - how wrong "there's an object here" is. Computed for **all** slots: for slots with an object the target is near `1`, for background `0`.
+- **Classification loss** - how wrong the class is. Computed only for slots with an object: nothing to classify on background.
+
+Total loss is a weighted sum of these three. Weights are needed because components are in different "units" and appear at different frequencies; more on that below.
+
+<Figure caption="Training is descent on the loss surface: the optimizer steps toward the minimum, step size set by learning rate. Detection loss is the sum of three such errors at once.">
+  <GradientDescentViz lr={0.2} />
+</Figure>
+
+The ball on the diagram rolls toward the minimum - that's training: gradient descent moves weights so total loss falls. Change learning rate: too large a step overshoots the minimum, too small crawls. The same mechanics apply to the sum of three detection components - the optimizer doesn't distinguish where the error came from, it minimizes their sum.
+
+## Positive and negative slots
+
+Each "cell plus anchor" slot gets a label during training. **Positive** - a slot assigned to answer for a real object: its anchor best matched the object's shape among anchors in the cell containing the object's center. **Negative** - a slot with no assigned object; its objectness target is `0` (background here).
+
+These labels are extremely uneven. On a `13x13` grid with three anchors - 507 slots, and objects per typical frame are single digits. So positive slots are few, negative hundreds. If objectness loss counts all slots with equal weight, background error sum drowns rare object errors, and the gradient pulls the network toward trivial "background everywhere".
+
+<Callout type="warning">Class imbalance in detection isn't a rare edge case - it's the norm: background always outnumbers objects by orders of magnitude. Without special handling objectness loss learns only "background".</Callout>
+
+## How imbalance is handled
+
+Two classic approaches. First - **weighting**: negative-slot errors get smaller weight than positive, so rare objects speak louder in the sum. Early YOLO did this - multiplied background objectness loss by a coefficient less than one.
+
+Second approach - **focal loss**: dynamically reduce contribution of "easy" examples. Most negative slots are obvious background the network quickly learns; focal loss automatically shrinks their contribution and forces focus on hard examples - e.g. background that looks like an object. Focal loss came from RetinaNet and is widely used in modern detectors.
+
+```python
+box_loss = 2.0
+obj_loss = 1.0
+cls_loss = 0.5
+lambda_box, lambda_obj, lambda_cls = 5.0, 1.0, 1.0
+
+total = lambda_box * box_loss + lambda_obj * obj_loss + lambda_cls * cls_loss
+print(total)
+```
+
+It prints `11.5`: with weights `(5, 1, 1)` box error is amplified fivefold relative to objectness and class. Weights are hyperparameters: they balance components with different scales and frequency.
+
+## Try it yourself
+
+Run the calculation. Raise `lambda_box` to `10` and watch box error's contribution to total loss grow - the network is "punished harder" for inaccurate localization. Keep weights but zero `cls_loss` (perfect class) and confirm total loss drops by exactly the classification contribution. That shows the total is a weighted sum of independent terms.
+
+<PyDemo
+  title="Weighted detector loss"
+  code={`box_loss = 2.0
+obj_loss = 1.0
+cls_loss = 0.5
+lambda_box, lambda_obj, lambda_cls = 5.0, 1.0, 1.0
+
+total = lambda_box * box_loss + lambda_obj * obj_loss + lambda_cls * cls_loss
+print(total)`}
+/>
+
+## Where this surprises you
+
+Localization and classification losses are computed **only on positive slots**, objectness on all. Easy to miss: if you accidentally compute box loss on background (no ground-truth box), the network learns to "fit" nonexistent boxes to garbage and training derails. Background has no ground truth - so no coordinate error.
+
+Second surprise - positive assignment isn't by IoU of decoded box but by anchor shape match with the object at target-label time. A slot becomes positive before the network predicts anything: target assignment is part of batch preparation, not network output.
+
+## Common mistakes
+
+- **Computing box loss on negatives.** Background has no ground-truth box, so no coordinate error. Localization loss - only for positive slots.
+- **Ignoring imbalance.** Without lower background weight or focal loss objectness loss is crushed by a sea of negatives, and the network learns "background everywhere". Imbalance must be handled explicitly.
+- **Confusing component scope.** Objectness - on all slots, localization and classification - only on positive. Mixing scopes means either under-training background objectness or over-training boxes on garbage.
+- **Picking component weights off the ceiling.** `(lambda_box, lambda_obj, lambda_cls)` are tuned for the task: their role is to equalize term contributions at different scales, not "make the box more important" by intuition.
+
+<Detail summary="Why focal loss is 'one line of code'">
+
+RetinaNet authors noticed ordinary cross-entropy drowns in easy negatives on detection: each of hundreds of obvious background slots gives a small but nonzero error, and in sum they outweigh rare hard examples. Focal loss multiplies cross-entropy by `(1 - p)^gamma`, where `p` is model confidence in the correct answer. For an easy example `p` is near one, multiplier near zero - contribution almost vanishes. For a hard one `p` is low, multiplier near one - contribution stays. Technically it's one added line, but it redistributes gradient from a sea of easy background to a handful of hard examples, and that's enough for a single-stage detector to match two-stage accuracy.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Detection loss is a weighted sum of three errors: box localization, objectness (is there an object), and classification.",
+    "Objectness is computed on all slots; localization and classification - only on positive slots; background has no ground truth.",
+    "A positive slot is assigned to answer for an object (best-shape anchor in the center cell); negative is background with objectness target 0.",
+    "Background slots far outnumber objects; without handling imbalance the network learns trivial 'background everywhere'.",
+    "Imbalance is handled with lower negative weight and focal loss, which dampens easy background examples.",
+  ]}
+/>
+
+## References
+
+- [Lin et al., Focal Loss for Dense Object Detection (RetinaNet, 2017)](https://arxiv.org/abs/1708.02002)
+- [Redmon, Farhadi, YOLOv3 (2018) - loss components](https://arxiv.org/abs/1804.02767)
