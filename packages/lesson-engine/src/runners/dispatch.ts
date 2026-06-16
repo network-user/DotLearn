@@ -5,6 +5,7 @@ import type { PythonRuntime } from '../runtime/python';
 import type { SqlRuntime } from '../runtime/sql';
 
 import { runFillInBlanks } from './fill-in-blanks';
+import { runGitChallenge } from './git-challenge';
 import { runJavascriptFunction } from './javascript-function';
 import { runPredictOutput } from './predict-output';
 import { runPythonFunction } from './python-function';
@@ -74,5 +75,14 @@ export const runExercise = async (
     case 'predict-output': {
       return runPredictOutput(exercise, answer);
     }
+    case 'git-challenge': {
+      if (typeof answer !== 'string' && !isStringArray(answer)) {
+        return fail('expected git commands as string or string[]');
+      }
+      return runGitChallenge(exercise, answer);
+    }
   }
 };
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((entry) => typeof entry === 'string');

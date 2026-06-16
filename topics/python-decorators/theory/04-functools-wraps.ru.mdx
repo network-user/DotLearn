@@ -1,0 +1,183 @@
+---
+conceptId: functools-wraps
+title: functools.wraps
+estimatedMinutes: 30
+---
+
+Ваш декоратор работает, но он украл у функции имя. Спросите у декорированной функции, как её зовут, - и вместо `add` услышите `wrapper`. Документация тоже пропала. Для глаз это мелочь, но для отладчиков, логов, фреймворков и `help()` имя функции - это паспорт, по которому её узнают. В этом разделе мы починим паспорт одной строкой `@functools.wraps`.
+
+К концу раздела Вы поймёте, почему наивный декоратор затирает `__name__` и `__doc__`, как `functools.wraps` копирует метаданные с исходной функции на обёртку и как через атрибут `__wrapped__` добраться до оригинала под обёрткой.
+
+## Обёртка - другая функция, и метаданные у неё свои
+
+Когда декоратор возвращает `wrapper`, имя исходной функции начинает указывать именно на `wrapper`. А `wrapper` - это отдельный объект-функция со своим `__name__` (равным `"wrapper"`) и пустым `__doc__`. Метаданные оригинала никуда не делись - просто наружу теперь смотрит обёртка, и видны её собственные атрибуты.
+
+```python
+def log_call(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log_call
+def add(a, b):
+    "Складывает два числа."
+    return a + b
+
+print(add.__name__)
+print(add.__doc__)
+```
+
+Печатается `wrapper` и `None`. Имя `add` указывает на `wrapper`, поэтому `add.__name__` читает имя обёртки. Документация оригинала тоже не видна: у `wrapper` строки документации нет.
+
+<Figure caption="Без wraps наружу смотрит wrapper со своими метаданными; __name__ и __doc__ оригинала спрятаны под обёрткой.">
+  <ObjectMemoryFigure
+    objects={[
+      { name: 'add', className: 'wrapper', attrs: { __name__: "'wrapper'", __doc__: 'None' } },
+      { name: '(оригинал)', className: 'add', attrs: { __name__: "'add'", __doc__: "'Складывает...'" } },
+    ]}
+  />
+</Figure>
+
+Почему это не косметика. Логи, которые печатают `func.__name__`, начнут писать `wrapper` для всех декорированных функций - различить их станет нельзя. `help(add)` покажет пустую обёртку. Некоторые фреймворки (например, маршрутизаторы веб-серверов) опираются на имя функции и сломаются на дубле `wrapper`.
+
+## functools.wraps копирует метаданные на обёртку
+
+В стандартной библиотеке есть готовое лекарство - декоратор `functools.wraps`. Его навешивают на саму обёртку и передают ему оригинальную функцию; он копирует с оригинала на обёртку `__name__`, `__doc__`, `__module__`, `__qualname__`, `__dict__` и аннотации.
+
+```python
+import functools
+
+def log_call(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log_call
+def add(a, b):
+    "Складывает два числа."
+    return a + b
+
+print(add.__name__)
+print(add.__doc__)
+```
+
+Теперь печатается `add` и `Складывает два числа.`. Строка `@functools.wraps(func)` сама является декоратором обёртки: `wraps(func)` возвращает декоратор, который применяется к `wrapper` и переносит на него метаданные `func`. Снаружи декорированная функция снова выглядит как `add`.
+
+## Потрогайте руками
+
+Запустите код: внизу два декоратора - `plain` без `wraps` и `nice` с ним. Сравните, что печатает `__name__` у каждой декорированной функции. Затем попробуйте добавить `@functools.wraps(func)` в `plain` и убедитесь, что его вывод стал таким же правильным, как у `nice`.
+
+<PyDemo
+  title="С wraps и без"
+  code={`import functools
+
+def plain(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def nice(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@plain
+def alpha():
+    "Первая."
+    return 1
+
+@nice
+def beta():
+    "Вторая."
+    return 2
+
+print("plain:", alpha.__name__, repr(alpha.__doc__))
+print("nice: ", beta.__name__, repr(beta.__doc__))`}
+/>
+
+`plain` даёт `wrapper None`, а `nice` - `beta 'Вторая.'`. Разница ровно в одной строке `@functools.wraps(func)` над обёрткой.
+
+## __wrapped__ ведёт к оригиналу
+
+`functools.wraps` делает ещё одну полезную вещь: кладёт на обёртку атрибут `__wrapped__`, указывающий на исходную функцию. Через него можно достать оригинал из-под обёртки - например, чтобы вызвать функцию в обход декоратора в тесте.
+
+```python
+import functools
+
+def log_call(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log_call
+def add(a, b):
+    return a + b
+
+print(add.__wrapped__ is not None)
+print(add.__wrapped__(2, 3))
+```
+
+Печатается `True` и `5`. `add.__wrapped__` - это исходная функция `add` до оборачивания; вызвав её напрямую, мы обошли обёртку. Без `functools.wraps` атрибута `__wrapped__` не будет.
+
+<Callout type="info">`functools.wraps(func)` - это удобная обёртка над `functools.update_wrapper(wrapper, func)`. Первый используют как декоратор внутри другого декоратора, второй - вызовом, если обёртку строят не через `def`.</Callout>
+
+## Когда поведение удивит
+
+`functools.wraps` копирует метаданные, но не саму сигнатуру в смысле проверки аргументов. Обёртка по-прежнему принимает `*args, **kwargs`, и инструменты, читающие «настоящую» сигнатуру через `inspect.signature`, увидят правильные параметры только потому, что `wraps` копирует ссылку `__wrapped__`, по которой `inspect` поднимается к оригиналу.
+
+```python
+import functools, inspect
+
+def log_call(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log_call
+def add(a, b):
+    return a + b
+
+print(str(inspect.signature(add)))
+```
+
+Печатается `(a, b)`, а не `(*args, **kwargs)`: `inspect.signature` по умолчанию идёт по цепочке `__wrapped__` к оригиналу. Уберите `@functools.wraps(func)` - и та же строка напечатает `(*args, **kwargs)`, потому что подняться к оригиналу будет не по чему.
+
+## Типичные ошибки
+
+- **Забыть `@functools.wraps(func)`.** Декоратор работает, но крадёт `__name__` и `__doc__`; логи и `help()` показывают `wrapper`. Добавляйте `wraps` в каждый нетривиальный декоратор.
+- **Навесить `wraps` не на ту функцию.** `@functools.wraps(func)` ставят над обёрткой (`wrapper`) и передают ему `func` - оригинал. Перепутать местами обёртку и оригинал - значит скопировать метаданные не в ту сторону.
+- **Вызвать `wraps` без аргумента.** `@functools.wraps` без `(func)` не сработает: `wraps` принимает оборачиваемую функцию и возвращает декоратор; скобки с `func` обязательны.
+
+<Detail summary="Что именно копирует wraps">
+
+По умолчанию `functools.wraps` копирует кортеж атрибутов `WRAPPER_ASSIGNMENTS`: `__module__`, `__name__`, `__qualname__`, `__annotations__`, `__doc__`. Кроме того, он обновляет (а не заменяет) `__dict__` обёртки атрибутами оригинала через `WRAPPER_UPDATES` и проставляет `__wrapped__`. Список настраивается параметрами `assigned` и `updated`, но трогать их нужно редко.
+
+```python
+import functools
+print(functools.WRAPPER_ASSIGNMENTS)
+```
+
+Печатается кортеж имён копируемых атрибутов. Именно поэтому после `wraps` декорированная функция почти неотличима от оригинала для интроспекции.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Наивный декоратор возвращает wrapper, и имя функции начинает указывать на обёртку: __name__ становится 'wrapper', __doc__ - None.",
+    "Это не косметика: логи, help() и фреймворки, читающие __name__, ломаются на одинаковых обёртках.",
+    "functools.wraps(func) навешивают на обёртку; он копирует __name__, __doc__, __qualname__, аннотации и __dict__ с оригинала.",
+    "wraps также ставит на обёртку атрибут __wrapped__, через который можно достать исходную функцию.",
+    "inspect.signature идёт по __wrapped__ к оригиналу, поэтому с wraps видит настоящие параметры, а не (*args, **kwargs).",
+    "Добавляйте @functools.wraps(func) над обёрткой в каждом нетривиальном декораторе.",
+  ]}
+/>
+
+## Ссылки
+
+- [Документация Python - functools.wraps](https://docs.python.org/3/library/functools.html#functools.wraps)
+- [Документация Python - functools.update_wrapper](https://docs.python.org/3/library/functools.html#functools.update_wrapper)
+- [Документация Python - inspect.signature](https://docs.python.org/3/library/inspect.html#inspect.signature)

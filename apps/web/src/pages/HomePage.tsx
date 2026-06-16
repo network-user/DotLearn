@@ -14,6 +14,7 @@ import {
   Database,
   FileText,
   FlaskConical,
+  GitBranch,
   History,
   Layers,
   NotebookPen,
@@ -63,6 +64,7 @@ const RUNTIME_LABEL_KEY: Record<string, string> = {
   'sql.js': 'runtimeLabel.sql',
   pyodide: 'runtimeLabel.python',
   javascript: 'runtimeLabel.javascript',
+  git: 'runtimeLabel.git',
   none: 'runtimeLabel.none',
 };
 
@@ -76,6 +78,7 @@ const runtimeIcon = (runtime: string) => {
   if (runtime === 'sql.js') return <Database size={14} />;
   if (runtime === 'pyodide') return <FlaskConical size={14} />;
   if (runtime === 'javascript') return <Code2 size={14} />;
+  if (runtime === 'git') return <GitBranch size={14} />;
   return <FileText size={14} />;
 };
 

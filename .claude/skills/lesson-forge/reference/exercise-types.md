@@ -126,6 +126,50 @@ Learner predicts what a snippet outputs.
     value: 0
 ```
 
+## `git-challenge`
+
+Learner reaches a target repository state by typing real git commands into an in-browser terminal. The challenge runs entirely in a deterministic JavaScript git engine (no backend, no real git): the topic `runtime` must be `git`.
+
+Shape:
+
+- `setup` (optional): the starting repository state. `setup.files` seeds the worktree (path → contents); `setup.commands` is an ordered list of git/shell commands the engine replays to build history before the learner starts. Supported shell verbs: `git`, `echo`, `cat`, `ls`, `rm`, `touch`, `mkdir`, `pwd`, plus `>`/`>>` redirection. Supported git subcommands include `init`, `config`, `add`, `rm`, `status`, `commit`, `log`, `diff`, `branch`, `checkout`, `switch`, `merge`, `reset`, `revert`, `restore`, `stash`, `cherry-pick`, `rebase`, `tag`, `reflog`, `remote`, `fetch`, `pull`, `push`.
+- `goal` (required, min 1): assertions checked against the resulting repository. The challenge passes only when every assertion holds. Available `kind`s: `commit-count`, `file-content`, `file-tracked`, `file-absent`, `staged`, `branch-exists`, `branch-absent`, `head-on-branch`, `head-detached`, `head-at`, `clean-tree`, `merged`, `commit-message`, `tag-exists`.
+- `solution` (required, min 1): an ordered list of git command strings that satisfies every goal. `pnpm validate` replays this solution in the engine and fails the build if the goals are not met, so the gold solution is verified on every run.
+
+Goal field reference (only the fields each kind reads are honored):
+
+- `commit-count` → `ref` (default `HEAD`), `equals`
+- `file-content` → `path`, `equals`, `where` (`worktree` | `head`, default `worktree`)
+- `file-tracked` / `staged` → `path`
+- `file-absent` → `path`, `where` (default `worktree`)
+- `branch-exists` / `branch-absent` / `head-on-branch` / `tag-exists` → `name`
+- `head-detached` / `clean-tree` → no extra fields
+- `head-at` → `ref`
+- `merged` → `branch`, `into` (default `HEAD`)
+- `commit-message` → `ref` (default `HEAD`), `index` (default `0`, counts back from `ref`), `contains`
+
+```yaml
+- id: stage-and-commit-001
+  concept: staging
+  type: git-challenge
+  difficulty: 1
+  prompt: "Создайте коммит с файлом notes.txt и сообщением «add notes»."
+  setup:
+    files:
+      notes.txt: "first line\n"
+    commands:
+      - git init
+      - git config user.name learner
+  goal:
+    - { kind: file-tracked, path: notes.txt }
+    - { kind: commit-count, equals: 1 }
+    - { kind: commit-message, contains: "add notes" }
+    - { kind: clean-tree }
+  solution:
+    - git add notes.txt
+    - git commit -m "add notes"
+```
+
 ## Variants (randomized practice)
 
 Every exercise type accepts an optional `variants` array. Each variant is a **full alternative version of the same task**: same skill being tested, different surface (different data, different prompt, different expected answer). The runner picks a random variant per attempt and offers «другой вариант» after a pass, so learners internalize the principle instead of memorizing the answer.
@@ -133,7 +177,7 @@ Every exercise type accepts an optional `variants` array. Each variant is a **fu
 Rules:
 
 - The base exercise fields are variant 0; `variants` adds more.
-- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output). `prompt`, `fixture`, `starter` are optional overrides - omit them to inherit from the base.
+- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output, `goal`+`solution` for git-challenge). `prompt`, `fixture`, `starter`, `setup` are optional overrides - omit them to inherit from the base.
 - A variant that differs only in wording is useless; vary the data or the target so the correct answer actually changes.
 - Translations of an exercise must define the **same number of variants in the same order** (the validator enforces parity).
 - Gold solutions of every sql-query variant are executed by `pnpm validate`; variant solutions for other runtimes follow the same manual verification rule as the base (see G6).
