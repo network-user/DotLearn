@@ -1,0 +1,131 @@
+---
+conceptId: realtime-patterns
+title: "Patterns: broadcast, presence, scaling"
+estimatedMinutes: 45
+---
+
+# When one server is no longer enough
+
+One process on one server holds thousands of WebSocket connections and happily broadcasts to them. While everything lives in one memory space, broadcast is trivial: walk the list of open sockets, send to each. Complexity starts the moment you have two servers. User Anna is on server #1, Boris on server #2, both in the same chat. Anna sends a message; it lands on server #1 - how does server #2 reach it when Anna's connection isn't in its memory at all?
+
+This section covers the patterns that keep realtime alive: broadcast (send to many), presence (who's online now), and horizontal scaling (making several servers behave as one). By the end you'll understand why naive broadcast breaks when you scale, why an external layer like Redis is needed, and what pitfalls wait in presence and connection load balancing.
+
+## Broadcast: send to everyone except the sender
+
+The basic realtime pattern is delivering an event to a group. Socket.IO offers three addressing options, and they're easy to mix up. `io.emit` sends to **everyone** connected. `socket.broadcast.emit` sends to everyone **except** the sender (the "don't show me my own message twice" case). `io.to(room).emit` sends only to room members.
+
+```js
+io.on("connection", (socket) => {
+  socket.on("chat:message", (msg) => {
+    socket.broadcast.to(msg.room).emit("chat:message", msg);
+  });
+});
+```
+
+Here `socket.broadcast.to(room)` delivers to everyone in the room except the sender: their client already rendered the message optimistically, so echo isn't needed. The difference between "everyone" and "everyone but me" seems small, but duplicate messages in chats break on exactly that line.
+
+<Figure caption="socket.broadcast.to(room) delivers the event to room members except the sender - their client already showed the message locally.">
+  <Sketch viewBox="0 0 460 170" title="Broadcast except sender">
+    <SketchBox x={20} y={65} width={90} height={45} accent />
+    <SketchLabel x={65} y={87} size={11} accent mono>sender</SketchLabel>
+    <SketchBox x={300} y={20} width={70} height={35} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={335} y={42} size={10} mono>B</SketchLabel>
+    <SketchBox x={300} y={70} width={70} height={35} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={335} y={92} size={10} mono>C</SketchLabel>
+    <SketchArrow from={[110, 80]} to={[300, 40]} accent />
+    <SketchArrow from={[110, 92]} to={[300, 88]} accent />
+    <SketchArrow from={[65, 65]} to={[65, 40]} dashed />
+    <SketchLabel x={120} y={140} size={10} muted>no echo to sender - they already rendered locally</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Presence: who's online now
+
+Presence is the "online" indicator, participant list, green dot on an avatar. The naive approach: on `connection` add the user to an online set, on `disconnect` remove them. That works - until the first network drop. If Wi-Fi dies, `disconnect` arrives only after a heartbeat timeout; until then they're "online" when they're not. And with two tabs open, one tab's `disconnect` doesn't mean the person left.
+
+Reliable presence counts connections per user, not "is there a connection": tab connects - increment, disconnects - decrement, online while the count is above zero.
+
+```js
+io.on("connection", (socket) => {
+  const userId = socket.handshake.auth.userId;
+  presence.increment(userId);
+  socket.on("disconnect", () => presence.decrement(userId));
+});
+```
+
+That counter survives multiple tabs and reconnects correctly: a person is online while at least one connection lives. To keep the counter from leaking when a server crashes (connections died but `disconnect` never ran), store it in external storage with TTL, not in process memory.
+
+<Callout type="warning">
+Connection-based presence lies on drops and multiple tabs: `disconnect` after network loss is delayed by the heartbeat timeout. Count online by connections per user with TTL so a crashed server doesn't leave "forever online" ghosts.
+</Callout>
+
+## Scaling: why naive broadcast breaks
+
+Back to Anna and Boris on different servers. `io.to(room).emit` on server #1 walks sockets **in that process** - it knows nothing about server #2's connections. Boris never sees Anna's message. That's fundamental: the in-memory connection list is visible only to its process, and a room spread across servers is half invisible to each one.
+
+<Figure caption="Without a shared layer, io.to(room) on server 1 can't reach server 2's connections: broadcast only hits half the room.">
+  <Sketch viewBox="0 0 460 180" title="Cross-server broadcast problem">
+    <SketchBox x={20} y={30} width={120} height={120} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={50} size={11} weight="bold">server 1</SketchLabel>
+    <SketchBox x={45} y={70} width={70} height={30} accent />
+    <SketchLabel x={80} y={90} size={10} accent mono>Anna</SketchLabel>
+    <SketchBox x={320} y={30} width={120} height={120} hatched />
+    <SketchLabel x={380} y={50} size={11} weight="bold">server 2</SketchLabel>
+    <SketchBox x={345} y={70} width={70} height={30} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={380} y={90} size={10} mono>Boris</SketchLabel>
+    <SketchArrow from={[140, 90]} to={[320, 90]} dashed />
+    <SketchLabel x={230} y={120} size={10} muted>message doesn't reach</SketchLabel>
+  </Sketch>
+</Figure>
+
+The fix is to move broadcast outside the process. Servers attach a shared **adapter** (for Socket.IO - Redis adapter): when server #1 does `io.to(room).emit`, the adapter publishes the event to Redis, and every other server subscribed delivers it to its local sockets in that room. Redis acts as a publish/subscribe bus: one publishes, all deliver.
+
+```js
+const { createAdapter } = require("@socket.io/redis-adapter");
+io.adapter(createAdapter(pubClient, subClient));
+```
+
+After attaching the adapter, your application code **doesn't change**: you still write `io.to(room).emit`, but broadcast now reaches the whole cluster. The magic hides in the adapter; to the app the cluster looks like one server again.
+
+## Sticky sessions: another scaling trap
+
+There's a second pitfall, separate from broadcast. Socket.IO starts with long-polling and upgrades to WebSocket - several HTTP requests that **must** hit the same server. If the load balancer round-robins them across processes, the Engine.IO handshake falls apart: one server starts the session, another knows nothing about it.
+
+Sticky sessions fix this: the load balancer binds the client to one backend for the whole connection (usually by cookie or IP hash). Redis adapter solves broadcast across servers but **doesn't** replace sticky sessions - two independent settings, and the second is easy to forget.
+
+<Callout type="info">
+Redis adapter and sticky sessions solve different problems. The adapter delivers broadcast across cluster servers. Sticky sessions ensure all requests of one Engine.IO session (polling + upgrade) hit one server. Horizontal Socket.IO scaling needs both.
+</Callout>
+
+## Surprise: scale limits are usually fan-out, not connections
+
+It seems the scaling limit is open connection count. In practice **fan-out** hits first: how many outbound messages one inbound message creates. In a 10,000-person chat, one message is 10,000 sends. At 1,000 messages per second that's tens of millions outbound per second, and network and CPU run out before descriptor limits. Large realtime systems split audiences into smaller rooms, aggregate events (not every "typing..." tick, but once every N seconds), and sometimes deliberately drop non-critical events. Realtime scale is mostly about managing outbound traffic, not accepting connections.
+
+## Common mistakes
+
+- **Using `io.emit` where you need a room.** `io.emit` hits everyone on the server; in a multi-room app that leaks messages between chats and wastes traffic. Address with `io.to(room)`.
+- **Presence from raw `disconnect`.** Drops and tabs break a naive flag. Count live connections per user and store with TTL.
+- **Thinking Redis adapter replaces sticky sessions.** Different problems: adapter is broadcast across servers; sticky is keeping one Engine.IO session on one server during upgrade.
+- **Ignoring fan-out when estimating load.** Counting only connections misses the real limit: outbound traffic grows as room size times message rate.
+
+<Detail summary="Delivery after disconnect: message history and idempotency">
+
+WebSocket and Socket.IO deliver "while the connection is alive," but during an outage messages sent in the gap never reach the client (the emit buffer only helps the client's own outbound, not inbound). Chats solve this at the application layer: each message gets a monotonic id or timestamp, and after reconnect the client requests "everything after the last id I saw" via a normal HTTP history request. Realtime transport handles "here and now"; reliable history handles "what I missed." The same id idea gives idempotency: a message redelivered from the buffer is dropped if the client already saw that id, so duplicates don't appear.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Three broadcast targets: io.emit - everyone, socket.broadcast - everyone except sender, io.to(room) - the room; mixing them up causes duplicates and leaks.",
+    "Reliable presence uses a live-connection counter per user with TTL, not raw connection/disconnect - drops and tabs break the naive approach.",
+    "Naive broadcast fails on multiple servers: io.to(room) sees only local sockets; a shared adapter (Redis pub/sub) reaches the whole cluster without changing application code.",
+    "Redis adapter doesn't replace sticky sessions: adapter is cross-server broadcast; sticky keeps one Engine.IO session's requests on one server.",
+    "Scale limits are usually fan-out (outbound per inbound), not connection count; reduce it with smaller rooms, aggregation, and dropping non-critical events.",
+  ]}
+/>
+
+## References
+
+- [Socket.IO - Broadcasting events](https://socket.io/docs/v4/broadcasting-events/)
+- [Socket.IO - Scaling and Redis adapter](https://socket.io/docs/v4/redis-adapter/)
+- [Socket.IO - Using multiple nodes and sticky sessions](https://socket.io/docs/v4/using-multiple-nodes/)

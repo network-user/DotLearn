@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Link, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Dices, GraduationCap, Layers, Shuffle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -16,11 +16,16 @@ import {
   type SessionCard,
 } from '@/lib/flashcard-sources';
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
+import {
+  parseFlashcardsPracticeSearch,
+  parseTopicsParam,
+  practiceSearchDefaults,
+  topicsToParam,
+  type FlashcardsPracticeSearch,
+} from '@dotlearn/lesson-engine';
 import { interviewCategories, interviewStages } from '@/lib/interview';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { topicTitleOf } from '@/lib/topics';
-
-type PracticeMode = 'topics' | 'interview' | 'random';
 
 interface Session {
   cards: SessionCard[];
@@ -35,46 +40,70 @@ const PracticeField = ({ label, children }: { label: string; children: React.Rea
   </label>
 );
 
+const resolvedSearch = (
+  search: FlashcardsPracticeSearch,
+): Required<Pick<FlashcardsPracticeSearch, 'mode' | 'category' | 'stage' | 'due' | 'count'>> &
+  Pick<FlashcardsPracticeSearch, 'topics' | 'start'> => ({
+  mode: search.mode ?? practiceSearchDefaults.mode,
+  category: search.category ?? practiceSearchDefaults.category,
+  stage: search.stage ?? practiceSearchDefaults.stage,
+  due: search.due ?? practiceSearchDefaults.due,
+  count: search.count ?? practiceSearchDefaults.count,
+  topics: search.topics,
+  start: search.start,
+});
+
 export const FlashcardsPracticePage = () => {
   const { t } = useTranslation('flashcards');
-  const search = useSearch({ strict: false }) as { mode?: PracticeMode; category?: string };
+  const navigate = useNavigate();
+  const rawSearch = useSearch({ strict: false }) as Record<string, unknown>;
+  const search = useMemo(() => parseFlashcardsPracticeSearch(rawSearch), [rawSearch]);
+  const active = useMemo(() => resolvedSearch(search), [search]);
   const language = getCurrentLanguage();
   const topicSlugs = useMemo(() => flashcardTopicSlugs(), []);
-  const [mode, setMode] = useState<PracticeMode>(search.mode ?? 'topics');
-  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
-  const [category, setCategory] = useState(search.category ?? 'all');
-  const [stage, setStage] = useState('all');
-  const [dueOnly, setDueOnly] = useState('due');
-  const [count, setCount] = useState('20');
+  const selectedTopics = useMemo(
+    () => parseTopicsParam(active.topics, topicSlugs),
+    [active.topics, topicSlugs],
+  );
+
   const [session, setSession] = useState<Session | undefined>(undefined);
   const [starting, setStarting] = useState(false);
+  const autostartHandled = useRef(false);
 
-  const toggleTopic = (slug: string): void => {
-    setSelectedTopics((current) =>
-      current.includes(slug) ? current.filter((entry) => entry !== slug) : [...current, slug],
-    );
-  };
+  const patchSearch = useCallback(
+    (patch: FlashcardsPracticeSearch): void => {
+      const next = resolvedSearch({ ...active, ...patch, start: undefined });
+      void navigate({
+        to: '/flashcards/practice',
+        search: {
+          mode: next.mode,
+          ...(next.category !== 'all' ? { category: next.category } : {}),
+          ...(next.stage !== 'all' ? { stage: next.stage } : {}),
+          ...(next.topics ? { topics: next.topics } : {}),
+          ...(next.due !== 'due' ? { due: next.due } : {}),
+          ...(next.count !== '20' ? { count: next.count } : {}),
+        },
+        replace: true,
+      });
+    },
+    [active, navigate],
+  );
 
-  const selectAllTopics = (): void => {
-    setSelectedTopics(topicSlugs);
-  };
-
-  const clearTopics = (): void => {
-    setSelectedTopics([]);
-  };
-
-  const start = async (): Promise<void> => {
+  const start = useCallback(async (): Promise<void> => {
     setStarting(true);
     try {
       let pool: SessionCard[] = [];
       let title = '';
       let subtitle = '';
-      if (mode === 'topics') {
+      if (active.mode === 'topics') {
         pool = await loadTopicSessionCards(selectedTopics, language);
         title = t('practice.topicsTitle');
         subtitle = t('practice.topicsSubtitle', { count: selectedTopics.length });
-      } else if (mode === 'interview') {
-        pool = await loadInterviewSessionCards(language, { category, stage });
+      } else if (active.mode === 'interview') {
+        const filter: { category?: string; stage?: string } = {};
+        if (active.category && active.category !== 'all') filter.category = active.category;
+        if (active.stage && active.stage !== 'all') filter.stage = active.stage;
+        pool = await loadInterviewSessionCards(language, filter);
         title = t('practice.interviewTitle');
         subtitle = t('practice.interviewSubtitle');
       } else {
@@ -82,11 +111,11 @@ export const FlashcardsPracticePage = () => {
         title = t('practice.randomTitle');
         subtitle = t('practice.randomSubtitle');
       }
-      if (dueOnly === 'due') {
+      if (active.due === 'due') {
         pool = await filterDueCards(pool);
       }
       pool = shuffleCards(pool);
-      const limit = count === 'all' ? pool.length : Number(count);
+      const limit = active.count === 'all' ? pool.length : Number(active.count);
       setSession({
         cards: pool.slice(0, limit),
         title,
@@ -95,7 +124,21 @@ export const FlashcardsPracticePage = () => {
     } finally {
       setStarting(false);
     }
-  };
+  }, [active, language, selectedTopics, t, topicSlugs]);
+
+  useEffect(() => {
+    if (!search.start || session || starting || autostartHandled.current) return;
+    autostartHandled.current = true;
+    void start().finally(() => {
+      patchSearch({});
+    });
+  }, [search.start, session, starting, start, patchSearch]);
+
+  useEffect(() => {
+    if (!session) {
+      autostartHandled.current = false;
+    }
+  }, [session]);
 
   if (session) {
     return (
@@ -110,9 +153,9 @@ export const FlashcardsPracticePage = () => {
   }
 
   const canStart =
-    mode === 'topics'
+    active.mode === 'topics'
       ? selectedTopics.length > 0
-      : mode === 'interview' || mode === 'random';
+      : active.mode === 'interview' || active.mode === 'random';
 
   return (
     <div className="space-y-6">
@@ -138,47 +181,59 @@ export const FlashcardsPracticePage = () => {
           <button
             key={entry.key}
             type="button"
-            onClick={() => setMode(entry.key)}
+            onClick={() => patchSearch({ mode: entry.key })}
             className={`rounded-2xl border p-4 text-left transition-colors duration-fast ${
-              mode === entry.key
+              active.mode === entry.key
                 ? 'border-accent/50 bg-accent/5'
                 : 'border-border-base bg-surface hover:bg-surface-2/40'
             }`}
           >
-            <entry.icon size={18} className={mode === entry.key ? 'text-accent' : 'text-fg-subtle'} />
+            <entry.icon
+              size={18}
+              className={active.mode === entry.key ? 'text-accent' : 'text-fg-subtle'}
+            />
             <div className="mt-3 font-medium text-fg">{entry.label}</div>
           </button>
         ))}
       </div>
 
       <Surface variant="chrome" className="p-4 sm:p-5">
-        {mode === 'topics' && (
+        {active.mode === 'topics' && (
           <div className="space-y-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-fg-muted">{t('practice.pickTopics')}</span>
               <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={selectAllTopics}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => patchSearch({ topics: topicsToParam(topicSlugs) })}
+                >
                   {t('practice.selectAll')}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={clearTopics}>
+                <Button variant="ghost" size="sm" onClick={() => patchSearch({ topics: undefined })}>
                   {t('practice.clearAll')}
                 </Button>
               </div>
             </div>
             <div className="grid max-h-64 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
               {topicSlugs.map((slug) => {
-                const active = selectedTopics.includes(slug);
+                const checked = selectedTopics.includes(slug);
                 return (
                   <label
                     key={slug}
                     className={`flex min-h-[var(--tap)] cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 transition-colors ${
-                      active ? 'border-accent/40 bg-accent/5' : 'border-border-base'
+                      checked ? 'border-accent/40 bg-accent/5' : 'border-border-base'
                     }`}
                   >
                     <input
                       type="checkbox"
-                      checked={active}
-                      onChange={() => toggleTopic(slug)}
+                      checked={checked}
+                      onChange={() => {
+                        const next = checked
+                          ? selectedTopics.filter((entry) => entry !== slug)
+                          : [...selectedTopics, slug];
+                        patchSearch({ topics: topicsToParam(next) });
+                      }}
                       className="size-4 shrink-0 accent-accent"
                     />
                     <span className="truncate text-sm text-fg">{topicTitleOf(slug) ?? slug}</span>
@@ -189,12 +244,16 @@ export const FlashcardsPracticePage = () => {
           </div>
         )}
 
-        {mode === 'interview' && (
+        {active.mode === 'interview' && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <PracticeField label={t('practice.filterCategory')}>
               <select
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
+                value={active.category}
+                onChange={(event) =>
+                  patchSearch({
+                    category: event.target.value === 'all' ? undefined : event.target.value,
+                  })
+                }
                 className="form-input"
               >
                 <option value="all">{t('practice.allCategories')}</option>
@@ -207,8 +266,12 @@ export const FlashcardsPracticePage = () => {
             </PracticeField>
             <PracticeField label={t('practice.filterStage')}>
               <select
-                value={stage}
-                onChange={(event) => setStage(event.target.value)}
+                value={active.stage}
+                onChange={(event) =>
+                  patchSearch({
+                    stage: event.target.value === 'all' ? undefined : event.target.value,
+                  })
+                }
                 className="form-input"
               >
                 <option value="all">{t('practice.allStages')}</option>
@@ -222,7 +285,7 @@ export const FlashcardsPracticePage = () => {
           </div>
         )}
 
-        {mode === 'random' && (
+        {active.mode === 'random' && (
           <div className="flex items-start gap-3 text-sm text-fg-muted">
             <Dices size={18} className="mt-0.5 shrink-0 text-accent" />
             <p>{t('practice.randomHint')}</p>
@@ -232,8 +295,12 @@ export const FlashcardsPracticePage = () => {
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <PracticeField label={t('practice.filterDue')}>
             <select
-              value={dueOnly}
-              onChange={(event) => setDueOnly(event.target.value)}
+              value={active.due}
+              onChange={(event) =>
+                patchSearch({
+                  due: event.target.value === 'due' ? undefined : (event.target.value as 'all'),
+                })
+              }
               className="form-input"
             >
               <option value="due">{t('practice.dueOnly')}</option>
@@ -242,8 +309,12 @@ export const FlashcardsPracticePage = () => {
           </PracticeField>
           <PracticeField label={t('practice.filterCount')}>
             <select
-              value={count}
-              onChange={(event) => setCount(event.target.value)}
+              value={active.count}
+              onChange={(event) =>
+                patchSearch({
+                  count: event.target.value === '20' ? undefined : event.target.value,
+                })
+              }
               className="form-input"
             >
               <option value="10">10</option>

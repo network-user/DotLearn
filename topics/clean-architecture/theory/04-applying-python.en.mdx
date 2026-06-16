@@ -1,0 +1,117 @@
+---
+conceptId: applying-python
+title: Applying it in a Python project
+estimatedMinutes: 45
+---
+
+# From circular diagrams to a real directory tree
+
+Theory looks good on diagrams, but at some point you need practical answers: which folders to create, what to import where, where to wire everything together, and how to avoid turning this into a mountain of abstractions for their own sake. Python adds its own quirks: you are not expected to create an interface for every class, and duck typing lets you live without `abc` entirely. So copying C# recipes literally is a mistake — you need a pragmatic adaptation.
+
+By the end of this section you will be able to lay out layers in packages so import direction follows the dependency rule, assemble dependencies in one composition root, and understand where `Protocol` fits instead of abstract base classes in Python and where layers are unnecessary luxury. That turns the whole topic into a working project template.
+
+## Mental model: packages as rings
+
+Clean Architecture rings map most cleanly to packages. Inner packages do not import outer ones — that is the dependency rule expressed in `import`.
+
+```text
+src/
+  domain/        entities and value objects
+  application/   use cases + ports (interfaces)
+  infrastructure/ adapters: SQL repositories, API clients
+  interface/     FastAPI controllers, CLI
+  main.py        composition root
+```
+
+`domain` imports nothing from the project. `application` imports `domain` but not `infrastructure`. `infrastructure` and `interface` import `application` and `domain` but not each other. `main.py` imports everything and wires it together.
+
+<Figure caption="Allowed import directions between packages. Any arrow outward (from application into infrastructure) violates the dependency rule.">
+  <Sketch viewBox="0 0 460 200" title="Imports between packages">
+    <SketchBox x={40} y={80} width={90} height={44} accent />
+    <SketchLabel x={85} y={107} size={12} mono>domain</SketchLabel>
+    <SketchBox x={180} y={80} width={100} height={44} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={230} y={107} size={12} mono>application</SketchLabel>
+    <SketchBox x={330} y={30} width={110} height={40} fill="rgb(var(--surface-2))" hatched />
+    <SketchLabel x={385} y={54} size={11} mono>infrastructure</SketchLabel>
+    <SketchBox x={330} y={130} width={110} height={40} fill="rgb(var(--surface-2))" hatched />
+    <SketchLabel x={385} y={154} size={11} mono>interface</SketchLabel>
+    <SketchArrow from={[180, 102]} to={[132, 102]} accent />
+    <SketchArrow from={[330, 50]} to={[282, 95]} accent />
+    <SketchArrow from={[330, 150]} to={[282, 110]} accent />
+  </Sketch>
+</Figure>
+
+Import discipline is the architecture. If `from infrastructure...` appears in `application/use_cases.py`, the arrow pointed outward — the rule is broken, however neat the folders look.
+
+## A port is a Protocol, not necessarily ABC
+
+In Python an interface does not have to be an abstract class. `Protocol` from `typing` defines a structural contract: any class with matching methods counts as an implementation, without explicit inheritance. That fits duck typing and removes coupling even at the inheritance level.
+
+```python
+from typing import Protocol
+
+class OrderRepository(Protocol):
+    def save(self, order: Order) -> None: ...
+    def by_id(self, order_id: str) -> Order | None: ...
+```
+
+The use case annotates its dependency with this protocol. The implementation in `infrastructure` does not inherit `OrderRepository` — it only needs `save` and `by_id` with compatible signatures, and mypy will accept it.
+
+```python
+class SqlOrderRepository:
+    def save(self, order: Order) -> None: ...
+    def by_id(self, order_id: str) -> Order | None: ...
+```
+
+`SqlOrderRepository` never mentions `OrderRepository` but structurally matches it. Coupling is minimal: infrastructure does not even depend on the port's name. When you want inheritance to be mandatory (for example to get a runtime error if a method is missing), use `abc.ABC` — both approaches are valid.
+
+## Composition root: the only place where everything meets
+
+Somewhere concrete classes must be connected: create the repository, pass it to the use case, pass the use case to the controller. That place is the composition root. Keep one per application, usually in `main.py` or a factory. Only here does code see both abstractions and implementations at once.
+
+```python
+def build_place_order(session) -> PlaceOrderUseCase:
+    repo = SqlOrderRepository(session)
+    notifier = EmailNotifier(smtp_config)
+    return PlaceOrderUseCase(repo=repo, notifier=notifier)
+```
+
+Inside the use case, domain, and controller there is no `SqlOrderRepository(...)` — they receive ready dependencies through the constructor. All "dirty" assembly lives in one function. Swapping SMTP for a test stub means passing a different implementation at this one point, without touching business code.
+
+<Callout type="tip">
+A sign of healthy architecture: concrete infrastructure class names (`SqlOrderRepository`, `EmailNotifier`) appear in exactly two places in the project — the file where the class is defined, and the composition root where it is created. If they show up in use cases, inversion is not complete.
+</Callout>
+
+## This will surprise you: layers can be harmful luxury
+
+The temptation after studying this topic is to split even a two-hundred-line script that reads one CSV and writes another into five rings. That is the opposite mistake. Layers pay off when there is non-trivial business logic and a real chance of technology changes or serious testing. For a one-day script, three interfaces and a composition root are pure overhead: more code, more files, slower reading, zero benefit, because there is nothing to change.
+
+Architecture is an investment that pays off through change. No change — no payoff. A sane approach: start simple, add a layer exactly when mixing actually starts to hurt (tests need a database, a second delivery channel appears on the horizon). Premature layering is as harmful as premature optimization.
+
+## Common mistakes
+
+- **Importing from an outer package into an inner one.** The most common violation is `from infrastructure import ...` inside `application`. Catch it with an import linter (for example `import-linter`) in CI; do not rely on manual discipline.
+- **Scattered composition.** If `SqlOrderRepository()` is created directly in several use cases, there is no single composition point and you cannot swap implementations centrally. Consolidate creation in one composition root.
+- **Layering for layering's sake.** Five rings around CRUD with no business logic add ceremony and protect nothing. Pain from mixing first, then a layer — not the other way around.
+
+<Detail summary="How to check dependency direction automatically">
+
+Relying on review for imports is unreliable: a forbidden `import` slips through easily. The `import-linter` tool lets you describe contracts like "package domain must not import application, infrastructure, interface" and check them in CI. Then a dependency-rule violation becomes a failing test, not a review comment noticed six months later. That turns an architectural principle into an executable check — the same way types turn a convention into a compiler check.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Rings map to packages; the dependency rule is a ban on importing from an outer package into an inner one.",
+    "In Python a port is conveniently defined with typing.Protocol: implementations match structurally without inheritance and extra coupling.",
+    "The composition root is the only place where concrete classes are created and wired; their names must not appear in business code.",
+    "Layers are an investment that pays off through change; for a simple script with no business logic they are harmful overhead.",
+    "Check import direction automatically (import-linter in CI), not through review discipline alone.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - typing.Protocol](https://docs.python.org/3/library/typing.html#typing.Protocol)
+- [import-linter - controlling dependencies between packages](https://import-linter.readthedocs.io/en/stable/)
+- [Cosmic Python (Architecture Patterns with Python) - free book](https://www.cosmicpython.com/book/preface.html)

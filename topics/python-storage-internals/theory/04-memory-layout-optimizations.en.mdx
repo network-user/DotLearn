@@ -1,0 +1,181 @@
+---
+conceptId: memory-layout-optimizations
+title: Memory layout optimizations
+estimatedMinutes: 50
+---
+
+Python's flexibility is not free. The ability to add a new attribute to an object at any moment means every instance has its own dictionary. The ability of a list to grow means more memory is allocated than it currently uses. Usually these costs are invisible — but create a million small objects or read a gigabyte of numbers and data layout in memory becomes decisive. CPython offers several levers to shrink it: `__slots__` instead of a dict, small-object caches, thoughtful list growth, and specialized containers from `collections`.
+
+By the end of this section you will understand what memory a normal object spends and how `__slots__` cuts it, why `is` sometimes unexpectedly returns `True`, why `append` is cheap on average despite list moves, and which `collections` structures solve typical tasks better than bare `dict` and `list`.
+
+## __slots__: removing the instance dict
+
+By default instance attributes live in its `__dict__` — an ordinary dict attached to the object. That is convenient: you can hang any attribute whenever you want. But a dict is a hash table with its own header and spare buckets, and on every small object it adds noticeable overhead. If you declare `__slots__` on a class, Python replaces the dict with a compact set of fixed slots for names listed in advance.
+
+```python
+class PlainPoint:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+class SlotPoint:
+    __slots__ = ("x", "y")
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+p = SlotPoint(1, 2)
+print(hasattr(p, "__dict__"))
+```
+
+This prints `False`: `SlotPoint` has no `__dict__`; its attributes sit in fixed slots. The price of the savings is lost flexibility — assigning `p.z = 3` is no longer allowed; you get `AttributeError` because there is nowhere to store an undeclared attribute.
+
+<Figure caption="A normal object holds a reference to a separate attribute dict; an object with __slots__ stores values directly in fixed slots, without a dict.">
+  <Sketch viewBox="0 0 460 200" title="__dict__ vs __slots__">
+    <SketchLabel x={110} y={20} muted>PlainPoint</SketchLabel>
+    <SketchBox x={20} y={32} width={120} height={40} />
+    <SketchLabel x={80} y={56} mono>instance</SketchLabel>
+    <SketchArrow from={[140, 52]} to={[230, 52]} />
+    <SketchBox x={230} y={28} width={170} height={48} hatched />
+    <SketchLabel x={315} y={48} mono muted>__dict__</SketchLabel>
+    <SketchLabel x={315} y={64} size={11} muted>x: 1, y: 2</SketchLabel>
+    <SketchLabel x={110} y={120} muted>SlotPoint</SketchLabel>
+    <SketchBox x={20} y={132} width={120} height={48} accent />
+    <SketchLabel x={80} y={150} mono accent>instance</SketchLabel>
+    <SketchLabel x={80} y={168} size={11} muted>[x=1][y=2]</SketchLabel>
+  </Sketch>
+</Figure>
+
+The savings are especially visible when there are very many objects. On an array of millions of graph nodes, points, or records `__slots__` cuts memory by multiples. The figure below shows the order of magnitude: a compact object takes noticeably less thanks to the missing dict.
+
+<Figure caption="Order of magnitude: an object with __slots__ uses substantially less memory than the same object with a __dict__ (numbers are illustrative).">
+  <BarChart
+    title="Memory per instance, bytes (illustrative)"
+    unit=" B"
+    data={[
+      { label: "With __dict__", value: 152 },
+      { label: "With __slots__", value: 56 },
+    ]}
+    highlight={["With __slots__"]}
+  />
+</Figure>
+
+<Callout type="warning">
+`__slots__` fixes the set of attributes and removes `__dict__`. Do not use it "just in case": it blocks dynamic attributes, conflicts with some multiple-inheritance patterns, and barely helps on a handful of objects. It is a tool for masses of small instances, not the default style.
+</Callout>
+
+## Small-object caching: why is is sometimes True
+
+CPython pre-creates and reuses objects for small integers from -5 to 256. Any `10` in a program is the same object, so `a = 10; b = 10` gives two names pointing at one place.
+
+```python
+a = 10
+b = 10
+print(a is b)
+
+x = 1000
+y = 1000
+print(x is y)
+```
+
+The first line prints `True`: `10` is cached. The second usually prints `False` — `1000` is outside the cache and is two different objects with the same value. Hence the iron rule: compare numbers and values with `==`; reserve `is` for identity checks and singletons like `None`.
+
+<Callout type="tip">
+`is` answers "is this literally the same object?" and `==` answers "are the values equal?". Use `is` only with `None`, `True`, `False`, and deliberate identity checks. You cannot rely on small-integer caching in logic — it is a CPython implementation detail.
+</Callout>
+
+A similar trick is string interning: short identifier-like strings are also stored in a single instance so comparison and use as keys are faster. But as with integers, that is an under-the-hood optimization, not a contract to depend on.
+
+## List growth: spare capacity and amortized append
+
+A list stores elements in a contiguous memory block. If every `append` allocated a block exactly the size of the list, adding an element would copy the whole list each time — O(n) per operation. CPython avoids that by allocating with headroom: list capacity is usually larger than its length. While spare capacity remains, `append` just drops an element into a free slot in O(1). When capacity is exhausted the list grows by a multiple and moves once — and then has room for a long while.
+
+<Compare
+  leftTitle="Grow by 1 element"
+  rightTitle="Multiplicative growth (CPython)"
+  left={<>
+
+Each `append` copies the whole list into a block one larger. n inserts cost `1 + 2 + ... + n`, i.e. O(n²) total.
+
+  </>}
+  right={<>
+
+Capacity grows by a multiple; moves are rare. Total cost of n inserts is O(n), i.e. amortized O(1) per `append`.
+
+  </>}
+  verdict="Spare capacity turns expensive moves into a rarity — a single append is sometimes slow, but on average cheap."
+/>
+
+That is why a single insert is occasionally noticeably slower (it hit a move), but on average (amortized) `append` stays O(1). An immutable `tuple` has no spare capacity at all: it is fixed, uses exactly what it needs, and is therefore more compact than a list — but "adding" to it always creates a new object.
+
+## collections: specialized stores
+
+The standard `collections` module offers containers that under the hood are more efficient than hand-built `dict` and `list` constructions.
+
+```python
+from collections import deque, Counter, defaultdict
+
+queue = deque([1, 2, 3])
+queue.appendleft(0)
+
+freq = Counter("banana")
+groups = defaultdict(list)
+groups["fruit"].append("banana")
+
+print(list(queue))
+print(freq["a"])
+print(groups["fruit"])
+```
+
+This prints `[0, 1, 2, 3]`, `3`, and `['banana']`. Each container solves its own pain:
+
+- **`deque`** — a double-ended queue on linked memory blocks. Insert and remove at both ends in O(1), whereas for a list `insert(0, x)` shifts every element and costs O(n).
+- **`Counter`** — a frequency dict: count occurrences without manual "is the key already there?" checks.
+- **`defaultdict`** — a dict with a default-value factory: accessing a new key creates an empty list or number on its own, avoiding `if key not in d`.
+
+<PyDemo
+  title="collections containers in action"
+  code={`from collections import deque, Counter, defaultdict
+
+queue = deque([1, 2, 3])
+queue.appendleft(0)
+print(list(queue))
+
+print(Counter("banana"))
+
+groups = defaultdict(list)
+for word in ["ant", "bee", "ape"]:
+    groups[word[0]].append(word)
+print(dict(groups))`}
+/>
+
+Try replacing `defaultdict(list)` with a plain `dict` and accessing a new key directly — you get `KeyError`. That shows what the default factory is for.
+
+## Common mistakes
+
+- **Putting `__slots__` on every class.** On a few objects the gain is near zero while flexibility is lost. Use it where there are millions of instances.
+- **Relying on `is` for numbers and strings.** Small-integer caching and string interning are implementation details. For comparing values always use `==`.
+- **Doing `list.insert(0, x)` in a loop.** Each insert at the front shifts the whole list — O(n). For a queue use `deque`.
+- **Manual frequency counting via `if key in d`.** `Counter` and `defaultdict` are shorter, faster, and avoid forgotten initialization branches.
+
+<Detail summary="Why __slots__ does not always shrink memory if a subclass has no slots">
+
+`__slots__` removes `__dict__` only if it is removed along the whole inheritance chain. If even one class in the hierarchy does not declare `__slots__`, instances get a dict again because the subclass "restored" flexibility. So for savings slots are declared on every class in the chain, and an empty `__slots__ = ()` on an intermediate class means "I also add no attributes". Details are in the [__slots__ documentation](https://docs.python.org/3/reference/datamodel.html#slots).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A normal instance stores attributes in __dict__; __slots__ replaces the dict with fixed slots and saves memory on masses of small objects.",
+    "The price of __slots__ is lost flexibility: an undeclared attribute raises AttributeError.",
+    "CPython caches small integers (-5..256) and interns short strings, so is is sometimes True — but that is implementation detail; compare values with ==.",
+    "A list grows by multiples with spare capacity, so append is amortized O(1); a tuple is fixed and more compact.",
+    "deque gives O(1) at both ends, Counter counts frequencies, defaultdict creates default values — they beat hand-built dict and list constructions.",
+  ]}
+/>
+
+## References
+
+- [Python docs - __slots__](https://docs.python.org/3/reference/datamodel.html#slots)
+- [Python docs - collections](https://docs.python.org/3/library/collections.html)
+- [CPython - list layout (listobject.c)](https://github.com/python/cpython/blob/main/Objects/listobject.c)

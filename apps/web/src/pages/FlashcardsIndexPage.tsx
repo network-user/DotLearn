@@ -16,7 +16,10 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { flashcardTopicSlugs, loadTopicCards } from '@/lib/flashcard-decks';
 import { loadFlashcardStats, type FlashcardStats } from '@/lib/flashcard-sources';
-import { loadInterviewCards } from '@/lib/interview-flashcards';
+import {
+  interviewFlashcardCoverage,
+  loadInterviewCards,
+} from '@/lib/interview-flashcards';
 import { interviewCategories } from '@/lib/interview';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
@@ -115,7 +118,29 @@ export const FlashcardsIndexPage = () => {
     };
   }, [language]);
 
+  const coverage = useMemo(() => interviewFlashcardCoverage(language), [language]);
   const ready = summaries !== undefined && interviewSummaries !== undefined;
+
+  const reviewAllInterviewSearch = {
+    mode: 'interview' as const,
+    due: 'all' as const,
+    count: 'all',
+    start: true,
+  };
+
+  const reviewCategorySearch = (category: string) => ({
+    mode: 'interview' as const,
+    category,
+    due: 'all' as const,
+    count: 'all',
+    start: true,
+  });
+
+  const practiceTopicSearch = (slug: string) => ({
+    mode: 'topics' as const,
+    topics: slug,
+    start: true,
+  });
 
   return (
     <div className="space-y-8">
@@ -127,6 +152,14 @@ export const FlashcardsIndexPage = () => {
         <h1 className="font-display text-3xl tracking-tightish text-fg">{t('title')}</h1>
         <p className="max-w-prose text-sm text-fg-muted">{t('hubSubtitle')}</p>
       </header>
+
+      {coverage.missing > 0 && (
+        <Surface variant="inset">
+          <p className="p-4 text-sm text-fg-muted">
+            {t('coverageWarning', { missing: coverage.missing, total: coverage.cards + coverage.missing })}
+          </p>
+        </Surface>
+      )}
 
       {stats === undefined ? (
         <Skeleton rounded="2xl" className="h-28" />
@@ -195,20 +228,22 @@ export const FlashcardsIndexPage = () => {
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {summaries!.map((summary) => (
               <li key={summary.slug}>
-                <Link
-                  to="/flashcards/$slug"
-                  params={{ slug: summary.slug }}
-                  className="group block h-full"
-                >
-                  <Surface interactive className="h-full">
-                    <div className="flex h-full flex-col gap-4 p-5">
+                <Surface interactive className="h-full">
+                  <div className="flex h-full flex-col gap-4 p-5">
+                    <Link
+                      to="/flashcards/$slug"
+                      params={{ slug: summary.slug }}
+                      className="group block min-w-0 flex-1"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <h3 className="min-w-0 font-display text-xl leading-tight tracking-tightish text-fg">
                           {summary.title}
                         </h3>
                         <Layers size={18} className="shrink-0 text-fg-subtle" />
                       </div>
-                      <div className="mt-auto flex items-center gap-2">
+                    </Link>
+                    <div className="mt-auto flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Badge tone="neutral" variant="soft">
                           {t('cardsLabel', { count: summary.total })}
                         </Badge>
@@ -223,9 +258,18 @@ export const FlashcardsIndexPage = () => {
                           </Badge>
                         )}
                       </div>
+                      <Link
+                        to="/flashcards/practice"
+                        search={practiceTopicSearch(summary.slug)}
+                        className="sm:ml-auto"
+                      >
+                        <Button variant="outline" size="sm" className="w-full sm:w-auto">
+                          {t('practiceTopic')}
+                        </Button>
+                      </Link>
                     </div>
-                  </Surface>
-                </Link>
+                  </div>
+                </Surface>
               </li>
             ))}
           </ul>
@@ -233,11 +277,18 @@ export const FlashcardsIndexPage = () => {
       </section>
 
       <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="font-display text-xl tracking-tightish text-fg">{t('interviewDecksHeading')}</h2>
-          <span className="text-sm text-fg-subtle">
-            {t('interviewCategoriesCount', { count: interviewCategories.length })}
-          </span>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-display text-xl tracking-tightish text-fg">{t('interviewDecksHeading')}</h2>
+            <span className="text-sm text-fg-subtle">
+              {t('interviewCategoriesCount', { count: interviewCategories.length })}
+            </span>
+          </div>
+          <Link to="/flashcards/practice" search={reviewAllInterviewSearch}>
+            <Button variant="outline" size="sm" className="w-full sm:w-auto">
+              {t('reviewAllInterview')}
+            </Button>
+          </Link>
         </div>
         {!ready ? (
           <Skeleton rounded="2xl" className="h-32" />
@@ -251,25 +302,45 @@ export const FlashcardsIndexPage = () => {
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {interviewSummaries!.map((summary) => (
               <li key={summary.category}>
-                <Link
-                  to="/flashcards/practice"
-                  search={{ mode: 'interview', category: summary.category }}
-                  className="group block h-full"
-                >
-                  <Surface interactive className="h-full">
-                    <div className="flex h-full flex-col gap-4 p-5">
+                <Surface interactive className="h-full">
+                  <div className="flex h-full flex-col gap-4 p-5">
+                    <Link
+                      to="/flashcards/practice"
+                      search={{ mode: 'interview', category: summary.category }}
+                      className="block min-w-0"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <h3 className="min-w-0 font-display text-xl leading-tight tracking-tightish text-fg">
                           {summary.label}
                         </h3>
                         <GraduationCap size={18} className="shrink-0 text-fg-subtle" />
                       </div>
-                      <Badge tone="neutral" variant="soft">
-                        {t('cardsLabel', { count: summary.total })}
-                      </Badge>
+                    </Link>
+                    <Badge tone="neutral" variant="soft">
+                      {t('cardsLabel', { count: summary.total })}
+                    </Badge>
+                    <div className="mt-auto flex flex-col gap-2 sm:flex-row">
+                      <Link
+                        to="/flashcards/practice"
+                        search={{ mode: 'interview', category: summary.category }}
+                        className="flex-1"
+                      >
+                        <Button variant="ghost" size="sm" className="w-full">
+                          {t('practice.configure')}
+                        </Button>
+                      </Link>
+                      <Link
+                        to="/flashcards/practice"
+                        search={reviewCategorySearch(summary.category)}
+                        className="flex-1"
+                      >
+                        <Button variant="outline" size="sm" className="w-full">
+                          {t('reviewCategory')}
+                        </Button>
+                      </Link>
                     </div>
-                  </Surface>
-                </Link>
+                  </div>
+                </Surface>
               </li>
             ))}
           </ul>

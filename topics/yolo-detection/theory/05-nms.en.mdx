@@ -1,0 +1,133 @@
+---
+conceptId: nms
+title: Non-Maximum Suppression
+estimatedMinutes: 35
+---
+
+After decoding you don't have a tidy object list but a pile of boxes: one car spawned six nearly identical rectangles from neighboring cells, each with its own confidence. Showing them all means drawing the same car six times. You need a filter that from a dense cloud of duplicates keeps one box per object - the most confident one. That filter is Non-Maximum Suppression, and without it any detector's output is unreadable.
+
+By the end of this section you'll understand the NMS algorithm step by step, implement it via IoU and a threshold, see exactly what gets suppressed and relative to what, and how threshold choice changes the result - from merged objects to extra duplicates.
+
+## Idea: greedy selection by confidence
+
+NMS is a greedy algorithm. It works on one class at a time and repeats three actions while candidates remain:
+
+<Steps>
+  <li>Take the box with highest confidence among those left and keep it (the "winner").</li>
+  <li>Remove from candidates all boxes whose IoU with the winner exceeds the threshold - duplicates of the same object.</li>
+  <li>Repeat with what's left.</li>
+</Steps>
+
+The name literally describes the idea: "suppression of non-maxima". From a group of overlapping boxes the maximum by confidence survives, the rest are suppressed. IoU threshold decides what counts as "the same box": a high threshold suppresses only strongly overlapping ones, a low one - even lightly touching.
+
+<Figure caption="NMS steps: on each step the most confident box survives; candidates with IoU above the threshold relative to it are suppressed. The list on the right reflects each box's state.">
+  <NmsViz
+    iouThreshold={0.45}
+    boxes={[
+      { x: 40, y: 40, w: 130, h: 120, score: 0.92 },
+      { x: 58, y: 58, w: 130, h: 118, score: 0.81 },
+      { x: 180, y: 70, w: 110, h: 110, score: 0.88 },
+    ]}
+  />
+</Figure>
+
+Step through the visualization. On the first step the box with confidence `0.92` wins; the second, heavily overlapping it, is suppressed. Box `0.88` on the right doesn't overlap the winner, so it survives the first step and becomes winner on the next. Result - two boxes for two objects instead of three candidates.
+
+## Suppression is always relative to the current winner
+
+A subtlety people trip on: boxes are suppressed by IoU **relative to the current winner**, not pairwise against each other in a chain. If box `B` survived winner `A` (low IoU with `A`), it doesn't "inherit" suppression: on the next step it compares with its own candidates. So two lightly overlapping boxes can both survive even if each separately overlaps a third.
+
+```python
+def iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    iw = max(0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0, min(ay2, by2) - max(ay1, by1))
+    inter = iw * ih
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+print(round(iou((0, 0, 4, 4), (1, 1, 5, 5)), 3))
+```
+
+It prints `0.391`: two `4x4` boxes shifted diagonally by one overlap on `3x3 = 9`, union `16 + 16 - 9 = 23`, and `9/23 ≈ 0.391`. At threshold `0.3` the second box is suppressed; at `0.5` it survives. The same set of boxes gives different answers at different thresholds.
+
+## Implementation
+
+Let's assemble the algorithm. Working with indices is convenient: sort them by descending confidence, take the first, drop overlapping ones, repeat.
+
+```python
+def nms(boxes, scores, threshold):
+    order = sorted(range(len(boxes)), key=lambda i: scores[i], reverse=True)
+    keep = []
+    while order:
+        best = order.pop(0)
+        keep.append(best)
+        order = [i for i in order if iou(boxes[best], boxes[i]) <= threshold]
+    return keep
+```
+
+Sorting puts the most confident first. Each round `pop(0)` takes the current winner into `keep`, and list `order` is rebuilt keeping only those who **didn't** overlap the winner too much (`IoU <= threshold`). When candidates run out, `keep` holds surviving indices in descending confidence order.
+
+## Try it yourself
+
+Run NMS on four boxes: two pairs of close rectangles in different corners. At threshold `0.3` one box survives from each pair - result `[0, 2]`. Raise threshold to `0.5` and run again: now IoU within pairs (about `0.39`) is below threshold, no suppression happens, and all four survive - `[0, 1, 2, 3]`. That shows the threshold is the lever for "how aggressively to merge duplicates".
+
+<PyDemo
+  title="NMS with adjustable threshold"
+  code={`def iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    iw = max(0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0, min(ay2, by2) - max(ay1, by1))
+    inter = iw * ih
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+def nms(boxes, scores, threshold):
+    order = sorted(range(len(boxes)), key=lambda i: scores[i], reverse=True)
+    keep = []
+    while order:
+        best = order.pop(0)
+        keep.append(best)
+        order = [i for i in order if iou(boxes[best], boxes[i]) <= threshold]
+    return keep
+
+boxes = [(0, 0, 4, 4), (1, 1, 5, 5), (10, 10, 14, 14), (11, 11, 15, 15)]
+scores = [0.9, 0.8, 0.7, 0.6]
+print(nms(boxes, scores, 0.3))`}
+/>
+
+## Where this surprises you
+
+Too low a threshold merges different objects. Two people standing close give boxes with noticeable IoU; at threshold `0.2` NMS decides they're duplicates and suppresses one. The object simply vanishes from output - not because the detector missed it, but because post-processing "ate" it. That's a typical cause of missing objects in dense scenes.
+
+Too high a threshold leaves duplicates: at `0.9` almost nothing is suppressed, and one car is outlined several times again. A standard compromise is threshold around `0.4..0.5`, but it depends on how tightly objects stand in your task.
+
+## Common mistakes
+
+- **Suppressing by IoU between all pairs at once.** NMS suppresses only relative to the current winner on each step, not all overlapping pairs globally. Global suppression would drop boxes that should survive.
+- **Mixing classes.** NMS is usually applied separately per class: a "cat" box shouldn't suppress a "dog" box even if they overlap heavily. Otherwise overlapping objects of different classes lose one of them.
+- **Comparing score to IoU threshold.** The NMS threshold is IoU between boxes, not confidence. Filtering by confidence (`score < conf_threshold`) is a separate step, usually before NMS.
+- **Reversing the comparison sign.** Boxes with `IoU > threshold` are suppressed; those with `IoU <= threshold` survive. Swapping strict and non-strict inequality shifts behavior exactly on the boundary.
+
+<Detail summary="Soft-NMS - don't discard, demote">
+
+Hard NMS deletes a duplicate entirely, which hurts in dense scenes: a legitimate neighbor box that overlapped the winner strongly disappears. Soft-NMS instead **lowers** overlapping box confidence proportional to IoU - stronger overlap, stronger penalty. The box stays a candidate with reduced score and can survive if confidence is still high. On datasets with tight objects this noticeably raises recall without changing the core idea of selection by descending confidence.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "NMS removes duplicates: from a group of overlapping boxes it keeps the most confident, suppresses the rest.",
+    "The algorithm is greedy: take max by confidence, drop candidates with IoU above threshold relative to it, repeat.",
+    "Suppression is relative to the current winner, not between all pairs at once.",
+    "IoU threshold is the lever: low merges close objects (loses them), high leaves duplicates; typical compromise 0.4..0.5.",
+    "NMS is applied per class; filtering by low confidence is a separate step before NMS.",
+  ]}
+/>
+
+## References
+
+- [Neubeck, Van Gool, Efficient Non-Maximum Suppression (2006)](https://ieeexplore.ieee.org/document/1699659)
+- [Bodla et al., Soft-NMS - Improving Object Detection With One Line of Code (2017)](https://arxiv.org/abs/1704.04503)

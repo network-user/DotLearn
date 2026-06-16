@@ -1,0 +1,171 @@
+---
+conceptId: first-decorator
+title: Your first decorator
+estimatedMinutes: 30
+---
+
+Imagine you have a dozen functions and need to add the same thing to each: log that it was called, measure time, check permissions. You could paste those lines at the start of every function — and doom yourself to copy-paste that falls apart on the first edit. A decorator solves this differently: you write a wrapper once and attach it to any function with one line `@`. Now all three bricks from previous sections — function as object, passing functions, closure — come together in this technique.
+
+By the end of this section you will write your first decorator by hand, understand that `@log` is just sugar for `func = log(func)`, and learn to forward any arguments and return value through the wrapper with `*args` and `**kwargs`.
+
+## A decorator is a function that wraps a function
+
+A decorator takes a function and returns a new function that usually calls the original, adding something before or after. The "before" and "after" live in the wrapper, and the original function is captured by closure. Watch how the wrapper wraps the call: one block runs before the body, control goes inside, and another runs on the way back.
+
+<DecoratorWrap decoratorName="log_call" funcName="add" before="print('call')" after="print('done')" />
+
+Let's write it in code. Decorator `log_call` takes `func`, builds `wrapper` around it, and returns `wrapper` itself, not the result of calling it.
+
+```python
+def log_call(func):
+    def wrapper():
+        print("вызов")
+        result = func()
+        print("готово")
+        return result
+    return wrapper
+```
+
+Here `func` is a free variable captured by closure: `wrapper` will remember which function it wrapped even after `log_call` finishes. Inside `wrapper` we decide when to call `func()` and what to do around it.
+
+## Applying the wrapper by hand
+
+A decorator is an ordinary function, so you can apply it without any `@` syntax: call it and reassign the name.
+
+```python
+def hello():
+    return "привет"
+
+hello = log_call(hello)
+print(hello())
+```
+
+This prints:
+
+```
+вызов
+готово
+привет
+```
+
+Step by step. `log_call(hello)` returned `wrapper`, and we reassigned `hello` to that `wrapper`. Now `hello` points at the wrapper. Calling `hello()` runs `wrapper`: it prints `вызов`, calls the original function (captured in `func`), prints `готово`, and returns its result. From outside it looks like `hello` simply "grew" logging.
+
+## The @ syntax is the same call, just shorter
+
+The line `hello = log_call(hello)` appears so often that sugar was invented for it. Writing `@log_call` above a function definition is exactly the same thing.
+
+```python
+@log_call
+def hello():
+    return "привет"
+```
+
+These two forms are equivalent down to the last byte: Python sees `@log_call`, creates the function `hello`, immediately passes it to `log_call`, and reassigns the name `hello` to the result. The decorator runs once — when the function is defined, not on every call.
+
+<Figure caption="@log_call above def is sugar for hello = log_call(hello): the name hello starts pointing at wrapper, which remembers the original function.">
+  <Sketch viewBox="0 0 420 150" title="Decorator syntax equivalence">
+    <SketchBox x={20} y={30} width={150} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={55} mono>@log_call</SketchLabel>
+    <SketchBox x={20} y={90} width={150} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={115} mono>def hello()</SketchLabel>
+    <SketchArrow from={[180, 80]} to={[250, 80]} />
+    <SketchBox x={255} y={55} width={150} height={45} accent />
+    <SketchLabel x={330} y={82} mono accent>hello = log_call(hello)</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Try it yourself
+
+Run the code: decorator `announce` announces a call and returns the result. Right now the wrapper only works with a function that has no arguments. Try adding a second decorated example — for instance, a function that returns something — and trace that `return func()` really forwards the result outward.
+
+<PyDemo
+  title="Your first decorator"
+  code={`def announce(func):
+    def wrapper():
+        print("-> до вызова")
+        result = func()
+        print("<- после вызова")
+        return result
+    return wrapper
+
+@announce
+def task():
+    print("работаю")
+    return 42
+
+value = task()
+print("результат:", value)`}
+/>
+
+The output shows the order: first `-> до вызова`, then the body `работаю`, then `<- после вызова`, and only then the printed result `42`. The wrapper controls what happens around the real call.
+
+## A universal wrapper: *args and **kwargs
+
+The wrapper from the examples accepts zero arguments, so you cannot decorate a function with parameters with it — you get `TypeError`. For a decorator to fit any function, the wrapper must accept any arguments and pass them to `func` untouched. `*args` (any positional) and `**kwargs` (any keyword) serve that purpose.
+
+```python
+def log_call(func):
+    def wrapper(*args, **kwargs):
+        print("вызов", func.__name__)
+        result = func(*args, **kwargs)
+        return result
+    return wrapper
+
+@log_call
+def add(a, b):
+    return a + b
+
+print(add(2, 3))
+```
+
+This prints `вызов add`, then `5`. In the signature `wrapper(*args, **kwargs)` the stars collect arguments into a tuple and dict; in the call `func(*args, **kwargs)` the same stars unpack them back. One wrapper thus serves `add(2, 3)`, a function with keyword parameters, and a function with no arguments.
+
+<Callout type="tip">The pair `wrapper(*args, **kwargs)` and `func(*args, **kwargs)` is standard for a decorator that must fit any function. Not returning `func(...)` from the wrapper means silently losing the result: `add(2, 3)` would return `None`.</Callout>
+
+## When behavior surprises you
+
+The most frustrating mistake is forgetting `return` in the wrapper. The decorator still "works", but swallows the result.
+
+```python
+def silent(func):
+    def wrapper(*args, **kwargs):
+        func(*args, **kwargs)
+    return wrapper
+
+@silent
+def square(x):
+    return x * x
+
+print(square(5))
+```
+
+This prints `None`, not `25`. The wrapper called `square`, which honestly returned `25`, but `wrapper` did not write `return`, so `None` went outward — the default for a function without `return`. A decorator must return what the wrapped function returned, unless it intentionally changes the result.
+
+## Common mistakes
+
+- **A wrapper without `*args, **kwargs`.** `def wrapper():` only fits functions with no parameters. Decorating `add(a, b)` gives `TypeError: wrapper() takes 0 positional arguments`. Use `wrapper(*args, **kwargs)`.
+- **Forgotten `return` in the wrapper.** Without `return func(*args, **kwargs)` the decorator swallows the result and the call returns `None`.
+- **Returning `wrapper()` instead of `wrapper`.** The decorator must return the wrapper itself (`return wrapper`), not call it. `return wrapper()` runs the wrapper at decoration time and substitutes its result for the name.
+
+<Detail summary="What does @ mean if you look at the bytecode?">
+
+The `@decorator` syntax appeared in Python 2.4 exactly as shorthand for repeated assignment. When defining a function the interpreter: builds a function object, calls the decorator on it, binds the name to the result. So the decorator runs once — at module import time when `def` executes, not on every call. If a decorator prints something at the top level (outside `wrapper`), that message appears when the module loads, before the first call. Several `@` lines above one `def` apply bottom to top — a separate section covers decorator stacks.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A decorator is a function that takes a function and returns a new one (a wrapper), usually calling the original with code before and after.",
+    "@log_call above def is sugar for hello = log_call(hello); the decorator applies once, when the function is defined.",
+    "The original function is captured by closure in the wrapper's free variable, so the wrapper remembers what it wraps.",
+    "For a decorator to fit any function, the wrapper accepts *args, **kwargs and forwards them with func(*args, **kwargs).",
+    "The wrapper must return the result of func(...), otherwise the decorated call silently returns None.",
+    "The decorator returns the wrapper itself (return wrapper), not a call to it (return wrapper() is wrong).",
+  ]}
+/>
+
+## References
+
+- [Python documentation — function decorators](https://docs.python.org/3/glossary.html#term-decorator)
+- [Python documentation — arbitrary argument lists (*args, **kwargs)](https://docs.python.org/3/tutorial/controlflow.html#arbitrary-argument-lists)
+- [PEP 318 — decorator syntax](https://peps.python.org/pep-0318/)

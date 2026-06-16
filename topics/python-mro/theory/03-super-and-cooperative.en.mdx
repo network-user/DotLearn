@@ -1,0 +1,195 @@
+---
+conceptId: super-and-cooperative
+title: super() and cooperative inheritance
+estimatedMinutes: 50
+---
+
+# super() is not "the parent" but the next in MRO
+
+Almost everyone who learned inheritance carries a false definition: "`super()` calls the parent class's method." With single inheritance that lie is harmless - there the parent is the next link. But once a second base appears, `super()` starts jumping to classes that are not formally parents of the caller at all - and the intuition "super is the parent" leads to bugs you cannot explain without knowing the truth.
+
+The truth is: `super()` returns a proxy that continues search from **the next class in the MRO of the object on which the method was called** - not from the static hierarchy of the class where `super()` is written. By the end of this section you will understand how that lets several classes cooperatively share one operation, how to pass `**kwargs` correctly along such a chain, and which mistakes come from confusing super with the parent.
+
+## Mental model: super is "next", not "up"
+
+When inside method of class `X` you write `super().method()`, Python does this: take the MRO of object `self`, find `X` in it, and continue searching for `method` starting from the class **immediately after** `X`. "After" refers to the MRO list of that specific object - which depends on the actual class of `self`, not on `X`.
+
+```python
+class A:
+    def greet(self):
+        return "A"
+
+class B(A):
+    def greet(self):
+        return "B->" + super().greet()
+
+class C(A):
+    def greet(self):
+        return "C->" + super().greet()
+
+class D(B, C):
+    def greet(self):
+        return "D->" + super().greet()
+
+print(D().greet())
+print([c.__name__ for c in D.__mro__])
+```
+
+MRO of `D` is `[D, B, C, A, object]`. Calling `D().greet()` walks it: `D` calls `super()` → `B`, `B` calls `super()` → **`C`** (not `A`, even though `C` is not a parent of `B`!), `C` calls `super()` → `A`. Prints `D->B->C->A` and `['D', 'B', 'C', 'A', 'object']`. Here is the main surprise: `super()` inside `B` went to `C` because in the MRO of object `D`, `C` stands after `B`.
+
+<Figure caption="super() in each class passes control to the next in the MRO of object D, not to its static parent: from B the flow goes to C, although C is not a base of B.">
+  <Sketch viewBox="0 0 480 130" title="super() walk along MRO">
+    <SketchBox x={10} y={45} width={80} height={40} accent />
+    <SketchLabel x={50} y={70} mono accent>D</SketchLabel>
+    <SketchBox x={130} y={45} width={80} height={40} />
+    <SketchLabel x={170} y={70} mono>B</SketchLabel>
+    <SketchBox x={250} y={45} width={80} height={40} />
+    <SketchLabel x={290} y={70} mono>C</SketchLabel>
+    <SketchBox x={370} y={45} width={80} height={40} />
+    <SketchLabel x={410} y={70} mono>A</SketchLabel>
+    <SketchArrow from={[90, 65]} to={[130, 65]} accent />
+    <SketchArrow from={[210, 65]} to={[250, 65]} accent />
+    <SketchArrow from={[330, 65]} to={[370, 65]} accent />
+    <SketchLabel x={110} y={35} size={11} muted>super()</SketchLabel>
+    <SketchLabel x={230} y={35} size={11} muted>super()</SketchLabel>
+    <SketchLabel x={350} y={35} size={11} muted>super()</SketchLabel>
+  </Sketch>
+</Figure>
+
+Read the figure next to output `D->B->C->A`: arrows do not go to parents but to neighbors in the MRO list. If `super()` meant "parent", flow from `B` would go straight to `A`, and `C` would never run.
+
+## Cooperative inheritance: each does its part
+
+This mechanics is not a curiosity but a tool. If *every* class in the hierarchy does its part and then calls `super()`, one call at the leaf walks through all classes exactly once, in MRO order. This is **cooperative multiple inheritance**: classes do not know about each other but honestly pass the baton on.
+
+```python
+class Save:
+    def save(self):
+        return ["base"]
+
+class Timestamped(Save):
+    def save(self):
+        return ["timestamp"] + super().save()
+
+class Audited(Save):
+    def save(self):
+        return ["audit"] + super().save()
+
+class Record(Timestamped, Audited):
+    pass
+
+print(Record().save())
+```
+
+MRO of `Record` is `[Record, Timestamped, Audited, Save, object]`. `Record` does not override `save`, so `Timestamped`'s version starts: it adds `"timestamp"` and calls `super().save()`, which by MRO lands in `Audited` (not `Save`!), which adds `"audit"` and calls `super().save()`, landing in `Save`. Prints `['timestamp', 'audit', 'base']`. Three independent classes built the result together, and none knew in advance who comes after it.
+
+<PullQuote>A cooperative hierarchy works only if every link calls super(). One missed call breaks the baton.</PullQuote>
+
+## Passing **kwargs: a shared constructor contract
+
+Cooperativity matters especially in `__init__`, because different classes expect different arguments. The pattern: each class takes its named arguments from `**kwargs` and passes the rest on with `super().__init__(**kwargs)`. Last in line is `object.__init__`, which expects no arguments - `kwargs` must arrive empty.
+
+```python
+class Base:
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+class Named(Base):
+    def __init__(self, name, **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+
+class Aged(Base):
+    def __init__(self, age, **kwargs):
+        super().__init__(**kwargs)
+        self.age = age
+
+class Person(Named, Aged):
+    pass
+
+p = Person(name="Ana", age=30)
+print(p.name, p.age)
+```
+
+Prints `Ana 30`. `Person(name="Ana", age=30)` runs `Named.__init__`: it takes `name`, passes `{'age': 30}` on; `Aged.__init__` takes `age`, passes `{}` on; `Base.__init__` gets empty `kwargs` and calls `object.__init__()`. Each class took exactly its own, and no argument was lost.
+
+## Try the baton yourself
+
+Run the cooperative hierarchy. Then remove `super().save()` from `Audited` (let it return just `["audit"]`) and run again: the baton breaks at `Audited`, and `Save.save()` no longer runs - the result is shorter. That shows clearly that `super()` is not a call to a specific class but passing the baton to the next in MRO.
+
+<PyDemo
+  title="Cooperative save() along MRO"
+  code={`class Save:
+    def save(self):
+        return ["base"]
+
+class Timestamped(Save):
+    def save(self):
+        return ["timestamp"] + super().save()
+
+class Audited(Save):
+    def save(self):
+        return ["audit"] + super().save()
+
+class Record(Timestamped, Audited):
+    pass
+
+print(Record().save())
+print([c.__name__ for c in Record.__mro__])`}
+/>
+
+## Surprise: super(B, self) walks self's MRO, not B's
+
+The two-argument form `super(B, self)` explicitly says: "continue search after `B` in the MRO of object `self`." "After" refers to the MRO of `self`'s *actual* class, not to `B`'s hierarchy. If `self` is an instance of `D(B, C)`, then after `B` in its MRO stands `C`, and `super(B, self).m()` goes to `C`.
+
+```python
+class A:
+    def m(self):
+        return "A"
+
+class B(A):
+    def m(self):
+        return "B"
+
+class C(A):
+    def m(self):
+        return "C"
+
+class D(B, C):
+    pass
+
+d = D()
+print(super(B, d).m())
+```
+
+Prints `C`. Although `B` inherits only `A` directly, `super(B, d)` looks at the MRO of object `d` - `[D, B, C, A, object]` - and takes the class after `B`, namely `C`. Final proof that super is tied to the object's MRO, not to the static parents of the class where it is written.
+
+## Typical mistakes
+
+- **Thinking "super is the parent" and being surprised by a foreign class.** Under multiple inheritance super goes to the next in MRO, often a sibling, not an ancestor. The fix is always to check `type(self).__mro__`, not the class's `__bases__`.
+- **Skipping `super()` in the middle of a cooperative chain.** One class did not pass the baton - and all classes after it in MRO silently did not run. Symptom: part of initialization never happened, no error. Rule: in a cooperative hierarchy every method calls super.
+- **Hard-coding a parent name: `Base.__init__(self, ...)`.** That calls a specific class bypassing MRO and in a diamond leads to double invocation of a common ancestor or skipping sibling classes. Use `super()`, not a class name.
+- **Not accepting and forwarding `**kwargs` in cooperative `__init__`.** If a class expects fixed arguments and does not forward the rest, foreign keyword arguments hit it with `TypeError`. Accept `**kwargs` and pass them on.
+
+<Detail summary="Why super() with no arguments works at all">
+
+Bare `super()` is syntactic sugar in Python 3. The compiler sees `super` inside a method and implicitly passes two hidden values: the class whose body contains the method (via the `__class__` cell), and the first positional argument (`self`). So `super()` is equivalent to `super(__class__, self)` but does not break when the class is renamed and does not repeat the name twice. Because of the `__class__` cell, `super()` cannot be called outside a method body - there is no needed context. Details are in the [super() documentation](https://docs.python.org/3/library/functions.html#super).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "super() continues search from the next class in the MRO of object self, not from the parent of the class where it is written.",
+    "Under multiple inheritance super() from B may go to C - a sibling, not an ancestor - if C stands after B in the object's MRO.",
+    "Cooperative inheritance: each class does its part and calls super(), then one call at the leaf walks the entire MRO chain once.",
+    "One missed super() breaks the cooperative baton - classes after it in MRO silently do not run.",
+    "In cooperative __init__, accept and forward **kwargs: each class takes its own, the rest goes on until object.",
+    "Hard-coding Base.__init__(self) bypasses MRO and breaks diamonds - always use super().",
+  ]}
+/>
+
+## References
+
+- [Python documentation - super()](https://docs.python.org/3/library/functions.html#super)
+- [Raymond Hettinger - Super considered super!](https://rhettinger.wordpress.com/2011/05/26/super-considered-super/)
+- [Python documentation - MRO](https://docs.python.org/3/howto/mro.html)

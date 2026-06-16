@@ -1,0 +1,167 @@
+---
+conceptId: mcp
+title: Model Context Protocol
+estimatedMinutes: 26
+---
+
+# One plug instead of a hundred adapters
+
+In [[tool-use]] you saw the model request a tool call. Behind that sits plumbing: someone must describe the tool, connect to the service, run the call, return the result. If every app hand-wires every service - GitHub, database, filesystem - you get incompatible integrations: N apps times M services is N×M adapters. Model Context Protocol (MCP) turns that into N+M: one protocol any client uses to talk to any server. One standard plug instead of a hundred custom adapters.
+
+By the end of this section you will know what MCP is and why a standard matters, how host/client and MCP server relate, what servers expose (tools, resources, prompts), which transport carries messages, and how MCP differs from ordinary function calling.
+
+## Why a standard at all
+
+Tool calling solves what the model may request. MCP solves how an app attaches those capability sources uniformly. Before the standard every app-service pair was bespoke: its own auth, format, error handling. Add a new service and wire it into every app again.
+
+<Figure caption="Without a standard each app integrates each service (N×M links). With MCP client and server share one protocol: a new server plugs into all clients (N+M).">
+  <Sketch viewBox="0 0 440 180" title="Why a standard">
+    <SketchLabel x={70} y={16} muted size={11}>without standard: N×M</SketchLabel>
+    <SketchBox x={20} y={30} width={60} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={50} y={48} mono size={10}>app A</SketchLabel>
+    <SketchBox x={20} y={80} width={60} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={50} y={98} mono size={10}>app B</SketchLabel>
+    <SketchBox x={120} y={30} width={60} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={150} y={48} mono size={10}>service 1</SketchLabel>
+    <SketchBox x={120} y={80} width={60} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={150} y={98} mono size={10}>service 2</SketchLabel>
+    <SketchArrow from={[80, 44]} to={[120, 44]} />
+    <SketchArrow from={[80, 50]} to={[120, 90]} />
+    <SketchArrow from={[80, 94]} to={[120, 50]} />
+    <SketchArrow from={[80, 94]} to={[120, 94]} />
+    <SketchLabel x={350} y={16} muted size={11}>with MCP: N+M</SketchLabel>
+    <SketchBox x={280} y={30} width={60} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={310} y={48} mono size={10}>app A</SketchLabel>
+    <SketchBox x={280} y={80} width={60} height={28} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={310} y={98} mono size={10}>app B</SketchLabel>
+    <SketchBox x={350} y={55} width={50} height={30} accent />
+    <SketchLabel x={375} y={74} mono accent size={10}>MCP</SketchLabel>
+    <SketchBox x={410} y={55} width={26} height={30} fill="rgb(var(--surface-2))" />
+    <SketchArrow from={[340, 50]} to={[352, 64]} accent />
+    <SketchArrow from={[340, 90]} to={[352, 76]} accent />
+    <SketchArrow from={[400, 70]} to={[410, 70]} accent />
+  </Sketch>
+</Figure>
+
+The value is combinatorics: write an MCP server once and any MCP-compatible client can attach - chat app, IDE, agent - without per-app reintegration. Same idea as USB or HTTP: agree on a plug and everything supporting it interoperates.
+
+## Host, client, and server
+
+MCP has three roles. **Host** - the app hosting the model (chat client, IDE, agent). Inside the host an **MCP client** speaks the protocol. On the other end an **MCP server** - a separate program exposing concrete capabilities (files, GitHub, database). Client and server talk over the protocol; the host links model, user, and servers.
+
+<Figure caption="The host contains an MCP client and connects over the protocol to multiple MCP servers; each server declares tools, resources, and prompts.">
+  <McpDiagram
+    servers={[
+      { name: "Filesystem", capabilities: ["resources", "tools"], detail: "Read and write files, list directories." },
+      { name: "GitHub", capabilities: ["tools"], detail: "Create issues, read PRs, search code." },
+      { name: "Knowledge base", capabilities: ["resources", "prompts"], detail: "Documents as resources and prompt templates." }
+    ]}
+  />
+</Figure>
+
+Hover a server on the diagram to see what it exposes. One host may connect to several servers and merge capabilities for the model. On connect each server announces what it offers; the client discovers them instead of hardcoding a list.
+
+## What a server exposes: tools, resources, prompts
+
+An MCP server publishes three capability kinds worth distinguishing.
+
+- **Tools** - actions the model can call: create an issue, query a database, write a file. Direct kin of function calling from the prior section - what the model invokes in an agent loop.
+- **Resources** - data to read into context: a file, database row, documentation page. A resource does not act; it supplies readable content.
+- **Prompts** - reusable interaction templates the server offers the user, e.g. "run a code review on this file" with a preset structure.
+
+<Callout type="info">Remember tools vs resources: a tool acts (model chooses it); a resource supplies data for reading (usually attached by user or host). Prompts are ready-made scenarios. A server may offer any mix of the three.</Callout>
+
+## Transport: JSON-RPC over stdio or HTTP
+
+Client and server messages use JSON-RPC - simple request with method name and params → response. The wire can differ. **stdio** - server as local process, communication via stdin/stdout (good for local tools). **HTTP** - server as remote network service (good for cloud integrations). Logic is the same; only the pipe changes.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "create_issue",
+    "arguments": { "title": "Login bug", "body": "Fails on empty password" }
+  }
+}
+```
+
+Typical JSON-RPC: method `tools/call`, tool name and args. The server executes and replies with the same `id`. It closely mirrors tool calling from the prior section - by design.
+
+## Try it yourself
+
+Build a tiny server registry: given declared capabilities, say what the server offers. That models how a client discovers capabilities on connect. Run it, change the capability set, and read the output.
+
+<PyDemo
+  title="What an MCP server announces"
+  code={`def describe(server):
+    kinds = {"tools": "действия", "resources": "данные", "prompts": "шаблоны"}
+    parts = [kinds[c] for c in server["capabilities"]]
+    return server["name"] + ": " + ", ".join(parts)
+
+github = {"name": "GitHub", "capabilities": ["tools"]}
+fs = {"name": "Файлы", "capabilities": ["resources", "tools"]}
+print(describe(github))
+print(describe(fs))`}
+/>
+
+This prints `GitHub: действия` and `Файлы: данные, действия`: the client learns what to expect from declared capabilities. Real MCP does this at handshake - server sends tools, resources, and prompts; client assembles the model-facing set.
+
+## How MCP differs from function calling
+
+Easy confusion, so state it plainly. Function calling (see [[tool-use]]) is the mechanism: how the model requests a call inside one API turn. MCP is the integration standard: how apps attach external tool and data sources portably across applications.
+
+<Compare
+  leftTitle="Function calling"
+  rightTitle="MCP"
+  left={[
+    "Mechanism inside one model API call",
+    "Tools described by the app for itself",
+    "Tied to a specific API and application",
+    "Answers how the model requests a call"
+  ]}
+  right={[
+    "Standard for attaching external sources",
+    "Server describes capabilities once for all clients",
+    "Portable: any client to any server",
+    "Answers how the app wires sources in"
+  ]}
+  verdict="Not competitors but layers: MCP server supplies tools; the model invokes them via function calling. MCP standardizes delivery; function calling is usage."
+/>
+
+They work together. MCP server declares tools; host exposes them; model calls via function calling; results return through the protocol. MCP does not replace function calls - it standardizes where they come from.
+
+## When behavior surprises you
+
+A standard does not make integration safe automatically. An MCP server is code with access to your data and actions; an unvetted server enters your context. Trust is separate from the protocol.
+
+Second point: MCP does not teach the model.new skills. The server only exposes capabilities; whether to call a tool and how to use a resource is still the model - with all caveats from [[tool-use]] about wrong or hallucinated calls.
+
+## Common misconceptions
+
+- **MCP replaces function calling.** Different layers. MCP server supplies tools; model calls via function calling; they cooperate.
+- **An MCP server is the model.** The server has no model; it exposes capabilities. The model lives in the host across the protocol.
+- **Connecting MCP means safe.** The standard unifies wiring; you still vet servers with access to your data and actions.
+
+<Detail summary="Why resources and tools are separate">
+
+You could treat reading a file as just another tool action. The distinction is about control. Tools are model-initiated actions with side effects (create issue, delete row). Resources are usually user- or host-attached upfront ("put this document in context"). Splitting them enables gating and confirmation for actions (see [[tool-use]]) while explicitly choosing what data enters context without letting the model freely read everything. Prompts add a third axis - reusable scenarios the user launches deliberately. Three categories are different access and initiative models, not pedantry.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "MCP is a standard so any client talks to any server: N×M bespoke integrations become N+M, like USB or HTTP for model capabilities.",
+    "Three roles: host (app with model) contains MCP client and connects to MCP servers that expose concrete capabilities.",
+    "Servers publish tools (model-called actions), resources (readable context data), and prompts (scenario templates).",
+    "Transport is JSON-RPC over stdio (local process) or HTTP (remote service); logic is the same, pipe differs.",
+    "MCP does not replace function calling; it standardizes where tools come from while the model invokes them the usual way. Trust the server yourself.",
+  ]}
+/>
+
+## References
+
+- [Model Context Protocol - specification](https://modelcontextprotocol.io/)
+- [Anthropic - Introducing the Model Context Protocol](https://www.anthropic.com/news/model-context-protocol)
+- [JSON-RPC 2.0](https://www.jsonrpc.org/specification)

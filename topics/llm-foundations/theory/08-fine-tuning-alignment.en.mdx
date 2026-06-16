@@ -1,0 +1,126 @@
+---
+conceptId: fine-tuning-alignment
+title: Fine-tuning and alignment
+estimatedMinutes: 28
+---
+
+# From text continuer to useful, safe assistant
+
+A pretrained model continues text, but that is not yet an assistant: it may reply to a request with a list of similar requests, speak rudely, or explain harmless and harmful things with equal readiness. Turning raw weights into a helper that follows instructions, keeps tone, and refuses harm is alignment - an engineering discipline built on top of pretraining.
+
+By the end of this section you will understand instruction tuning and SFT, why human preference training (RLHF and the simpler DPO) exists, how fine-tuning differs from pretraining, and why RAG often beats retraining for fresh knowledge.
+
+## SFT: teach following instructions
+
+The first post-pretraining step is supervised fine-tuning (SFT), also called instruction tuning. The model sees curated instruction → good answer pairs: questions with exemplar replies, dialogues, worked tasks. Weights are nudged to reproduce the useful-assistant format. After SFT the model answers like a helper, not a forum thread.
+
+<Figure caption="Alignment stacks on pretraining: SFT teaches answer format; preference training polishes which of two answers humans prefer.">
+  <PipelineFigure
+    stages={[
+      { label: "Pretraining", note: "next-token prediction on corpus" },
+      { label: "SFT", note: "instruction → good answer", active: true },
+      { label: "Preferences", note: "RLHF or DPO", active: true },
+      { label: "Assistant", note: "helpful and safe" }
+    ]}
+  />
+</Figure>
+
+Alignment is not one step but a stack on pretraining. SFT sets format; the next stage tunes what is hard to specify with a single example - which of two plausible answers a human prefers.
+
+## Preference training: RLHF and DPO
+
+Some qualities - politeness, caution, refusing harm, choosing the better of two good answers - are hard to demo with one gold example. People easily compare two replies and pick a winner. Human preference training builds on that.
+
+The classic path is RLHF: train a reward model on comparison pairs, then use reinforcement learning to push the main model toward high-reward answers. Powerful but heavy and unstable. A simpler path is DPO (direct preference optimization): skip the separate reward model and RL, shifting the model directly toward preferred and away from rejected answers. DPO is easier and stabler, so in 2026 it and variants are widely used.
+
+<Callout type="info">Alignment is a trade-off. Too weak - rude and unsafe; too strong - evasive, over-refusing, less useful. Good alignment balances helpful, honest, and harmless.</Callout>
+
+## Fine-tuning is not pretraining again
+
+Fine-tuning is far cheaper than pretraining: small nudges to already-trained weights on a modest dataset. Often done efficiently with methods like LoRA that train a small adapter instead of the full model. But fine-tuning has limits: it shifts behavior and style more than it injects large new fact stores. Trying to fine-tune a document base into weights is costly, unreliable, and goes stale quickly.
+
+## RAG: knowledge without touching weights
+
+When the goal is answers grounded in fresh or private data, RAG (retrieval-augmented generation) usually beats retraining. Do not bake knowledge into weights; inject relevant chunks into the prompt. Documents are chunked and embedded; on a query find nearest chunks by meaning (cosine similarity from [[embeddings-context]]) and place them in the prompt. The model answers from supplied context.
+
+```python
+import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb)
+
+def best_doc(query, docs):
+    best = 0
+    for i in range(1, len(docs)):
+        if cosine(query, docs[i]) > cosine(query, docs[best]):
+            best = i
+    return best
+
+print(best_doc([1, 1], [[1, 0], [0, 1], [1, 1]]))
+```
+
+This prints `2`: the third document is closest in meaning and would enter context. RAG gives freshness and citeability (show the source), needs no retraining, and updates by swapping documents in the index.
+
+## Try it yourself
+
+Build the retriever core: pick the document whose embedding is closest to the query. Run it, then change `query` to `[1, 0]` and watch which document is selected - that is how RAG chooses context.
+
+<PyDemo
+  title="Retriever picks the nearest document"
+  code={`import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb)
+
+def best_doc(query, docs):
+    best = 0
+    for i in range(1, len(docs)):
+        if cosine(query, docs[i]) > cosine(query, docs[best]):
+            best = i
+    return best
+
+docs = [[0, 1], [1, 0], [1, 1]]
+print(best_doc([0, 1], docs))`}
+/>
+
+Output is `0`: query `[0, 1]` is closest to the first document. In practice several nearest chunks are injected together, but the principle is the same - semantic closeness decides context.
+
+## When behavior surprises you
+
+RAG does not make the model omniscient: answers are good only if the right chunk was retrieved and placed in context. A weak retriever means a weak answer even from a strong model. RAG system quality depends heavily on search quality, not only the model.
+
+A second surprise: alignment can be undone. Fine-tuning on narrow or harmful data can weaken safeguards built during preference training. Open weights enable freedom but shift safety responsibility to whoever deploys and fine-tunes.
+
+## Common misconceptions
+
+- **Fine-tuning is how you give the model new facts.** It changes behavior and style; for fresh facts use RAG or tools (see [[tool-use]]).
+- **RLHF and DPO pursue different goals.** Same goal - human preferences; DPO reaches it without a reward model and RL.
+- **An aligned model is absolutely safe.** Alignment lowers risk but does not remove it; jailbreaks and bad fine-tunes remain possible.
+
+<Detail summary="Where preferences come from and Constitutional AI">
+
+Human comparisons are expensive. Constitutional AI reduces cost: the model critiques and rewrites its answers against written principles (a constitution), and preferences are partly AI-generated (RLAIF). That scales alignment and makes principles explicit and auditable, though humans still oversee the principles themselves.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Alignment turns a text continuer into an assistant on top of pretraining: SFT teaches the useful-answer format on instruction → answer pairs.",
+    "Preference training polishes what examples cannot: RLHF uses a reward model and RL; DPO does the same more simply and stably.",
+    "Fine-tuning is cheap and shifts behavior and style but poorly injects facts; for knowledge RAG is usually better.",
+    "RAG injects relevant chunks via embedding similarity: freshness, citeability, and updates without retraining weights.",
+    "Alignment balances helpful, honest, harmless; it lowers risk but is not absolute and can be weakened by fine-tuning.",
+  ]}
+/>
+
+## References
+
+- [Ouyang et al., 2022 - InstructGPT (RLHF)](https://arxiv.org/abs/2203.02155)
+- [Rafailov et al., 2023 - Direct Preference Optimization (DPO)](https://arxiv.org/abs/2305.18290)
+- [Anthropic - Constitutional AI](https://www.anthropic.com/news/constitutional-ai-harmlessness-from-ai-feedback)

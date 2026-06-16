@@ -1,0 +1,126 @@
+---
+conceptId: http-to-websocket
+title: "From HTTP to WebSocket: handshake and frames"
+estimatedMinutes: 45
+---
+
+# How one TCP connection stops being HTTP and becomes a two-way channel
+
+Picture a chat. You send a message - it reaches the server instantly; HTTP handles that fine. But your peer's message has to arrive on its own, without you asking for it. Classic HTTP doesn't work that way: the server only responds to a client request and stays silent otherwise. To get updates, the browser has to ask again and again - with short polls or long-held requests. That works, but it's expensive: every request carries a full set of headers, connection setup takes time, and the gap between "something happened" and "the client learned about it" is measured in seconds.
+
+WebSocket solves exactly that. It takes an already-open TCP connection that carried a normal HTTP request and turns it into a persistent two-way channel: after a short ritual, both sides exchange messages without headers and without reconnecting. By the end of this section you'll understand the WebSocket handshake, why it starts as an HTTP request, what the `Sec-WebSocket-Key` header is for, and what a frame is - the smallest unit of data the sides exchange after the upgrade.
+
+## Mental model: upgrade, not a new protocol
+
+WebSocket doesn't open a separate port or invent a handshake from scratch. It reuses what's already there: the client sends a normal HTTP request on the same port `80`/`443`, but with a special `Upgrade: websocket` header. If the server agrees, it responds with `101 Switching Protocols` - and from that moment the same TCP connection stops speaking HTTP and switches to WebSocket. No bytes are lost; only the rules for interpreting the stream change.
+
+<Figure caption="The connection starts as an HTTP request with an Upgrade header; after a 101 response the same TCP connection switches to WebSocket mode and works both ways.">
+  <Sketch viewBox="0 0 460 220" title="HTTP upgrade to WebSocket">
+    <SketchBox x={20} y={20} width={110} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={75} y={50} mono>Client</SketchLabel>
+    <SketchBox x={330} y={20} width={110} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={385} y={50} mono>Server</SketchLabel>
+    <SketchArrow from={[130, 95]} to={[330, 95]} />
+    <SketchLabel x={230} y={88} size={11} muted>GET ... Upgrade: websocket</SketchLabel>
+    <SketchArrow from={[330, 130]} to={[130, 130]} />
+    <SketchLabel x={230} y={123} size={11} muted>101 Switching Protocols</SketchLabel>
+    <SketchHighlight x={20} y={165} width={420} height={40} />
+    <SketchArrow from={[130, 185]} to={[330, 185]} accent />
+    <SketchArrow from={[330, 200]} to={[130, 200]} accent />
+    <SketchLabel x={230} y={158} size={11} accent>bidirectional WebSocket frames</SketchLabel>
+  </Sketch>
+</Figure>
+
+The key idea: before the highlighted zone it's ordinary HTTP; after it, WebSocket on the same channel. That's why WebSocket plays nicely with existing infrastructure: proxies, load balancers, and firewalls see a familiar HTTP request on a familiar port and let it through. The `ws://` scheme corresponds to `http://`, and `wss://` is WebSocket over TLS, the analog of `https://`.
+
+## Handshake: client request
+
+The upgrade request is a full HTTP request, just with a special set of headers. The browser builds it automatically when you create a `WebSocket`; here's what it looks like on the wire.
+
+```http
+GET /chat HTTP/1.1
+Host: example.com
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+```
+
+`Upgrade: websocket` and `Connection: Upgrade` tell the server what the client wants. `Sec-WebSocket-Version: 13` is the protocol version (current per RFC 6455). And `Sec-WebSocket-Key` is a random 16-byte string in base64, new for every connection. It's not about cryptographic security: its job is to confirm that a real WebSocket server answered, not a cached response or a server that accidentally returned `101`.
+
+## Handshake: server response
+
+The server must prove it understood the request. It takes the client's `Sec-WebSocket-Key`, appends the fixed "magic" string `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`, computes SHA-1 over the result, base64-encodes it, and puts it in the `Sec-WebSocket-Accept` header.
+
+```http
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+```
+
+The client recomputes the same value and compares. Match - the connection is live and frames can flow. No match - the browser tears down the connection. That computed response is the whole point of `Sec-WebSocket-Key`: a random caching proxy doesn't know the magic string and can't forge a correct `Sec-WebSocket-Accept`.
+
+<Callout type="info">
+The magic string `258EAFA5-E914-47DA-95CA-C5AB0DC85B11` is baked into RFC 6455 and is the same for every server in the world. Its only role is to make the server's response computable and verifiable, filtering out systems that don't implement the protocol properly.
+</Callout>
+
+## After the upgrade: frames instead of requests
+
+Once `101` is received, the conversation in headers ends. From then on the sides exchange **frames** - compact binary packets. A frame has no HTTP headers; its header is only a few bytes and encodes the data type, length, and a couple of flags. That's why WebSocket is cheap: sending "hello" costs a few bytes of overhead instead of hundreds of bytes of HTTP headers.
+
+<Figure caption="Frame header: the FIN bit marks the last fragment of a message, opcode sets the type, the MASK bit enables mandatory client-side masking, and the length field describes payload size.">
+  <Sketch viewBox="0 0 460 150" title="WebSocket frame structure">
+    <SketchBox x={20} y={40} width={60} height={50} accent />
+    <SketchLabel x={50} y={70} size={11} accent mono>FIN</SketchLabel>
+    <SketchBox x={80} y={40} width={90} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={125} y={70} size={11} mono>opcode</SketchLabel>
+    <SketchBox x={170} y={40} width={70} height={50} accent />
+    <SketchLabel x={205} y={70} size={11} accent mono>MASK</SketchLabel>
+    <SketchBox x={240} y={40} width={90} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={285} y={70} size={11} mono>length</SketchLabel>
+    <SketchBox x={330} y={40} width={110} height={50} hatched />
+    <SketchLabel x={385} y={70} size={11} mono>payload</SketchLabel>
+    <SketchLabel x={230} y={120} size={11} muted>header - a few bytes, then the data</SketchLabel>
+  </Sketch>
+</Figure>
+
+The `opcode` field distinguishes frame kinds: `0x1` - text (UTF-8), `0x2` - binary data, `0x8` - close, `0x9` - ping, `0xA` - pong. Text and binary carry your application's payload; ping/pong and close are control frames - covered in the next section on lifecycle. The `FIN` bit lets you split one large message into several frames: all but the last have `FIN = 0`.
+
+## Masking: why the client must and the server doesn't
+
+Here's a detail that surprises almost everyone. Per RFC 6455 **every** frame the client sends to the server must be masked: the client generates a random 4-byte key and XORs the payload with it. The server sends data back **without** masking. The asymmetry looks wrong until you know why.
+
+Masking doesn't protect data; it protects intermediate infrastructure. Without it, an attacker with JavaScript in the browser could craft a payload that looks like a valid HTTP request to an outdated caching proxy - and poison the cache. A random mask makes bytes on the wire unpredictable and blocks that attack. The server doesn't need to mask: data from server to browser isn't under the attacker's control.
+
+<Callout type="warning">
+Masking is not encryption. XOR with a random but transmitted-in-the-same-frame key is removed instantly by any observer. Confidentiality comes only from `wss://` (TLS), not the mask. The mask solves the narrow problem of protecting proxies from cache poisoning.
+</Callout>
+
+## Common mistakes
+
+- **Thinking WebSocket is "HTTP that never closes."** After `101` it's no longer HTTP: no methods, paths, or status codes per message. There's a stream of frames. Familiar HTTP tools (response caching, REST semantics) don't apply.
+- **Assuming `ws://` is enough for private data.** `ws://` travels in plain text, like `http://`. For anything that shouldn't be read in transit, use `wss://`. Client masking doesn't provide confidentiality.
+- **Expecting the connection to open under any network conditions.** Corporate proxies that don't understand `Upgrade` may block the upgrade. That's why serious libraries like Socket.IO keep a fallback transport - covered in the third section.
+
+<Detail summary="Why SHA-1 if it's broken for signatures">
+
+`Sec-WebSocket-Accept` uses SHA-1, which sometimes raises eyebrows: SHA-1 has long been considered unsafe for digital signatures. But here the hash carries no cryptographic burden. Its job is to make the server's response deterministically computable from the client's key, filtering out systems that don't implement the protocol. An attacker has no reason to forge `Sec-WebSocket-Accept`: they gain nothing, because channel security lives in TLS below. SHA-1 was chosen in RFC 6455 as a simple, widely available hash, and there's no need to change it.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "WebSocket reuses an HTTP connection: the client sends GET with Upgrade: websocket, the server responds 101 Switching Protocols, and the same TCP channel switches to WebSocket.",
+    "Sec-WebSocket-Key and the computed Sec-WebSocket-Accept (via the magic string and SHA-1) confirm a real WebSocket server answered, not a proxy or cache.",
+    "After the upgrade, exchange happens in frames: opcode sets the type (text, binary, ping, pong, close), the FIN bit joins fragments, and the header is a few bytes instead of HTTP headers.",
+    "The client must mask every frame with a random key; this protects intermediate proxies from cache poisoning, not data - only wss:// (TLS) provides confidentiality.",
+    "ws:// corresponds to http://, wss:// to https://; use wss:// for private data.",
+  ]}
+/>
+
+## References
+
+- [RFC 6455 - The WebSocket Protocol](https://datatracker.ietf.org/doc/html/rfc6455)
+- [MDN - Writing WebSocket servers (handshake and frames)](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers)
+- [MDN - The WebSocket API (WebSockets)](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API)

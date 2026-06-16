@@ -1,0 +1,159 @@
+---
+conceptId: walrus-readability
+title: "Readability and when not to use it"
+estimatedMinutes: 45
+---
+
+# A new tool does not mean "always"
+
+Learn a new operator and the temptation appears to embed it everywhere: in every condition, every call, every line where assignment flickers. With the walrus that temptation is especially strong because it *fits more into one line*. But "shorter" and "clearer" are not synonyms. A line that squeezes in computation, assignment, checking, and a side effect reads slower than two simple lines, even if it is formally more compact. Mature walrus use is mostly knowing where **not** to put it.
+
+By the end of this section you will distinguish places where `:=` makes code clearer from places where it obscures it, learn two or three stable anti-patterns, and get a simple rule for the "walrus or two lines" debate.
+
+## Mental model: the walrus pays off when it removes repetition nearby
+
+The usefulness of the walrus boils down to one criterion: **it is good when it removes duplicate computation or repeated names within a pair of neighboring lines, and bad when it merely compresses already clear code**. In the first case you remove a real problem — a second function call, a forgotten variable update in a loop. In the second you only save a newline at the cost of more events happening in one place.
+
+<Figure caption="The walrus is justified when it removes a duplicate or repetition; if it only compresses clear code or hides a side effect, two lines read better.">
+  <Compare
+    leftTitle="Walrus fits"
+    rightTitle="Walrus hurts"
+    left={
+      <ul>
+        <li>removes a second call to an expensive function</li>
+        <li>returns the exit condition to the while header</li>
+        <li>result is checked right next to where it is computed</li>
+      </ul>
+    }
+    right={
+      <ul>
+        <li>compresses two already clear lines</li>
+        <li>hides assignment deep inside an expression</li>
+        <li>several := in one line</li>
+      </ul>
+    }
+    verdict="One criterion: the walrus should remove repetition, not just shorten lines."
+  />
+</Figure>
+
+The left column is exactly the scenarios from previous sections: duplicate calls in a comprehension and a split read loop. The right column is what to avoid. Below we walk through it point by point.
+
+## Anti-pattern one: walrus instead of simple assignment
+
+If the value would be assigned on its own line anyway and is not checked immediately, the walrus improves nothing — it only moves assignment to an unexpected place.
+
+```python
+print(total := sum(prices))
+print(total)
+```
+
+Here `:=` removed no repetition: you still need `total` separately. Two ordinary lines are clearer, with assignment visible where the eye looks for it.
+
+```python
+total = sum(prices)
+print(total)
+```
+
+The second version is one symbol longer, but `total = ...` sits where you expect assignment — at the start of the line, not inside a `print` argument. When the choice is "walrus for compactness" versus "ordinary `=` for clarity," default to clarity.
+
+## Anti-pattern two: several walrus operators in one line
+
+One `:=` a reader can still track. Two or three in one expression turn the line into a puzzle: unclear in what order names bind and what the expression returns.
+
+```python
+result = (a := 2) + (b := a * 3) + (c := b - 1)
+print(a, b, c, result)
+```
+
+Prints `2 6 5 13`, but to understand that you must evaluate the expression in your head left to right while holding three new names. The same calculation with ordinary lines reads without strain.
+
+```python
+a = 2
+b = a * 3
+c = b - 1
+result = a + b + c
+```
+
+<Callout type="warning">
+Several walrus operators in one expression is almost always a signal to split the line. If you need three intermediate names, give them three ordinary lines — step-by-step calculation reads better than a dense expression.
+</Callout>
+
+## Anti-pattern three: walrus hiding a side effect
+
+The walrus is especially treacherous when it binds a name deep inside an expression, so the reader does not notice a variable appeared at all. Assignment is an event that affects later code, and hiding it in the middle of an argument masks an important detail.
+
+```python
+send(payload, retries=(limit := config.max_retries))
+log(limit)
+```
+
+Someone reading the first line looks for a `send` call, not a declaration of `limit` — and easily misses that `limit` now exists and is used below. Explicit assignment before the call makes that event visible.
+
+```python
+limit = config.max_retries
+send(payload, retries=limit)
+log(limit)
+```
+
+## Try the boundary yourself
+
+Run the code: both functions compute the same thing — how many list elements exceed a threshold and what their sum is. `with_walrus` uses it appropriately (one condition evaluation), `cramped` squeezes an unnecessary walrus into `print` with no benefit. Compare which version reads easier. Change `threshold` or the numbers in `data` and confirm both functions agree — this is only about readability, not behavior.
+
+<PyDemo
+  title="Same behavior, different readability"
+  code={`data = [4, 9, 2, 11, 7]
+threshold = 5
+
+def with_walrus(values, t):
+    picked = [v for v in values if (keep := v > t) and keep]
+    return len(picked), sum(picked)
+
+def cramped(values, t):
+    print(res := (len([v for v in values if v > t]), sum(v for v in values if v > t)))
+    return res
+
+print(with_walrus(data, threshold))
+print(cramped(data, threshold))`}
+/>
+
+## Edge case that will surprise you: walrus can mask a comparison mistake
+
+The historical reason the walrus became a separate operator instead of allowing `=` in conditions like C is exactly typo protection. In languages where `if (x = 5)` is allowed, it is easy to write assignment where you meant comparison `==`, and the condition silently becomes true. Python rejects such cases: `if x = 5:` is a syntax error.
+
+```python
+flag = False
+if (flag := True):
+    print("branch taken, flag is now", flag)
+```
+
+Prints `branch taken, flag is now True`. Here the walrus was intentional, but imagine you meant `if flag == True` (or simply `if flag`) and wrote `:=` instead. The condition would always be true and `flag` would be silently overwritten. Strict walrus syntax reduces accidental typo risk, but a deliberate `:=` in a condition still demands reader attention: it assigns and checks at once.
+
+## Common mistakes
+
+- **Using walrus where the value would be assigned separately anyway.** If there is no check or second use nearby, ordinary `=` on its own line is clearer.
+- **Stacking several `:=` in one expression.** Two or three walrus operators in a line are a reason to split into step-by-step ordinary assignments.
+- **Hiding assignment deep inside a call argument.** Creating a new variable is a noticeable event; do not mask it inside `send(...)` or `print(...)` if the variable is needed further on.
+- **Assuming shorter means better.** The walrus is justified when it removes a duplicate or repeated name, not when it only saves a newline.
+
+<Detail summary="What official recommendations say">
+
+PEP 8 does not forbid the walrus, but its spirit is "readability counts," and that applies directly to `:=`. A good review heuristic: the walrus fits when it *removes duplication* (double call in a comprehension, repeated read in a loop) or *returns the exit condition to the while header*. If neither applies and you use the walrus only to "fit in one line," two ordinary lines almost always win. PEP 572 itself in the "Style" section advises not to use the walrus and ordinary `=` for the same purpose in one expression and to avoid complex constructions. When in doubt, write two lines — you can always compress into a walrus later; unpacking a dense expression is harder.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "The walrus pays off when it removes duplicate computation or repeated names in neighboring lines, not when it merely shortens code.",
+    "If the value would be assigned on its own line and is not checked nearby, ordinary = reads more clearly.",
+    "Several := in one expression is a signal to split into step-by-step ordinary assignments.",
+    "Do not hide assignment deep inside a call argument: creating a variable is a noticeable event worth not masking.",
+    "Strict walrus syntax protects against = instead of == typos, but a deliberate := in a condition still needs reader attention.",
+    "Unsure between walrus and two lines — choose two lines: compressing later is easier than unpacking a dense expression.",
+  ]}
+/>
+
+## References
+
+- [PEP 572 - Style recommendations](https://peps.python.org/pep-0572/#style)
+- [PEP 8 - Style Guide for Python Code](https://peps.python.org/pep-0008/)
+- [Python documentation - Assignment expressions](https://docs.python.org/3/reference/expressions.html#assignment-expressions)

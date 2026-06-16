@@ -1,0 +1,171 @@
+---
+conceptId: stacking-decorators
+title: Stacking decorators
+estimatedMinutes: 30
+---
+
+A real function often gets several decorators at once: check permissions, consult the cache, write to the log. They stack on top of each other, and the order of lines suddenly starts to matter. Swap `@cache` and `@log` - and only cache misses get logged, not every call. In this section we'll unpack the order in which decorators are applied, the order in which they run, and why those aren't the same thing.
+
+By the end of this section you'll confidently read a stack of several `@` lines, predict their firing order, and understand why a decorator stack unfolds like a stack of plates: the last one hung is the outermost layer.
+
+## Applied bottom to top
+
+Multiple decorators above one function are applied bottom to top - from the one closest to `def` to the topmost. The notation
+
+```python
+@outer
+@inner
+def func():
+    ...
+```
+
+is equivalent to `func = outer(inner(func))`. First `inner` is applied to the function (it's closer), then the result is wrapped in `outer`. So the topmost decorator becomes the outermost layer, and the lower one sits closest to the original function.
+
+<Figure caption="Decorators are applied bottom to top: @inner wraps the function first, @outer wraps the result. The top decorator is the outer layer.">
+  <MroFigure chain={["@outer", "@inner", "func"]} lookup="call" foundIn="@outer" startLabel="outside in" title="Decorator layers" />
+</Figure>
+
+The result is an onion of wrappers: `outer(inner(func))`. On the outside `outer`, under it `inner`, in the core the original `func`.
+
+## Run outside in, return inside out
+
+Application is about assembling layers when the function is defined. Execution is about what happens on a call. And here the order feels reversed but is logical: the call enters through the outermost layer and sinks inward, then the result bubbles back. That's exactly call-stack behavior: frames are pushed on top until the bottom is reached, then popped in reverse order.
+
+<CallStackViz frames={['@outer', '@inner']} innerLabel="func()" />
+
+Look at code with "before" and "after" in each layer:
+
+```python
+def outer(func):
+    def wrapper(*args, **kwargs):
+        print("outer до")
+        result = func(*args, **kwargs)
+        print("outer после")
+        return result
+    return wrapper
+
+def inner(func):
+    def wrapper(*args, **kwargs):
+        print("inner до")
+        result = func(*args, **kwargs)
+        print("inner после")
+        return result
+    return wrapper
+```
+
+```python
+@outer
+@inner
+def task():
+    print("тело")
+
+task()
+```
+
+It prints:
+
+```
+outer до
+inner до
+тело
+inner после
+outer после
+```
+
+Read the output as descent and ascent. The call enters `outer` (outer layer) - `outer до` prints. `outer` calls what's under it, i.e. `inner` - `inner до`. `inner` calls the real function - `тело`. Then ascent: back through `inner` - `inner после`, back through `outer` - `outer после`. Symmetry: "before" top to bottom, "after" bottom to top - the signature of a stack.
+
+## Try it yourself
+
+Run the code: two decorators, `bold` and `italic`, wrap the result in markup. See in what order the tags land. Then swap `@bold` and `@italic` and confirm the outer tag is always the top decorator: the line order controls nesting.
+
+<PyDemo
+  title="Order matters"
+  code={`def bold(func):
+    def wrapper(*args, **kwargs):
+        return "<b>" + func(*args, **kwargs) + "</b>"
+    return wrapper
+
+def italic(func):
+    def wrapper(*args, **kwargs):
+        return "<i>" + func(*args, **kwargs) + "</i>"
+    return wrapper
+
+@bold
+@italic
+def text():
+    return "привет"
+
+print(text())`}
+/>
+
+It prints `<b><i>привет</i></b>`. Top `@bold` is the outer layer, so its tags are outside; `@italic` is closer to the function, its tags inside. Swap the lines - you get `<i><b>привет</b></i>`.
+
+## Why order changes meaning, not just appearance
+
+With tags the difference is cosmetic, but with real decorators it changes logic. Compare `@log` above `@cache` and the reverse.
+
+```python
+@log
+@cache
+def fetch(key):
+    ...
+```
+
+Here `log` is outer, `cache` inner. A call enters `log` first (every call is logged), then `cache` (checks the cache). All accesses are logged. Swap them - `cache` outside, `log` inside - and on a cache hit `cache` returns the answer itself and `log` never runs: only misses get logged. The same set of decorators, reordered, gives different observable behavior.
+
+<Callout type="tip">Put "cross-cutting" decorators that must see every call (log, metrics, permission checks) above caching and filtering decorators that can cut the chain and return early.</Callout>
+
+## When behavior surprises you
+
+If the stack has no `functools.wraps`, each layer loses metadata, and the outermost wrapper's name surfaces. But there's a subtler surprise: decorators are applied when the function is defined, so the decorators' own code (outside their wrappers) runs immediately on import, bottom to top.
+
+```python
+def announce(name):
+    def decorator(func):
+        print("навешиваю", name)
+        return func
+    return decorator
+
+@announce("верхний")
+@announce("нижний")
+def f():
+    pass
+```
+
+It prints at definition time:
+
+```
+навешиваю нижний
+навешиваю верхний
+```
+
+First the lower `@announce("нижний")` fires (it's closer to `def`), then the upper one. Same "bottom to top" logic on application - only here the decorators print something at hang time, and the order becomes visible.
+
+## Common mistakes
+
+- **Thinking the top decorator runs last.** The top one is applied last (becomes the outer layer), but on a call it runs first - entry goes outside in.
+- **Confusing application order and execution order.** Application: bottom to top. Execution "before": top to bottom. Execution "after": bottom to top. Three different directions, easy to mix up.
+- **Putting a short-circuiting decorator (cache) above log.** Then log won't see cache-served calls. Decide by meaning who must see every call.
+
+<Detail summary="Decorator stack and call stack are the same thing">
+
+When decorators are nested, a real call stack of frames forms: `outer`'s `wrapper` calls `inner`'s `wrapper`, which calls `func`. Each call pushes a frame on the interpreter stack. So deeply nested decorators show up in tracebacks: on an error inside `func` you'll see a chain `wrapper -> wrapper -> func`. That's why `functools.wraps` is so valuable - without it every frame in the traceback is named `wrapper`, and you can't tell which layer it is. LIFO stack unwinding (last in, first out) is exactly what the symmetric "before/after" output shows.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Multiple decorators are applied bottom to top: @outer above @inner means func = outer(inner(func)).",
+    "The top decorator becomes the outermost layer, the lower one sits closest to the original function.",
+    "On a call, control enters outside in ('before' code top to bottom) and returns inside out ('after' code bottom to top) - like a call stack.",
+    "Order changes not just appearance but logic: cache above log hides cache hits from the log.",
+    "Put cross-cutting decorators (log, metrics, permissions) above short-circuiting ones (cache, filter) that can return early.",
+    "Decorator code itself runs at function definition time, bottom to top; functools.wraps is especially important in a stack for readable tracebacks.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - multiple decorators](https://docs.python.org/3/reference/compound_stmts.html#function-definitions)
+- [PEP 318 - decorator application order](https://peps.python.org/pep-0318/)
+- [Python documentation - functools.wraps](https://docs.python.org/3/library/functools.html#functools.wraps)

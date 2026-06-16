@@ -1,0 +1,157 @@
+---
+conceptId: queries-and-relationships
+title: "Queries and relationships: select(), join, relationship()"
+estimatedMinutes: 52
+---
+
+# Queries as objects and relationships as attributes
+
+In the previous section the model learned to map to a table. Now you need to query it: select rows by condition, sort, join tables. In SQLAlchemy 2.x a query is built not as an SQL string but as a `select(...)` construct — an object you assemble piece by piece that the library translates to SQL. And relationships between tables (foreign keys) become ordinary object attributes: an order gets `.user`, a user gets a list `.orders`. That is the payoff of ORM — navigating relationships like object fields.
+
+By the end of this section you will be able to build a query with `select()` including conditions and sorting, declare a `relationship()` between two models, and understand the key fork — when related data loads: lazily on first access or upfront.
+
+## select(): a query you build piece by piece
+
+A selection query starts with `select(Model)` and is refined with `.where()`, `.order_by()`, and others. The result is not rows but a query description object; to run it and get objects, pass it to `session.scalars()` (or `session.execute()`).
+
+```python
+from sqlalchemy import select
+
+stmt = (
+    select(User)
+    .where(User.age >= 18)
+    .order_by(User.name)
+)
+adults = session.scalars(stmt).all()
+```
+
+Notice: the condition is not the string `"age >= 18"` but the expression `User.age >= 18`. Attribute `User.age` is not just a number but a column object whose `>=` operator is overridden to produce a piece of SQL. So the editor suggests field names, and a typo in a column name becomes a Python error, not a mysterious database response.
+
+<Figure caption="select(User).where(...).order_by(...) is a builder: each method adds a part, and SQLAlchemy translates the whole to SQL on execution.">
+  <PipelineFigure
+    title="Query assembly"
+    stages={[
+      { label: "select(User)", note: "what to select" },
+      { label: ".where(User.age >= 18)", note: "WHERE condition", active: true },
+      { label: ".order_by(User.name)", note: "sort order" },
+      { label: "session.scalars(stmt)", note: "execute → User objects" },
+    ]}
+  />
+</Figure>
+
+## relationship(): a link becomes an attribute
+
+In the database, tables are linked by foreign keys: `orders` has column `user_id` pointing to `users.id`. In ORM you declare this link twice — a foreign key at the column level and `relationship()` at the navigation level — and then you can walk it like a normal attribute.
+
+```python
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import relationship
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    orders: Mapped[list["Order"]] = relationship(back_populates="user")
+
+class Order(Base):
+    __tablename__ = "orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user: Mapped["User"] = relationship(back_populates="orders")
+```
+
+Now `order.user` returns a `User` object and `user.orders` returns their orders, even though you wrote no `JOIN`. Parameter `back_populates` links both sides: add an order to `user.orders` and `order.user` automatically points to that user. The relationship is bidirectional and consistent.
+
+<Figure caption="Foreign key orders.user_id links rows; relationship() turns that link into order.user and user.orders attributes.">
+  <Sketch viewBox="0 0 460 170" title="relationship on top of foreign key">
+    <SketchBox x={20} y={40} width={160} height={90} accent />
+    <SketchLabel x={100} y={60} mono accent>User</SketchLabel>
+    <SketchLabel x={100} y={84} size={11} muted>id = 1</SketchLabel>
+    <SketchLabel x={100} y={104} size={11} muted>.orders → [..]</SketchLabel>
+    <SketchBox x={280} y={40} width={160} height={90} />
+    <SketchLabel x={360} y={60} mono>Order</SketchLabel>
+    <SketchLabel x={360} y={84} size={11} muted>user_id = 1</SketchLabel>
+    <SketchLabel x={360} y={104} size={11} muted>.user → User</SketchLabel>
+    <SketchArrow from={[280, 100]} to={[180, 100]} />
+    <SketchArrow from={[180, 70]} to={[280, 70]} accent />
+    <SketchLabel x={230} y={58} size={11} muted accent>orders</SketchLabel>
+    <SketchLabel x={230} y={120} size={11} muted>user</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Under the hood — still a JOIN
+
+`user.orders` looks like magic, but behind it is ordinary SQL with a join or a separate selection by foreign key. It helps to see which SQL it produces on bare `sqlite3` — then ORM behavior stops being a mystery.
+
+<PyDemo
+  title="user → orders link is a JOIN on the foreign key"
+  code={`import sqlite3
+
+conn = sqlite3.connect(":memory:")
+cur = conn.cursor()
+cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+cur.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER)")
+cur.execute("INSERT INTO users VALUES (1, 'Анна'), (2, 'Борис')")
+cur.execute("INSERT INTO orders VALUES (10, 1, 500), (11, 1, 300), (12, 2, 200)")
+
+rows = cur.execute(
+    "SELECT u.name, o.amount FROM users u "
+    "JOIN orders o ON o.user_id = u.id "
+    "ORDER BY u.name, o.amount"
+).fetchall()
+print(rows)`}
+/>
+
+You would get the same result in ORM by navigating `for order in user.orders` without writing `JOIN` by hand. The ORM generates SQL for you — but which SQL and how many queries depends on the loading strategy.
+
+## Lazy and eager loading: the key fork
+
+Here is the fork that drives performance. When you access `user.orders`, related orders can load two ways:
+
+- **Lazy loading** — the default. Orders are not loaded until you access them. The first access to `user.orders` runs a separate `SELECT`. Convenient, but tricky: in a loop over many users this becomes a flood of queries (covered in the next section).
+- **Eager loading** — you say upfront "load orders together with users", and SQLAlchemy fetches everything in one or two queries via `selectinload` or `joinedload`.
+
+```python
+from sqlalchemy.orm import selectinload
+
+stmt = select(User).options(selectinload(User.orders))
+users = session.scalars(stmt).all()
+for user in users:
+    print(user.name, len(user.orders))
+```
+
+Here `selectinload(User.orders)` preloads orders for all selected users in one extra query, not one query per user. The difference between lazy and eager loading is the difference between "1 + N queries" and "2 queries", and most ORM beginners stumble on it.
+
+<Callout type="warning">
+By default, relationships load lazily. That is fine for a single object, but in a loop over many objects it leads to the N+1 problem. If you know upfront you will access a relationship on many objects, ask for eager loading via `.options(selectinload(...))`.
+</Callout>
+
+## Common mistakes
+
+- **Writing the condition as a string.** `.where("age >= 18")` is not the same as `.where(User.age >= 18)`. Use expressions from model attributes: they give editor hints and catch typos in column names.
+- **Declaring only a foreign key without `relationship()`.** Then `order.user` will not work — navigating a relationship requires `relationship()`, not just `ForeignKey`.
+- **Forgetting `back_populates` on one side.** The relationship becomes one-sided or inconsistent: adding to one collection does not reflect on the other side.
+- **Relying on lazy loading in a loop.** Accessing a relationship inside a loop over many objects is a direct path to N+1. Plan loading upfront.
+
+<Detail summary="select() vs legacy session.query()">
+
+In SQLAlchemy 1.x code you will see queries like `session.query(User).filter(...).all()`. That is legacy API: it still works, but in 2.x the recommended style is the builder `select(User).where(...)`, executed via `session.scalars()` / `session.execute()`. The new style is uniform for ORM and Core (SQLAlchemy's low-level layer), types better, and makes clearer that a query is a description object, not an immediate action. Write new queries with `select()`. Migration details are in the [1.4→2.0 guide](https://docs.sqlalchemy.org/en/20/changelog/migration_20.html).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "In SQLAlchemy 2.x a query is select(Model).where(...).order_by(...), executed via session.scalars()/execute().",
+    "Write conditions as model attribute expressions (User.age >= 18), not strings — that gives hints and catches typos.",
+    "relationship() turns a foreign key into an attribute: order.user and user.orders are available without a manual JOIN.",
+    "back_populates links both sides of a relationship, making it consistent and bidirectional.",
+    "By default relationships load lazily (separate SELECT on access); eager loading via selectinload/joinedload fetches them upfront.",
+    "Choosing lazy vs eager loading is the difference between 1+N and 2 queries — a key ORM performance factor.",
+  ]}
+/>
+
+## References
+
+- [SQLAlchemy 2.0 - select() and executing queries](https://docs.sqlalchemy.org/en/20/tutorial/data_select.html)
+- [SQLAlchemy - relationship() and back_populates](https://docs.sqlalchemy.org/en/20/orm/basic_relationships.html)
+- [SQLAlchemy - relationship loading strategies](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html)

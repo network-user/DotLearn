@@ -18,6 +18,7 @@ structure here are not a copy of the source; treat this as derived, adapted mate
 interview/
 ├── index.json              # question metadata (id, title, titleEn?, category, stage, exerciseCount, path)
 ├── exercises-index.json    # flat exercise metadata for the exam mode
+├── flashcards-index.json   # prebuilt flashcard fronts/backs for /flashcards interview mode
 └── <category>/
     ├── <id>.ru.mdx         # article (Russian, primary)
     ├── <id>.en.mdx         # article (English, optional)
@@ -38,6 +39,7 @@ Article skeleton: `## Суть` → `## Что ответить на собес�
 ```bash
 pnpm import:interview              # re-scrape source into interview/ (one-off seeding)
 pnpm build:interview-index         # rebuild index.json + exercises-index.json from frontmatter/files
+pnpm build:interview-flashcards    # rebuild flashcards-index.json from interview answer sections
 pnpm reorg:interview               # move files into the category dir named in their frontmatter
 pnpm validate:interview-exercises  # structural validation against the ExerciseFile schema
 pnpm check:interview               # invariants: index <-> files, facets, duplicates

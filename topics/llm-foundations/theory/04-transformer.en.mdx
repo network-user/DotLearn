@@ -1,0 +1,111 @@
+---
+conceptId: transformer
+title: Transformer architecture
+estimatedMinutes: 28
+---
+
+# The transformer: a stack of blocks where tokens look at each other
+
+Before 2017 sequences were processed recurrently: token by token in a chain, each step waiting on the previous. That was slow and weak at distant context. The transformer dropped recurrence and let all tokens be processed at once while attention sets links between them - each token decides which others to attend to. That idea from Attention Is All You Need underlies every modern LLM.
+
+By the end of this section you will know what one transformer block contains, why residual connections and normalization matter, why blocks stack deep, and what each component does - without the attention formulas covered separately in [[attention]].
+
+## One block: attention plus MLP
+
+A transformer is a stack of identical blocks. Each block has two main operations in sequence. First, self-attention: every token gathers information from others it chooses to attend to. Second, a small feed-forward network (MLP) that independently processes each position and further mixes features. Around and between them sit two critical details: residual connections and normalization.
+
+<Figure caption="One transformer block: input passes through self-attention and MLP, each wrapped in residual connection and normalization.">
+  <Sketch viewBox="0 0 300 320" title="Transformer block">
+    <SketchBox x={90} y={20} width={120} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={150} y={42} mono>block input</SketchLabel>
+    <SketchBox x={70} y={80} width={160} height={44} accent />
+    <SketchLabel x={150} y={100} mono accent>self-attention</SketchLabel>
+    <SketchLabel x={150} y={116} muted size={10}>tokens attend to each other</SketchLabel>
+    <SketchBox x={70} y={170} width={160} height={44} accent />
+    <SketchLabel x={150} y={190} mono accent>MLP (feed-forward)</SketchLabel>
+    <SketchLabel x={150} y={206} muted size={10}>per-position processing</SketchLabel>
+    <SketchBox x={90} y={266} width={120} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={150} y={288} mono>block output</SketchLabel>
+    <SketchArrow from={[150, 54]} to={[150, 78]} accent />
+    <SketchArrow from={[150, 124]} to={[150, 168]} accent />
+    <SketchArrow from={[150, 214]} to={[150, 264]} accent />
+    <SketchArrow from={[60, 100]} to={[60, 192]} curve={40} dashed />
+    <SketchLabel x={34} y={148} muted size={10}>residual</SketchLabel>
+  </Sketch>
+</Figure>
+
+The diagram shows the flow: block input through attention, then MLP, each step wrapped in a residual. One block output feeds the next. Layout repeats; weights differ per block, so layers learn different things.
+
+## Residual: a bypass path
+
+A residual connection adds the sublayer input to its output: instead of `y = f(x)` you get `y = x + f(x)`. It sounds minor, but without it deep networks barely train: gradients vanish across dozens of layers. The shortcut gives gradients a direct path and enables very deep stacks.
+
+<Callout type="info">A useful metaphor is the residual stream: imagine a wide data bus through all blocks. Each block reads it and writes an update instead of replacing the stream. Attention and MLP are amendments to the stream, not a rewrite.</Callout>
+
+## Normalization: keeping numbers stable
+
+Across many layers activations tend to grow or collapse. Layer normalization keeps each vector on a stable scale so values do not run away. Modern models often use pre-norm (normalize before the sublayer) for stabler training. Easy to overlook, but essential glue: without it a deep stack becomes numerically brittle.
+
+## Why a stack, not one huge block
+
+One block does little: gather neighbor information and lightly transform features. Power comes from repetition. Lower blocks catch local, shallow patterns (word shapes, nearby links); upper blocks catch abstract, distant ones (sentence meaning, long-range agreement). Dozens of blocks build progressively richer text representations.
+
+<Figure caption="Attention in one layer: row is query token, column is key token; brightness is how strongly one token attends to another.">
+  <AttentionHeatmap tokens={["The", "cat", "sat", "on", "the", "mat"]} />
+</Figure>
+
+The heatmap shows uneven attention: a query row distributes its gaze across keys, and each row sums to one. Hover a cell to read a specific query → key weight; [[attention]] explains where those numbers come from.
+
+## Try it yourself
+
+Build a miniature residual stream: a vector passes two operations, each adding an update. Run the code, then remove one `+ x` (break the residual) and see how the result changes - that bypass is what residual provides.
+
+<PyDemo
+  title="Residual stream through two blocks"
+  code={`def attention_update(x):
+    return [v * 0.1 for v in x]
+
+def mlp_update(x):
+    return [v * -0.2 + 1 for v in x]
+
+x = [2.0, -1.0, 0.5]
+x = [a + b for a, b in zip(x, attention_update(x))]
+x = [a + b for a, b in zip(x, mlp_update(x))]
+print([round(v, 3) for v in x])`}
+/>
+
+Each `x = [a + b ...]` line is `x + f(x)`: the block amends the stream instead of replacing it. Output is `[2.76, 0.12, 1.44]`. Real blocks are richer, but the skeleton matches: read stream, compute update, add back.
+
+## When intuition misleads
+
+It feels like tokens are processed sequentially inside a block like an RNN. They are not: attention processes all tokens in parallel, which made training huge models practical. Only generation steps are sequential (see [[what-is-llm]]); processing a context inside one step is parallel.
+
+A second subtlety: the MLP in a block works per position independently - it does not look at neighbors. All cross-token communication happens in attention. The MLP only transforms what attention already collected.
+
+## Common misconceptions
+
+- **A transformer is only about attention; MLP does not matter.** MLP holds a large share of parameters and compute; much knowledge likely lives there.
+- **All blocks do the same thing.** Layout repeats but weights differ: lower and upper layers catch different patterns.
+- **Residual and normalization are decoration.** Without them a deep stack does not train stably; they are structural, not trim.
+
+<Detail summary="Encoder, decoder, and why LLMs are decoder-only">
+
+The original transformer had an encoder (read the input) and a decoder (generate output) - useful for translation. Generative LLMs use only the decoder with causal attention: a token may look only left, not at the future. That matches next-token prediction - the model must not peek at the answer. Modern GPT- and Claude-like models are decoder-only.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A transformer is a stack of identical blocks; each has self-attention then MLP (feed-forward).",
+    "Self-attention is where tokens exchange information; MLP processes each position independently.",
+    "Residual connection (y = x + f(x)) gives gradients a direct path and enables deep stacks.",
+    "Layer normalization stabilizes activation scale; modern models often use pre-norm.",
+    "Attention processes all context tokens in parallel; only autoregressive generation steps are sequential.",
+  ]}
+/>
+
+## References
+
+- [Vaswani et al., 2017 - Attention Is All You Need](https://arxiv.org/abs/1706.03762)
+- [The Illustrated Transformer (Jay Alammar)](https://jalammar.github.io/illustrated-transformer/)
+- [Anthropic - A Mathematical Framework for Transformer Circuits](https://transformer-circuits.pub/2021/framework/index.html)

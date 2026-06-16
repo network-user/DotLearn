@@ -1,0 +1,239 @@
+exercises:
+  - id: tq-why-offload-001
+    concept: task-queues-why
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Why move sending email out of an HTTP handler into a background task?"
+    choices:
+      - id: a
+        text: "So the handler responds quickly without waiting on a slow SMTP server."
+      - id: b
+        text: "So email is delivered instantly at response time."
+      - id: c
+        text: "So the database does not write the user twice."
+      - id: d
+        text: "So the web server is no longer needed."
+    correct: [a]
+    explanation: "Sending email is slow and depends on a third-party server. Offloading lets the handler answer after the database write; a worker sends email later. Background adds delay, not instant delivery."
+    variants:
+      - prompt: "Which work is a good candidate for a background task?"
+        choices:
+          - id: a
+            text: "Generating a PDF report to email the user in a minute."
+          - id: b
+            text: "Validating request input before writing to the database."
+          - id: c
+            text: "Reading a user profile to show in the response."
+          - id: d
+            text: "Fast cart total calculation for the page."
+        correct: [a]
+        explanation: "Background fits slow work the HTTP response does not depend on. PDF emailed later qualifies. Validation, reads for the response, and fast math belong in the handler."
+      - prompt: "What does it mean that producer and consumer are decoupled in time?"
+        choices:
+          - id: a
+            text: "Producer enqueues and is free immediately; consumer runs later at its own pace."
+          - id: b
+            text: "Producer and consumer must run strictly at the same time."
+          - id: c
+            text: "Consumer runs before producer enqueues."
+          - id: d
+            text: "Producer waits for consumer to finish before responding."
+        correct: [a]
+        explanation: "Decoupling in time is the point of a queue: enqueue time and execution time differ. Producer does not wait; the task sits in the broker until taken."
+
+  - id: tq-why-delay-returns-001
+    concept: task-queues-why
+    type: theory-quiz
+    difficulty: 2
+    prompt: "The handler called `send_welcome_email.delay(user.email)` and returned immediately. What happened by response time?"
+    choices:
+      - id: a
+        text: "The task was serialized and enqueued; email was not sent yet."
+      - id: b
+        text: "Email was sent and SMTP confirmed delivery."
+      - id: c
+        text: "Email was sent synchronously, delaying the response."
+      - id: d
+        text: "The task fully completed including storing the result."
+    correct: [a]
+    explanation: "`.delay()` serializes name and arguments into a message and enqueues it, returning in milliseconds. A worker sends email later. Success means accepted into the queue, not sent."
+    hints:
+      - "What does .delay() do - execute work or enqueue it?"
+
+  - id: tq-why-thread-vs-queue-001
+    concept: task-queues-why
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Why is enqueueing more reliable than starting work in a background thread inside the web process?"
+    choices:
+      - id: a
+        text: "Messages in the broker survive process restarts; a thread dies with its process."
+      - id: b
+        text: "A thread is always slower than a queue worker."
+      - id: c
+        text: "A queue guarantees exactly-once execution; a thread gives at-least-once."
+      - id: d
+        text: "A thread cannot call external APIs; a queued task can."
+    correct: [a]
+    explanation: "Durability is the difference. Threads live in the process: deploy, OOM, or restart kills unfinished work. Broker messages persist until a worker acknowledges them."
+    hints:
+      - "What happens to unfinished work on deploy in each approach?"
+      - "Where is the unit of work stored for a thread vs a queue?"
+
+  - id: tq-why-classify-001
+    concept: task-queues-why
+    type: theory-quiz
+    difficulty: 3
+    prompt: "The user clicks Download invoice and must see the PDF immediately. Can you offload PDF generation without changing that requirement?"
+    choices:
+      - id: a
+        text: "No: the result is needed in the HTTP response, so work stays synchronous; background does not help."
+      - id: b
+        text: "Yes: all file generation always goes to background."
+      - id: c
+        text: "Yes: .delay() returns the finished PDF in the response."
+      - id: d
+        text: "No, because PDF cannot be serialized into the queue."
+    correct: [a]
+    explanation: "Ask whether the result is needed in the response. Immediate PDF on screen means synchronous work; background either still forces a wait or returns incomplete data. Background fits if PDF can arrive later."
+    hints:
+      - "Does the HTTP response depend on this work's result?"
+      - "What does the user see if the response returns before the PDF is ready?"
+
+  - id: tq-why-status-meaning-001
+    concept: task-queues-why
+    type: theory-quiz
+    difficulty: 4
+    prompt: "After adopting queues, which mindset shift is mandatory to avoid bugs?"
+    choices:
+      - id: a
+        text: "200 OK now means only task accepted, not work done - track important operations separately."
+      - id: b
+        text: "After return all background work is guaranteed finished."
+      - id: c
+        text: "The queue automatically notifies the user of background task errors."
+      - id: d
+        text: "Background tasks cannot fail, so tracking is unnecessary."
+    correct: [a]
+    explanation: "Before, code after return had run. Now success means enqueue only. The task may not start, may fail, or may hang; nobody auto-notifies the user after 200 OK."
+    hints:
+      - "What does successful .delay() guarantee - enqueue or execution?"
+      - "When does a background task fail relative to when the user got the response?"
+
+  - id: tq-why-blanks-offload-001
+    concept: task-queues-why
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks so the handler enqueues email and responds immediately."
+    template: |
+      def register(request):
+          user = create_user(request.data)
+          send_welcome_email.{{call}}(user.email)
+          return Response({"id": user.id})
+    blanks:
+      call:
+        accept: ["delay", "apply_async"]
+    hints:
+      - "Use the task method that enqueues without running the work."
+    variants:
+      - template: |
+          def upload_avatar(request):
+              path = save_file(request.file)
+              generate_thumbnail.{{call}}(path)
+              return Response({"path": path})
+        blanks:
+          call:
+            accept: ["delay", "apply_async"]
+      - template: |
+          result = send_report.{{call}}(report_id)
+          return Response({"queued": True})
+        blanks:
+          call:
+            accept: ["delay", "apply_async"]
+
+  - id: tq-why-roles-blanks-001
+    concept: task-queues-why
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Fill in the roles in a background task queue."
+    template: |
+      The web handler that enqueues work is the {{a}}.
+      The process that takes tasks and runs them is the {{b}}.
+    blanks:
+      a:
+        accept: ["producer"]
+      b:
+        accept: ["consumer", "worker"]
+    variants:
+      - template: |
+          Who creates work and puts a message in the queue is the {{a}}.
+          Who pulls the message and runs its code is the {{b}}.
+        blanks:
+          a:
+            accept: ["producer"]
+          b:
+            accept: ["consumer", "worker"]
+      - template: |
+          In Celery the consumer role is performed by a process called {{b}}.
+          The role of whoever enqueues is called {{a}}.
+        blanks:
+          a:
+            accept: ["producer"]
+          b:
+            accept: ["worker"]
+
+  - id: tq-why-predict-sync-001
+    concept: task-queues-why
+    type: predict-output
+    difficulty: 2
+    prompt: "This program models a synchronous handler: slow work runs before the response. What does it print?"
+    snippet: |
+      def create_user():
+          return "user-1"
+
+      def send_email():
+          print("sending email")
+          return "sent"
+
+      def register():
+          user = create_user()
+          send_email()
+          print("response", user)
+
+      register()
+    expected:
+      kind: stdout
+      value: "sending email\nresponse user-1"
+    hints:
+      - "In the sync version email sends before the response. Order of prints?"
+    variants:
+      - prompt: "This program models enqueueing email: handler responds immediately; send only enqueues. What does it print?"
+        snippet: |
+          queue = []
+
+          def send_email_delay(addr):
+              queue.append(("send_email", addr))
+
+          def register():
+              send_email_delay("a@b.c")
+              print("response 200")
+
+          register()
+          print("queued", len(queue))
+        expected:
+          kind: stdout
+          value: "response 200\nqueued 1"
+      - prompt: "This program models handler steps when enqueueing: create user, enqueue email, return. What does it print?"
+        snippet: |
+          log = []
+
+          def handler():
+              log.append("create_user")
+              log.append("enqueue_email")
+              log.append("return")
+
+          handler()
+          print(log)
+        expected:
+          kind: stdout
+          value: "['create_user', 'enqueue_email', 'return']"

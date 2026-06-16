@@ -1,0 +1,114 @@
+---
+conceptId: prompt-anatomy
+title: Prompt anatomy
+estimatedMinutes: 28
+---
+
+# Prompt anatomy: six layers, not one string
+
+You ask the model to "write a client email," get three paragraphs about the wrong thing in the wrong tone, rewrite the request, still miss the mark — and loop. The problem is almost never the model. The problem is that a single verb, "write," is forced to carry everything at once: who is writing, what exactly, with what data, in what style, and in what format. A good prompt splits that load into separate layers, and each layer controls its own aspect of the answer independently of the rest.
+
+By the end of this section you will see the skeleton in any prompt: role/system, instruction, context, examples, constraints, and output format. You will learn to add the missing layer instead of blindly rewriting the whole string, and you will understand why the system message is processed differently from the user message.
+
+## A prompt is a stack of layers
+
+A useful mental model: a prompt is not text, but a stack of six layers, each answering its own question for the model. Role answers "who are you now," instruction — "what to do," context — "on what data," examples — "here is what correct looks like," constraints — "what is forbidden," format — "in what shape to return." When the answer disappoints, diagnosis boils down to one question: which layer is empty or contradictory?
+
+<Figure caption="The same request, 'rewrite the paragraph,' split into six layers. Hover a segment to see which aspect of the answer it controls.">
+  <PromptAnatomy
+    segments={[
+      { role: 'system', label: 'Role / system', text: 'You are a technical editor who explains complex topics in plain language.' },
+      { role: 'instruction', label: 'Instruction', text: 'Rewrite the paragraph below so a beginner with no database experience can understand it.' },
+      { role: 'context', label: 'Context', text: 'Paragraph: "A B-tree index speeds up range search via ordered pages."' },
+      { role: 'examples', label: 'Examples', text: 'Good: short sentences, everyday analogy, no jargon.' },
+      { role: 'constraints', label: 'Constraints', text: 'No more than three sentences. Do not invent facts not in the source.' },
+      { role: 'format', label: 'Output format', text: 'Return only the rewritten paragraph, with no introduction.' },
+    ]}
+  />
+</Figure>
+
+Not every prompt needs all six layers. "Translate to English: hello" gets by with instruction and context. But as soon as the answer starts to drift, it almost always turns out that you kept one layer in your head but never told the model.
+
+## Role and system: who answers
+
+The system message sets a stable behavior frame for the whole dialogue: who the model is, what tone to keep, what it must not do. In modern model APIs this is a separate channel. For Anthropic Claude, the system instruction goes in the top-level `system` parameter, not inside the `messages` array; in models with role separation, the system layer has priority over ordinary user messages. The practical meaning: rules that must survive the whole conversation belong in system, not repeated in every user message.
+
+```text
+system: You are a hosting support assistant. You answer only about our
+        plans and do not give legal advice.
+
+user:   Can you tell me how to sue my neighbor?
+```
+
+Here the system layer keeps the instruction "answer the question" from overriding the frame "plans only": the model politely steers back to its domain because the boundary was set at a higher level.
+
+<Callout type="tip">
+Role is not a "magic spell." The phrase "you are a world-class expert" by itself changes almost nothing. Specifics work: what task, what tone, what boundaries. "Technical editor, short sentences, no jargon" beats "genius writer."
+</Callout>
+
+## Instruction: one clear verb
+
+The instruction is the core of the prompt — the action verb: "classify," "summarize," "rewrite," "extract." The main mistake is hiding several different tasks in one sentence. "Analyze the review and improve it and translate" is three instructions; the model will mix them and do each worse. Either split into steps or honestly list subtasks as bullet points.
+
+Write instructions affirmatively. "Answer as a list of three bullet points" is more reliable than "do not answer in plain prose": the model follows what to do better than what to avoid. Prohibitions matter too, but their place is the constraints layer, not instead of a positive instruction.
+
+## Context, examples, constraints, format
+
+Context is the data the instruction operates on: source text, document excerpts, prior messages. Without it the model falls back on its memory and easily drifts into generic wording or invention. Supply context explicitly and separate it from the instruction with delimiters so the model does not confuse "what to process" with "how to process."
+
+```text
+Extract the amount and currency from the receipt below.
+
+<receipt>
+Total due: 1,480.00 RUB
+</receipt>
+```
+
+Examples (few-shot) show the desired answer shape on samples; the next section covers them [[zero-few-shot]]. Constraints cut off the unwanted: length, tone, forbidden topics, requirement not to invent facts. Format defines the answer shell — plain text, bullet list, JSON by schema; reliable structured output parsing is covered in [[structured-output]].
+
+## Build a prompt yourself
+
+Below is the same request in two versions. Read the "thin" prompt and ask: which layer is missing for the answer to become predictable? Then compare with the expanded version.
+
+<Compare
+  leftTitle="Thin prompt"
+  rightTitle="All layers present"
+  left={<>“Tell me about our new plan.” The model does not know who is asking, which plan, how long to answer, or in what form — the answer will be generic and likely invented.</>}
+  right={<>System sets support role; instruction — “describe the plan”; context — table with prices and limits; constraint — “no more than five lines, do not mention competitors’ plans”; format — “bullet list of benefits.”</>}
+  verdict="Same verb, but now every aspect of the answer is explicit instead of guessed by the model."
+/>
+
+## Edge cases
+
+Layers can conflict. If system says "answer only in Russian" and the user asks "answer in English," the layer with higher priority wins — usually system. That is not a bug: that is why system exists for stable rules. But if you built a contradiction between your own system and user text, the model will behave inconsistently from request to request.
+
+Empty context is another subtle case. The prompt "summarize the article" with no article attached will not error: the model will honestly try and produce a plausible summary of a nonexistent text. The model does not distinguish missing data from silent permission to invent unless you explicitly forbid it.
+
+## Common mistakes
+
+- **Cramming everything into one instruction.** "Write, proofread, and shorten" is three tasks in one verb. Split into steps or bullet points, or each will be half done.
+- **Keeping constraints in your head.** You know the answer must be short and free of filler, but the prompt says nothing. The model does not read minds: an unstated constraint does not exist for it.
+- **Confusing context and instruction.** Without delimiters the model may treat a chunk of source data as a command. Wrap context in tags or triple quotes.
+- **Relying on role instead of specifics.** "You are the world's best analyst" does not replace clear criteria for what a good answer means in this task.
+
+<Detail summary="Why the system layer is processed differently">
+
+In models with role separation, system and user messages are different roles in one request, and the model is trained to treat them differently: system sets stable policy, user — a concrete request. So a harmful instruction from user data is easier to block when the protective frame sits in system. That does not fully stop prompt injection attacks (see [[failures-injection]]), but it improves resilience. At Anthropic, system text goes in a separate `system` field, not mixed into `messages` — a technical reflection of the same idea.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A prompt is a stack of six layers: role/system, instruction, context, examples, constraints, format. Each controls its own aspect of the answer.",
+    "When the answer disappoints, look for an empty or contradictory layer instead of blindly rewriting the whole string.",
+    "The system layer sets stable rules and has priority over the user message; for Claude it is passed in the separate system field.",
+    "Write instructions affirmatively, one verb at a time; move prohibitions to the constraints layer.",
+    "Supply context explicitly and separate it with delimiters, or the model will confuse data with commands or invent what you never gave it.",
+  ]}
+/>
+
+## References
+
+- [Anthropic - System prompts](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/system-prompts)
+- [Anthropic - Use XML tags to structure prompts](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/use-xml-tags)
+- [OpenAI - Prompt engineering guide](https://platform.openai.com/docs/guides/prompt-engineering)

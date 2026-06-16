@@ -1,0 +1,134 @@
+---
+conceptId: oauth2-oidc-basics
+title: "OAuth2 and OIDC: basics"
+estimatedMinutes: 45
+---
+
+# OAuth2 and OIDC: who gets in and on what document
+
+Imagine a third-party service needs to read your cloud photos. The most straightforward approach is to give it your cloud login and password. That is bad for an obvious reason: the service gets everything, forever, and you cannot revoke access without changing your password. OAuth2 was born from exactly this problem — as a way to grant limited access to a resource without showing anyone your password. It answers "what is this application allowed to do on my behalf", that is, it solves **authorization**.
+
+But developers had a second, equally common request: "give me a *sign in with Google* button so I know who this user is". That is no longer about resource access, but about identity — **authentication**. OAuth2 is not designed for that, and trying to stretch it for login led to subtle vulnerabilities. So OpenID Connect (OIDC) was layered on top of OAuth2 — a thin layer that adds a verifiable proof of identity. By the end of this section you will clearly separate these two jobs, know the four OAuth2 roles, and understand how `access_token` differs from `id_token`.
+
+## Mental model: four roles around one consent
+
+At the core of OAuth2 is a conversation between four participants. **Resource Owner** is you, the owner of the data. **Client** is the application that wants to act on your behalf (mobile client, SPA, backend service). **Authorization Server** is whoever asks for your consent and issues tokens; in this topic that is Keycloak. **Resource Server** is the API that holds data and only admits requests with a valid token.
+
+The key idea: the client never gets your password. It sends you to the authorization server, you log in there and confirm consent, and the client gets back not your credentials but an **access_token** — a string with limited rights and a lifetime. With that token the client goes to the resource server, which checks permissions from the token, not from the user's identity.
+
+<Figure caption="The client never sees the password: it sends the owner to the authorization server and gets back only an access_token with limited rights.">
+  <Sketch viewBox="0 0 460 220" title="Four OAuth2 roles">
+    <SketchBox x={20} y={20} width={120} height={50} />
+    <SketchLabel x={80} y={50} mono>Resource Owner</SketchLabel>
+    <SketchBox x={20} y={150} width={120} height={50} accent />
+    <SketchLabel x={80} y={180} mono accent>Client</SketchLabel>
+    <SketchBox x={320} y={20} width={120} height={50} />
+    <SketchLabel x={380} y={50} mono>Authorization Server</SketchLabel>
+    <SketchBox x={320} y={150} width={120} height={50} />
+    <SketchLabel x={380} y={180} mono>Resource Server</SketchLabel>
+    <SketchArrow from={[140, 45]} to={[320, 45]} />
+    <SketchLabel x={230} y={36} size={11} muted>login and consent</SketchLabel>
+    <SketchArrow from={[140, 175]} to={[320, 45]} accent />
+    <SketchLabel x={230} y={120} size={11} accent>exchange for token</SketchLabel>
+    <SketchArrow from={[140, 185]} to={[320, 185]} accent />
+    <SketchLabel x={230} y={205} size={11} muted>request with access_token</SketchLabel>
+  </Sketch>
+</Figure>
+
+Remember this triangle: the owner trusts the authorization server, the client gets a token, the resource server trusts the token. The password stays between owner and authorization server and never appears anywhere else.
+
+## Scope: limited consent, not "all or nothing"
+
+Consent in OAuth2 is not a switch — it is a set of checkboxes. **Scope** is the list of requested permissions the client specifies when calling the authorization server. The user sees exactly these items: "the app wants to read your photos" — and agrees to a specific scope, not full access.
+
+```text
+GET /authorize?response_type=code
+  &client_id=gallery-app
+  &scope=photos:read profile
+  &redirect_uri=https://gallery.app/callback
+```
+
+Here the client asks for two scopes: `photos:read` and `profile`. The issued access_token will carry exactly those rights — trying to delete a photo with such a token will hit a denial from the resource server. Scope is a least-privilege mechanism: you grant the minimum needed for the job.
+
+<Callout type="info">
+Scope answers "what the application may do", but says nothing about *who* the user is. Name, email, and the fact of login belong to OIDC, which we turn to next.
+</Callout>
+
+## OIDC: identity on top of OAuth2
+
+OAuth2 issues an access_token — a pass to a resource. But in the access_token itself, per the OAuth2 spec, there are no guarantees about user identity: its format is not standardized, and the client must not "read" it — it only forwards it to the resource server. When the job is login, you need a document the client can verify and trust. That is the **id_token** from OIDC.
+
+OIDC adds one special scope to OAuth2 — `openid` — and a new artifact: an **id_token** as a JWT signed by the authorization server. It holds **claims** about the user: `sub` (stable identifier), `iss` (who issued it), `aud` (for whom), issue and expiry times, optionally email and name.
+
+```text
+scope=openid profile email
+  →  id_token (JWT) + access_token issued
+```
+
+The difference in purpose is fundamental: **access_token is for API access, id_token is for the application itself** to learn who signed in. The resource server validates the access_token; the id_token usually never reaches the resource server at all.
+
+<Figure caption="OIDC is a thin layer on OAuth2: it does not replace access_token, it adds a signed id_token with user claims beside it.">
+  <Sketch viewBox="0 0 440 180" title="OIDC on OAuth2">
+    <SketchBox x={40} y={90} width={360} height={70} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={130} muted>OAuth2: access_token, scope, flows</SketchLabel>
+    <SketchBox x={90} y={20} width={260} height={55} accent />
+    <SketchLabel x={220} y={42} accent>OIDC: id_token (JWT)</SketchLabel>
+    <SketchLabel x={220} y={62} size={11} accent>claims: sub, iss, aud, email</SketchLabel>
+    <SketchArrow from={[220, 75]} to={[220, 88]} accent />
+  </Sketch>
+</Figure>
+
+A good mnemonic: if you build "sign in with X" and need identity — you need OIDC and id_token. If you build API access on behalf of the user — OAuth2 and access_token are enough. Most often you get both in one flow.
+
+## How the client learns addresses: the discovery document
+
+To avoid hardcoding URLs, OIDC defines a **discovery endpoint** — one JSON at a fixed path where the authorization server publishes all its addresses and parameters.
+
+```text
+GET /.well-known/openid-configuration
+```
+
+The response contains `authorization_endpoint`, `token_endpoint`, `jwks_uri` (where to get keys to verify signatures), supported scopes and algorithms. Libraries read this document once and then know where to send requests. For Keycloak the path looks like `/realms/<realm>/.well-known/openid-configuration` — what a realm is, we cover in the next section.
+
+## Edge case: an access_token you must not parse
+
+Here is what surprises many people: per the OAuth2 spec **the access_token format is not defined**. It may be a JWT or an opaque random string backed by a record at the authorization server. The client must not try to decode it or make decisions from its contents — for the client it is simply "a string to pass along".
+
+```text
+access_token = "8xLOxBtZp8...opaque..."   valid
+access_token = "eyJhbGciOi...JWT..."       also valid
+```
+
+Keycloak by default issues access_token as JWT, so it *can* be parsed on the resource server. But the habit of "I'll parse access_token on the frontend and pull out email" is a design mistake: identity belongs in id_token, and access_token may become opaque tomorrow and break your code.
+
+## Common mistakes
+
+- **Using OAuth2 for login without OIDC.** Treating access_token as proof that "the user signed in" is dangerous: the token might have been issued to another client, and without checking `aud`/`iss` you accept someone else's pass as login. For authentication there is id_token — use it.
+- **Confusing access_token and id_token by purpose.** Sending id_token in the `Authorization` header to an API, or parsing access_token for email — a frequent mix-up. Rule: access_token goes to the API, id_token stays with the client.
+- **Treating scope as roles.** Scope is consent to an access volume for one request, not permanent user rights in the system. Roles are a separate model; in Keycloak they are different entities.
+
+<Detail summary="Why OAuth2 alone is not enough for login">
+
+Historically developers built "login with X" directly on OAuth2: they got an access_token and assumed that because a token was issued, the user was authenticated. The problem is that access_token is not bound to a specific client in a way the client can verify. A "token substitution" attack looked like this: a malicious app got an access_token for its user and slipped it to an honest app, impersonating that user.
+
+OIDC closes this because id_token contains claim `aud` (audience) — the client id the token is for — and is signed so the client must verify signature, `aud`, and `iss`. You cannot swap id_token without the authorization server's private key. So proper "sign in with X" is always OIDC, not bare OAuth2.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "OAuth2 handles authorization (what the app may do); OIDC on top handles authentication (who the user is).",
+    "Four roles: resource owner, client, authorization server, resource server; the client never sees the owner's password.",
+    "access_token is an API pass for the resource server; id_token is a signed JWT with user identity for the client.",
+    "Scope is requested consent volume, a least-privilege mechanism — not user roles.",
+    "The access_token format is not defined by spec: the client must not parse it, even if Keycloak returns JWT.",
+    "Endpoint addresses come from the discovery document /.well-known/openid-configuration, not hardcoded URLs.",
+  ]}
+/>
+
+## References
+
+- [RFC 6749 - The OAuth 2.0 Authorization Framework](https://datatracker.ietf.org/doc/html/rfc6749)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+- [Keycloak - Securing applications and services guide](https://www.keycloak.org/docs/latest/securing_apps/index.html)

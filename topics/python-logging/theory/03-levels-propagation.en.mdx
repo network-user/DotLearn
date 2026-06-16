@@ -1,0 +1,166 @@
+---
+conceptId: levels-propagation
+title: Levels and propagation
+estimatedMinutes: 45
+---
+
+# A dotted logger name is an address in a tree
+
+You created `logging.getLogger("shop.orders")` and `logging.getLogger("shop.pay")`, and it seems like two independent objects with similar names. But the dot is not decoration: it declares parentage. `shop.orders` is a child of `shop`, and `shop` is a child of the root logger. That parentage explains two otherwise puzzling behaviors: why a message configured on one logger suddenly prints through another logger's handler, and why one `setLevel` on a parent affects children.
+
+By the end of this section you will confidently answer whether a specific message reaches output: first whether it passes the level filter, then whose handlers it reaches while climbing the tree. These are two different mechanisms, and confusing them causes most "why is my log invisible" and "why did it duplicate" questions.
+
+## Mental model: level filter, then climb the tree
+
+A record faces two independent barriers. First **level**: the logger admits the record only if its level is not below the effective logger level. Second **propagation**: after passing the filter, the record goes to this logger's handlers, then climbs to the parent and reaches **its** handlers, up to the root. Not either-or, but filter first, then climb.
+
+<Figure caption="A record from shop.pay first passes the level filter on that logger, then climbs to shop and root, handing off to each ancestor's handlers on the way.">
+  <Sketch viewBox="0 0 440 240" title="Logger hierarchy and propagation">
+    <SketchBox x={160} y={20} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={44} mono>root</SketchLabel>
+    <SketchArrow from={[220, 100]} to={[220, 60]} accent />
+
+    <SketchBox x={160} y={100} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={124} mono>shop</SketchLabel>
+    <SketchArrow from={[160, 190]} to={[200, 140]} accent />
+    <SketchArrow from={[330, 190]} to={[280, 140]} />
+
+    <SketchBox x={90} y={190} width={120} height={40} accent />
+    <SketchLabel x={150} y={214} mono accent>shop.pay</SketchLabel>
+    <SketchBox x={280} y={190} width={130} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={345} y={214} mono>shop.orders</SketchLabel>
+
+    <SketchLabel x={30} y={150} muted anchor="start">record climbs</SketchLabel>
+  </Sketch>
+</Figure>
+
+A record born in `shop.pay`, after its filter, climbs to `shop`, then `root`, touching each ancestor's handlers along the way. One handler on the root logger can therefore serve all descendants - they share the ancestor's handler.
+
+## Effective level: search upward until found
+
+Each logger may have its own level. If unset (`NOTSET`), the logger takes the level of the nearest ancestor that has one. That is the **effective** level.
+
+```python
+import logging
+
+logging.getLogger("shop").setLevel(logging.WARNING)
+child = logging.getLogger("shop.pay")
+
+print(child.level)
+print(logging.getLevelName(child.getEffectiveLevel()))
+```
+
+Prints `0` and `WARNING`. `child`'s own level is `0` (`NOTSET`), but the effective level is `WARNING` inherited from `shop`. So `child.info(...)` is dropped: `INFO` is below effective `WARNING`. Set the threshold once on `shop` and it covers the subtree until a child overrides explicitly.
+
+## Propagation delivers records to ancestor handlers
+
+By default a record that passed the filter goes not only to this logger's handlers but also upward. Configure a handler only on the parent and the child uses it.
+
+```python
+import logging
+import sys
+
+parent = logging.getLogger("svc")
+parent.setLevel(logging.INFO)
+parent.addHandler(logging.StreamHandler(sys.stdout))
+
+child = logging.getLogger("svc.db")
+child.info("child without its own handler")
+```
+
+Prints `child without its own handler`. `child` has no handlers, but the record climbed to `svc` and exited through its handler. Common pattern: configure output once on a top logger, call `getLogger(__name__)` in every module and write - output collects itself.
+
+<Callout type="warning">
+Tree propagation is why logs duplicate in large apps. If a handler sits on both child and parent, the record prints twice: once from the child, once from the parent after propagation.
+</Callout>
+
+## Stopping propagation: propagate = False
+
+Climbing can be disabled with `propagate = False`. Then only this logger's own handlers serve the record; ancestors do not see it.
+
+```python
+import logging
+import sys
+
+logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+quiet = logging.getLogger("quiet")
+quiet.setLevel(logging.INFO)
+quiet.propagate = False
+
+quiet.info("I will not climb to root")
+```
+
+Nothing prints. `quiet` has no handler, and `propagate = False` forbids climbing to root's handler, so the record has no outlet. Use this flag to isolate a noisy subsystem: give it its own handler and cut propagation so its lines do not mix with the general stream.
+
+## Try the tree by hand
+
+Run the code: a handler sits only on parent `app`, and a message from `app.worker` climbs to it. Uncomment `worker.propagate = False` and run again - climbing stops and the message disappears because `worker` has no handler. Restore propagation and set `app` level to `logging.ERROR` - `info` is filtered before climbing.
+
+<PyDemo
+  title="Level filters, propagation climbs"
+  code={`import logging
+import sys
+
+app = logging.getLogger("app")
+app.setLevel(logging.INFO)
+app.handlers.clear()
+app.addHandler(logging.StreamHandler(sys.stdout))
+
+worker = logging.getLogger("app.worker")
+worker.handlers.clear()
+# worker.propagate = False
+
+worker.info("hello from worker")
+worker.debug("you will not see this at INFO")`}
+/>
+
+`worker.debug(...)` is dropped by effective level INFO inherited from `app` - it never reaches propagation. That is "filter first, then propagation" in action.
+
+## Edge case: handler level is a second, separate filter
+
+You set `logger.setLevel(logging.DEBUG)` and expect debug output, but see none. Reason: the **handler** has its own level and filters a second time after the logger.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("two.filters")
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.WARNING)
+logger.addHandler(handler)
+
+logger.debug("passed logger, not handler")
+logger.warning("passed both filters")
+```
+
+Only `passed both filters` prints. There are two filters and both must pass. `debug` passed the logger (`DEBUG`) but hit the handler (`WARNING`). A record reaches output only if its level is not below **both** the logger level and every handler level on the path.
+
+## Common mistakes
+
+- **Raising logger level but forgetting the handler.** If the handler is set to WARNING, no `logger.setLevel(DEBUG)` shows debug. Lower the level where the barrier stands - usually both.
+- **Surprise duplication after configuring both root and child.** That is working propagation, not a bug. Remove a handler from one side or set `propagate = False` on the child.
+- **Setting `propagate = False` without a local handler.** Records are lost: they do not climb and have no local outlet. When disabling climb, always attach a handler.
+
+<Detail summary="Why level filter and propagation are two different steps">
+
+Level and propagation answer different questions. Level: "Is this message important enough to bother with?" Decided once on the logger by effective level, before handlers. Propagation: "Who will output this message?" Decided by walking upward. A record dropped by level never propagates - there is nothing to climb. A record that passed may exit through several handlers on different tree levels. Separation lets you configure "what matters" and "where to write" independently: the first by subsystem, the second at one point on a top logger.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A dot in a logger name declares parentage: shop.pay is a child of shop, shop of root.",
+    "Effective level walks up the tree to the first ancestor with a set level (NOTSET inherits).",
+    "By default a record that passed the filter climbs to all ancestors' handlers - one root handler can serve the whole tree.",
+    "propagate = False stops climbing: only this logger's own handlers serve the record.",
+    "Handlers have their own level - a second filter after the logger; the record must pass both.",
+    "Duplicate logs are usually working propagation: handlers on both child and parent.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - Logger objects and propagate](https://docs.python.org/3/library/logging.html#logging.Logger.propagate)
+- [Python documentation - getEffectiveLevel and levels](https://docs.python.org/3/library/logging.html#logging.Logger.getEffectiveLevel)
+- [Python documentation - Logging HOWTO: Logger Flow](https://docs.python.org/3/howto/logging.html#logging-flow)

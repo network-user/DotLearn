@@ -1,0 +1,257 @@
+exercises:
+  - id: delivery-guarantees-modes-001
+    concept: delivery-guarantees
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does at-least-once delivery guarantee?"
+    choices:
+      - id: a
+        text: "The message will be delivered at least once; duplicates are possible, but not loss."
+      - id: b
+        text: "The message will be delivered exactly once with no duplicates and no loss."
+      - id: c
+        text: "The message will be delivered at most once; loss is possible, no duplicates."
+      - id: d
+        text: "The message will be delivered as many times as it has recipients."
+    correct: [a]
+    explanation: "at-least-once means minimum one delivery: the broker retries until ack, so loss is ruled out, but failure between work and ack redelivers the message. Any consumer in this mode must be ready for a duplicate."
+    variants:
+      - prompt: "What does at-most-once delivery guarantee?"
+        choices:
+          - id: a
+            text: "The message will be delivered at most once; loss is possible, no duplicates."
+          - id: b
+            text: "The message will be delivered at least once; duplicates possible, no loss."
+          - id: c
+            text: "The message will be delivered exactly once under any failure."
+          - id: d
+            text: "The message will be delivered as many times as there were network failures."
+        correct: [a]
+        explanation: "at-most-once is zero or one delivery: ack comes before work, so no duplicate, but failure between ack and work loses unprocessed work. Tolerable for metrics and telemetry where losing one point is fine."
+      - prompt: "Which action order in a consumer corresponds to at-least-once?"
+        choices:
+          - id: a
+            text: "Do the work first, then ack - failure before ack leads to retry, not loss."
+          - id: b
+            text: "Ack first, then work - then loss is ruled out."
+          - id: c
+            text: "Ack and work simultaneously in one network operation."
+          - id: d
+            text: "Never ack - the broker will figure it out."
+        correct: [a]
+        explanation: "at-least-once comes from work before ack: if failure happens between work and confirmation, the broker retries. No loss, but duplicate possible - neutralized with idempotency."
+
+  - id: delivery-idempotent-op-001
+    concept: delivery-guarantees
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Which operation is idempotent - safe on redelivery?"
+    choices:
+      - id: a
+        text: "order.status = \"paid\" - assigning a specific value."
+      - id: b
+        text: "balance = balance + 100 - adding to current value."
+      - id: c
+        text: "counter += 1 - incrementing a counter."
+      - id: d
+        text: "history.append(event) - appending to a list."
+    correct: [a]
+    explanation: "An idempotent operation gives the same outcome on any number of retries. Assigning status = paid stays paid no matter how often you repeat. Addition, increment, and append accumulate - each retry changes the result, so they need duplicate protection."
+    variants:
+      - prompt: "Which operation must NOT be repeated safely without duplicate protection?"
+        choices:
+          - id: a
+            text: "balance = balance + 100 - each retry adds another hundred."
+          - id: b
+            text: "user.email = \"a@b.com\" - assigning a value."
+          - id: c
+            text: "order.status = \"shipped\" - setting status."
+          - id: d
+            text: "cache[key] = value - writing by key."
+        correct: [a]
+        explanation: "Accumulating balance = balance + 100 is not idempotent: retry adds an extra hundred. Assignments (email, status, write by key) are idempotent. Accumulation is protected by deduplication on unique message id."
+      - prompt: "What makes a consumer idempotent under at-least-once delivery?"
+        choices:
+          - id: a
+            text: "Keeping a set of processed ids and skipping work if the message id was seen before."
+          - id: b
+            text: "Switching the broker to exactly-once with one setting."
+          - id: c
+            text: "Increasing partition count so duplicates go to different consumers."
+          - id: d
+            text: "Disabling redelivery on the broker side."
+        correct: [a]
+        explanation: "Consumer idempotency is built on deduplication: each message has a unique id, consumer remembers processed ids and skips work on retry. That turns at-least-once into exactly one effect without broker magic."
+
+  - id: delivery-ack-order-blanks-001
+    concept: delivery-guarantees
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in statements about ack/work order and related guarantees."
+    template: |
+      If the consumer acks {{before}} work, failure between them leads to {{loss}} of the message - at-most-once mode.
+      If the consumer does work before ack, failure between them leads to {{dup}} of the message - at-least-once mode.
+      For retry to be safe, the operation must be {{idempotent}}.
+    blanks:
+      before:
+        accept: ["before", "prior to"]
+      loss:
+        accept: ["loss", "lost message"]
+      dup:
+        accept: ["duplicate", "duplication", "retry", "redelivery"]
+      idempotent:
+        accept: ["idempotent"]
+    variants:
+      - template: |
+          Honest exactly-once at network delivery level is {{achievable}}, because confirmation can be lost like the message.
+          So exactly-once is done at the {{level}} level, not at delivery level.
+          An accumulating operation is made safe with {{dedup}} on a unique id.
+        blanks:
+          achievable:
+            accept: ["unachievable", "not achievable", "impossible"]
+          level:
+            accept: ["effect"]
+          dedup:
+            accept: ["deduplication", "dedup"]
+      - template: |
+          In at-most-once mode {{atmost}} is possible, but there are no duplicates.
+          In at-least-once mode {{atleast}} are possible, but there is no loss.
+          The deduplication window must cover maximum {{delay}} of retry, otherwise there is a gap.
+        blanks:
+          atmost:
+            accept: ["loss"]
+          atleast:
+            accept: ["duplicates", "retries", "redeliveries"]
+          delay:
+            accept: ["delay"]
+
+  - id: delivery-balance-predict-001
+    concept: delivery-guarantees
+    type: predict-output
+    difficulty: 2
+    prompt: "What will the program print? It models an idempotent consumer: message m2 arrives twice (simulating at-least-once)."
+    snippet: |
+      processed = set()
+      balance = 0
+
+      def handle(message_id, amount):
+          global balance
+          if message_id in processed:
+              return balance
+          balance += amount
+          processed.add(message_id)
+          return balance
+
+      stream = [("m1", 100), ("m2", 50), ("m2", 50), ("m3", 30)]
+      for mid, amt in stream:
+          handle(mid, amt)
+      print(balance)
+    expected:
+      kind: stdout
+      value: "180"
+    hints:
+      - "Duplicate is neutralized by processed set: second time same id is inside, work is skipped. Which messages actually change balance?"
+      - "Count m1 (100), m2 (50 once), m3 (30); retry of m2 does not touch balance."
+    variants:
+      - snippet: |
+          balance = 0
+
+          def handle(amount):
+              global balance
+              balance += amount
+              return balance
+
+          stream = [100, 50, 50, 30]
+          for amt in stream:
+              handle(amt)
+          print(balance)
+        expected:
+          kind: stdout
+          value: "230"
+      - snippet: |
+          processed = set()
+          applied = 0
+          deliveries = ["a", "b", "a", "c", "b", "a"]
+
+          for d in deliveries:
+              if d in processed:
+                  continue
+              processed.add(d)
+              applied += 1
+
+          print(applied)
+        expected:
+          kind: stdout
+          value: "3"
+
+  - id: delivery-exactly-once-myth-001
+    concept: delivery-guarantees
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Why can't honest exactly-once delivery at network level be guaranteed by adding more confirmations?"
+    choices:
+      - id: a
+        text: "Delivery confirmation also travels over the network and can be lost like the message - the producer again does not know if it arrived, and the retry-or-not choice returns."
+      - id: b
+        text: "Because brokers have not implemented the needed protocol yet; future versions will fix it."
+      - id: c
+        text: "Because the network always works at-most-once and cannot do otherwise."
+      - id: d
+        text: "Because exactly-once requires synchronized clocks on all nodes, which do not exist."
+    correct: [a]
+    explanation: "Between received and confirmed there is always a gap where failure can occur. If ack is lost in transit, the producer does not know if the message arrived and faces retry (duplicate risk) or not (loss risk). Extra confirmations do not help - they can be lost too. Exactly-once is done at effect level, not delivery."
+    hints:
+      - "What do the message and the ack replying to it have in common from the network's point of view?"
+      - "If ack can be lost, what uncertainty does that create for the sender, and does another confirmation on top help?"
+
+  - id: delivery-dedup-window-001
+    concept: delivery-guarantees
+    type: theory-quiz
+    difficulty: 3
+    prompt: "A consumer deduplicates by id but keeps processed ids only for the last 10 minutes. The broker may retry a message an hour after failure. What is the problem?"
+    choices:
+      - id: a
+        text: "The deduplication window (10 minutes) is less than maximum retry delay (one hour), so a late duplicate falls out of the window and is processed again."
+      - id: b
+        text: "None: 10 minutes is enough for any retry; one hour is a rare edge case."
+      - id: c
+        text: "Storing ids at all is wrong; id deduplication is always erroneous."
+      - id: d
+        text: "The problem is only memory: ids over an hour take too much space."
+    correct: [a]
+    explanation: "Processed ids cannot be stored forever, so a window is used. But the window must cover maximum possible retry delay. If the broker retries after an hour and ids live 10 minutes, the late duplicate is not found and passes as new. Deduplication window must exceed maximum retry delay."
+    hints:
+      - "Deduplication catches a duplicate only while its id is remembered. Compare how long ids are kept versus how late a retry can arrive."
+      - "If retry arrives after the id expires from the window, what does the consumer know about it at receipt time?"
+
+  - id: delivery-effects-predict-001
+    concept: delivery-guarantees
+    type: predict-output
+    difficulty: 4
+    prompt: "What will the program print? It models an at-least-once stream with duplicates and counts how many effects a non-idempotent consumer applies (no deduplication)."
+    snippet: |
+      deliveries = ["m1", "m1", "m2", "m3", "m3", "m3"]
+
+      def apply_naive(stream):
+          effects = 0
+          for _ in stream:
+              effects += 1
+          return effects
+
+      def apply_idempotent(stream):
+          seen = set()
+          effects = 0
+          for mid in stream:
+              if mid in seen:
+                  continue
+              seen.add(mid)
+              effects += 1
+          return effects
+
+      print(apply_naive(deliveries) - apply_idempotent(deliveries))
+    expected:
+      kind: stdout
+      value: "3"
+    hints:
+      - "Naive consumer applies effect on every delivery; idempotent only on each unique id. The difference is extra retries."
+      - "Count total deliveries and unique ids separately. The program prints the difference - number of duplicates among m1, m1, m2, m3, m3, m3."

@@ -1,0 +1,114 @@
+---
+conceptId: grid-anchors
+title: Grid and Anchors
+estimatedMinutes: 40
+---
+
+A YOLO network outputs a fixed number of predictions — it does not depend on how many objects are in the frame. Where does that number come from, and how is each prediction "tied" to a specific place in the image? The answer is a grid of cells and anchor boxes. These two ideas turn "one convolutional network pass" into "a structured list of candidate boxes with meaningful coordinates."
+
+By the end of this section you will understand what an `SxS` grid is and how an object is assigned to one responsible cell, why each cell gets several anchors of different shapes, and how to pick the anchor that best fits an object — using the same IoU you implemented in the previous section.
+
+## SxS grid and the responsible cell
+
+YOLO mentally overlays an `S` by `S` grid on the image. At a coarse level `S` might be 13, 26, or 52 — a finer grid means more precise localization and more predictions. Each cell is responsible for objects whose **center** falls inside it. Not "intersects the object" but "contains its center" — that is the key detail: a large object covers many cells, but exactly one is responsible for it.
+
+<Figure caption="A 5x5 grid. The highlighted cell contains the object's center: it is responsible for predicting the box. Anchors show typical box shapes attached to the cell.">
+  <AnchorGridViz
+    grid={5}
+    anchors={[{ w: 0.85, h: 0.35 }, { w: 0.4, h: 0.85 }, { w: 0.6, h: 0.6 }]}
+    object={{ cx: 0.62, cy: 0.46, w: 0.34, h: 0.5 }}
+  />
+</Figure>
+
+Finding the responsible cell is arithmetic on normalized center coordinates. If the center is given in frame fractions `(cx, cy)` from 0..1 and the grid is `S` by `S`, column index is `floor(cx * S)` and row index is `floor(cy * S)`.
+
+```python
+import math
+
+def responsible_cell(cx, cy, S):
+    col = min(int(cx * S), S - 1)
+    row = min(int(cy * S), S - 1)
+    return (col, row)
+
+print(responsible_cell(0.62, 0.46, 5))
+```
+
+This prints `(3, 2)`: `0.62 * 5 = 3.1`, integer part `3`; `0.46 * 5 = 2.3`, integer part `2`. The `min(..., S - 1)` guard handles the edge: a center exactly on the right boundary `cx = 1.0` would give `S`, which is out of range, so it is clamped to the last cell.
+
+## Why anchors
+
+One cell — one object? That is not enough for two reasons. First, two object centers can land in the same cell. Second, objects come in different shapes: a lying person is wide, a pole is narrow and tall. Making the network guess arbitrary aspect ratios from scratch is hard. The solution is **anchor boxes**: each cell gets several template rectangles of different proportions attached in advance. The network does not invent sizes from zero; it predicts a correction to the nearest anchor.
+
+Anchors are a set of shapes `(w, h)` shared across all cells. They are chosen for the dataset (often by clustering real boxes), but the idea is the same: give the network convenient "reference" proportions. Each "cell plus anchor" pair maps to one slot in the network output.
+
+<Callout type="info">An anchor defines only shape (width and height), not position. Position comes from the cell: the anchor is "placed" at the responsible cell's center, and the network moves and scales it with corrections. Decoding those corrections is the next section.</Callout>
+
+## Which anchor owns the object
+
+When an object's center lands in a cell, the anchor responsible for the object inside that cell is **the one whose shape is closest to the object's shape**. Shape closeness is measured with the same IoU — but boxes are compared by shape with aligned centers. Then IoU depends only on width and height: intersection of centered boxes equals `min(wa, wb) * min(ha, hb)`.
+
+```python
+def shape_iou(a, b):
+    wa, ha = a
+    wb, hb = b
+    inter = min(wa, wb) * min(ha, hb)
+    union = wa * ha + wb * hb - inter
+    return inter / union if union > 0 else 0.0
+
+print(shape_iou((3, 1), (2, 2)), shape_iou((3, 1), (4, 2)))
+```
+
+This prints `0.4 0.375`: shape `(3, 1)` is closer to square `(2, 2)` than to wide `(4, 2)`, even though by area it is the opposite. The best anchor is chosen by enumeration: compute `shape_iou` of the object with each anchor and take the index of the maximum.
+
+## Try it yourself
+
+Run anchor selection. Object shape `(3, 1)` picks anchor `0` — square `(2, 2)`. Change the object shape to `(1, 4)` (narrow and tall) — anchor `2`, `(2, 4)`, wins. Try `(4, 2)`: the object matches one anchor's shape exactly and its IoU becomes `1.0`. This shows clearly that the "responsible anchor" is the one with the most similar shape, not the most similar area.
+
+<PyDemo
+  title="Anchor selection by shape"
+  code={`def shape_iou(a, b):
+    wa, ha = a
+    wb, hb = b
+    inter = min(wa, wb) * min(ha, hb)
+    union = wa * ha + wb * hb - inter
+    return inter / union if union > 0 else 0.0
+
+anchors = [(2, 2), (4, 2), (2, 4)]
+target = (3, 1)
+ious = [shape_iou(target, a) for a in anchors]
+best = ious.index(max(ious))
+print(best, [round(v, 3) for v in ious])`}
+/>
+
+## Where this surprises you
+
+An object in one cell with its box partly outside is normal. Responsibility is determined only by the center: if the center is in cell `(3, 2)`, that cell owns the object even if the box extends into neighbors. So a large object is one prediction from one cell, not a mosaic of pieces.
+
+A second surprise is two objects with centers in the same cell. If a cell has, say, three anchors, it can physically handle at most three objects — one per anchor. A third object whose center lands in the same cell either "takes" a free anchor or is lost. That is why a fine grid with multiple anchors is not a luxury but a way to resolve object clusters.
+
+## Common mistakes
+
+- **Treating any cell the box intersects as responsible.** Responsibility is by center, not intersection. A large object intersects many cells, but exactly one is responsible — where its center lies.
+- **Choosing an anchor by area instead of shape IoU.** Similar area does not mean similar shape: a square and a strongly elongated rectangle can have the same area and low IoU. Compare shapes via IoU with aligned centers.
+- **Forgetting to clamp the grid edge.** A center exactly on the boundary `cx = 1.0` gives index `S`, out of range. Clamp with `min(int(cx * S), S - 1)`.
+
+<Detail summary="Anchor-free detectors — can you skip anchors entirely?">
+
+Anchors solve the shape problem but add hyperparameters: how many anchors, what proportions, how to cluster them for the dataset. So a whole line of anchor-free detectors appeared (FCOS, CenterNet, and others) that predict a box directly from a point — for example, distances to four sides from the object center — without predefined templates. Modern YOLO versions have moved this way too: from YOLOX onward many detection heads became anchor-free. The grid and responsible-point idea remains — only the way sizes are predicted changes.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "YOLO overlays an SxS grid; the cell that contains an object's center owns it, not the cells its box intersects.",
+    "Responsible cell from normalized center: col = floor(cx * S), row = floor(cy * S), with edge clamped to S - 1.",
+    "Anchors are a set of template shapes (w, h) shared by all cells; the network predicts a correction to an anchor, not sizes from scratch.",
+    "The anchor for an object is the closest shape; closeness is measured by IoU with aligned centers — only w and h matter.",
+    "An anchor defines shape, a cell defines position; the number of anchors limits how many objects one cell can serve.",
+  ]}
+/>
+
+## References
+
+- [Redmon, Farhadi, YOLO9000: Better, Faster, Stronger (2017) - dimension clusters](https://arxiv.org/abs/1612.08242)
+- [Ge et al., YOLOX: Exceeding YOLO Series in 2021 - anchor-free head](https://arxiv.org/abs/2107.08430)

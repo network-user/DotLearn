@@ -1,0 +1,166 @@
+---
+conceptId: functions-as-objects
+title: Functions as objects
+estimatedMinutes: 30
+---
+
+# In Python, a function is a value you can store in a variable
+
+You are used to defining a function and then calling it. But in Python `def greet():` does more than that: it creates an object and binds a name to it. That object is not fundamentally different from a number or a string - you can assign it to another name, put it in a list, pass it to another function as an argument, and return it from a function as a result. You cannot understand decorators without this fact, because a decorator is simply a function that takes a function and returns a function.
+
+By the end of this section you will see a live object behind a function name: understand how `greet` differs from `greet()`, pass functions to `map` and `sorted`, collect them in a dispatch dictionary instead of an `if/elif` ladder, and return one function from another.
+
+## A name and an object are two different things
+
+When the interpreter reaches `def`, it builds a function object and stores it in memory, and the name after `def` becomes a pointer to that object. Exactly the same way, `x = 5` puts a number in memory and points the name `x` at it. The only difference is the type of object.
+
+<Figure caption="def creates a function object and binds a name to it; the name can be copied to another label, and both will point at the same object.">
+  <ObjectMemoryFigure
+    objects={[
+      { name: 'greet', className: 'function', attrs: { __name__: "'greet'" } },
+      { name: 'f', className: '(same)', attrs: { __name__: "'greet'" } },
+    ]}
+  />
+</Figure>
+
+The first practical takeaway: `greet` and `greet()` are not the same thing. `greet` is the function object itself - you can pass it on. `greet()` is a command to run that object and give back its result. Confusing them is the source of a good half of decorator bugs.
+
+```python
+def greet():
+    return "привет"
+
+f = greet
+print(f())
+print(greet is f)
+```
+
+This prints `привет` and `True`. The assignment `f = greet` did not call the function and did not copy it - it attached a second label to the same object, so `f()` does exactly what `greet()` does, and `greet is f` confirms there is one object.
+
+## Functions have attributes
+
+Since a function is an object, it has its own data. The most useful are `__name__` (the name it was defined under) and `__doc__` (the documentation string). These two attributes will come back in the section on `functools.wraps`: a careless decorator overwrites them.
+
+```python
+def area(width, height):
+    "Площадь прямоугольника."
+    return width * height
+
+print(area.__name__)
+print(area.__doc__)
+```
+
+This prints `area` and `Площадь прямоугольника.`. The name lives on the object, not "outside" it - so even after `f = area`, the attribute `f.__name__` stays `area`: the label changed, the object did not.
+
+## You can pass a function as an argument
+
+If a function is a value, you can hand it to another function as input. Built-ins like `map`, `filter`, and `sorted` work exactly this way: you pass a rule function, and they apply it to data.
+
+```python
+def shout(text):
+    return text.upper() + "!"
+
+words = ["раз", "два", "три"]
+print([shout(w) for w in words])
+print(list(map(shout, words)))
+```
+
+Both lines print `['РАЗ!', 'ДВА!', 'ТРИ!']`. In `map(shout, words)` we pass `shout` without parentheses - the function object, not the result of calling it. `map` will call it for each word itself.
+
+This is especially clear with `sorted` and the `key` parameter: you pass a function that computes the "weight" of each element.
+
+```python
+people = [("Аня", 30), ("Боб", 17), ("Вера", 25)]
+by_age = sorted(people, key=lambda p: p[1])
+print(by_age)
+```
+
+This prints `[('Боб', 17), ('Вера', 25), ('Аня', 30)]`. `lambda p: p[1]` is an anonymous function object passed to `sorted` as the sorting rule.
+
+## Try it yourself
+
+Below, `add` and `mul` sit in a dictionary under string keys - a dispatcher that replaces a chain of `if op == "+"`. Run the code: it prints `7`. Now try adding a third operation `"-"` with your own function and call `dispatch("-", 10, 4)` - confirm that choosing the operation reduces to an ordinary dictionary lookup, without a single `if`.
+
+<PyDemo
+  title="A dictionary of functions instead of if/elif"
+  code={`def add(a, b):
+    return a + b
+
+def mul(a, b):
+    return a * b
+
+operations = {"+": add, "*": mul}
+
+def dispatch(op, a, b):
+    return operations[op](a, b)
+
+print(dispatch("+", 3, 4))`}
+/>
+
+The expression `operations[op]` fetches a function object from the dictionary, and the following `(a, b)` calls it. It is the same "fetch object, then call" pattern as in decorators.
+
+## You can return a function from a function
+
+The last building block before decorators: a function can not only accept another function, but create a new one and return it. You define the inner function with `def` right inside the outer body and hand it back by name, without parentheses.
+
+```python
+def make_greeter():
+    def greeter():
+        return "привет"
+    return greeter
+
+g = make_greeter()
+print(g())
+```
+
+This prints `привет`. `make_greeter()` returned the `greeter` object, we stored it in `g`, and then called it via `g()`. Notice `return greeter` without parentheses: it returns the function itself, not the result of calling it. How the returned function remembers variables from the outer scope is the topic of the next section on closures.
+
+## When behavior surprises you
+
+The most common surprise is forgotten or extra parentheses. They do not fail immediately - they quietly swap the meaning.
+
+```python
+def greet():
+    return "привет"
+
+handlers = [greet()]
+print(handlers)
+```
+
+This prints `['привет']`, although the author probably wanted a list of functions `[greet]`. The parentheses ran `greet` on the spot, and the list got the result string, not the function. If you then write `handlers[0]()`, you get `TypeError: 'str' object is not callable` - you cannot call a string.
+
+<Callout type="warning">`func` is a function object you can pass on. `func()` is a command to run it right now. In higher-order code, always ask yourself: am I passing the function or its result?</Callout>
+
+## Common mistakes
+
+- **Extra parentheses when passing.** `map(shout(), words)` will try to call `shout` with no arguments first and fail. Pass `shout` - the object, not `shout()`.
+- **Forgetting to check with `callable`.** If you accidentally put a function's result, not the function itself, into a dispatch dictionary, `operations[op](a, b)` fails with `not callable`. Store the functions themselves in such structures.
+- **Returning a call instead of a function.** `return greeter()` in the outer function returns a string, not a function; the name without parentheses (`return greeter`) returns the object, ready to be called later.
+
+<Detail summary="What first-class functions means">
+
+People say that in Python functions are "first-class citizens". That means exactly the set of rights we went through: the object can be assigned to a name, passed as an argument, returned from a function, and stored in data structures. Not every language works this way: in old C, for example, you cannot create a function at runtime and return it as an ordinary value. In Python a function, lambda, method, and even a class are all callable objects, and `callable(x)` checks exactly this right to be called.
+
+```python
+print(callable(print), callable(42))
+```
+
+This prints `True False`: you can call `print`, you cannot call a number.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "def creates a function object and binds a name to it; the name and the object are different things.",
+    "greet is the function object itself (you can pass it on); greet() is a command to run it and get the result.",
+    "A function has attributes, including __name__ and __doc__, and they live on the object, not on the name.",
+    "You can pass a function as an argument (map, sorted key=...) and store it in structures - for example, in a dispatch dictionary instead of if/elif.",
+    "You can return a function from another function: return innerFunc without parentheses hands back the object, ready to be called later.",
+    "Extra or forgotten parentheses quietly swap 'function' for 'result of calling it' - a source of not callable errors.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - Defining functions](https://docs.python.org/3/tutorial/controlflow.html#defining-functions)
+- [Python documentation - sorted and the key parameter](https://docs.python.org/3/library/functions.html#sorted)
+- [Python documentation - callable](https://docs.python.org/3/library/functions.html#callable)

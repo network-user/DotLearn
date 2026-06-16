@@ -1,0 +1,152 @@
+---
+conceptId: celery-architecture
+title: "Celery architecture: broker, worker, backend"
+estimatedMinutes: 45
+---
+
+# Three parts people often merge into one
+
+"I set up Celery" - as if Celery were one program you start and it runs. In practice a working background task system is three moving parts, each possibly on its own server, each failing independently, each with its own configuration. When tasks "disappear", "never run", or "ran but I cannot see the result", it is almost always because the three parts were confused and nobody knows which one is responsible.
+
+In the previous section we saw the outline: producer enqueues, consumer dequeues, storage in between. Now the Celery-specific split. By the end you will clearly separate broker (where tasks wait), worker (who runs them), and result backend (where results live), know what is required vs optional, and read errors like "cannot connect to broker" as pointing at a specific part.
+
+## Mental model: where the task is, who runs it, where the answer goes
+
+Running Celery means running and connecting three roles. **Broker** is the queue: storage where the producer puts tasks and the worker takes them. Usually Redis or RabbitMQ. **Worker** is a process that connects to the broker, pulls tasks, and runs their code. **Result backend** is separate storage where the worker, if asked, stores result and status so the producer can read them later.
+
+<Figure caption="Three Celery parts: producer writes a task to the broker, worker takes and runs it, status and result go to the result backend where the producer reads them.">
+  <Sketch viewBox="0 0 480 250" title="Broker, worker, backend">
+    <SketchBox x={20} y={100} width={100} height={54} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={70} y={131} mono>producer</SketchLabel>
+    <SketchBox x={185} y={20} width={110} height={56} accent radius={8} />
+    <SketchLabel x={240} y={44} mono accent>broker</SketchLabel>
+    <SketchLabel x={240} y={62} muted size={11}>queue</SketchLabel>
+    <SketchBox x={360} y={100} width={100} height={54} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={410} y={131} mono>worker</SketchLabel>
+    <SketchBox x={185} y={180} width={110} height={56} radius={8} dashed />
+    <SketchLabel x={240} y={204} mono>backend</SketchLabel>
+    <SketchLabel x={240} y={222} muted size={11}>results</SketchLabel>
+    <SketchArrow from={[120, 118]} to={[185, 56]} accent />
+    <SketchArrow from={[295, 56]} to={[360, 118]} />
+    <SketchArrow from={[360, 138]} to={[295, 200]} />
+    <SketchArrow from={[185, 208]} to={[120, 140]} dashed />
+  </Sketch>
+</Figure>
+
+Broker and backend are different stores even if you use the same Redis for both. Task flow: producer → broker → worker (execution) → backend. Result flow back: producer reads from backend by task id. Broker is always required - without it there is nowhere to put a task. Backend is optional: only needed if someone wants the result or status.
+
+<MarginNote label="Dashed on purpose">Arrows to backend are dashed: that path exists only if a result backend is configured. Without it the task still runs but the result is not stored anywhere.</MarginNote>
+
+## Minimal setup
+
+Create a `Celery` object with broker and (optionally) backend. A task is an ordinary function with a decorator.
+
+```python
+from celery import Celery
+
+app = Celery(
+    "myapp",
+    broker="redis://localhost:6379/0",
+    backend="redis://localhost:6379/1",
+)
+
+@app.task
+def add(x, y):
+    return x + y
+```
+
+`broker` is where tasks are put and taken from; `backend` is where results are stored. Note `/0` and `/1`: different logical Redis databases so the task queue and result store do not interfere, even on one Redis. `@app.task` turns `add` into a task with a `.delay()` method.
+
+## Producer and worker are different processes
+
+The same task file is imported in the web app (producer) and in the worker. They start separately. The worker is started with its own command.
+
+```python
+result = add.delay(2, 3)
+print(result.id)
+```
+
+This is the producer side. It enqueues `add(2, 3)` and gets an `AsyncResult` with a task id. `add` does not run here: no `2 + 3`, no `return` in this process. For the task to run, a worker must be running, started with `celery -A myapp worker`. It connects to the same broker, sees the task, runs `add(2, 3)`, and stores `5` in the backend under `result.id`.
+
+<Callout type="warning">
+If no worker is running, `add.delay(2, 3)` still succeeds without error: the task sits in the broker and waits. "Task never runs" often means not a code bug but a worker that was never started or has crashed.
+</Callout>
+
+## Getting the result
+
+The producer gets `AsyncResult` immediately, but there is no result yet - it appears in the backend only when the worker finishes. Read through the same object.
+
+```python
+result = add.delay(2, 3)
+print(result.ready())
+print(result.get(timeout=5))
+```
+
+`result.ready()` asks the backend if the result is ready and returns `True` or `False` without blocking. `result.get(timeout=5)` blocks until the result arrives or five seconds pass, then raises on timeout. If backend is not configured, `result.get()` will not work - nowhere to store the result. Calling `.get()` synchronously in a web handler is usually a bad idea: you block the request again, exactly what background work was meant to avoid.
+
+## Broker and backend solve different problems
+
+Broker is optimized for "accept a message and quickly hand it to one recipient". Backend is optimized for "store a value by key and return on request". Different access models, so Celery keeps them separate.
+
+<Compare
+  leftTitle="Broker"
+  rightTitle="Result backend"
+  left={
+    <ul>
+      <li>Holds tasks waiting to run</li>
+      <li>Delivers a task to one worker</li>
+      <li>Always required</li>
+      <li>Redis, RabbitMQ</li>
+    </ul>
+  }
+  right={
+    <ul>
+      <li>Stores result and status</li>
+      <li>Returned by task id to anyone who asks</li>
+      <li>Optional</li>
+      <li>Redis, database, or disabled</li>
+    </ul>
+  }
+  verdict="Broker is where you put work; backend is where the answer lives. Easy to confuse because both are often the same Redis."
+/>
+
+Broker choice affects guarantees. RabbitMQ is a full message broker with acknowledgements and routing, historically Celery's main choice. Redis is simpler to operate and popular, but as a broker has reliability nuances on restart. For backend Redis is fast but results expire with TTL by default; a relational database keeps them longer but slower.
+
+## Edge cases
+
+**No result backend but you call `.get()`.** The task runs, the worker finishes, but there is nowhere to store the result. `result.get()` hangs or raises a configuration error. If you do not need results, do not call `.get()`; if you do, configure backend.
+
+**This will surprise you: storing every result by default is expensive.** It seems reasonable to enable result backend and store everything. But Celery by default writes status and result for every task, and at volume the backend becomes a constantly growing pile. For tasks whose result nobody reads (sent email - forget it), disable backend or set `ignore_result=True`.
+
+**Worker and producer run different code.** Producer enqueues by string name (e.g. `myapp.add`). Worker looks up a function with that name locally. Add a task, redeploy producer, forget to restart worker - worker does not know the task and fails with `unregistered task`. Task code must match on both sides.
+
+## Common mistakes
+
+- **Treating broker and backend as the same thing.** Different stores, different roles. "Connection to broker" and "connection to backend" are configured separately and fail independently.
+- **Calling `result.get()` in an HTTP handler.** Blocks until the worker finishes - synchronous wait again. If the result is needed in the response, maybe the work should not have been backgrounded.
+- **Forgetting to restart worker after deploy.** Worker holds task code from startup. New or changed task code appears only after restart.
+
+<Detail summary="What prefork pool is and why worker is not one process">
+
+`celery -A myapp worker` starts not one process but a coordinator and a pool of child executors (default prefork - fork per CPU core). The coordinator talks to the broker and assigns tasks; each child runs one task at a time. A worker with a pool of four runs up to four tasks in parallel.
+
+Two practical points. First, if a task holds global state, remember parallel tasks may run in different processes and state is not shared as you expect. Second, for tasks that mostly wait on the network (external APIs), prefork with processes is memory-heavy - gevent or eventlet pools run many light tasks in one process while they wait on I/O. Pool choice is the `--pool` flag.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Working Celery is three parts: broker (task queue), worker (executor), and result backend (result store).",
+    "Broker is always required; result backend is optional and only needed if someone needs result or status.",
+    "Producer (.delay) and worker are different processes; the task does not run until a worker is started.",
+    "Broker and backend are different stores with different roles, even when physically one Redis.",
+    "result.get() reads from backend and blocks - do not call it in an HTTP handler.",
+    "Storing every task result is expensive; for tasks without a needed result disable backend or set ignore_result=True.",
+  ]}
+/>
+
+## References
+
+- [Celery - Backends and Brokers](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/index.html)
+- [Celery - Workers Guide](https://docs.celeryq.dev/en/stable/userguide/workers.html)
+- [Celery - Task result backend settings](https://docs.celeryq.dev/en/stable/userguide/configuration.html#task-result-backend-settings)

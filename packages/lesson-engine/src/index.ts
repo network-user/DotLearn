@@ -53,4 +53,18 @@ export type {
   TopicSource,
 } from './loader/source';
 export { TopicLoadError, TopicNotFoundError } from './loader/source';
-export { parseExerciseFile, parseManifest } from './loader/parse';
+export { parseExerciseFile, parseFlashcardDeck, parseManifest } from './loader/parse';
+export {
+  cleanInterviewAnswer,
+  extractInterviewAnswer,
+  stripFrontmatter,
+} from './interview/flashcard-text';
+export {
+  parseFlashcardsPracticeSearch,
+  parseTopicsParam,
+  practiceSearchDefaults,
+  topicsToParam,
+  type FlashcardsPracticeSearch,
+  type PracticeDueFilter,
+  type PracticeMode,
+} from './interview/practice-search';

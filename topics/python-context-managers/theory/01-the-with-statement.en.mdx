@@ -1,0 +1,146 @@
+---
+conceptId: the-with-statement
+title: "The with statement: why it exists"
+estimatedMinutes: 45
+---
+
+# with: code that cleans up after itself
+
+You opened a file to read a few lines, processed them, and moved on. Somewhere between open and read an exception fired - bad format, missing key, anything. The program crashed, the stack unwound, control flew to a handler above. The file stayed open: the OS descriptor was never returned, the buffer never flushed. Once it is invisible. In a loop of ten thousand iterations such a leak kills the process on open-file limits.
+
+The `with` statement exists so this does not happen. It ties resource release to leaving the block - any exit: normal, via `return`, or via exception. By the end of this section you will understand the guarantee `with` gives, why it beats manual `try/finally`, and why "close the file" is only a special case of a much broader idea.
+
+## Mental model: a guaranteed finalizer on a code block
+
+Imagine every resource has two operations: "acquire" and "release". Acquire happens at the start, release must happen at the end - always, however work finishes. The problem is that "end" in Python arrives many ways, and holding them all in your head with manual control is hard.
+
+`with` folds both operations into one construct. Block entry performs acquire, block exit performs release. Anything can happen in between and release still runs. The diagram shows both exit paths - calm and exceptional - converging on the same cleanup point.
+
+<Figure caption="Any exit from a with block - normal or via exception - passes through resource release. You cannot bypass cleanup.">
+  <Sketch viewBox="0 0 460 200" title="with exit always passes through cleanup">
+    <SketchBox x={20} y={80} width={110} height={44} accent />
+    <SketchLabel x={75} y={106} mono accent>acquire</SketchLabel>
+    <SketchBox x={175} y={80} width={110} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={106} mono>block body</SketchLabel>
+    <SketchBox x={330} y={80} width={110} height={44} accent />
+    <SketchLabel x={385} y={106} mono accent>release</SketchLabel>
+    <SketchArrow from={[130, 102]} to={[173, 102]} accent />
+    <SketchArrow from={[285, 102]} to={[328, 102]} accent />
+    <SketchArrow from={[230, 80]} to={[360, 50]} curve dashed />
+    <SketchLabel x={300} y={42} muted>exception</SketchLabel>
+    <SketchArrow from={[362, 50]} to={[385, 78]} dashed />
+  </Sketch>
+</Figure>
+
+What most people first remember as "`with open(...)` closes the file" is general: `with` manages any resource that knows how to acquire and release itself. A file is the first and clearest example, not the only one.
+
+## The problem without with
+
+Start with honest manual control. You need to read a file and not leave the descriptor open even if reading fails.
+
+```python
+f = open("data.txt")
+try:
+    content = f.read()
+finally:
+    f.close()
+```
+
+The `finally` block guarantees `f.close()` runs for any `try` outcome. That works, and `with` does roughly the same underneath. But notice the manual discipline: declare `f` before `try`, do not forget `finally`, do not confuse what to close. Tolerable for one file. For three nested resources it becomes a `try/finally` nest where mistakes are easy.
+
+## The same code with with
+
+`with` hides `try/finally` inside itself. You write only what you do with the resource; acquire and release are the construct's job.
+
+```python
+with open("data.txt") as f:
+    content = f.read()
+```
+
+Here `open("data.txt")` returns a file object, `with` calls acquire on it, binds the result to `f`, runs the body, and - whatever happens - calls release, closing the file. After the block `f` is closed. Two lines instead of five, and there is nowhere to forget `close()`.
+
+<Callout type="info">
+The name after `as` is what the acquire step returned. For a file that is the open file object, so `f` inside the block is an open file. That is not always true: acquire may return another object or `None`. We return to this in the protocol section.
+</Callout>
+
+## Multiple resources in one with
+
+When there are several resources, list them comma-separated in one `with`. They release in reverse acquisition order - like a stack of plates: last placed, first removed.
+
+```python
+with open("in.txt") as src, open("out.txt", "w") as dst:
+    dst.write(src.read())
+```
+
+`src` is acquired first, then `dst`. On exit `dst` releases first, then `src`. That matters when resources depend on each other: the outer resource usually releases last, and reverse acquisition order provides that.
+
+<MarginNote label="Parentheses for wrapping">From Python 3.10 you can wrap everything after `with` in parentheses to break a long resource list across lines. Before that you used a backslash or nested `with`.</MarginNote>
+
+## Try it: exit via exception
+
+Below `with` manages not a file but a simple object that prints its acquire and release. Inside the block an exception is raised on purpose. Run the code: the release line prints even on failure - before the exception leaves the block. Remove `raise` and run again: message order is the same; release is still last.
+
+<PyDemo
+  title="Release happens on any exit"
+  code={`class Tracker:
+    def __enter__(self):
+        print("acquire")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        print("release")
+        return False
+
+try:
+    with Tracker():
+        print("body")
+        raise ValueError("fail")
+except ValueError:
+    print("caught outside")`}
+/>
+
+Change messages, add a second line in the body, move `raise` to the start - in every scenario `release` prints before control reaches `except`. That is the guarantee `with` exists for.
+
+## This will surprise you: with does not swallow exceptions by itself
+
+It is easy to think that because `with` cleans up so neatly it also "puts out" the error. It does not. By default `with` releases the resource and propagates the exception unchanged - which is why the example above needed an outer `except`.
+
+```python
+with open("data.txt") as f:
+    raise RuntimeError("oops")
+print("never reached")
+```
+
+The file will be closed, but `RuntimeError` flies upward as if nothing happened, and `print` never runs. `with` is responsible for resource release, not error handling. Only a specially written context manager can suppress exceptions - a separate protocol capability you should not abuse.
+
+## Common mistakes
+
+- **Thinking `with` is only for files.** A file is the showcase example. The same operator manages locks, network connections, DB transactions, temporary settings. If an object has acquire/release, it belongs in `with`.
+- **Using a resource after the block.** After leaving `with` the file is closed. `f.read()` outside the block raises `ValueError: I/O operation on closed file`. Do everything you need inside the block.
+- **Expecting `with` to swallow errors.** It releases the resource but propagates the exception. Need handling - write `try/except` around or inside `with`; those are different jobs.
+- **Opening a file without `with` "just quickly".** "I will close right away" works until an exception or early `return` slips between `open` and `close`. `with` removes that entire class of bugs.
+
+<Detail summary="Why with beats close() at the end of a function">
+
+It is tempting to write `f = open(...)`, work, and call `f.close()` at the function end. That breaks on three things. First - an exception between `open` and `close`: control jumps, `close` never runs. Second - early `return` from the middle: it also skips `close`. Third - `break`/`continue` in a loop.
+
+`try/finally` closes all three holes but needs manual discipline per resource. `with` is `try/finally` built into syntax and tied to an object that knows how to release itself. You cannot forget `finally` because the language writes it. That is why manual `close()` in application code is almost always a sign you should use `with`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "with ties resource release to leaving the block and guarantees it for any outcome - normal, return, or exception.",
+    "with is syntactic try/finally built into the language, so forgetting finally is impossible.",
+    "The name after as is what the acquire step returned; for a file that is the open file object.",
+    "Several resources in one with release in reverse acquisition order.",
+    "By default with does not suppress exceptions: the resource is released but the error propagates.",
+    "with manages any resource with an acquire/release pair, not only files.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - The with statement](https://docs.python.org/3/reference/compound_stmts.html#the-with-statement)
+- [Python documentation - With Statement Context Managers](https://docs.python.org/3/reference/datamodel.html#with-statement-context-managers)
+- [PEP 343 - The "with" Statement](https://peps.python.org/pep-0343/)

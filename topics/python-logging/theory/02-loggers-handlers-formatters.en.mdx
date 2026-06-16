@@ -1,0 +1,169 @@
+---
+conceptId: loggers-handlers-formatters
+title: Logger, Handler, Formatter
+estimatedMinutes: 45
+---
+
+# Three parts every message passes through
+
+In the first section you called `logging.warning(...)` on the module directly and it worked like magic. But `basicConfig` assembled a small pipeline from ready-made parts behind the scenes, and while those parts are invisible, any non-standard request is confusing: "how do I write to file and console at once?", "why is the date printed in one place but not another?", "where did the word `root` come from?". The answer is always the same: a message passes through a chain of three objects, each responsible for one step.
+
+By the end of this section you will assemble that pipeline by hand: create a named logger, attach a handler, set a formatter on the handler - and understand who does what. After that `logging` stops being incantations and becomes a constructor you build for your task.
+
+## Mental model: a record travels a three-station pipeline
+
+When you call `logger.info("hello")`, a `LogRecord` is born with text, level, time, and context. Then it travels the pipeline. **Logger** is the entry point: it decides whether to admit the record by level and passes it to its handlers. **Handler** is the destination: it decides *where* the record goes (console, file, network). **Formatter** is presentation: it turns the record into a string by template. One logger can have several handlers, each with its own formatter.
+
+<Figure caption="A record travels the pipeline: Logger admits it by level, hands it to several Handlers, each Handler formats with its Formatter and writes to its destination.">
+  <Sketch viewBox="0 0 470 250" title="Logger, Handler, Formatter">
+    <SketchBox x={20} y={100} width={90} height={44} accent />
+    <SketchLabel x={65} y={126} mono accent>Logger</SketchLabel>
+    <SketchArrow from={[110, 122]} to={[180, 70]} accent />
+    <SketchArrow from={[110, 122]} to={[180, 174]} accent />
+
+    <SketchBox x={180} y={48} width={100} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={74} mono>Handler A</SketchLabel>
+    <SketchBox x={180} y={152} width={100} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={178} mono>Handler B</SketchLabel>
+
+    <SketchArrow from={[280, 70]} to={[340, 70]} />
+    <SketchArrow from={[280, 174]} to={[340, 174]} />
+    <SketchBox x={340} y={52} width={70} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={74} mono>console</SketchLabel>
+    <SketchBox x={340} y={156} width={70} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={178} mono>file</SketchLabel>
+
+    <SketchLabel x={230} y={120} muted>each Handler has its own Formatter</SketchLabel>
+    <SketchLabel x={65} y={170} muted>entry point</SketchLabel>
+  </Sketch>
+</Figure>
+
+The picture shows the role split: logger decides "admit or not", handler decides "where", formatter decides "how it looks". These three questions are independent, which is why they live on different objects.
+
+## Logger: named entry point
+
+Instead of nameless `root`, create a named logger. The name usually matches the module via `logging.getLogger(__name__)`.
+
+```python
+import logging
+
+logger = logging.getLogger("shop.orders")
+print(logger.name)
+print(logger is logging.getLogger("shop.orders"))
+```
+
+Prints `shop.orders` and `True`. The second matters: `getLogger` with the same name always returns **the same** object. Loggers are a global registry by name, not new objects per call. Configure in one place, get configured elsewhere - normal.
+
+## Handler: where the record goes
+
+A named logger prints nothing by itself - it needs a handler. The most common is `StreamHandler`, writing to a stream (default `stderr`).
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("shop.orders")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+
+logger.info("order 42 placed")
+```
+
+Prints `order 42 placed`. We explicitly created a handler on `sys.stdout` and attached it. Without `addHandler` there is nowhere to write. Note the bare line without time or level - formatting is not set yet.
+
+<Callout type="tip">
+`logging.FileHandler("app.log")` writes to a file, `RotatingFileHandler` rotates by size. All handlers share the same interface, so once you know `StreamHandler` you can attach any handler.
+</Callout>
+
+## Formatter: how a record becomes a string
+
+To give the line shape, set a formatter on the handler with a template referencing record fields via `%(name)s`.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("shop.pay")
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+logger.addHandler(handler)
+
+logger.info("payment accepted")
+```
+
+Prints `INFO [shop.pay] payment accepted`. The formatter inserted level and logger name around the text. Many fields exist: `%(asctime)s` for time, `%(funcName)s` for function name, `%(lineno)d` for line number. Formatter lives on the handler, not the logger - so the same record can look different in console and file.
+
+## One logger - several destinations
+
+The pipeline shines when one logger has several handlers, each formatting differently. This sandbox builds exactly that. Run the code: one `error` message arrives in two streams in two formats. Try raising the second handler's level to `logging.ERROR` via `h2.setLevel(...)` and add `logger.warning("verbose only")` - the warning should hit only the verbose handler.
+
+<PyDemo
+  title="One message, two formats"
+  code={`import logging
+import sys
+
+logger = logging.getLogger("demo.multi")
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+
+h1 = logging.StreamHandler(sys.stdout)
+h1.setFormatter(logging.Formatter("brief: %(message)s"))
+
+h2 = logging.StreamHandler(sys.stdout)
+h2.setFormatter(logging.Formatter("verbose: %(levelname)s [%(name)s] %(message)s"))
+
+logger.addHandler(h1)
+logger.addHandler(h2)
+
+logger.error("database unavailable")`}
+/>
+
+`logger.handlers.clear()` at the start is for the sandbox: without it repeat runs stack handlers and messages print multiple times. That leads to the most common beginner mistake below.
+
+## Edge case: duplicates from repeat addHandler
+
+A logger keeps handlers in a list without deduplication. If setup code runs twice, the record prints twice.
+
+```python
+import logging
+import sys
+
+logger = logging.getLogger("dup")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.addHandler(logging.StreamHandler(sys.stdout))
+
+logger.info("how many times")
+```
+
+Prints **two** lines `how many times`. Repeat `addHandler` **accumulates**, it does not replace: two identical handlers on `stdout` give two outputs. Configure logging once at startup, not per function call, and clear `logger.handlers` before adding if needed.
+
+## Common mistakes
+
+- **Attaching a handler on every request/function.** Handler setup is startup work. Doing it inside a frequently called handler stacks handlers and multiplies logs. Configure once at application init.
+- **Setting formatter on the logger.** Loggers have no `setFormatter` - formatting lives on the handler. The logger does not know which stream a record will use; format depends on destination.
+- **Expecting output from a bare logger.** `getLogger("x").info(...)` with no handler on the logger or ancestors is silent (except lastResort for `WARNING+`). No handler means nowhere to write.
+
+<Detail summary="Why split three objects when one could do it all">
+
+Separation gives independent configuration axes. Filtering level (`logger`) changes per subsystem: module `shop.pay` noisy at DEBUG, rest quiet at INFO. Destination (`handler`) changes per environment: rotated file in production, console locally. Appearance (`formatter`) changes per target: human-readable in console, JSON in a collection file. One object would force those three decisions together and make reuse across environments impossible. The price of flexibility is three objects instead of one - excessive until you need a second axis.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A message passes a three-object pipeline: Logger (admit?), Handler (where?), Formatter (how it looks?).",
+    "logging.getLogger(name) returns the same object for the same name - loggers are a global registry.",
+    "A bare logger without handlers prints nothing; the handler defines stream or file destination.",
+    "Formatter lives on the handler, so one logger can write the same record to different places in different formats.",
+    "addHandler accumulates, it does not replace: repeat setup duplicates lines - configure once at startup.",
+    "The logging.getLogger(__name__) idiom names the logger after the module and places it in the hierarchy.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - Logger, Handler, Formatter](https://docs.python.org/3/library/logging.html#logger-objects)
+- [Python documentation - logging.Formatter and LogRecord attributes](https://docs.python.org/3/library/logging.html#logrecord-attributes)
+- [Python documentation - logging.handlers module](https://docs.python.org/3/library/logging.handlers.html)

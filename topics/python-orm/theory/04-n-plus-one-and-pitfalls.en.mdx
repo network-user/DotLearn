@@ -1,0 +1,171 @@
+---
+conceptId: n-plus-one-and-pitfalls
+title: "The N+1 problem and Session pitfalls"
+estimatedMinutes: 50
+---
+
+# N+1: how one line of code spawns a thousand queries
+
+The most expensive mistake in ORM work is almost invisible in code. The loop `for user in users: print(user.orders)` looks harmless — but if `orders` is lazy, each iteration secretly sends a separate query to the database. On a hundred users that is one hundred and one queries instead of two. The program works, tests on three records pass, and in production the page takes five seconds. This is the N+1 problem, and you need to recognize it because the compiler will not warn you.
+
+By the end of this section you will learn to spot N+1 in SQL logs, fix it with eager loading, understand the `Session` lifecycle (and why an object sometimes "falls off" with `DetachedInstanceError`), and decide soberly when raw SQL is simpler than ORM.
+
+## Where N+1 comes from
+
+Recall lazy loading from the previous section. A relationship is not loaded until you access it. Now put that access in a loop:
+
+```python
+users = session.scalars(select(User)).all()
+for user in users:
+    print(user.name, len(user.orders))
+```
+
+The first line is **one** query: `SELECT * FROM users`. But `user.orders` inside the loop is lazy, so for **each** of N users its own `SELECT * FROM orders WHERE user_id = ?` runs. Total: `1 + N` queries. The name "N+1" comes from here. Each query is fast on its own, but network latency and overhead add up, and at large N the page dies.
+
+<Figure caption="Lazy loading in a loop: one query for the list plus one per each of N users. Eager loading stays at two queries for any N.">
+  <BarChart
+    title="Database queries with 100 users"
+    data={[
+      { label: "Lazy (N+1)", value: 101 },
+      { label: "selectinload", value: 2 },
+      { label: "joinedload", value: 1 },
+    ]}
+    highlight={["selectinload", "joinedload"]}
+  />
+</Figure>
+
+## How to spot it: look at the SQL
+
+N+1 is invisible in Python code — it is visible in SQL logs. Enable query echo on the engine, and a flood of identical `SELECT ... WHERE user_id = ?` jumps out immediately.
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("sqlite:///app.db", echo=True)
+```
+
+With `echo=True`, SQLAlchemy prints every query sent. The rule is simple: if the same query shape repeats dozens of times, differing only in the parameter value, that is N+1. The same technique worked with raw SQL from the first section, which is why SQL understanding under ORM matters: the problem is visible only at the query level.
+
+<Callout type="tip">
+Get in the habit of enabling `echo=True` in development and glancing at which SQL your code produces. Most ORM performance problems are "surprisingly many queries", and the only way to notice them is to see the queries.
+</Callout>
+
+## How to fix it: eager loading
+
+The cure is to tell the ORM upfront that you will need the relationship so it loads in bulk, not one at a time.
+
+```python
+from sqlalchemy.orm import selectinload, joinedload
+
+stmt = select(User).options(selectinload(User.orders))
+users = session.scalars(stmt).all()
+for user in users:
+    print(user.name, len(user.orders))
+```
+
+Now there are only two queries: one for users, a second (`selectinload`) for all their orders at once via `WHERE user_id IN (...)`. Eager loading has two main variants:
+
+- **`selectinload`** — a separate query for related objects with an `IN` condition. Good for collections (one-to-many): does not inflate the result and does not duplicate rows.
+- **`joinedload`** — pulls the relationship in the same query via `JOIN`. Good for many-to-one links (`order.user`), but on collections it multiplies parent rows by the number of children.
+
+<Compare
+  leftTitle="selectinload"
+  rightTitle="joinedload"
+  left={<>
+
+A separate second query with `WHERE id IN (...)`. Ideal for one-to-many collections: no duplicate rows, predictable volume.
+
+  </>}
+  right={<>
+
+One query with `JOIN`. Ideal for many-to-one links. On collections it duplicates parent rows — use carefully.
+
+  </>}
+  verdict="Collections — selectinload; link to one object — joinedload."
+/>
+
+## Session lifecycle and DetachedInstanceError
+
+The second class of pitfalls is that ORM objects do not live on their own — they live inside a session. A session is the boundary of a transaction and a "unit of work": it tracks changes and holds a connection. An object loaded by a session is bound to it. When the session is closed (or did `commit` with expire enabled), the object becomes *detached*. Accessing an unloaded lazy relationship on such an object fails.
+
+```python
+with Session(engine) as session:
+    user = session.scalars(select(User)).first()
+print(user.orders)
+```
+
+This line after `with` often fails with `DetachedInstanceError`: the session is closed, `user.orders` is lazy, and it tries to hit the database through a dead connection. Fixes: access relationships inside `with` while the session is alive; preload what you need eagerly (`selectinload`); or configure the session not to expire attributes after commit (`expire_on_commit=False`). Main point: an object's lifetime is bounded by the session's lifetime.
+
+<Callout type="warning">
+Do not return "live" ORM objects outside a session expecting to lazily read their relationships. Either load everything needed inside the session, or return simple structures (dicts, dataclass) instead of session-bound models.
+</Callout>
+
+## When raw SQL beats ORM
+
+ORM is excellent for typical "fetch objects, change, save" work. But it is not a silver bullet. Some tasks are simpler, faster, and more honest with raw SQL from the first section:
+
+- **Heavy analytics and reports.** Multi-level aggregations, window functions, tricky `GROUP BY` are expressed directly in SQL; through ORM they become a fight with the abstraction.
+- **Bulk operations.** `UPDATE ... WHERE` on a million rows in one query is incomparably cheaper than loading a million objects, changing, and saving one by one.
+- **Fine-grained performance tuning.** When you need a specific query plan or a database-specific construct, direct SQL gives full control.
+
+SQLAlchemy does not forbid this: the same `session.execute(text("..."))` runs raw SQL inside the same transaction. A mature approach is not "ORM vs SQL" but ORM for object work and raw SQL where it fits better.
+
+<PyDemo
+  title="Counting queries: N+1 vs optimized access"
+  code={`class FakeDB:
+    def __init__(self):
+        self.queries = 0
+    def all_users(self):
+        self.queries += 1
+        return [1, 2, 3, 4, 5]
+    def orders_of(self, user_id):
+        self.queries += 1
+        return [user_id * 10]
+    def orders_of_many(self, user_ids):
+        self.queries += 1
+        return {uid: [uid * 10] for uid in user_ids}
+
+naive = FakeDB()
+users = naive.all_users()
+for uid in users:
+    naive.orders_of(uid)
+print("N+1:", naive.queries)
+
+eager = FakeDB()
+users = eager.all_users()
+eager.orders_of_many(users)
+print("eager:", eager.queries)`}
+/>
+
+Run it: naive access prints `N+1: 6` (1 + 5), eager prints `eager: 2`. Change the number of users and watch the lazy counter grow linearly while eager stays at two.
+
+## Common mistakes
+
+- **Accessing a lazy relationship in a loop.** The main source of N+1. If the relationship is needed on many objects — load it eagerly via `selectinload`/`joinedload`.
+- **Not looking at SQL logs.** N+1 and extra queries are invisible in Python. Without `echo=True` (or a query profiler) you will not notice until things get slow.
+- **Using `joinedload` for large collections.** It multiplies parent rows by the number of children; for one-to-many use `selectinload`.
+- **Returning ORM objects from a closed session.** Lazy access to a relationship after the session closes gives `DetachedInstanceError`. Load what you need inside the session or return simple structures.
+- **Forcing everything through ORM.** For bulk `UPDATE`/`DELETE` and heavy analytics, raw SQL is simpler and orders of magnitude cheaper than loading and saving objects one by one.
+
+<Detail summary="Why N+1 is easy to miss during development">
+
+N+1 is tricky because it is invisible on small data. In tests and local development tables are tiny: 1 + 5 queries finish in milliseconds and the problem does not show. It wakes up in production where N is thousands of rows and the database is across the network with millisecond latency per query. 1 + 5 becomes 1 + 5000, and a page that was instant in development loads for seconds. That is why queries are profiled early and code review watches for relationship access inside loops. Cheaper to spot N+1 by eye in review than to catch it from slow-production complaints.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "N+1 is 1 query for a list plus one per element from lazy relationship access in a loop; invisible in Python code.",
+    "Spot N+1 in SQL logs (echo=True): the same query repeats dozens of times, only the parameter changes.",
+    "Fix with eager loading: selectinload for collections (separate query with IN), joinedload for many-to-one (JOIN).",
+    "An ORM object lives inside a session; lazy relationship access after it closes gives DetachedInstanceError.",
+    "Load what you need inside the session or return simple structures, not session-bound models.",
+    "Raw SQL fits better than ORM for heavy analytics, bulk UPDATE/DELETE, and fine-grained performance tuning.",
+  ]}
+/>
+
+## References
+
+- [SQLAlchemy - relationship loading strategies (selectinload, joinedload)](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html)
+- [SQLAlchemy - Session lifecycle and object states](https://docs.sqlalchemy.org/en/20/orm/session_state_management.html)
+- [SQLAlchemy - executing raw SQL via text()](https://docs.sqlalchemy.org/en/20/core/connections.html#sqlalchemy.sql.expression.text)

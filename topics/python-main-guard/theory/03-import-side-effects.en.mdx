@@ -1,0 +1,143 @@
+---
+conceptId: import-side-effects
+title: Import side effects and multiprocessing
+estimatedMinutes: 45
+---
+
+# When a forgotten guard becomes an infinite loop
+
+While only people import your module, unguarded top-level code at worst prints an extra line. But there is a library that makes a forgotten guard genuinely dangerous — `multiprocessing`. To start a new process on Windows and in some modes on other systems, Python takes your main file and **imports it again** in the child process. If run code is not hidden under a guard, the child process on import reaches the line that creates processes again — and creates more, and more. Instead of parallel work you get a flood of processes that overwhelms the machine.
+
+By the end of this section you will understand what an "import side effect" is, why `multiprocessing` re-imports the main module, and why for process-based programs a guard is not style but a requirement for correctness. This ties together everything you learned: a module runs on import, `__name__` separates run from import, and the guard splits them — here you see why that matters in practice.
+
+## Mental model: a side effect is an action on import
+
+An import side effect is any observable action that happens simply because the module was imported: printing, writing a file, a network request, starting a thread or process. Defining a function is not a side effect — it only creates an object without "doing" anything in the outside world. But calling that function at module level is a side effect. The guard exists so dangerous side effects happen only on run, not on every import.
+
+<Figure caption="Without a guard the child process on re-import reaches spawn again and creates new processes — a chain reaction.">
+  <Sketch viewBox="0 0 470 230" title="Re-import in multiprocessing">
+    <SketchBox x={20} y={90} width={140} height={50} accent />
+    <SketchLabel x={90} y={120} mono accent>main</SketchLabel>
+    <SketchBox x={200} y={30} width={140} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={270} y={57} mono>child 1</SketchLabel>
+    <SketchBox x={200} y={155} width={140} height={45} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={270} y={182} mono>child 2</SketchLabel>
+    <SketchBox x={370} y={30} width={90} height={45} hatched />
+    <SketchLabel x={415} y={57} size={11} muted>more...</SketchLabel>
+    <SketchArrow from={[160, 105]} to={[200, 55]} accent />
+    <SketchArrow from={[160, 125]} to={[200, 175]} accent />
+    <SketchArrow from={[340, 52]} to={[370, 52]} dashed />
+  </Sketch>
+</Figure>
+
+The diagram shows how one unguarded `spawn` line starts a chain reaction: each child process imports the main file, executes `spawn` again, and spawns new children. The guard breaks the chain — in the child process `__name__` is not `"__main__"`, and the run line is skipped.
+
+## First — a harmless side effect
+
+Before `multiprocessing`, look at a simpler side effect: opening a file at module level.
+
+```python
+log = open("audit.log", "a")
+
+def record(event):
+    log.write(event + "\n")
+```
+
+The file `audit.log` opens for writing the moment this module is imported — even if you never call `record`. Any `import` leaves an open file descriptor behind. That is a side effect: import "did" something in the outside world. Often that is not what you want, and the fix is moving the open inside a function or under a guard.
+
+## Why `multiprocessing` re-imports the module
+
+When you create a process through `multiprocessing`, the child process needs somewhere to get the code of the function it should run. With the `spawn` start method (the only one on Windows and available everywhere) the child starts "from scratch" and, to reach that function, imports your main module again. That is where everything from the first section applies: import executes the file body top to bottom.
+
+```python
+from multiprocessing import Process
+
+def worker():
+    print("working in a separate process")
+
+Process(target=worker).start()
+```
+
+Without a guard this `Process(...).start()` line sits at module level. In the child process on re-import it runs again, creates another process, that imports the module, reaches the same line — and so on. On Windows such a file can spawn hundreds of processes in seconds.
+
+## The guard breaks the chain reaction
+
+It is enough to move startup under the guard. In the child process the main module is imported, so its `__name__` equals the module name, not `"__main__"` — and the run line is skipped.
+
+```python
+from multiprocessing import Process
+
+def worker():
+    print("working in a separate process")
+
+if __name__ == "__main__":
+    Process(target=worker).start()
+```
+
+Now process startup happens only in the original main process. The child imports the module for the `worker` definition, passes the guard, and does its job. The same `__name__` variable that seemed minor in the first section here saves you from a cascade of processes.
+
+<Callout type="warning">
+The `multiprocessing` documentation calls protecting the main module with `if __name__ == "__main__"` mandatory for the `spawn` start method. That is not a style recommendation but a correctness requirement: without it a process-based program may fail to start or loop spawning processes.
+</Callout>
+
+## Try the idea yourself
+
+The sandbox does not start real processes, but you can model re-import logic. Below, `simulate_import` mimics what happens when a module runs as `"__main__"` and when imported. Run as-is, then change `current_name` from `"__main__"` to `"worker_module"` and run again: in the second case "run" does not happen — exactly how a child process passes the guard.
+
+<PyDemo
+  title="How the guard behaves with different __name__ values"
+  code={`def spawn_processes():
+    return "spawning process"
+
+def simulate(current_name):
+    if current_name == "__main__":
+        return spawn_processes()
+    return "import: skipped"
+
+current_name = "__main__"
+print(simulate(current_name))
+print(simulate("worker_module"))`}
+/>
+
+The first call prints "spawning process", the second — "import: skipped". That is real guard behavior in two modes: with `"__main__"` the run block works; with an imported name it stays silent.
+
+## Surprise: on Linux the same code may "work" by accident
+
+For a long time on Linux the default start method was `fork`: the child process got a copy of the parent's memory and did **not** re-import the main module. So unguarded code was often forgiven there, and programmers got used to thinking "mine works without a guard". But that luck is fragile: the same code on Windows or with explicit `set_start_method("spawn")` breaks instantly, and in recent Python versions the default on some platforms shifts toward modes where re-import happens. Code that "worked without a guard" is not correct code — it is code that got lucky on a platform.
+
+```python
+import multiprocessing as mp
+print(mp.get_start_method())
+```
+
+This line prints the current start method — `fork`, `spawn`, or `forkserver`. If you ever debug mysterious process behavior on someone else's machine, start here: the start method explains why the same code behaves differently on different systems.
+
+## Common mistakes
+
+- **Relying on "it works for me" with Linux/fork.** Missing a guard may be forgiven on one platform and break on another. For portable process code a guard is mandatory.
+- **Leaving heavy initialization outside the guard in process programs.** Everything at module level runs in each child process on re-import. Expensive setup goes under the guard or inside functions.
+- **Treating a function definition as a side effect.** `def worker(): ...` alone starts nothing — the problem is calling it at module level. Under the guard you hide the call, not the definition.
+- **Forgetting the guard in scripts that later become modules.** A small script without a guard may someday be imported — and its run code fires in someone else's program. Cheaper to write the guard from the start.
+
+<Detail summary="fork, spawn, and forkserver — how they differ">
+
+`multiprocessing` can start processes three ways. `fork` copies the process with its memory and imported modules — fast, but unsafe with threads and unavailable on Windows. `spawn` starts a clean interpreter and re-imports needed modules — slower, portable, and it requires a guard. `forkserver` is a compromise: a server process forks workers from a prepared state. You can read the current method with `multiprocessing.get_start_method()` and set it with `set_start_method()`. Important consequence: once `spawn` or `forkserver` is in play, the main module is imported in child processes, and without a guard run code executes again. Details are in the official docs on start methods.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An import side effect is any action (printing, writing, starting a process) that happens simply because the module was imported.",
+    "With the spawn start method multiprocessing re-imports the main module in each child process.",
+    "Without a guard unprotected run code runs again in child processes and can spawn a flood of processes.",
+    "The guard works because in a child process __name__ equals the module name, not \"__main__\", and the run block is skipped.",
+    "The multiprocessing docs treat protecting the main module with a guard as mandatory, not stylistic.",
+    "Code that «works without a guard» on Linux/fork is platform luck, not portable correctness.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation — multiprocessing: Safe importing of main module](https://docs.python.org/3/library/multiprocessing.html#safe-importing-of-main-module)
+- [Python documentation — Contexts and start methods](https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods)
+- [Python documentation — `__main__` — Top-level code environment](https://docs.python.org/3/library/__main__.html)

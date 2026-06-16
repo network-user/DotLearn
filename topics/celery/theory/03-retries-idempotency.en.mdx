@@ -1,0 +1,150 @@
+---
+conceptId: retries-idempotency
+title: "Retries, errors, and task idempotency"
+estimatedMinutes: 45
+---
+
+# A task may run twice, and you should not fear that
+
+A worker took a task "charge 100 from account", started executing, successfully charged the money - and then the worker server rebooted. The broker never got acknowledgement that the task finished and, by its rules, will give the task to another worker. That one charges another 100. Nobody wrote buggy code: each component behaved as promised. In a distributed system "execute exactly once" is not a default guarantee, and you design assuming otherwise.
+
+This topic is scary but underpins reliable queue usage. By the end you will understand why a task can run more than once, how Celery retries failed tasks, and - most importantly - what it means to make a task idempotent so a repeat does not corrupt data. This is not exotic: it is ordinary email sending and charging money.
+
+## Mental model: retry is normal, duplicate is your problem
+
+Celery follows at-least-once delivery. When a worker takes a task, it stays in the broker as "delivered but not acknowledged". The worker acknowledges only when finished. If the worker dies before ack, the broker treats the task as incomplete and delivers it again. Outcome: the task runs at least once, but may run twice or three times.
+
+<Figure caption="Worker crashed after side effect but before ack. Broker sees no ack and redelivers - the same effect happens a second time.">
+  <Sketch viewBox="0 0 480 200" title="At-least-once and retry">
+    <SketchBox x={20} y={80} width={90} height={50} accent radius={8} />
+    <SketchLabel x={65} y={109} mono accent>broker</SketchLabel>
+    <SketchBox x={180} y={20} width={120} height={50} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={240} y={42} mono>worker A</SketchLabel>
+    <SketchLabel x={240} y={58} muted size={11}>crashed before ack</SketchLabel>
+    <SketchBox x={180} y={130} width={120} height={50} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={240} y={159} mono>worker B</SketchLabel>
+    <SketchBox x={370} y={80} width={90} height={50} radius={8} dashed />
+    <SketchLabel x={415} y={101} mono>effect</SketchLabel>
+    <SketchLabel x={415} y={119} muted size={11}>twice</SketchLabel>
+    <SketchArrow from={[110, 95]} to={[180, 50]} />
+    <SketchArrow from={[110, 115]} to={[180, 150]} accent />
+    <SketchArrow from={[300, 45]} to={[370, 95]} dashed />
+    <SketchArrow from={[300, 155]} to={[370, 115]} dashed />
+  </Sketch>
+</Figure>
+
+The broker honestly guarantees delivery to a worker but cannot guarantee the side effect happens exactly once - it only sees ack, not what happened inside the task. Practical conclusion: since duplicates are possible, write tasks so a repeat is safe. That property is idempotency.
+
+<MarginNote label="acknowledge">Ack is the worker's signal to the broker "forget this task, I handled it". By default Celery sends ack early (when the task is taken), but for critical tasks switch to late ack - acknowledgement after execution.</MarginNote>
+
+## Retries on failure: retry
+
+Separate from broker redelivery, a task can explicitly retry on temporary errors (external API 503, network blip). Give the task access to itself with `bind=True` and call `self.retry`.
+
+```python
+@app.task(bind=True, max_retries=3)
+def fetch_rate(self, currency):
+    try:
+        return call_external_api(currency)
+    except TimeoutError as exc:
+        raise self.retry(exc=exc, countdown=10)
+```
+
+`bind=True` makes the task object the first argument (`self`). On timeout `self.retry(...)` does not rerun immediately - it re-enqueues with `countdown=10` seconds delay and raises a special exception to stop the current attempt. `max_retries=3` caps attempts: after three retries the task fails permanently. Retry only temporary errors: if the API returns "no such currency", retry will not help and only clogs the queue.
+
+<Callout type="tip">
+Increase delay between retries (larger `countdown` each time) - exponential backoff. Hammering a down external service every second keeps it down. In Celery enable with `retry_backoff=True` and `retry_jitter=True`.
+</Callout>
+
+## What an idempotent task means
+
+A task is idempotent if running it again with the same arguments leaves the system in the same state as running it once. One run or five - same outcome. Compare two bonus-grant versions.
+
+```python
+@app.task
+def grant_bonus(user_id):
+    user = User.objects.get(id=user_id)
+    user.balance += 100
+    user.save()
+```
+
+Not idempotent: each repeat adds another 100. Two runs - plus 200. Make it idempotent by tying the grant to a unique event.
+
+```python
+@app.task
+def grant_bonus(user_id, bonus_id):
+    _, created = Bonus.objects.get_or_create(
+        id=bonus_id, defaults={"user_id": user_id, "amount": 100}
+    )
+    if created:
+        User.objects.filter(id=user_id).update(balance=F("balance") + 100)
+```
+
+Now `bonus_id` is the idempotency key. `get_or_create` creates the bonus record only once; on repeat `created` is `False` and balance is untouched. However many times the task runs, the bonus is applied once. The key must come from outside (producer generates it), not inside the task - otherwise each repeat generates a new key and protection fails.
+
+## Three ways to make a task idempotent
+
+Idempotency is not magic - one of these patterns per operation.
+
+<Figure caption="Idempotency is built on a key: a repeat with the same key recognizes the operation already ran and skips the effect.">
+  <Sketch viewBox="0 0 460 170" title="Deduplication by key">
+    <SketchBox x={20} y={30} width={120} height={44} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={80} y={57} mono>task #1</SketchLabel>
+    <SketchBox x={20} y={96} width={120} height={44} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={80} y={123} mono>task #1</SketchLabel>
+    <SketchLabel x={80} y={155} muted size={11}>repeat</SketchLabel>
+    <SketchBox x={200} y={62} width={110} height={50} accent radius={8} />
+    <SketchLabel x={255} y={84} mono accent>key?</SketchLabel>
+    <SketchBox x={370} y={30} width={80} height={44} radius={8} dashed />
+    <SketchLabel x={410} y={57} mono>effect</SketchLabel>
+    <SketchBox x={370} y={96} width={80} height={44} radius={8} />
+    <SketchLabel x={410} y={123} mono muted size={12}>skip</SketchLabel>
+    <SketchArrow from={[140, 52]} to={[200, 80]} />
+    <SketchArrow from={[140, 118]} to={[200, 92]} accent />
+    <SketchArrow from={[310, 75]} to={[370, 52]} dashed />
+    <SketchArrow from={[310, 95]} to={[370, 118]} />
+  </Sketch>
+</Figure>
+
+First: **unique operation key** (like `bonus_id` above) - a unique database constraint physically prevents a duplicate. Second: **check state before acting** - a "send order" task first checks `if order.status != "sent"`. Third: **naturally idempotent overwrite** - `set status = "done"` or `PUT` on a specific key can repeat safely; unlike `balance += 100`, which accumulates.
+
+Pick the pattern for the operation. Unique key record - for "create exactly once". State check - when there is an explicit status flag. Overwrite by key - for "set value" operations already safe to repeat.
+
+## Edge cases
+
+**Retry after partial execution.** The nastiest case: task did the first of two side effects (charged money), failed before the second (did not deliver goods), and retried. If idempotency covers only the second step, money is charged twice. Every external effect in the task must be idempotent, not just the last.
+
+**This will surprise you: even a "successful" task can repeat.** Repeats seem to belong only to failed tasks. But if a worker finished fully and crashed right before sending ack (or the network to the broker blipped), the broker never learns of success and redelivers. Idempotency is needed even for tasks that "never fail" inside: the duplicate may come from outside the task code.
+
+**Retry is not forever, but the window is large.** `max_retries` limits explicit `self.retry`, not broker redelivery when a worker dies. Do not assume "after N attempts it definitely stops": design so any repeat is safe, not just the first few.
+
+## Common mistakes
+
+- **Assuming exactly-once execution.** Celery gives at-least-once. Any task with external effects must survive repeat without corrupting data - not optional, a correctness requirement.
+- **Retrying the wrong errors.** `self.retry` fits temporary failures (timeout, 503, network drop). Retrying `ValueError` from bad input is pointless: same data next time, and you fill the queue with doomed retries.
+- **Generating the idempotency key inside the task.** A new `uuid4` each run means the repeat gets a new key and deduplication fails. Producer creates the key once and passes it in arguments.
+
+<Detail summary="acks_late and why early ack sometimes loses tasks">
+
+By default the worker sends ack as soon as it takes the task from the broker, then starts execution. If the worker dies during execution, the broker already considers the task acknowledged and will not redeliver - the task is lost. Acceptable for fast unimportant tasks; not for critical ones.
+
+`acks_late=True` (on the task or globally) moves ack to after completion. Then a crash during execution leads to redelivery - the task is not lost. The cost is the duplicates this whole section is about: a task that failed near the end runs again. So `acks_late` and idempotency go together: late ack gives "we will not lose it", idempotency gives "we survive the duplicate". Enabling `acks_late` without idempotency trades lost tasks for double execution, which is often worse.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Celery guarantees at-least-once, not exactly-once: a task may run again after worker failure.",
+    "self.retry (with bind=True) re-enqueues with delay; retry only temporary errors and use exponential backoff.",
+    "An idempotent task yields the same outcome on one or many runs - a correctness requirement, not an option.",
+    "Idempotency uses a stable key from arguments: unique constraint, state check, or overwrite operation.",
+    "The idempotency key is generated by the producer and passed in arguments; generating it inside the task is pointless.",
+    "Every external effect in a task must be idempotent, not only the last step - repeat may come after partial execution.",
+  ]}
+/>
+
+## References
+
+- [Celery - Task retry (Tasks Guide)](https://docs.celeryq.dev/en/stable/userguide/tasks.html#retrying)
+- [Celery - Should I use retry or acks_late](https://docs.celeryq.dev/en/stable/faq.html#faq-acks-late-vs-retry)
+- [Celery - Task options (acks_late, idempotency)](https://docs.celeryq.dev/en/stable/userguide/tasks.html#task-options)

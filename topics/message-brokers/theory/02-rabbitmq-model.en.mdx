@@ -1,0 +1,149 @@
+---
+conceptId: rabbitmq-model
+title: "RabbitMQ: exchange, queue, binding, ack"
+estimatedMinutes: 45
+---
+
+# RabbitMQ: a smart broker that decides where to put each message
+
+In the previous section the broker was a black box: producer puts, consumer takes. But how does a message find its queue? RabbitMQ has a detailed answer, and it works differently from what many expect. In RabbitMQ the producer does not write to a queue directly - it does not even know which queues exist. It sends a message to an exchange with a label - a routing key. Then the broker, using preconfigured rules, routes the message into the right queues.
+
+That is the "smart broker, dumb consumer" model: routing logic lives on the server, clients stay simple. By the end of this section you will distinguish the four AMQP building blocks - exchange, queue, binding, routing key - understand the four exchange types, and know why without manual acknowledgment RabbitMQ loses messages when a consumer crashes.
+
+## Mental model: mail sorting
+
+Imagine a post office. You do not put a letter straight into someone else's mailbox - you hand it to the sorting desk (exchange) with an address on the envelope (routing key). The sorter looks at rules (bindings), decides which slots (queues) get a copy, and distributes. The recipient (consumer) takes mail only from their slot and knows nothing about the sorting desk.
+
+<Figure caption="The producer publishes to an exchange with a routing key. The exchange, via bindings, decides which queues get a copy. The consumer reads only from its queue.">
+  <Sketch viewBox="0 0 460 220" title="Routing in RabbitMQ">
+    <SketchBox x={20} y={85} width={70} height={44} />
+    <SketchLabel x={55} y={111} mono size={11}>producer</SketchLabel>
+    <SketchBox x={140} y={80} width={80} height={54} accent />
+    <SketchLabel x={180} y={101} mono accent size={11}>exchange</SketchLabel>
+    <SketchLabel x={180} y={119} muted size={9}>direct</SketchLabel>
+    <SketchArrow from={[90, 107]} to={[140, 107]} />
+    <SketchLabel x={115} y={96} mono size={9}>key=eu</SketchLabel>
+
+    <SketchBox x={300} y={30} width={80} height={40} />
+    <SketchLabel x={340} y={54} mono size={10}>queue.eu</SketchLabel>
+    <SketchBox x={300} y={100} width={80} height={40} />
+    <SketchLabel x={340} y={124} mono size={10}>queue.us</SketchLabel>
+    <SketchBox x={300} y={170} width={80} height={40} />
+    <SketchLabel x={340} y={194} mono size={10}>queue.all</SketchLabel>
+
+    <SketchArrow from={[220, 95]} to={[300, 50]} accent />
+    <SketchLabel x={255} y={62} muted size={9}>eu</SketchLabel>
+    <SketchArrow from={[220, 110]} to={[300, 120]} dashed />
+    <SketchLabel x={255} y={128} muted size={9}>us</SketchLabel>
+    <SketchArrow from={[220, 125]} to={[300, 190]} accent />
+    <SketchLabel x={250} y={172} muted size={9}>#</SketchLabel>
+
+    <SketchBox x={410} y={40} width={40} height={40} />
+    <SketchLabel x={430} y={64} mono size={9}>C1</SketchLabel>
+    <SketchArrow from={[380, 50]} to={[410, 55]} />
+  </Sketch>
+</Figure>
+
+On the diagram a message with `key=eu` lands in `queue.eu` (exact match) and in `queue.all` (bound with `#`, "everything"), but not in `queue.us`. Key point: the producer did not choose queues - it only labeled the envelope `eu`. Bindings, configured in advance, made the decision. Change bindings and routing changes without touching the producer.
+
+## Four building blocks: exchange, queue, binding, routing key
+
+Roles one by one. **Queue** - a named buffer where messages wait for a consumer; the only place a message is actually stored. **Exchange** - the producer's entry point; it does not store anything, only routes. **Binding** - a rule linking "from this exchange into this queue when this condition holds". **Routing key** - a label on the message that the binding compares to its condition.
+
+```text
+publish(exchange="orders", routing_key="order.eu", body=...)
+binding: orders --[order.eu]--> queue.eu
+binding: orders --[order.#]--> queue.audit
+```
+
+A message with key `order.eu` goes to both queues: `queue.eu` catches the exact key, `queue.audit` catches the whole `order.*` family via pattern `order.#`. One message - as many copies as matching bindings. If no binding matches, the message is silently dropped by default - a common source of "where did the message go".
+
+<Callout type="warning">
+A message published to an exchange with no matching binding disappears without error. The producer thinks it sent successfully. Before debugging the consumer, check that a binding exists.
+</Callout>
+
+## Four exchange types answer "where"
+
+The exchange type defines how a binding compares the routing key. There are four, covering almost all routing scenarios.
+
+```text
+direct  : routing key equals binding key exactly   ("order.eu" == "order.eu")
+topic   : pattern match with * and #               ("order.eu" matches "order.#")
+fanout  : routing key ignored, copy to every queue
+headers : route by message headers, not by key
+```
+
+`direct` - point-to-point: key either equals or not. `topic` - hierarchical keys like `order.eu.priority`, where `*` replaces one word and `#` any number of words. `fanout` - pure broadcast: every bound queue gets a copy, key ignored. `headers` is rare - route by header key-value pairs instead of a string key.
+
+<Figure caption="topic exchange: key order.eu.vip matches pattern order.# (any tail) and order.*.vip (exactly one word between), but not order.us.#.">
+  <RowFilterFigure
+    columns={["binding pattern", "meaning"]}
+    rows={[
+      { cells: ["order.#", "order and any tail"], kept: true },
+      { cells: ["order.*.vip", "order, one word, vip"], kept: true },
+      { cells: ["order.us.#", "us branch only"], kept: false },
+      { cells: ["payment.#", "different family"], kept: false },
+    ]}
+    condition="routing key = order.eu.vip"
+    title="Topic exchange pattern matching"
+  />
+</Figure>
+
+Read the table as "what catches a message with key `order.eu.vip`": patterns `order.#` and `order.*.vip` match and deliver a copy; `order.us.#` and `payment.#` miss. The producer still chose nothing - it only set key `order.eu.vip`; binding patterns decided.
+
+## Ack: a message is deleted only after acknowledgment
+
+Reliability gets serious here. A consumer took a message - can it be deleted from the queue immediately? If you delete it and the consumer crashes before finishing work, the message is lost forever. So RabbitMQ has manual acknowledgment: the message stays in the queue (unacked) until the consumer explicitly sends `ack`. Only then does the broker delete it.
+
+```text
+1. consumer receives message      -> status: unacked
+2. consumer finished successfully -> sends ack -> broker deletes
+3. consumer crashed before ack    -> broker returns message to queue
+```
+
+If the consumer closes the connection without acknowledging, RabbitMQ treats the message as unprocessed and gives it to another consumer (or the same one after restart). That is at-least-once: the message is not lost, but after a bad crash it may arrive again. The opposite is auto ack: the broker deletes on delivery, before processing. Faster, but any consumer crash means loss.
+
+<Callout type="tip">
+By default use manual ack and acknowledge only after work is really done and its result is saved. Reserve auto ack for streams where losing an individual message is acceptable (for example metrics).
+</Callout>
+
+## Edge case: prefetch and the "greedy" consumer
+
+Here is what surprises newcomers. Without prefetch the broker may deliver hundreds of unacked messages to one consumer at once - it "grabbed" them while a second consumer idles. Instead of even load one worker is buried, another bored, and if the greedy one crashes its whole batch returns to the queue at once.
+
+```text
+prefetch = 1  : broker gives the next message only after ack of the previous
+prefetch = N  : consumer may have up to N unacked messages at once
+```
+
+`prefetch=1` gives fair distribution: the next message goes to whoever just freed up. Ideal for long uneven tasks. For short uniform messages a tiny prefetch adds round-trips; a modest value like 10-50 improves throughput. Unlimited default is almost always wrong.
+
+## Common mistakes
+
+- **Publishing to a queue directly, bypassing the exchange.** In pure AMQP the producer always writes to an exchange. "Direct queue send" in clients is sugar: the message goes to the nameless default exchange with routing key equal to the queue name. You need to understand this or topic and fanout routing look like magic.
+- **Leaving auto ack for speed.** Auto ack deletes on delivery. Any consumer crash loses the message. Speed bought at the price of data loss is a bad deal except for clearly optional streams.
+- **Forgetting unmatched bindings.** A message published "to nowhere" vanishes silently. If the consumer gets nothing, first check that a binding exists and its pattern matches the key.
+
+<Detail summary="What happens on failure: dead-letter and return">
+
+When a consumer rejects a message (`nack`/`reject`) without requeue, or TTL expires, or the queue overflows, the message can be redirected to a dead-letter exchange (DLX) - a separate exchange bound to a "quarantine" queue. Failed messages pile up there for manual inspection or later retry with delay. Without DLX a rejected message without requeue simply disappears. DLX is the standard way to build retry with exponential backoff: the rejected message goes to a queue with TTL, and when TTL expires it returns for reprocessing.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "In RabbitMQ the producer writes to an exchange with a routing key, not to a queue; bindings on the broker side decide the route.",
+    "Queue is the only storage for a message; exchange only routes and stores nothing.",
+    "Exchange type sets the matching rule: direct (exact), topic (pattern with * and #), fanout (all), headers (by headers).",
+    "A message with no matching binding vanishes silently - a common cause of 'lost' messages.",
+    "Manual ack deletes only after processing confirmation and gives at-least-once; auto ack deletes on delivery and loses data on crash.",
+    "prefetch limits unacked messages per consumer and balances load across workers.",
+  ]}
+/>
+
+## Links
+
+- [RabbitMQ - AMQP 0-9-1 Concepts](https://www.rabbitmq.com/tutorials/amqp-concepts.html)
+- [RabbitMQ - Consumer Acknowledgements and Publisher Confirms](https://www.rabbitmq.com/confirms.html)
+- [RabbitMQ - Consumer Prefetch](https://www.rabbitmq.com/consumer-prefetch.html)
+- [RabbitMQ - Dead Letter Exchanges](https://www.rabbitmq.com/dlx.html)

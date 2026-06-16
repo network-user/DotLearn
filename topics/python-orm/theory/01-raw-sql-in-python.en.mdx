@@ -1,0 +1,196 @@
+---
+conceptId: raw-sql-in-python
+title: "Raw SQL in Python: DB-API, parameters, transactions"
+estimatedMinutes: 50
+---
+
+# Before you reach for an ORM, learn to talk to the database directly
+
+You already know how to write SQL. Now you need to run it from Python: open a connection, send a query, pull rows back into your program. The standard library gives you `sqlite3` for this — and it is important to work through this layer by hand before hiding it behind an ORM. Developers who understand that an ORM ultimately drives a cursor and sends text strings debug problems in minutes, not hours.
+
+By the end of this section you will be able to open a connection and cursor, run a query and fetch results, substitute user data safely through parameters (and explain why an f-string in a query is a security hole), and manage a transaction with `commit` and `rollback` without forgetting to close resources with a context manager.
+
+## Connection, cursor, result — a three-step pipeline
+
+Every database operation in Python follows the same path. First you open a *connection* (`Connection`) — a channel to a database file or server. Then you get a *cursor* (`Cursor`) from it — the object through which queries are sent and answers read. The cursor runs SQL with `execute`, and you fetch result rows with `fetchone`, `fetchall`, or by iterating the cursor in a loop.
+
+<Figure caption="Data flows left to right: Connection holds the channel, Cursor sends SQL and pulls rows, fetch hands them to Python. commit writes changes back to the database.">
+  <PipelineFigure
+    title="DB-API: query path"
+    stages={[
+      { label: "connect()", note: "Connection: channel to the database" },
+      { label: "cursor()", note: "Cursor: send SQL" },
+      { label: "execute(sql)", note: "query sent to the database", active: true },
+      { label: "fetchall()", note: "rows returned to Python" },
+      { label: "commit()", note: "changes persisted" },
+    ]}
+  />
+</Figure>
+
+A minimal session fits in a few lines. Create a table, insert a couple of rows, read them back:
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+cur = conn.cursor()
+cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+cur.execute("INSERT INTO users (name, age) VALUES ('Анна', 30)")
+cur.execute("INSERT INTO users (name, age) VALUES ('Борис', 17)")
+rows = cur.execute("SELECT name, age FROM users").fetchall()
+print(rows)
+```
+
+This prints `[('Анна', 30), ('Борис', 17)]`. Each result row is a tuple, and `fetchall` collects them into a list. The `:memory:` string means a database that lives only in RAM — ideal for examples and tests, because no file remains after the program ends.
+
+`fetchone` returns the next single row (or `None` when rows are exhausted); `fetchall` returns all remaining rows at once. Iterating the cursor in a loop reads rows one at a time without loading the entire result into memory — how large result sets are handled.
+
+```python
+for row in cur.execute("SELECT name FROM users"):
+    print(row[0])
+```
+
+## Never build a query with an f-string
+
+Here is the most important point in this section. Suppose a user name comes from outside — a form, a command-line argument — and you want to find it in the database. It is tempting to assemble the query as a string:
+
+```python
+name = "Анна"
+cur.execute(f"SELECT * FROM users WHERE name = '{name}'")
+```
+
+This works until `name` turns hostile. Substitute `name = "'; DROP TABLE users; --"` and the f-string assembles two queries: a harmless `SELECT` and a command to drop the table. The database obediently runs both. That is **SQL injection**: data that should have been a value breaks through and becomes code.
+
+<Callout type="warning" title="The golden rule of database work">
+User data never goes directly into query text. You write the SQL; values travel through a separate channel — parameters. The boundary between "query code" and "data" must not depend on what the data contains.
+</Callout>
+
+The correct approach is to leave a *placeholder* in the SQL and pass the value as the second argument to `execute`. In `sqlite3` the placeholder is a question mark `?`:
+
+```python
+name = "'; DROP TABLE users; --"
+rows = cur.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchall()
+print(rows)
+```
+
+This prints `[]`: the database honestly searches for a user with that wild name, finds none, and returns an empty list. The table is intact. The driver sent the value separately from the query text, so no quotes or semicolons inside `name` can change the SQL structure — they remain just characters in the searched string.
+
+The figure shows how parameterization splits two streams: query text and values reach the database through separate channels and meet only inside, where the value can no longer become code.
+
+<Figure caption="With an f-string, data is pasted into text and can become code. With a parameter, text and value travel separately — the value stays a value.">
+  <Sketch viewBox="0 0 460 200" title="Parameterization vs f-string">
+    <SketchLabel x={90} y={24} weight="600">f-string (unsafe)</SketchLabel>
+    <SketchBox x={20} y={40} width={150} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={66} mono size={11}>SELECT ... '{name}'</SketchLabel>
+    <SketchArrow from={[170, 62]} to={[260, 62]} />
+    <SketchBox x={260} y={40} width={120} height={44} dashed />
+    <SketchLabel x={320} y={66} size={11}>text = code+data</SketchLabel>
+    <SketchLabel x={95} y={120} weight="600" accent>parameter (safe)</SketchLabel>
+    <SketchBox x={20} y={136} width={150} height={44} accent />
+    <SketchLabel x={95} y={162} mono size={11} accent>WHERE name = ?</SketchLabel>
+    <SketchArrow from={[170, 158]} to={[260, 158]} accent />
+    <SketchBox x={260} y={136} width={120} height={44} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={320} y={162} size={11}>value separate</SketchLabel>
+  </Sketch>
+</Figure>
+
+Parameters also solve a second problem — escaping. The name `O'Brien` with an apostrophe would break an f-string (the apostrophe would close the SQL string literal), but through a parameter it passes without any escaping concern. Named placeholders (`:name`) are supported too and read more clearly when there are many parameters: `execute("... WHERE name = :name", {"name": name})`.
+
+## Transactions: all or nothing
+
+`execute` with `INSERT` or `UPDATE` changes data, but the change lives only inside a *transaction* — an unfinished set of modifications. Until you call `conn.commit()`, those changes are not persisted: other processes cannot see them, and a crash rolls them back entirely. `commit` means "all good, persist"; `rollback` means "something went wrong, undo everything since the last commit".
+
+This gives atomicity: related changes either apply together or not at all. The classic example is transferring money between accounts: debit and credit must both happen or neither.
+
+```python
+try:
+    cur.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 1")
+    cur.execute("UPDATE accounts SET balance = balance + 100 WHERE id = 2")
+    conn.commit()
+except Exception:
+    conn.rollback()
+    raise
+```
+
+If the second `UPDATE` fails, `rollback` undoes the first too: the money does not vanish from account 1 without appearing on account 2. Without transactions there could be a window between two `execute` calls where the hundred dollars exist nowhere.
+
+## Try it yourself
+
+Run the code: it finds a user by name through a parameter. Now substitute a string with a quote and semicolon in `name` — for example `"'; DROP TABLE users; --"` — and confirm the table is intact and the result is empty. Then replace `?` with an f-string and repeat the attack to see the difference with your own eyes (safe on an in-memory database).
+
+<PyDemo
+  title="Parameter vs injection"
+  code={`import sqlite3
+
+conn = sqlite3.connect(":memory:")
+cur = conn.cursor()
+cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+cur.execute("INSERT INTO users (name, age) VALUES ('Анна', 30), ('Борис', 17)")
+conn.commit()
+
+name = "Анна"
+rows = cur.execute("SELECT name, age FROM users WHERE name = ?", (name,)).fetchall()
+print(rows)`}
+/>
+
+## A context manager closes resources for you
+
+A connection is a resource: it must be closed, otherwise the database file stays locked and uncommitted changes are lost. A manual `conn.close()` is easy to skip if an exception fires between open and close. The `with` context manager handles that.
+
+```python
+with sqlite3.connect("app.db") as conn:
+    cur = conn.cursor()
+    cur.execute("INSERT INTO users (name, age) VALUES (?, ?)", ("Вера", 29))
+```
+
+Here is a subtlety many people trip on. `with sqlite3.connect(...)` manages the *transaction*, not closing the connection: on exit without an exception it commits; on exception it rolls back. The connection itself is not closed by this block. To guarantee closing, wrap the connection in `contextlib.closing` or use a connection pool — which, incidentally, SQLAlchemy will handle for you in later sections.
+
+## When behavior surprises you
+
+Without `commit`, your `INSERT` statements exist only inside the current connection and disappear when it closes if that happens outside a `with` block. The program finishes with no errors, but the database file is empty — because nobody committed the transaction.
+
+```python
+conn = sqlite3.connect("app.db")
+conn.execute("INSERT INTO users (name) VALUES ('Глеб')")
+conn.close()
+```
+
+After this, `Глеб` will not appear in the database: the connection closed without reaching `commit`, and the unfinished transaction rolled back. The fix is either an explicit `conn.commit()` before closing, or a `with` block that commits for you.
+
+## Common mistakes
+
+- **Gluing a query with an f-string or `+`.** Any query with user data in the text is a potential injection. Always use `?`/`:name` and pass values as a separate argument, even when "the data is surely safe": correctness must not depend on data being safe.
+- **Passing a single parameter without a tuple.** `execute("... = ?", name)` fails: the second argument must be a sequence. For one value write `(name,)` — the comma matters, otherwise it is not a tuple, just parentheses.
+- **Forgetting `commit`.** `INSERT`/`UPDATE`/`DELETE` without a subsequent `commit` (and outside a `with` block) are not saved. The query "succeeded", but the data was not written.
+
+<Detail summary="Why ? and :name, not driver-side text substitution">
+
+It may look like the driver simply escapes the value and inserts it into the text for you. On many databases something more reliable happens: a query with placeholders is sent to the server once as a *prepared* template, and values travel in a separate message. The server compiles a query plan from the template, where a parameter slot is a "hole", and the value physically cannot affect the plan structure.
+
+A side benefit is performance: the same template with different values can be reused without re-parsing SQL. In `sqlite3` this shows up through `executemany`, which runs one query over a list of parameter sets:
+
+```python
+cur.executemany(
+    "INSERT INTO users (name, age) VALUES (?, ?)",
+    [("Анна", 30), ("Борис", 17), ("Вера", 29)],
+)
+```
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Database work follows a pipeline: connect() gives Connection, cursor() gives Cursor, execute() sends SQL, fetch* retrieves rows.",
+    "Never glue a query with an f-string or concatenation — that opens SQL injection; pass data through ? or :name placeholders as a separate argument.",
+    "Parameterization also solves escaping: apostrophes and special characters inside a value stay data, not syntax breakers.",
+    "Changes live in a transaction; conn.commit() persists them, conn.rollback() undoes everything since the last commit — atomicity.",
+    "with sqlite3.connect(...) manages the transaction (commit/rollback) but does not close the connection; use closing() or a pool to close.",
+    "INSERT/UPDATE/DELETE without commit (outside a with block) are not saved — a common cause of \"the program ran but there is no data\".",
+  ]}
+/>
+
+## Links
+
+- [Python documentation — sqlite3](https://docs.python.org/3/library/sqlite3.html)
+- [PEP 249 — Python Database API Specification](https://peps.python.org/pep-0249/)
+- [sqlite3 — placeholders and injection protection](https://docs.python.org/3/library/sqlite3.html#sqlite3-placeholders)

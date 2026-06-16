@@ -1,0 +1,147 @@
+---
+conceptId: counting-queries
+title: "Counting queries: connection.queries, assertNumQueries"
+estimatedMinutes: 45
+---
+
+# Making invisible queries visible
+
+In the previous section we learned query count matters more than time: it is deterministic and immediately shows whether load grows with data. Now we need to obtain that number. Django stores executed queries on the connection object - one line to read them. To keep regression from returning in a month, lock the same number in a test: `assertNumQueries(3)` fails as soon as someone adds a hidden database trip.
+
+By the end of this section you will count queries in any code block via `connection.queries`, reset the counter where you need a pinpoint measurement, and lock expected query count in a test that catches N+1 on CI. Two tools from standard Django - no extra dependencies.
+
+## Mental model: the connection keeps a query log
+
+Each Django database connection has `connection.queries` - a list of dicts, one per executed SQL. Each dict holds the SQL text (`sql`) and execution time (`time`). The list accumulates for the connection lifetime in the current thread: each new query is appended.
+
+<Figure caption="connection.queries is a growing log: each executed SQL is appended with query text and time.">
+  <Sketch viewBox="0 0 420 190" title="connection.queries log">
+    <SketchLabel x={210} y={22} mono weight="bold">connection.queries</SketchLabel>
+    <SketchBox x={30} y={36} width={360} height={30} />
+    <SketchLabel x={50} y={56} mono size={11} anchor="start">[0] SELECT * FROM orders</SketchLabel>
+    <SketchBox x={30} y={72} width={360} height={30} />
+    <SketchLabel x={50} y={92} mono size={11} anchor="start">[1] SELECT * FROM customers WHERE id=1</SketchLabel>
+    <SketchBox x={30} y={108} width={360} height={30} />
+    <SketchLabel x={50} y={128} mono size={11} anchor="start">[2] SELECT * FROM customers WHERE id=2</SketchLabel>
+    <SketchBox x={30} y={144} width={360} height={30} accent dashed />
+    <SketchLabel x={210} y={164} mono size={11} accent>new query appended here</SketchLabel>
+  </Sketch>
+</Figure>
+
+The length of this list is the query count. To count queries for a specific code block, save length before and take the difference after - or more often reset the log, run code, and read `len(connection.queries)`.
+
+<Callout type="warning">
+`connection.queries` is populated only when `DEBUG = True`. With `DEBUG = False` in production the log is off to save memory under load. Count queries in dev or tests, not on the production server.
+</Callout>
+
+## Counting queries directly
+
+The most direct way is log length before and after the code you care about. `reset_queries()` clears the log so old queries do not skew the count.
+
+```python
+from django.db import connection, reset_queries
+
+reset_queries()
+orders = list(Order.objects.all())
+for order in orders:
+    _ = order.customer.name
+print(len(connection.queries))
+```
+
+With a hundred orders in the database this prints `101`: one for the list and one hundred for customers. Change `Order.objects.all()` to `Order.objects.select_related("customer")` and the number becomes `1`: related customers come in the same query via JOIN. The log makes hidden N+1 a visible number you can target.
+
+Note `list(...)` around the queryset: without it the query would run lazily later, possibly after your measurement window. Wrapping in `list` forces execution between reset and count so the measurement reflects this code block, not a deferred query that surfaces later. General pattern for manual measurement: materialize the queryset where you count it.
+
+## connection.queries shows SQL text, not just count
+
+The log stores each query's text, so you see not only how many but *what* hit the database. That helps distinguish N+1 (many nearly identical queries) from one heavy query.
+
+```python
+reset_queries()
+list(Order.objects.all()[:3])
+for q in connection.queries:
+    print(q["sql"][:40], q["time"])
+```
+
+Output shows a line starting with `SELECT` and time as a string. When dozens of lines differ only in `WHERE id = ?`, that is classic N+1: the same query repeated with different keys. Reading texts you see a concrete repeating SELECT, not abstract "many queries".
+
+This text analysis separates N+1 from other slowness. One heavy query with high `time` and a complex plan is fixed differently - index or SQL rewrite, not relation prefetch. The log shows both: N+1 gives many short identical lines; a heavy query gives one long line with noticeable time. Without reading texts you can pick the wrong fix.
+
+<MarginNote label="time is a string">The `time` field in `connection.queries` is a string like `"0.001"`, not a number. Convert to `float` before summing timings.</MarginNote>
+
+## assertNumQueries: lock the count in a test
+
+Manual counting helps while debugging, but tomorrow someone adds a new relation access in a view and N+1 returns unnoticed. Django provides `assertNumQueries(n)` - a context manager that checks exactly `n` queries ran inside the block.
+
+```python
+from django.test import TestCase
+
+class OrderQueryTests(TestCase):
+    def test_list_uses_two_queries(self):
+        Customer.objects.create(name="Ada")
+        with self.assertNumQueries(1):
+            list(Order.objects.select_related("customer"))
+```
+
+If the count is wrong the test fails and shows the actual number and executed SQL list. Expectation "this endpoint does at most one query" becomes an executable contract: someone adds a hidden trip - CI goes red.
+
+<Callout type="tip">
+Write `assertNumQueries` for endpoints where query count should stay constant regardless of data. Then the test catches N+1 regression: add lazy access - count rises - test fails.
+</Callout>
+
+## Edge case: query count depends on fixture data
+
+`assertNumQueries(1)` passes on an empty database even for naive N+1 code: no orders - no loop - no extra queries. Surprise: test is green, production has N+1. Fixture should contain at least two related rows - then naive code does at least three queries and `assertNumQueries(1)` catches it.
+
+```python
+def test_no_n_plus_one(self):
+    c = Customer.objects.create(name="Ada")
+    Order.objects.create(customer=c, total=10)
+    Order.objects.create(customer=c, total=20)
+    with self.assertNumQueries(1):
+        for o in Order.objects.select_related("customer"):
+            _ = o.customer.name
+```
+
+Two orders is the minimum where naive `Order.objects.all()` would do three queries instead of one. With one order the gap between "1" and "1+1=2" is too small to catch regression reliably; with two, N+1 shows as rising query count.
+
+## Typical mistakes
+
+- **Counting queries with `DEBUG = False`.** The log is empty and `len(...)` always returns zero. Tests handle counting for `assertNumQueries`, but for manual log reads ensure `DEBUG` is `True`.
+- **Forgetting `reset_queries()` before measuring.** The log accumulates from connection start. Without reset, setup queries inflate the count.
+- **Hard-coding query count on an empty fixture.** `assertNumQueries(1)` on a database without related rows cannot distinguish naive from optimized code. Put at least two rows in the fixture so N+1 appears.
+
+<Detail summary="CaptureQueriesContext - when you need count and SQL text">
+
+`assertNumQueries` checks count but does not return query texts for analysis. When a test needs both count and SQL inspection, use `CaptureQueriesContext`:
+
+```python
+from django.test.utils import CaptureQueriesContext
+from django.db import connection
+
+with CaptureQueriesContext(connection) as ctx:
+    list(Order.objects.select_related("customer"))
+print(len(ctx.captured_queries))
+print(ctx.captured_queries[0]["sql"])
+```
+
+`captured_queries` matches `connection.queries` format but is collected only for the block, without manual `reset_queries()`. Useful when you need to verify JOIN inside queries, not a per-row subquery.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "connection.queries is a log of executed SQL; its length equals query count but fills only when DEBUG=True.",
+    "reset_queries() clears the log to measure queries for a specific code block.",
+    "The log stores SQL text: dozens of nearly identical SELECTs with different id values signal N+1.",
+    "assertNumQueries(n) turns expected query count into an executable test that catches N+1 regression on CI.",
+    "Test fixtures need at least two related rows or N+1 will not appear on them.",
+    "CaptureQueriesContext gives count and query texts without manual reset_queries().",
+  ]}
+/>
+
+## References
+
+- [Django - Examining executed queries (connection.queries)](https://docs.djangoproject.com/en/stable/faq/models/#how-can-i-see-the-raw-sql-queries-django-is-running)
+- [Django - assertNumQueries](https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TransactionTestCase.assertNumQueries)
+- [Django - CaptureQueriesContext](https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.utils.CaptureQueriesContext)

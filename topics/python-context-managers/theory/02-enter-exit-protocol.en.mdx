@@ -1,0 +1,148 @@
+---
+conceptId: enter-exit-protocol
+title: "The __enter__/__exit__ protocol"
+estimatedMinutes: 45
+---
+
+# What makes an object a context manager
+
+In the previous section `with` seemed like magic: it somehow knew how to acquire a file and close it. There is no magic - there is a contract. Any object with two methods of the right names can follow `with`, and the language calls those methods at the right moments. A file, a lock, a database connection - all are context managers because they obey the same protocol.
+
+By the end of this section you will write your own context manager from scratch, know exactly what the exit method receives and in what order, and understand the subtle but important point: how an object can suppress an exception - and why doing that accidentally is dangerous.
+
+## Mental model: two methods that with calls
+
+A context manager is an object with two methods. `__enter__` runs on block entry and returns what lands in the variable after `as`. `__exit__` runs on exit and receives information about how the block finished. `with` is essentially a wrapper that invokes these two methods at the right times in the right order.
+
+<Figure caption="with calls __enter__ on entry and __exit__ on exit. The block body runs between them; __exit__ runs on both success and exception.">
+  <PipelineFigure
+    title="Context manager lifecycle"
+    stages={[
+      { label: "__enter__", note: "acquire, return value for as", active: true },
+      { label: "with body", note: "your code" },
+      { label: "__exit__", note: "release, handle exception", active: true },
+    ]}
+  />
+</Figure>
+
+When you write `with cm as x`, Python calls `cm.__enter__()`, assigns the result to `x`, runs the body, then on any outcome calls `cm.__exit__(...)`. Everything needed to manage a resource fits in these two methods.
+
+## Minimal context manager
+
+Build the simplest context manager that acquires nothing but reports entry and exit. That is enough to see the whole protocol.
+
+```python
+class Greeter:
+    def __enter__(self):
+        print("enter")
+        return "hello"
+
+    def __exit__(self, exc_type, exc, tb):
+        print("exit")
+        return False
+```
+
+`__enter__` prints "enter" and returns a string - not the `Greeter` object itself but what the method returned. `__exit__` prints "exit" and returns `False`. Why `False` - explained below; for now accept it means "do not suppress the exception".
+
+## What lands in the variable after as
+
+A common misconception: "after `as` you always get the context manager itself." In fact you get the result of `__enter__`, and the class author decides that.
+
+```python
+with Greeter() as value:
+    print(value)
+```
+
+Prints `enter`, then `hello`, then `exit`. `value` is the string `"hello"` because `__enter__` returned it - not the `Greeter()` object. For files `__enter__` returns the file itself, so it looks like `as` gives "the same object"; that is the file implementation's choice, not a general rule.
+
+<Callout type="tip">
+If `__enter__` returns nothing (no `return`), `as` gets `None`. Context managers used "for effect" (for example temporarily changing a setting) are often written without `as` - nothing useful to return.
+</Callout>
+
+## What __exit__ receives
+
+The exit method always receives three arguments besides `self`. If the block finished normally, all three are `None`. If an exception occurred inside the block, they carry type, exception object, and traceback.
+
+```python
+class Watcher:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        print("type:", exc_type)
+        return False
+```
+
+Call `with Watcher(): pass` - prints `type: None`. Call `with Watcher(): raise ValueError("x")` - prints `type: <class 'ValueError'>`. From these arguments `__exit__` can behave differently: roll back a transaction on error, commit on success.
+
+## Try it: how with sees an exception
+
+Run the code. Context manager `Resource` prints which exception closed it. Change `raise KeyError(...)` to `pass` and run again - all three `__exit__` arguments become `None`. That is how the object learns whether the block succeeded.
+
+<PyDemo
+  title="__exit__ receives exception details"
+  code={`class Resource:
+    def __enter__(self):
+        print("opened")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            print("closed: all good")
+        else:
+            print(f"closed: error {exc_type.__name__}: {exc}")
+        return False
+
+try:
+    with Resource():
+        raise KeyError("no key")
+except KeyError:
+    print("handled outside")`}
+/>
+
+On error the `__exit__` line prints first, then the outer `except`. Release always happens before the exception leaves the block.
+
+## This will surprise you: return from __exit__ can swallow an exception
+
+The non-obvious part: what `__exit__` returns decides the exception's fate. Return a "false" value (`False`, `None`, nothing) - the exception propagates as usual. Return a "true" value (`True`) - Python treats the exception as handled and **suppresses** it: the block ends quietly as if no error occurred.
+
+```python
+class Swallow:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return True
+
+with Swallow():
+    raise ValueError("vanish without trace")
+print("program continues")
+```
+
+Only `program continues` prints. `ValueError` happened but `__exit__` returned `True` and Python swallowed it. Powerful but dangerous: accidental `return True` in `__exit__` turns a context manager into a black hole that silently eats any error in the block. Default to explicit `return False` or no return, and suppress only deliberately.
+
+<MarginNote label="Why three arguments">The triple `(exc_type, exc, tb)` is exactly what `sys.exc_info()` returns. That is how Python's exception system is structured, and `__exit__` receives it in the same form.</MarginNote>
+
+## Common mistakes
+
+- **Returning `True` from `__exit__` "just in case".** That suppresses all exceptions in the block, including unexpected ones. Default to `False` (or nothing) and suppress only a specific error type deliberately.
+- **Forgetting `return self` in `__enter__` when the resource is needed inside the block.** Without `return`, `as` is `None` and `with cm as x: x.do()` raises `AttributeError`. If the object is needed in the body, return it explicitly.
+- **Doing release in `__enter__`.** Acquire in `__enter__`, release in `__exit__`. Swap them and the resource closes before you use it.
+- **Ignoring `__exit__` arguments.** Transactions, retries, error logging - all decided from `exc_type`. A method that ignores its arguments cannot distinguish success from failure.
+
+<KeyTakeaways
+  items={[
+    "A context manager is an object with __enter__ and __exit__; with calls them.",
+    "__enter__ performs acquire and returns the value for the variable after as.",
+    "After as lies the result of __enter__, not necessarily the manager itself.",
+    "__exit__ always receives (exc_type, exc, tb): all None on success, exception details on error.",
+    "A true return from __exit__ suppresses the exception; default to False to avoid swallowing errors accidentally.",
+    "Acquire in __enter__, release in __exit__; do not swap them.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - With Statement Context Managers](https://docs.python.org/3/reference/datamodel.html#with-statement-context-managers)
+- [Python documentation - contextmanager protocol](https://docs.python.org/3/library/stdtypes.html#typecontextmanager)
+- [PEP 343 - The "with" Statement](https://peps.python.org/pep-0343/)

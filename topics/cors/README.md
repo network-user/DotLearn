@@ -13,3 +13,21 @@
 Нет.
 
 Generated via `lesson-forge`.
+
+## English
+
+# CORS and same-origin policy
+
+Why the browser blocks requests from one site to another site's API and how the server allows it. For anyone writing frontend or backend who first hit "blocked by CORS policy": what origin and same-origin policy are, how simple requests differ from preflight, what `Access-Control-*` headers do, how credentials work, and how to read the console error instead of randomly changing config.
+
+## Concepts
+
+1. Same-origin policy: what and why (`same-origin-policy`)
+2. Simple requests and preflight (`simple-vs-preflight`)
+3. Headers, credentials, and debugging errors (`headers-credentials-debug`)
+
+## Prerequisites
+
+None.
+
+Generated via `lesson-forge`.

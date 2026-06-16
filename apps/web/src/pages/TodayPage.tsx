@@ -183,7 +183,7 @@ const ReviewSection = ({ due }: { due: DueCard[] | undefined }) => {
   const rate = useCallback(
     (rating: FlashcardRating) => {
       if (!current) return;
-      void reviewFlashcard(current.slug, current.card.id, rating);
+      void reviewFlashcard(current.deckSlug, current.card.id, rating);
       setReviewed((value) => value + 1);
       advance();
     },
@@ -274,7 +274,7 @@ const ReviewSection = ({ due }: { due: DueCard[] | undefined }) => {
                   <span className="eyebrow text-fg-subtle">
                     {flipped ? tCards('back') : tCards('front')}
                   </span>
-                  <span className="truncate text-[11px] text-fg-subtle">{current.title}</span>
+                  <span className="truncate text-[11px] text-fg-subtle">{current.sourceLabel}</span>
                 </div>
                 <div className="flex flex-1 items-center justify-center py-6">
                   <AnimatePresence mode="wait" initial={false}>

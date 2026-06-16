@@ -1,0 +1,139 @@
+---
+conceptId: delivery-guarantees
+title: Delivery guarantees and idempotency
+estimatedMinutes: 45
+---
+
+# Delivery guarantees: why "deliver exactly once" is harder than it looks
+
+A consumer processed message "charge 100 rubles", but the connection dropped before it could ack to the broker. The broker got no ack and treats the message as unprocessed - so it will deliver again. The consumer charges another 100 rubles. Or the other order: the consumer acked, then crashed before finishing the charge - and the broker already deleted the message, thinking work was done. Money not charged, and nothing to retry. The same failure gives either a duplicate or a loss - depending on whether you ack or work first.
+
+This is not a flaw of one broker; it is fundamental in distributed systems: there is always a gap between "processed" and "acked" where failure can slip in. By the end of this section you will distinguish at-most-once, at-least-once, and exactly-once; understand why honest exactly-once is unreachable in the general case; and know how to build an idempotent consumer for which retries are safe.
+
+## Mental model: do we ack or work first?
+
+Everything comes down to the order of two actions: acknowledge receipt (ack) and do the work. Ack first - failure between ack and work loses the message (broker already deleted it). Work first - failure between work and ack redelivers the message (broker never got ack). There is no third "safe" order in general: you risk loss or duplicate.
+
+<Figure caption="Ack before work - risk of loss (failure erases unprocessed work). Work before ack - risk of duplicate (failure repeats done work). Idempotency removes harm from duplicates.">
+  <Sketch viewBox="0 0 460 200" title="Order of ack and work">
+    <SketchLabel x={110} y={22} weight="bold">ack -> work</SketchLabel>
+    <SketchBox x={20} y={40} width={80} height={36} />
+    <SketchLabel x={60} y={62} mono size={10}>ack</SketchLabel>
+    <SketchArrow from={[100, 58]} to={[150, 58]} />
+    <SketchBox x={150} y={40} width={80} height={36} dashed />
+    <SketchLabel x={190} y={62} muted size={10}>work</SketchLabel>
+    <SketchLabel x={125} y={96} muted size={9}>failure here = loss</SketchLabel>
+
+    <SketchLabel x={110} y={130} weight="bold">work -> ack</SketchLabel>
+    <SketchBox x={20} y={146} width={80} height={36} accent />
+    <SketchLabel x={60} y={168} mono accent size={10}>work</SketchLabel>
+    <SketchArrow from={[100, 164]} to={[150, 164]} accent />
+    <SketchBox x={150} y={146} width={80} height={36} />
+    <SketchLabel x={190} y={168} mono size={10}>ack</SketchLabel>
+    <SketchLabel x={300} y={168} muted size={9}>failure here = duplicate</SketchLabel>
+  </Sketch>
+</Figure>
+
+The diagram shows the fork: top path (ack before work) risks loss, bottom (work before ack) risks duplicate. Practice almost always picks the bottom - data matters more than extra processing, and loss is irreversible while duplicates can be neutralized. How to neutralize them is the second half of this section. First, name the three modes that follow from this choice.
+
+## Three guarantees: at-most-once, at-least-once, exactly-once
+
+From action order come three delivery levels. They differ in what can happen to a message on failure.
+
+```text
+at-most-once  : 0 or 1 delivery. Loss possible, no duplicates.   (ack before work)
+at-least-once : 1 or more deliveries. Duplicates possible, no loss. (work before ack)
+exactly-once  : exactly 1 effect. No loss, no visible duplicates.  (needs extra mechanics)
+```
+
+at-most-once is cheapest and most dangerous: ack immediately, process later; loss possible, but you never retry. Fine for metrics and telemetry where losing one point is acceptable. at-least-once is the default for most systems: the message will be processed, but maybe more than once. exactly-once is the ideal, but hides a catch we turn to next.
+
+<Callout type="info">
+at-least-once does not mean "delivered once". It means "delivered at least once, sometimes more". Any consumer in at-least-once mode must be ready for a retry.
+</Callout>
+
+## Why honest exactly-once is unreachable
+
+It is tempting to want "exactly once" in the sense of delivery. But delivery goes through the network, and ack can be lost just like the message. Producer sent, broker accepted, but delivery confirmation lost on the way - producer does not know if it arrived, and faces the same choice: retry (duplicate risk) or not (loss risk). You cannot remove this uncertainty, only add more confirmations - they can be lost too.
+
+```text
+producer -> [message arrived] -> broker
+producer <- [ack lost on network] -x  broker
+producer: retry? -> duplicate possible.  don't retry? -> loss possible.
+```
+
+So exactly-once is done at the **effect** level, not delivery. You may deliver several times (at-least-once), but apply the effect exactly once. That is either idempotent consumer logic or a transaction that atomically ties processing and offset commit. What Kafka calls "exactly-once semantics" is about effect inside a Kafka transaction, not magic single delivery over the network.
+
+<Callout type="warning">
+When a vendor promises exactly-once, read the fine print: it is one-effect guarantee under certain conditions (usually inside one system via transactions), not cancellation of network laws. At the boundary with an external system (payment, email) idempotency is still yours.
+</Callout>
+
+## Idempotency: repeat without harm
+
+Since duplicates in at-least-once are inevitable, make retries harmless. An operation is idempotent if applying it once or ten times gives the same outcome. "Set order status to paid" is idempotent: repeat as much as you like, status stays paid. "Add 100 to balance" is not: each repeat adds another hundred.
+
+```text
+idempotent:     order.status = "paid"        (assignment)
+not idempotent: balance = balance + 100       (accumulation)
+fix:            if not seen(message_id): balance += 100; mark_seen(message_id)
+```
+
+Turn a non-idempotent operation safe with deduplication: each message carries a unique id, consumer keeps a set of processed ids and skips work on retry. Key point - atomicity: check "seen this id", the operation itself, and record "now seen" must be one transaction, otherwise failure between them recreates the same race as with ack.
+
+## Deterministic example: idempotent consumer
+
+Trace how deduplication neutralizes retry. Consumer gets a stream where message `m2` arrives twice (simulating at-least-once), and applies each only once thanks to a set of processed ids.
+
+```python
+processed = set()
+balance = 0
+
+def handle(message_id, amount):
+    global balance
+    if message_id in processed:
+        return balance
+    balance += amount
+    processed.add(message_id)
+    return balance
+
+stream = [("m1", 100), ("m2", 50), ("m2", 50), ("m3", 30)]
+for mid, amt in stream:
+    handle(mid, amt)
+print(balance)
+```
+
+Message `m2` appears twice, but the second time `handle` sees its id in `processed` and returns without touching balance. Result `180`: `m1` (100), `m2` (50 once), `m3` (30), duplicate `m2` neutralized. Without `if message_id in processed` balance would be `230` - extra 50 from retry. That is turning at-least-once into "exactly one effect" by the consumer itself.
+
+## Edge case: deduplication is not forever either
+
+An unpleasant detail: you cannot store every processed id forever - the set grows without bound. In practice ids are kept in a window (by time or count), and if a duplicate arrives after its id fell out of the window, it is processed again. So the deduplication window must cover maximum possible retry delay: if the broker can retry after a day, a window shorter than a day leaves a hole. Idempotency via deduplication is not absolute - it is a guarantee within the window.
+
+## Common mistakes
+
+- **Treating at-least-once as safe "as is".** at-least-once guarantees no loss, not no duplicates. A consumer that adds, credits, or sends email without retry protection will do it twice sooner or later.
+- **Believing exactly-once cancels duplicates.** "Exactly-once" solves effect inside one system via transactions, but does not cancel retries at the network boundary with external services. Protect payments and email with idempotency yourself.
+- **Making id check and record separate steps.** If "checked not seen" and "marked seen" are two operations, failure between them brings the duplicate back. Deduplication works only when check, work, and mark are atomic.
+
+<Detail summary="Where message_id comes from and how Kafka does exactly-once">
+
+Deduplication id comes from business data when present (payment number, order id), otherwise the producer generates it and puts it in the message - then retry of the same message carries the same id. Kafka exactly-once combines idempotent producer (broker drops duplicate publishes by sequence number within a session) and transactions where message processing and offset commit are fixed atomically - either both effect and bookmark move, or neither. That gives "exactly one effect" for pipelines living entirely inside Kafka (read-process-write). Once effect goes to an external system - database or payment gateway - exactly-once again rests on receiver idempotency, not the broker.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Delivery guarantee is determined by order of two actions: ack before work risks loss, work before ack risks duplicate.",
+    "at-most-once allows loss without duplicates; at-least-once allows duplicates without loss; exactly-once needs extra mechanics.",
+    "Honest exactly-once at network delivery level is unreachable: confirmation can be lost like the message.",
+    "Exactly-once is done at effect level - via consumer idempotency or transactions, not single delivery.",
+    "An idempotent operation gives the same outcome on any number of retries; non-idempotent ones are protected by deduplication on unique id.",
+    "Id check, work, and processed mark must be atomic; deduplication window must cover maximum retry delay.",
+  ]}
+/>
+
+## Links
+
+- [Kafka - Message Delivery Semantics](https://kafka.apache.org/documentation/#semantics)
+- [Confluent - Exactly-Once Semantics in Apache Kafka](https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/)
+- [RabbitMQ - Reliability Guide](https://www.rabbitmq.com/reliability.html)
+- [Microservices.io - Idempotent Consumer](https://microservices.io/patterns/communication-style/idempotent-consumer.html)

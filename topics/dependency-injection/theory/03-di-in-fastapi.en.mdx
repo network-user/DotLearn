@@ -1,0 +1,198 @@
+---
+conceptId: di-in-fastapi
+title: "Depends in FastAPI"
+estimatedMinutes: 45
+---
+
+# Depends: the framework assembles dependencies for you
+
+In the previous concept you wired dependencies by hand: `OrderService(SmtpMailer())`. With three classes that is tolerable. But a web app has dozens of handlers, each needing a database connection, the current user, settings — and often one depends on another: "user" is derived from "token", and "token" from a request header. Building that chain by hand at the start of every handler is tedious and error-prone. FastAPI takes assembly on itself: you *declare* what the handler needs, and the framework computes dependencies and plugs them in.
+
+It does this through `Depends`. In this section you will see how `Depends` declares a dependency as a function parameter, how FastAPI builds and caches the dependency graph per request, and how to override a dependency for tests. FastAPI is not installed in pyodide, so we reproduce the mechanics in plain Python — but it is the same mechanics inside the framework.
+
+## Mental model: dependency as a parameter
+
+A normal FastAPI argument comes from the request: path, query string, body. `Depends(f)` tells the framework something else: "before calling my handler, call function `f` and pass me its result as this parameter." The dependency stops being request data and becomes the *result of another function* that the framework will run for you.
+
+<Figure caption="FastAPI walks the dependency graph bottom-up: first it computes get_db, then passes the result to the handler. Graph nodes are functions; edges are Depends declarations.">
+  <Sketch viewBox="0 0 460 200" title="Request dependency graph">
+    <SketchBox x={150} y={20} width={160} height={46} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={47} mono size={12}>list_users(...)</SketchLabel>
+    <SketchLabel x={230} y={84} size={11} muted>depends on</SketchLabel>
+    <SketchBox x={150} y={100} width={160} height={44} accent />
+    <SketchLabel x={230} y={126} mono size={12} accent>get_db()</SketchLabel>
+    <SketchArrow from={[230, 100]} to={[230, 67]} accent />
+    <SketchBox x={150} y={160} width={160} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={182} mono size={11}>Settings</SketchLabel>
+    <SketchArrow from={[230, 160]} to={[230, 145]} accent dashed />
+    <SketchLabel x={392} y={126} size={11} muted>computed</SketchLabel>
+    <SketchLabel x={392} y={142} size={11} muted>first</SketchLabel>
+  </Sketch>
+</Figure>
+
+Handler `list_users` needs a database. It does not open a connection itself — it declares parameter `db = Depends(get_db)`. FastAPI sees that declaration, first computes `get_db()` (which may need settings in turn), and only then calls `list_users`, passing the ready `db`. Control is inverted again: the handler declares a need, and the framework handles assembly. Same DI as before — only the injector is FastAPI, not you.
+
+## What it looks like in FastAPI code
+
+A dependency is an ordinary function. `Depends(get_db)` in the handler signature binds the parameter to its result.
+
+```python
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+def get_db():
+    return {"users": ["ana", "boris"]}
+
+@app.get("/users")
+def list_users(db = Depends(get_db)):
+    return db["users"]
+```
+
+When a request hits `/users`, FastAPI calls `get_db()`, gets the dict, passes it to `list_users` as `db`, and returns `db["users"]`. You never wrote `get_db()` yourself — the framework did because it saw `Depends(get_db)`. The handler depends on the *result* of `get_db`, not on how the database is built.
+
+## Dependencies nest inside each other
+
+The main power of `Depends` is composition. A dependency can depend on another, and FastAPI resolves the whole chain.
+
+```python
+def get_token(authorization: str = ""):
+    return authorization.removeprefix("Bearer ")
+
+def get_user(token: str = Depends(get_token)):
+    return {"id": token, "name": "user-" + token}
+
+@app.get("/me")
+def me(user = Depends(get_user)):
+    return user
+```
+
+Here `me` depends on `get_user`, and `get_user` on `get_token`. FastAPI orders execution itself: first `get_token` (reads the header from the request), then `get_user` (gets the token), then `me` (gets the user). You do not write `get_user(get_token(...))` — the graph unfolds automatically. Each dependency handles one small step; the framework assembles composition.
+
+<Callout type="info">
+A dependency can also be a class: `Depends(Settings)` calls `Settings()` and passes the instance. If the object has `__call__`, the framework invokes it like a function. That is handy for injecting settings or stateful services.
+</Callout>
+
+## Caching within a request
+
+If the same dependency is required in several places in the graph, FastAPI by default computes it *once per request* and reuses the result. Otherwise `get_db` in an example with five dependents would open five connections — wasteful and dangerous.
+
+```python
+def get_db():
+    print("opened connection")
+    return object()
+
+@app.get("/report")
+def report(a = Depends(get_db), b = Depends(get_db)):
+    return a is b
+```
+
+Returns `True`, and "opened connection" prints *once*, even though `get_db` appears twice: `a` and `b` are the same object. FastAPI caches the result within one request by dependency function. When caching is not wanted (for example, you need two independent objects), disable it with `Depends(get_db, use_cache=False)`.
+
+<Figure caption="Two references to one dependency within a request yield one computed object: get_db runs once, the result is reused.">
+  <Sketch viewBox="0 0 440 160" title="Per-request dependency cache">
+    <SketchBox x={30} y={30} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={90} y={54} mono size={12}>param a</SketchLabel>
+    <SketchBox x={30} y={95} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={90} y={119} mono size={12}>param b</SketchLabel>
+    <SketchBox x={280} y={62} width={130} height={44} accent />
+    <SketchLabel x={345} y={82} mono size={12} accent>get_db()</SketchLabel>
+    <SketchLabel x={345} y={98} size={10} muted>called 1 time</SketchLabel>
+    <SketchArrow from={[150, 50]} to={[278, 78]} accent />
+    <SketchArrow from={[150, 115]} to={[278, 90]} accent />
+  </Sketch>
+</Figure>
+
+The cache lives exactly one request: the next request starts fresh and computes `get_db` again. That matters — dependencies do not "leak" between requests from different users.
+
+## Try the mechanics yourself
+
+FastAPI cannot run here, so below is a tiny "engine" in plain Python that reproduces the essence of `Depends`: the `Depends` marker stores a function, and `solve` recursively computes dependencies and caches results within one "request". Run the code and see how `get_db` is called once despite two references. Then change `me` so it also depends on `get_db` directly and confirm the connection still opens only once.
+
+<PyDemo
+  title="Mini-Depends in plain Python"
+  code={`class Depends:
+    def __init__(self, func):
+        self.func = func
+
+def solve(func, cache):
+    if func in cache:
+        return cache[func]
+    kwargs = {}
+    for name, default in getattr(func, "deps", {}).items():
+        kwargs[name] = solve(default.func, cache)
+    result = func(**kwargs)
+    cache[func] = result
+    return result
+
+def get_db():
+    print("opened connection")
+    return {"users": ["ana", "boris"]}
+
+def me(a=Depends(get_db), b=Depends(get_db)):
+    return a is b
+
+me.deps = {"a": Depends(get_db), "b": Depends(get_db)}
+
+cache = {}
+print(solve(me, cache))`}
+/>
+
+This engine is a rough simplification (real FastAPI reads dependencies from annotations and handles request data), but the key idea is the same: recursive walk of a function graph with a per-request cache. Once you see that `Depends` is just a deferred function call resolved by the framework, the magic disappears.
+
+## A dependency with yield acts like a context manager
+
+A dependency with `yield` behaves not like an ordinary function but like a context: code *before* `yield` runs on entry, code *after* runs after the response, even if the handler raised. This is the standard way to open a resource and guarantee it closes.
+
+```python
+def get_db():
+    db = {"conn": "open"}
+    try:
+        yield db
+    finally:
+        db["conn"] = "closed"
+```
+
+FastAPI passes the handler what was yielded (the open database), and lines after `finally` run when the request finishes — closing the connection regardless of outcome. The surprising detail: the handler receives the *yielded value*, not the generator function, and cleanup happens not right after `yield` but at the end of the request lifecycle. One dependency manages a resource from open to close, and the handler does not need to think about it.
+
+## Common mistakes
+
+- **Calling the dependency yourself: `Depends(get_db())`.** Pass the *function* `get_db` to `Depends`, not the result of calling it. With parentheses you evaluate `get_db` once at app startup and freeze a single result for all requests — almost never what you want.
+- **Doing heavy work in the handler body, bypassing `Depends`.** If you open a connection or check a token inside the handler, it cannot be reused or replaced in a test. Move such steps into dependencies — then they can be composed and overridden.
+- **Relying on cache between requests.** Dependency cache lives one request. State that must survive requests (connection pool, config) belongs at application level, not in an ordinary dependency.
+- **Forgetting `finally` in a yield dependency.** Without `finally` the resource will not close if the handler raises. Always release resources in `finally`.
+
+<Detail summary="dependency_overrides: replacing a dependency entirely">
+
+The `app` object has a dict `app.dependency_overrides`. Put a pair "original dependency → replacement" in it and FastAPI will call the second everywhere instead of the first — without touching handlers or the dependencies themselves.
+
+```python
+def get_db():
+    return real_database
+
+def fake_db():
+    return {"users": []}
+
+app.dependency_overrides[get_db] = fake_db
+```
+
+After that line every handler that declared `Depends(get_db)` gets the result of `fake_db`. This is the standard FastAPI testing mechanism: in a test you replace the database with an in-memory stub in one line, then clear the dict after the test. It is the same inversion of control — the decision *which* implementation to plug in is made outside, at test app assembly. The next concept covers dependency substitution in tests in detail.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Depends(f) declares a handler parameter as the result of function f: FastAPI calls f itself before the handler and passes the result.",
+    "Dependencies compose — one can depend on another; FastAPI orders graph computation automatically.",
+    "By default a dependency is computed once per request and cached; the cache resets between requests; use_cache=False disables it.",
+    "A yield dependency acts like a context: code after yield (in finally) runs when the request completes and closes the resource in any outcome.",
+    "Pass the function itself to Depends, not its call: Depends(get_db), not Depends(get_db()).",
+    "app.dependency_overrides replaces a dependency entirely — the foundation of testing FastAPI without editing handlers.",
+  ]}
+/>
+
+## References
+
+- [FastAPI — Dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/)
+- [FastAPI — Dependencies with yield](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/)
+- [FastAPI — Testing dependencies with overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)

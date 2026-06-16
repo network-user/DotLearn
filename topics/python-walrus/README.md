@@ -1,13 +1,21 @@
-# Walrus-оператор :=
+# Walrus Operator :=
 
-Разбор оператора присваивания-выражения `:=` («walrus»), который появился в Python 3.8: что он возвращает и где его разрешено ставить, как он сокращает циклы `while` и `comprehensions`, и в каких ситуациях он вредит читаемости и его лучше не использовать. Тема для тех, кто знает базовый Python и хочет уверенно читать и писать современный синтаксис.
+A tour of the assignment expression operator `:=` ("walrus"), introduced in Python 3.8: what it returns, where it is allowed, how it shortens `while` loops and comprehensions, and when it hurts readability and is better avoided. For anyone who knows basic Python and wants to read and write modern syntax confidently.
 
-Концепты:
+## Concepts
 
-1. Walrus := : выражение-присваивание
-2. Walrus в циклах и comprehensions
-3. Читаемость и когда не стоит
+1. Walrus := : assignment expression
+2. Walrus in loops and comprehensions
+3. Readability and when not to use it
 
-Prerequisites: нет.
+## Prerequisites
 
-Generated via `lesson-forge`.
+None.
+
+## Estimated effort
+
+About 2 hours.
+
+## Runtime
+
+`pyodide` — runs entirely in your browser. No setup.

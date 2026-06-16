@@ -1,0 +1,165 @@
+---
+conceptId: protocols-variance
+title: Protocol and variance
+estimatedMinutes: 45
+---
+
+# Protocol and Variance: Type by Shape, Not by Lineage
+
+Python has always favored duck typing: functions do not care what class an object is, as long as it has the right method. But ordinary annotations ignore that. If you write `def total(items: SupportsRead)`, you either introduce a common base class and force everyone to inherit from it, or accept a concrete class in the annotation — and then the analyzer rejects any outsider with the same method, even though at run time it would work fine. Static checking clashes with the dynamic nature of the language.
+
+`Protocol` reconciles them: it describes a type by **shape** — by its set of methods and attributes — without requiring inheritance. And once you have generic containers, a second subtle question appears: if `Cat` is a subtype of `Animal`, is `list[Cat]` a subtype of `list[Animal]`? The answer — variance — is not always "yes," and misunderstanding it breeds a whole class of errors. By the end of this section you will write protocols for structural typing and understand when a container of one type can be substituted for a container of another.
+
+## Mental Model: Match by Shape
+
+A protocol is a declared set of requirements: "a type fits if it has method `read() -> str`." No inheritance: a class matches a protocol automatically as soon as it has everything listed. This is called structural typing — as opposed to nominal typing, where lineage matters (who inherits from whom).
+
+<Figure caption="A class fits a Protocol by having the required methods, not by inheritance: Database matches Readable without inheriting anything.">
+  <Sketch viewBox="0 0 470 200" title="Structural protocol conformance">
+    <SketchBox x={20} y={60} width={150} height={80} accent />
+    <SketchLabel x={95} y={84}>Readable</SketchLabel>
+    <SketchLabel x={95} y={106} mono size={11}>read() -&gt; str</SketchLabel>
+    <SketchLabel x={95} y={125} size={11} muted>Protocol</SketchLabel>
+    <SketchBox x={300} y={20} width={150} height={70} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={44}>Database</SketchLabel>
+    <SketchLabel x={375} y={66} mono size={11}>read() -&gt; str</SketchLabel>
+    <SketchBox x={300} y={115} width={150} height={70} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={139}>File</SketchLabel>
+    <SketchLabel x={375} y={161} mono size={11}>read() -&gt; str</SketchLabel>
+    <SketchArrow from={[300, 52]} to={[172, 90]} dashed />
+    <SketchArrow from={[300, 148]} to={[172, 110]} dashed />
+    <SketchLabel x={235} y={185} size={11} muted>match by shape, no inheritance</SketchLabel>
+  </Sketch>
+</Figure>
+
+That is the power of protocols: a function accepting `Readable` will accept any object with a `read` method — a file, a network response, a database wrapper, a test stub — and the analyzer approves without knowing their hierarchy. You describe the needed shape once, and everything that fits is accepted.
+
+## Declaring a Protocol
+
+A protocol is a class inheriting from `Protocol` with methods left bodyless (`...`). It defines shape, not implementation.
+
+```python
+from typing import Protocol
+
+class Readable(Protocol):
+    def read(self) -> str: ...
+
+def load(source: Readable) -> int:
+    return len(source.read())
+```
+
+Now `load` accepts anything with a `read` method returning a string. A candidate class never mentions `Readable` anywhere — it simply has the method, and that is enough.
+
+```python
+class Report:
+    def read(self) -> str:
+        return "report data"
+```
+
+`load(Report())` passes checking: `Report` structurally conforms to `Readable` even though it does not know about it. If `Report` lacked `read` or it returned something other than a string, the analyzer would flag the mismatch — at check time, not at run time.
+
+## Variance: When list[Cat] Cannot Stand in for list[Animal]
+
+On to the second topic. Suppose `Cat` is a subtype of `Animal`. It seems logical that `list[Cat]` could go where `list[Animal]` is expected. But that is **unsafe**, and the analyzer forbids the substitution.
+
+```python
+class Animal: ...
+class Cat(Animal): ...
+class Dog(Animal): ...
+
+def add_dog(animals: list[Animal]) -> None:
+    animals.append(Dog())
+```
+
+If `list[Cat]` were accepted as `list[Animal]`, `add_dog` would append a `Dog` to a list of cats — and whoever holds that list as `list[Cat]` would hit a dog. A mutable container you can both read from and write to must be **invariant**: `list[Cat]` and `list[Animal]` are not interchangeable in either direction.
+
+<Figure caption="A mutable list is invariant: substituting list[Cat] where list[Animal] is expected would allow adding a Dog to a list of cats.">
+  <Sketch viewBox="0 0 470 180" title="Invariance of a mutable list">
+    <SketchBox x={20} y={60} width={130} height={55} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={85} y={84} mono size={12}>list[Cat]</SketchLabel>
+    <SketchLabel x={85} y={103} size={11} muted>passed as</SketchLabel>
+    <SketchBox x={300} y={60} width={150} height={55} accent />
+    <SketchLabel x={375} y={84} mono size={12}>list[Animal]</SketchLabel>
+    <SketchLabel x={375} y={103} size={11} muted>append(Dog())</SketchLabel>
+    <SketchArrow from={[150, 87]} to={[298, 87]} dashed />
+    <SketchLabel x={235} y={150} size={11} muted>a Dog ended up in the cat list — forbidden</SketchLabel>
+  </Sketch>
+</Figure>
+
+Read-only containers are different. You cannot write into them, so the danger from the example does not arise. Such a container is **covariant**: `Sequence[Cat]` fits where `Sequence[Animal]` is expected, because every cat is an animal and you cannot add a foreign object to the sequence. Practical rule: if a function only reads from a collection, annotate the parameter as `Sequence[...]` or `Iterable[...]`, not `list[...]` — you will accept more correct arguments.
+
+## Try Structural Typing by Hand
+
+Run the code: `load` works with `Report` and with any object that has `read` — inheritance is nowhere required. Now add your own class with a `read` method returning a string, pass an instance to `load`, and run again: it fits automatically. Remove `read` from one class — at run time you get `AttributeError`, and that is exactly the protocol mismatch the analyzer would catch before run time.
+
+<PyDemo
+  title="Structural conformance: anything with the right method fits"
+  code={`class Report:
+    def read(self):
+        return "report data"
+
+class Stub:
+    def read(self):
+        return "stub"
+
+def load(source):
+    return len(source.read())
+
+print(load(Report()))
+print(load(Stub()))`}
+/>
+
+Both objects are accepted because both have `read`. Neither `Report` nor `Stub` inherits a common ancestor — shape alone links them, and that is enough for the protocol.
+
+## Edge Case: isinstance with a Protocol Requires @runtime_checkable
+
+This may surprise you: by default you cannot use a protocol in `isinstance`. Protocols are a static-checking tool, and `isinstance(obj, Readable)` without preparation raises `TypeError`. To allow run-time checking, mark the protocol with `@runtime_checkable` — but even then only **presence** of methods is checked, not their signatures.
+
+```python
+from typing import Protocol, runtime_checkable
+
+@runtime_checkable
+class Readable(Protocol):
+    def read(self) -> str: ...
+
+class Report:
+    def read(self) -> str:
+        return "x"
+
+print(isinstance(Report(), Readable))
+```
+
+It prints `True`: the decorator enabled checking, and `Report` passed by having a `read` method. But note: `runtime_checkable` only looks at method names. It will confirm conformance even if `read` takes wrong arguments or returns a non-string — full signature checking is only done by the static analyzer.
+
+## Common Mistakes
+
+- **Forcing classes to inherit from the protocol.** The point of `Protocol` is that inheritance is not needed: conformance is determined by having the methods. Inheriting from a protocol is allowed for self-checking, but not required.
+- **Annotating a parameter as `list[...]` when `Sequence[...]` would suffice.** `list` is invariant and accepts only an exact match; `Sequence` is covariant and accepts a `Sequence` of a subtype. If the function only reads — use `Sequence`/`Iterable`.
+- **Expecting `list[Cat]` to stand in for `list[Animal]`.** A mutable list is invariant: substitution is forbidden in both directions, because otherwise you could append a foreign object to a list of one type.
+- **Calling `isinstance` with a plain protocol.** Without `@runtime_checkable` that is `TypeError`. With it, only method presence is checked, not signatures — do not rely on that check as a type guarantee.
+
+<Detail summary="Why dict keys are invariant but return values are covariant">
+
+Variance is not a property of "a type in general" but of the **position** where a parameter is used. A rough rule: positions where a value is only read (function output, elements of `Sequence`) are covariant — you can substitute a subtype. Positions where a value is only written (input sink) are contravariant — you can substitute a supertype. Positions where a value is both read and written (elements of mutable `list`, keys of `dict`) are invariant — only an exact match fits.
+
+So `Callable[[Animal], Cat]` is covariant in the result and contravariant in the argument: a function returning `Cat` fits where a return of `Animal` is expected, and a function accepting `Animal` fits where acceptance of `Cat` is expected. This "flipped" argument behavior is confusing at first but follows the same safe-substitution principle: the caller will pass a `Cat`, and a function ready to accept any `Animal` can handle a cat. For your own generic classes, variance per `TypeVar` position is set via `covariant=True` / `contravariant=True`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Protocol describes a type by shape — by its set of methods — and a class conforms without any inheritance (structural typing).",
+    "A function accepting a Protocol will accept any object with the required methods, bringing duck typing under analyzer control.",
+    "Mutable list is invariant: list[Cat] cannot substitute for list[Animal], or a Dog could be appended to a list of cats.",
+    "Read-only containers (Sequence, Iterable) are covariant: Sequence[Cat] fits where Sequence[Animal] is expected.",
+    "If a function only reads a collection, annotate the parameter as Sequence/Iterable, not list — you will accept more correct arguments.",
+    "isinstance with a protocol requires @runtime_checkable and checks only method presence, not signatures.",
+  ]}
+/>
+
+## References
+
+- [Python documentation — typing.Protocol](https://docs.python.org/3/library/typing.html#typing.Protocol)
+- [PEP 544 — Protocols: Structural subtyping](https://peps.python.org/pep-0544/)
+- [Python documentation — covariant and contravariant](https://docs.python.org/3/library/typing.html#typing.TypeVar)
+- [mypy — Variance of generic types](https://mypy.readthedocs.io/en/stable/generics.html#variance-of-generic-types)

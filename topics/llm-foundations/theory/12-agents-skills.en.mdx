@@ -1,0 +1,127 @@
+---
+conceptId: agents-skills
+title: Agents, skills, and memory
+estimatedMinutes: 30
+---
+
+# When the model stops answering and starts working
+
+Until now the model answered one request at a time: ask, reply. Real power appears when it gets a goal and moves toward it over many steps - plan, call tools, read results, adjust, continue until done. That system is an agent. An agent is not a new model or architecture; it is the same language model in a loop with tools, memory, and a goal. This final section ties everything together and shows how a replying model becomes a working one.
+
+By the end of this section you will know what makes a model an agent, what skills are and why they exist, how short- and long-term memory differ, how multi-agent setups differ from a single agent, and what risks and limits apply.
+
+## What turns a model into an agent
+
+An agent is a loop around the model. Each turn it looks at the goal and state, picks the next step, may call a tool (see [[tool-use]]), receives the result as an observation, and repeats. Unlike a single reply, three things differ: the goal persists across steps, the model plans its own action sequence, and tools let it change the world and gather facts instead of only talking.
+
+<Figure caption="Agent loop: model thinks about the goal, calls a tool, observes the result, repeats if needed, then finishes with a final answer when the goal is met.">
+  <AgentLoopDiagram
+    steps={[
+      { title: "Think", detail: "Checks goal and state, plans the next step." },
+      { title: "Call tool", detail: "Acts in the world or gathers information." },
+      { title: "Observe", detail: "Receives the call result and adds it to context." },
+      { title: "Repeat", detail: "Checks progress; another turn if not done." },
+      { title: "Answer", detail: "Goal met - delivers the final result." }
+    ]}
+  />
+</Figure>
+
+Step through the loop: think → act → observe repeats until the model judges the goal satisfied. Same agent loop as [[tool-use]], but now goal persistence across turns is central. Planning and holding the goal distinguishes an agent from a chat reply.
+
+## Skills: reusable instructions loaded on demand
+
+As tasks grow, the model needs many specific instructions - how to format a report, use an API, keep a style. Dumping everything into the system prompt is wasteful: it swells and most lines are irrelevant to the current job. Skills are reusable instruction packs the model loads only when needed.
+
+Progressive disclosure: only a short skill summary stays in context ("can run code review per standard X"); the full instruction loads when the task requires it. Specialized know-how stays available without polluting base context.
+
+<Callout type="tip">A skill is not a tool. Tools add actions (function calling); skills add reusable procedures - how to do, not what to call. Often a skill explains how to use a tool set for a specific job.</Callout>
+
+## Memory: in context vs outside
+
+An agent has two memory kinds worth separating. **Short-term memory** is the context window (see [[embeddings-context]]): current dialogue and observations the model sees now. It is bounded by window size and vanishes when the session ends. **Long-term memory** is external storage (files, database, vector index) where the agent writes important facts and reads them in future sessions.
+
+The difference is fundamental. Context is fast but finite and ephemeral: evicted or session-ended content is gone for the model. External memory survives sessions and is not capped by the window, but the agent must decide what to save and what to retrieve - often via the same embedding search as RAG (see [[fine-tuning-alignment]]).
+
+<Figure caption="Two memory kinds: short-term is the context window the model sees now; long-term is external storage across sessions, fetched on demand.">
+  <Sketch viewBox="0 0 440 170" title="Agent memory">
+    <SketchBox x={20} y={40} width={170} height={90} accent />
+    <SketchLabel x={105} y={30} mono size={11}>short-term</SketchLabel>
+    <SketchLabel x={105} y={75} mono accent>context window</SketchLabel>
+    <SketchLabel x={105} y={100} muted size={10}>fast, finite, ephemeral</SketchLabel>
+    <SketchBox x={250} y={40} width={170} height={90} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={335} y={30} mono size={11}>long-term</SketchLabel>
+    <SketchLabel x={335} y={75} mono>external store</SketchLabel>
+    <SketchLabel x={335} y={100} muted size={10}>survives sessions, on demand</SketchLabel>
+    <SketchArrow from={[190, 70]} to={[250, 70]} accent />
+    <SketchLabel x={220} y={62} muted size={9}>save</SketchLabel>
+    <SketchArrow from={[250, 100]} to={[190, 100]} dashed />
+    <SketchLabel x={220} y={118} muted size={9}>recall</SketchLabel>
+  </Sketch>
+</Figure>
+
+The diagram shows the cycle: save important facts externally, pull needed pieces back into context. Good agent memory is not remembering everything but knowing what to store and when to retrieve.
+
+## Try it yourself
+
+Build tiny long-term memory: a dict store to save and recall facts by key. That models how an agent persists knowledge between steps. Run it, add your own fact, and recall it.
+
+<PyDemo
+  title="Agent long-term memory"
+  code={`class Memory:
+    def __init__(self):
+        self.store = {}
+
+    def save(self, key, value):
+        self.store[key] = value
+
+    def recall(self, key):
+        return self.store.get(key, "не помню")
+
+m = Memory()
+m.save("город", "Париж")
+print(m.recall("город"))
+print(m.recall("погода"))`}
+/>
+
+This prints `Париж` and `не помню`: recall by key works; unknown keys get an honest missing answer. Real systems often key by semantic similarity (embeddings), but save-then-recall is the same idea.
+
+## Multi-agent systems
+
+When a task is large and decomposes, one agent can become several with divided roles. A coordinator splits work and assigns subtasks to specialists (one searches, one codes, one reviews), then merges results. Each sub-agent has its own context and tool/skill set.
+
+Upside: specialization and parallelism - focused agents often beat a generalist and independent subtasks can run concurrently. Cost: more moving parts, higher spend (each agent burns tokens), harder debugging, easier error chains. Multi-agent setups pay off when the task truly splits; they are not a goal by themselves.
+
+## When behavior surprises you
+
+An agent is a model in a loop, so model weaknesses amplify. An early mistake enters observations, steers later decisions, and can derail the whole run. Longer autonomous loops raise that risk. Use step limits, confirmations for dangerous actions (see [[tool-use]]), and result checks.
+
+A second surprise is cost. Every loop turn, sub-agent, and memory access costs tokens. A busy agent can burn budget quietly. Autonomy costs more than one-shot answers - plan for it.
+
+## Common misconceptions
+
+- **An agent is a special model.** No: a normal LM in a loop with goal, tools, and memory.
+- **A skill is the same as a tool.** Tools are actions; skills are reusable instructions loaded on demand.
+- **Agent memory is just a long context.** Context is short-term and ephemeral; long-term lives externally across sessions.
+- **More agents is always better.** Multi-agent adds specialization and parallelism at the cost of complexity, spend, and error compounding; use when the task decomposes.
+
+<Detail summary="Why long autonomous loops are context management problems">
+
+For a long-running agent the context window is a scarce resource. Every observation and intermediate result consumes space until important content is evicted. Hence context management practices: compress history (replace long chat with a short summary), drop stale observations, move facts to long-term memory and pull back only what is needed. Building a good agent is largely deciding what stays in the scarce window now, what goes to external memory, and what to discard - so each step sees exactly what matters next, not everything at once.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An agent is a normal model in a loop with goal, tools, and memory: plan, call tools, observe, repeat while holding the goal.",
+    "Skills are reusable instructions with progressive disclosure: short summary in context, full playbook on demand; skills are how, tools are what to call.",
+    "Short-term memory is the context window (fast, finite, ephemeral); long-term is external storage across sessions, often retrieved by embeddings.",
+    "Multi-agent systems split work for focus and parallelism at the cost of complexity, spend, and error chains; use when tasks truly decompose.",
+    "Risks compound in loops: early errors steer the run; autonomy costs tokens - use limits, confirmations, and checks.",
+  ]}
+/>
+
+## References
+
+- [Anthropic - Building effective agents](https://www.anthropic.com/research/building-effective-agents)
+- [Anthropic - Agent skills](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills)
+- [Model Context Protocol - specification](https://modelcontextprotocol.io/)

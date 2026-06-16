@@ -1,0 +1,161 @@
+exercises:
+  - id: rt-broadcast-targets-001
+    concept: realtime-patterns
+    type: theory-quiz
+    difficulty: 1
+    prompt: "How do `io.emit`, `socket.broadcast.emit`, and `io.to(room).emit` differ in Socket.IO?"
+    choices:
+      - id: a
+        text: "io.emit - everyone connected; socket.broadcast.emit - everyone except the sender; io.to(room).emit - only room members."
+      - id: b
+        text: "They're three names for the same operation, differing only in style."
+      - id: c
+        text: "io.emit - only the sender; socket.broadcast.emit - the room; io.to(room).emit - everyone."
+      - id: d
+        text: "io.emit uses WebSocket, socket.broadcast.emit uses long-polling, io.to(room) uses both."
+    correct: [a]
+    explanation: "`io.emit` broadcasts to everyone on the server, `socket.broadcast.emit` to everyone except the sender (so they don't see echo of their own message), `io.to(room).emit` only to members of that room."
+    variants:
+      - prompt: "Why use `socket.broadcast` instead of `io.emit` when relaying a chat message?"
+        choices:
+          - id: a
+            text: "To avoid echoing back to the sender - their client already rendered the message optimistically."
+          - id: b
+            text: "So the message reaches only the sender for confirmation."
+          - id: c
+            text: "To bypass rooms and reach every server in the cluster."
+          - id: d
+            text: "To compress the message before broadcast."
+        correct: [a]
+        explanation: "`socket.broadcast` excludes the sender. Their client already showed the message locally, so echo would duplicate it. Chat duplicates often break on 'everyone' vs 'everyone but me'."
+      - prompt: "Which addressing sends a message only to members of a specific chat, not all connected clients?"
+        choices:
+          - id: a
+            text: "io.to(room).emit - delivery only to room members."
+          - id: b
+            text: "io.emit - simpler, and extra recipients don't hurt."
+          - id: c
+            text: "socket.emit - sending to yourself spreads the message through the chat."
+          - id: d
+            text: "io.broadcast.emit - the only way to address a group."
+        correct: [a]
+        explanation: "`io.to(room).emit` addresses only room members. `io.emit` would hit everyone connected - in a multi-room app that's cross-chat leaks and wasted traffic."
+
+  - id: rt-presence-counter-001
+    concept: realtime-patterns
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Why count reliable presence with a connection counter per user instead of raw `connection`/`disconnect`?"
+    choices:
+      - id: a
+        text: "On a drop, disconnect is delayed by the heartbeat timeout, and a user may have several tabs; a counter survives both - online while it's above zero."
+      - id: b
+        text: "A counter is faster because it doesn't need event handling."
+      - id: c
+        text: "disconnect never fires when a tab closes, so events can't be used."
+      - id: d
+        text: "Socket.IO doesn't provide connection events, so counting manually is the only option."
+    correct: [a]
+    explanation: "After network loss, `disconnect` arrives only after heartbeat timeout - a naive flag lies 'online' until then. Multiple tabs mean multiple connections: one tab's disconnect doesn't mean the person left. Increment on connect, decrement on disconnect, online while count > 0; TTL in external storage guards against 'forever online' after server crash."
+    hints:
+      - "Picture a user with two tabs open. What does a naive flag say when they close one tab?"
+      - "After Wi-Fi drops, disconnect isn't instant. What does naive presence show in that window, and how does a connection counter fix both problems?"
+
+  - id: rt-redis-adapter-001
+    concept: realtime-patterns
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Why doesn't naive `io.to(room).emit` work on multiple servers, and what fixes it?"
+    choices:
+      - id: a
+        text: "io.to(room) sees only its process's sockets; a shared adapter (Redis pub/sub) publishes the event and other servers deliver to their local room sockets - application code unchanged."
+      - id: b
+        text: "io.to(room) breaks from open descriptor limits; raising ulimit helps."
+      - id: c
+        text: "The problem is sticky sessions, and Redis adapter fully replaces them."
+      - id: d
+        text: "io.to(room) works on any number of servers with no extra setup."
+    correct: [a]
+    explanation: "The in-memory connection list is visible only to its process, so `io.to(room)` on server #1 can't reach server #2's sockets. Redis adapter is a pub/sub bus: one server publishes, others subscribed deliver to their local sockets in that room. Application code stays the same."
+    hints:
+      - "The open-connection list lives in one process's memory. What does a second server know about connections it doesn't hold?"
+      - "You need a way for one server to tell others 'deliver this to your sockets in the room.' What tool works as a publish/subscribe bus?"
+
+  - id: rt-sticky-vs-adapter-001
+    concept: realtime-patterns
+    type: theory-quiz
+    difficulty: 4
+    prompt: "What two independent problems do Redis adapter and sticky sessions solve when scaling Socket.IO horizontally?"
+    choices:
+      - id: a
+        text: "Adapter delivers broadcast across cluster servers; sticky sessions ensure all requests of one Engine.IO session (polling and upgrade) hit one server. You need both."
+      - id: b
+        text: "They're the same thing: with Redis adapter you don't need sticky sessions."
+      - id: c
+        text: "Adapter binds the client to one server; sticky sessions broadcast across the cluster."
+      - id: d
+        text: "Both are only needed with long-polling and unnecessary with pure WebSocket transport."
+    correct: [a]
+    explanation: "Two independent problems. Adapter (Redis pub/sub) extends broadcast to all cluster servers. Sticky sessions are needed because Socket.IO starts with long-polling and upgrades to WebSocket - several HTTP requests of one Engine.IO session must hit one server or the handshake falls apart. Adapter doesn't replace sticky sessions."
+    hints:
+      - "One problem is getting a message from one process to sockets on another. The other is keeping one handshake's request chain on one server."
+      - "Engine.IO starts with polling then upgrades. How many HTTP requests in that chain, and where must they land? What setting guarantees that, and does Redis adapter provide it?"
+
+  - id: rt-fanout-predict-001
+    concept: realtime-patterns
+    type: predict-output
+    difficulty: 4
+    prompt: "A program estimates fan-out: how many outbound messages one inbound stream creates in rooms of different sizes. What does it print?"
+    snippet: |
+      room_sizes = [10000, 5000, 5000]
+      messages_per_second = 100
+      total_room_size = sum(room_sizes)
+      fan_out = total_room_size * messages_per_second
+      print(total_room_size)
+      print(fan_out)
+    expected:
+      kind: stdout
+      value: "20000\n2000000"
+    hints:
+      - "First sum all room sizes, then multiply by message rate. Each print is its own line."
+      - "Fan-out is total audience times inbound messages per second. Sum room sizes, then multiply by 100."
+    variants:
+      - snippet: |
+          room_sizes = [1000, 2000, 3000]
+          messages_per_second = 50
+          total_room_size = sum(room_sizes)
+          fan_out = total_room_size * messages_per_second
+          print(total_room_size)
+          print(fan_out)
+        expected:
+          kind: stdout
+          value: "6000\n300000"
+      - snippet: |
+          small_rooms = [500] * 8
+          messages_per_second = 20
+          fan_out = sum(small_rooms) * messages_per_second
+          print(len(small_rooms), sum(small_rooms))
+          print(fan_out)
+        expected:
+          kind: stdout
+          value: "8 4000\n80000"
+
+  - id: rt-scaling-challenge-001
+    concept: realtime-patterns
+    type: theory-quiz
+    difficulty: 5
+    prompt: "A team scales chat to two servers behind a load balancer: Redis adapter is on, but clients sometimes get handshake errors and messages sometimes miss part of a room. What's the most likely cause and what's missing?"
+    choices:
+      - id: a
+        text: "Sticky sessions aren't configured: requests of one Engine.IO session (polling + upgrade) hit different servers via round-robin and the handshake breaks. Redis adapter doesn't fix that - bind the client to one backend."
+      - id: b
+        text: "Redis adapter is misconfigured and that's what breaks the handshake; sticky sessions aren't involved."
+      - id: c
+        text: "Switch to pure WebSocket without long-polling and neither sticky sessions nor adapter are needed."
+      - id: d
+        text: "The presence counter TTL is too short, so connections count as dead and the handshake resets."
+    correct: [a]
+    explanation: "Handshake errors point to missing sticky sessions: Socket.IO starts with long-polling and upgrades to WebSocket, and several HTTP requests of one Engine.IO session must hit one server. Without binding, the load balancer round-robins them and the session falls apart. Redis adapter solves cross-server broadcast, not sticky sessions; scaling needs both."
+    hints:
+      - "Split the symptoms. Handshake errors point not to cross-server message delivery but to how one session's request chain is distributed by the load balancer."
+      - "Remember how many HTTP requests Engine.IO setup takes and where they must land. What setting guarantees that, and does Redis adapter provide it?"

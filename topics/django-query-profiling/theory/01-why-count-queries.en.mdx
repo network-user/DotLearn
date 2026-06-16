@@ -1,0 +1,129 @@
+---
+conceptId: why-count-queries
+title: "Why count queries: the N+1 problem"
+estimatedMinutes: 45
+---
+
+# One loop - and the database gets a hundred queries instead of two
+
+You open a page listing a hundred orders and it takes a second to load. The code looks innocent: fetch orders, loop, show each customer's name. The ORM hides SQL so well that `order.customer.name` reads like ordinary attribute access on an in-memory object. But behind that dot may be a separate database round-trip - and with a hundred orders you get a hundred and one trips. The code did not change, data grew, and time grew linearly with row count.
+
+By the end of this section you will recognize this pattern from code shape before running a profiler, understand why it is called "N+1", and estimate what it costs in time. You will count queries with tools in later sections; first you need to see *what* we are counting and why one number can explain a slow page.
+
+## Mental model: every database trip is a round-trip
+
+A database query is not a function call in your process. It is a network round-trip: the app sends SQL, waits for the database to parse, execute, and return rows. Even when the database answers in fractions of a millisecond, each query has fixed overhead - context setup, parsing, shipping results back. Ten queries at 2 ms each is not "instant" - it is 20 ms plus overhead, and they add up.
+
+The N+1 problem is when instead of one query that could return all needed data at once, the app runs one query for the list and then one query per row for related data. Hence the name: 1 query for the list plus N for details, total N+1.
+
+<Figure caption="Left: one query returns N orders, then the loop does one query per customer - 1+N round-trips. Right: the same data can be fetched in one or two queries.">
+  <Sketch viewBox="0 0 460 240" title="N+1 vs one query">
+    <SketchLabel x={90} y={24} weight="bold">N+1 queries</SketchLabel>
+    <SketchBox x={20} y={36} width={140} height={34} accent />
+    <SketchLabel x={90} y={58} mono accent>SELECT * FROM orders</SketchLabel>
+    <SketchBox x={20} y={86} width={140} height={26} />
+    <SketchLabel x={90} y={103} mono size={11}>customer #1</SketchLabel>
+    <SketchBox x={20} y={120} width={140} height={26} />
+    <SketchLabel x={90} y={137} mono size={11}>customer #2</SketchLabel>
+    <SketchBox x={20} y={154} width={140} height={26} dashed />
+    <SketchLabel x={90} y={171} mono size={11} muted>... N-2 more</SketchLabel>
+    <SketchArrow from={[160, 53]} to={[160, 99]} />
+    <SketchLabel x={350} y={24} weight="bold">1-2 queries</SketchLabel>
+    <SketchBox x={290} y={86} width={150} height={48} accent />
+    <SketchLabel x={365} y={106} mono accent size={11}>SELECT ... JOIN</SketchLabel>
+    <SketchLabel x={365} y={122} mono accent size={11}>customers</SketchLabel>
+  </Sketch>
+</Figure>
+
+The point of this picture is not that there are "many" queries but that their count *depends on data volume*. On ten orders the difference is invisible; on a thousand the page stalls. Code stays the same; only N changes, and time grows with it.
+
+## Where the hidden query comes from
+
+Take two models: an order references a customer via `ForeignKey`. When the ORM reads `order.customer`, it must get the customer object somewhere. If it is not in memory yet, it goes to the database.
+
+```python
+class Customer(models.Model):
+    name = models.CharField(max_length=100)
+
+class Order(models.Model):
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
+    total = models.DecimalField(max_digits=10, decimal_places=2)
+```
+
+Typical view or template code listing orders with customer names:
+
+```python
+orders = Order.objects.all()
+for order in orders:
+    print(order.customer.name)
+```
+
+The first line runs one query: `SELECT * FROM orders`. But `customer` is not in that query. So on each iteration `order.customer` finds the customer unloaded and runs a separate `SELECT * FROM customers WHERE id = ?`. A hundred orders - a hundred such queries plus the first. Pure N+1.
+
+<Callout type="warning">
+The query for `order.customer` is not visible in code as a query. It looks like attribute access. That is why N+1 is easy to write and hard to spot by eye - you do not see it until you count queries.
+</Callout>
+
+## Queryset laziness is a mechanism, not a bug
+
+It may seem the ORM is at fault: why hit the database one row at a time? But the same laziness that causes N+1 saves queries elsewhere. `Order.objects.all()` does not run SQL on the call - the queryset is lazy and waits until iteration. The query goes out only on the first loop iteration.
+
+```python
+orders = Order.objects.filter(total__gt=100)
+orders = orders.order_by("-total")
+top = orders[:5]
+```
+
+Three lines manipulate the queryset but no query has hit the database yet: filter, sort, and slice only build future SQL. One query runs - when `top` is iterated. Laziness lets the ORM assemble an optimal query from pieces. The same laziness means access to a related object not requested upfront becomes a separate trip.
+
+## Edge case: N+1 hides in templates too
+
+You can clean the view and still get N+1 if related access lives in the template. A Django template rendering `{{ order.customer.name }}` in a loop runs the same `order.customer` as Python code and causes the same N queries at render time. Surprise: the view looks "clean" with one query, but the page still does a hundred round-trips - hidden in the HTML template, not Python.
+
+The same applies to DRF serializers, model methods that touch relations, and `@property` that reads `self.related`. N+1 is a property of the whole data path from database to response, not one function. Count queries across full request handling, not by staring at a single function.
+
+## What it actually costs
+
+Query count is abstract until you translate it to time. Take an optimistic 1.5 ms per round-trip to a local database. For a list of N rows naive code does N+1 queries; optimized code does one or two regardless of N.
+
+<Figure caption="List render time at 1.5 ms per query: naive grows linearly with rows; optimized stays flat.">
+  <LineChart
+    series={[
+      { name: "N+1 queries", points: [{ x: 10, y: 16.5 }, { x: 50, y: 76.5 }, { x: 100, y: 151.5 }, { x: 200, y: 301.5 }, { x: 500, y: 751.5 }] },
+      { name: "1 query", points: [{ x: 10, y: 1.5 }, { x: 50, y: 1.5 }, { x: 100, y: 1.5 }, { x: 200, y: 1.5 }, { x: 500, y: 1.5 }] },
+    ]}
+    xLabel="rows in list"
+    yLabel="ms"
+  />
+</Figure>
+
+At five hundred rows the difference is three quarters of a second just waiting on the database, without network between services or load on the database itself. In production where the database answers in 5-10 ms and round-trips go over the network, the same page stretches to seconds. So the first thing to measure on a slow page is not time but query count: it immediately shows whether load grows linearly with data.
+
+## Typical mistakes
+
+- **Assuming "the ORM optimizes everything".** The ORM does exactly what you asked. Without eager loading it fetches relations one by one - not an ORM oversight but literal lazy access.
+- **Measuring only total page time.** Time jumps run to run from cache, GC, and background load. Query count is deterministic: the same code on the same data always does the same number of queries. Counting queries is more reliable than a stopwatch.
+- **Hunting N+1 only in views.** Related access in templates, serializers, or `@property` gives the same N+1 but hides outside the function you read. Count queries for the whole request.
+
+<Detail summary="Why N+1 and not 2N or N">
+
+The name describes structure: one initial list query (the "+1") plus one query per N items. If each item pulled two relations without prefetch, you would get 2N+1, and so on. The name is not about exact arithmetic but linear growth of query count with row count. Any pattern where queries grow with data instead of staying constant is called N+1 in practice - even if the multiplier is not exactly one.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Each SQL query is a round-trip with fixed overhead; counts add up in response time.",
+    "N+1 is 1 list query plus one query per row for related data.",
+    "Lazy access to a relation (order.customer) looks like attribute read but may hide a separate query.",
+    "The danger of N+1 is query count growing linearly with data while code stays the same.",
+    "N+1 hides in views, templates, serializers, and @property - count queries for the whole request.",
+    "On a slow page measure query count before time: it is deterministic and shows linear growth immediately.",
+  ]}
+/>
+
+## References
+
+- [Django - Related objects reference](https://docs.djangoproject.com/en/stable/ref/models/relations/)
+- [Django - QuerySet API: when QuerySets are evaluated](https://docs.djangoproject.com/en/stable/ref/models/querysets/#when-querysets-are-evaluated)
+- [Django - Database access optimization](https://docs.djangoproject.com/en/stable/topics/db/optimization/)

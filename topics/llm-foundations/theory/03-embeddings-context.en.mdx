@@ -1,0 +1,110 @@
+---
+conceptId: embeddings-context
+title: Embeddings and context
+estimatedMinutes: 30
+---
+
+# Tokens become vectors, and memory has an edge
+
+A token id is still just a label: id 5012 is no closer to 5013 than to 90000. For the model to reason about meaning, each token becomes a vector - a long list of numbers, coordinates in meaning space. Semantically close tokens sit nearby, and all internal layers work on those vectors. The model also has a hard limit on how many tokens it can hold in view at once. That limit - the context window - defines what the model remembers and what no longer exists for it.
+
+By the end of this section you will understand token embeddings, why positional information is added, how cosine similarity measures vector closeness, and what physically happens when text does not fit the context window.
+
+## An embedding is a coordinate of meaning
+
+An embedding is a fixed-length vector assigned to a token. Modern models use hundreds or thousands of dimensions. One vector alone means little; meaning comes from mutual placement. Words that appear in similar contexts are pushed together during training, so geometric nearness begins to reflect semantic nearness.
+
+<Figure caption="Semantically close words form clusters in embedding space; hover to see which points the model treats as neighbors.">
+  <EmbeddingSpace />
+</Figure>
+
+The figure shows words grouping: animals near animals, colors near colors. That layout is not hand-designed - it emerges in training because similar words appear in similar surroundings. The famous example is vector arithmetic: king minus man plus woman lands near queen. It is not perfect, but it shows that relations are partly encoded as directions in space.
+
+## Position becomes a number too
+
+There is a catch. Attention alone (see [[attention]]) does not distinguish order: "the dog bit the man" and "the man bit the dog" would be the same token set. Positional information is added so the model knows not only which token but where it sits. Modern models often encode position by rotation (rotary positional embeddings, RoPE), which generalizes better to lengths not seen in training.
+
+<Callout type="info">Without positional information a transformer is a bag of tokens: it would see which tokens exist but not their order. Positional encoding turns the bag into a sequence.</Callout>
+
+## Measuring closeness: cosine similarity
+
+If meaning is direction in space, a natural similarity measure is the angle between vectors. Cosine similarity is the cosine of that angle: 1 for aligned vectors, 0 for perpendicular, -1 for opposite. Vector length matters less than direction.
+
+```python
+import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb)
+
+print(round(cosine([1, 2, 3], [4, 5, 6]), 4))
+```
+
+This prints `0.9746`: the vectors point nearly the same way, so similarity is high. The dot product grows when vectors align; dividing by lengths removes scale effects. Cosine similarity is used in semantic search and RAG (see [[fine-tuning-alignment]]) to find chunks close to a query.
+
+## Try it yourself
+
+Run the cosine function and check edge cases: identical vectors give `1.0`, perpendicular `0.0`, opposite `-1.0`. Change the second vector to `[2, 4, 6]` (same direction, doubled) and confirm similarity with `[1, 2, 3]` stays `1.0` - scale does not matter, only direction.
+
+<PyDemo
+  title="Cosine similarity"
+  code={`import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb)
+
+print(round(cosine([1, 0], [1, 0]), 4))
+print(round(cosine([1, 0], [0, 1]), 4))
+print(round(cosine([1, 0], [-1, 0]), 4))`}
+/>
+
+Output is `1.0`, `0.0`, `-1.0` - three anchor points on the scale. Everything else lies between them: smaller angle between meanings means closer to 1.
+
+## Context has an edge
+
+The model does not process an infinite text tape but a fixed-size window. Anything that does not fit simply does not exist for the model. In 2026 windows reach hundreds of thousands or millions of tokens, but there is always a limit, and when it is hit the oldest tokens fall out.
+
+<Figure caption="A fixed window slides over the token stream; step forward and tokens past the left edge are evicted and no longer visible to the model.">
+  <ContextWindowViz windowSize={6} />
+</Figure>
+
+Watch the figure: as the window moves, old tokens fade and strike through - that is truncation. In a dialogue the start of a very long chat may be forgotten not from a bug but because it left the window. Long sessions and large documents need separate techniques: summarizing history, retrieving relevant chunks, external memory (see [[agents-skills]]).
+
+## When behavior surprises you
+
+A large window is not the same as using all of it well. Models often use the start and end of long context better than the middle - lost in the middle. Keep important instructions near the beginning or end, not buried in the center of a long document.
+
+A second surprise is cost. Attention compute grows faster than linearly with context length, so very long prompts cost more and run slower. A big window is capability, not a free habit.
+
+## Common misconceptions
+
+- **An embedding stores a word definition.** It stores position relative to other words; meaning is in neighborhood, not inside one vector.
+- **A bigger context window means the model remembers everything evenly.** The window sets a cap, not uniform attention; the middle of long context is used more weakly.
+- **If text does not fit, the model trims by meaning.** Truncation is mechanical - by tokens at the window edge without understanding what is lost; plumbing must handle that, not the model.
+
+<Detail summary="Why cosine similarity instead of Euclidean distance">
+
+Euclidean distance is sensitive to vector length, while embedding length often carries less meaning than direction: the same sense can have larger or smaller norm. Cosine looks only at angle and is stabler as semantic similarity. If vectors are normalized to unit length, cosine ranking and negative Euclidean distance often agree - but cosine does not require explicit normalization.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A token embedding is a fixed-length vector; training pushes semantically close tokens to nearby points.",
+    "Positional encoding adds place information; without it attention sees a bag of tokens, not an ordered sequence.",
+    "Cosine similarity measures the angle between vectors: 1 aligned, 0 perpendicular, -1 opposite; scale does not matter.",
+    "The context window is a hard token cap; anything outside is evicted and ceases to exist for the model.",
+    "A large window is not uniform attention: models use the middle of long context more weakly (lost in the middle), and long context costs more.",
+  ]}
+/>
+
+## References
+
+- [The Illustrated Word2vec (Jay Alammar)](https://jalammar.github.io/illustrated-word2vec/)
+- [Su et al., 2021 - RoFormer: Rotary Position Embedding (RoPE)](https://arxiv.org/abs/2104.09864)
+- [Liu et al., 2023 - Lost in the Middle](https://arxiv.org/abs/2307.03172)

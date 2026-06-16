@@ -1,0 +1,164 @@
+---
+conceptId: decorators-with-arguments
+title: Decorators with arguments
+estimatedMinutes: 30
+---
+
+`@retry` retries a call on error - but how many times? Two? Five? You want to write `@retry(3)` and tune the decorator for each use site. But here comes a fork: `@retry` without parentheses and `@retry(3)` with parentheses are syntactically different things, and an ordinary decorator can't do that. To let a decorator accept its own arguments, you need one more level of nesting. In this section we'll unpack the three floors of functions that every configurable decorator stands on.
+
+By the end of this section you'll understand how `@retry` differs from `@retry(3)`, write a decorator factory with three levels of `def`, and learn to read this nesting doll without confusing which level takes what.
+
+## A decorator argument needs an extra floor
+
+Recall: `@log` means `func = log(func)`. What does `@retry(3)` mean? First `retry(3)` is evaluated - that's a call, and it must return a decorator. That decorator is then applied to the function: `func = retry(3)(func)`. So `retry(3)` must return a decorator function. Hence three levels.
+
+<Figure caption="Three levels of a factory: the outer function takes the decorator argument, the middle one takes the function, the inner one takes call arguments.">
+  <Sketch viewBox="0 0 440 180" title="Three levels of a decorator with an argument">
+    <SketchBox x={20} y={20} width={400} height={140} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={35} y={42} mono anchor="start">def retry(times):</SketchLabel>
+    <SketchBox x={50} y={55} width={360} height={95} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={65} y={77} mono anchor="start">def decorator(func):</SketchLabel>
+    <SketchBox x={80} y={90} width={320} height={50} accent />
+    <SketchLabel x={95} y={112} mono anchor="start" accent>def wrapper(*args, **kwargs):</SketchLabel>
+    <SketchLabel x={95} y={130} mono anchor="start" accent>...uses times and func...</SketchLabel>
+  </Sketch>
+</Figure>
+
+Each floor captures something of its own. The outer function `retry(times)` takes the decorator argument and captures `times`. The middle `decorator(func)` takes the wrapped function and captures `func`. The inner `wrapper(*args, **kwargs)` takes call arguments and sees both free variables - `times` and `func` - by closure rules.
+
+## Building the factory floor by floor
+
+Let's start with a simple example: decorator `repeat(n)`, which calls the function `n` times in a row and returns the result of the last call.
+
+```python
+def repeat(n):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            result = None
+            for _ in range(n):
+                result = func(*args, **kwargs)
+            return result
+        return wrapper
+    return decorator
+```
+
+Read the nesting doll from the inside. `wrapper` calls `func` exactly `n` times; `n` comes from outer `repeat`, `func` from `decorator` - both captured by closure. `decorator` returns `wrapper`. `repeat` returns `decorator`. Now apply it:
+
+```python
+@repeat(3)
+def announce():
+    print("привет")
+
+announce()
+```
+
+It prints `привет` three times. This unfolds as: `repeat(3)` returned `decorator`, then `decorator(announce)` returned `wrapper`, and the name `announce` now points at `wrapper`. Calling `announce()` runs the loop three times.
+
+## @retry(3) and @retry are different things
+
+Here's the trap everyone falls into. You can't apply the `repeat` factory without parentheses. `@repeat` (without `(3)`) would pass the function itself into `repeat` instead of a number: `n` would become a function, and `range(n)` would crash. Parentheses are mandatory because the decorator isn't `repeat`, but what `repeat(3)` returns.
+
+```python
+@repeat(2)
+def beep():
+    print("бип")
+
+beep()
+```
+
+It prints `бип` twice. But `@repeat` without parentheses would break: `repeat` would get `beep` in parameter `n` and return `decorator`, expecting a function, but `decorator` would apply immediately... to nothing - the name `beep` would already be `decorator`. The tell: a "decorator factory" is always called with parentheses.
+
+<Callout type="warning">Always write a decorator factory (`@repeat(2)`) with parentheses, even when the argument is effectively empty. An ordinary decorator (`@log`) is always without parentheses. Parentheses are the factory call that produces the real decorator.</Callout>
+
+## Try it yourself
+
+Run the code: `@tag("INFO")` wraps the function's result in a prefix. The tag is fixed at decoration time. Try creating a second function with another tag, for example `@tag("WARN")`, and confirm each wrapper remembers its own `prefix` independently - the same closure isolation as factories from the closures section.
+
+<PyDemo
+  title="Decorator factory with an argument"
+  code={`def tag(prefix):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            return f"[{prefix}] " + func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@tag("INFO")
+def status():
+    return "система в норме"
+
+print(status())`}
+/>
+
+Each call to `tag(...)` creates its own `decorator` with its own captured `prefix`. So `@tag("INFO")` and `@tag("WARN")` give two independent wrappers.
+
+## One decorator that works with and without parentheses - harder
+
+Sometimes you want a decorator to work both ways: `@cache` and `@cache(maxsize=100)`. That requires a branch inside: check whether the first argument is a function (no-parentheses form) or a setting (parentheses form). The trick works but is confusing, and almost always unnecessary - the standard library prefers explicitness.
+
+```python
+import functools
+
+def trace(func=None, *, label="TRACE"):
+    if func is None:
+        return functools.partial(trace, label=label)
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return f"[{label}] " + str(func(*args, **kwargs))
+    return wrapper
+```
+
+If `func` was passed (the `@trace` form), decorate immediately. If not (the `@trace(label="X")` form), return `partial`, which gets the function on the next call. For now it's enough to know this universality is possible; in most code you pick one form and don't complicate things.
+
+## When behavior surprises you
+
+The factory argument is captured once - at `@repeat(3)`, i.e. when the function is defined. If you later change the variable the argument came from, the decorator won't notice: it already fixed the value in its cell.
+
+```python
+factor = 2
+
+def multiply_by(k):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs) * k
+        return wrapper
+    return decorator
+
+@multiply_by(factor)
+def value():
+    return 10
+
+factor = 100
+print(value())
+```
+
+It prints `20`, not `1000`. At `@multiply_by(factor)` the value of `factor` was `2`, and that's what went into `k`. Further changes to `factor` no longer affect `multiply_by`: the decorator was applied once and captured `k = 2`.
+
+## Common mistakes
+
+- **Applying the factory without parentheses.** `@repeat` instead of `@repeat(3)` passes a function into the factory instead of an argument; it usually crashes with `TypeError` deeper in the code. Always call the factory with parentheses.
+- **Confusing the levels.** The outer function takes the decorator argument, the middle one takes the function, the inner one takes call arguments. Returning from the wrong level (`return wrapper` instead of `return decorator` on the outside) breaks unfolding.
+- **Forgetting `functools.wraps` on the innermost wrapper.** There are more levels now, but there's still only one wrapper - and it's the one that loses metadata. Put `@functools.wraps(func)` above `wrapper`.
+
+<Detail summary="Why exactly three levels, not two or four">
+
+The number of levels equals the number of "portions" of arguments the decorator must accept separately, plus one for the call itself. An ordinary decorator: one portion (the function) plus the call - two levels (`decorator` and `wrapper`). A decorator with arguments: two portions (decorator arguments, then the function) plus the call - three levels. If you needed two independent configuration stages, a fourth level would appear, but in practice that's almost never needed: extra configuration is passed in one factory call through several parameters.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "@retry(3) means func = retry(3)(func): the factory is called first, its result - a decorator - is applied to the function.",
+    "A configurable decorator is three levels of def: the factory takes the decorator argument, the middle function takes the wrapped function, the inner wrapper takes call arguments.",
+    "Each level captures its own via closure: the inner wrapper sees both the decorator argument and the function itself.",
+    "Always call a decorator factory with parentheses (@repeat(2)), even with an empty argument; an ordinary decorator goes without parentheses.",
+    "The factory argument is captured once, at decoration time; later changes to the source variable don't affect the decorator.",
+    "functools.wraps is still needed and goes on the innermost wrapper.",
+  ]}
+/>
+
+## References
+
+- [Python documentation - decorators with arguments (Primer on wiki)](https://wiki.python.org/moin/PythonDecoratorLibrary)
+- [Python documentation - functools.partial](https://docs.python.org/3/library/functools.html#functools.partial)
+- [PEP 318 - decorator syntax](https://peps.python.org/pep-0318/)
