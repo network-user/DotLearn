@@ -1,0 +1,190 @@
+---
+conceptId: space-and-amortized
+title: "Memory and Amortized Complexity"
+estimatedMinutes: 45
+---
+
+# Not only time: memory and average price
+
+Until now, you have been counting steps - how many operations the algorithm will perform. But any calculation has a second count: how much **memory** it will take in addition to the input data. Sometimes it is memory that becomes the bottleneck: the algorithm runs in a second, but requires gigabytes, which are not available. And there are also operations whose honest price is sometimes tiny, sometimes suddenly large, and it makes no sense to analyze them individually - you need to average them over the series. This section is about both of these subjects: about spatial complexity and about amortized complexity.
+
+By the end of this section, you'll learn to value extra memory the same way you counted time, see the time versus memory tradeoff where the dictionary saves passes at the cost of space, and understand why `list.append` is called `O(1)` even though it sometimes copies the entire list. This closes the picture: the algorithm is characterized not by one number, but by a pair - time and memory.
+
+## Mental model: memory is also a function of n
+
+Space complexity is calculated on the same principle as time complexity: it is a **function of the input size**, but it does not measure steps, but the amount of additional memory. The important word is additional. The entrance itself is already in memory; we are interested in what the algorithm does **beyond** it: temporary lists, dictionaries, a stack of recursive calls.
+
+```python
+def squares(numbers):
+    result = []
+    for x in numbers:
+        result.append(x * x)
+    return result
+```
+
+Here `result` grows with the input: for `n` elements it stores `n` numbers. Additional memory is `O(n)`. But the sum of the same squares of memory requires almost no memory:
+
+```python
+def sum_of_squares(numbers):
+    total = 0
+    for x in numbers:
+        total += x * x
+    return total
+```
+
+`total` is one variable, it does not increase with `n`. Additional memory - `O(1)`, constant. The same input, the same time complexity `O(n)`, but the memory is fundamentally different: one algorithm builds a new list, the other makes do with a single accumulator.
+
+<Figure caption="With the same time O(n), the memory differs by class: the accumulator holds O(1), the result accumulator holds O(n).">
+  <Sketch viewBox="0 0 440 200" title="Memory: battery vs storage">
+    <SketchBox x={20} y={30} width={190} height={150} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={22} muted>O(1) память</SketchLabel>
+    <SketchBox x={90} y={90} width={50} height={40} accent />
+    <SketchLabel x={115} y={115} mono accent>total</SketchLabel>
+    <SketchLabel x={115} y={165} muted>одна ячейка</SketchLabel>
+    <SketchBox x={250} y={30} width={170} height={150} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={335} y={22} muted>O(n) память</SketchLabel>
+    <SketchBox x={270} y={70} width={30} height={30} />
+    <SketchBox x={305} y={70} width={30} height={30} />
+    <SketchBox x={340} y={70} width={30} height={30} />
+    <SketchBox x={375} y={70} width={30} height={30} dashed />
+    <SketchLabel x={335} y={130} mono>result[0..n]</SketchLabel>
+    <SketchLabel x={335} y={165} muted>растёт с n</SketchLabel>
+  </Sketch>
+</Figure>
+
+On the left is the only cell that does not depend on `n`. On the right is a list whose length is the same as the input. When looking at the code, ask yourself: what data structure grows with the input? Its size is its spatial complexity.
+
+## The recursion stack is also memory
+
+Memory is wasted not only on explicit lists. Each incomplete function call hangs on the call stack and takes up space until it returns. Deep recursion quietly eats `O(depth)` memory, even if it does not create any lists.
+
+```python
+def rec_sum(numbers, i=0):
+    if i == len(numbers):
+        return 0
+    return numbers[i] + rec_sum(numbers, i + 1)
+```
+
+This function does not start any structures, but by the time of the last call all `n` frames are hanging on the stack at once: each one is waiting for the result of the next one. Memory - `O(n)`. An iterative version with a regular loop would cost `O(1)`. Therefore, deep recursion over a list is a hidden waste of memory and a risk of stack overflow.
+
+<Callout type="warning">
+Recursion of depth `n` costs `O(n)` memory on the call stack, even when the function body does not create any objects. If the recursion is linear in depth and easily rewritten into a loop, the loop is almost always more memory efficient.
+</Callout>
+
+## Exchange: time for memory and back
+
+Memory and time can often be exchanged for one another. A classic example is checking whether two lists have a common element. Naively, this is a double loop: `O(n²)` time, `O(1)` memory. But if you first add one list into a `set`, the check becomes `O(1)` per element.
+
+```python
+def has_common(a, b):
+    seen = set(a)
+    for x in b:
+        if x in seen:
+            return True
+    return False
+```
+
+Now the time is `O(n)`: one pass to build the `set`, one to check. But this comes at a cost in memory: `set` stores `n` elements, the additional memory has grown from `O(1)` to `O(n)`. This is the “time for memory” trade: we wasted space to replace the quadratic search with a linear one. Most often, such an exchange is profitable, but it is not free, and on huge inputs memory may be more important.
+
+## Live sandbox: two solutions, different memory
+
+Below two functions look for the intersection of two lists. The first is a double loop without extra memory. The second is through `set`, faster in time, but with additional storage. The `ops` and `extra_mem` counters show the cost of each approach. Run the code, then **change `n` from 100 to 200** and compare: the slow version will quadruple the operations with zero additional memory, the fast version will double the operations, but the additional memory will also double.
+
+<PyDemo
+  title="Time versus memory at the intersection of lists"
+  code={`def common_slow(a, b):
+    ops = 0
+    result = []
+    for x in a:
+        for y in b:
+            ops += 1
+            if x == y:
+                result.append(x)
+                break
+    return ops, 0
+
+def common_fast(a, b):
+    ops = 0
+    seen = set()
+    for x in a:
+        ops += 1
+        seen.add(x)
+    result = []
+    for y in b:
+        ops += 1
+        if y in seen:
+            result.append(y)
+    return ops, len(seen)
+
+n = 100
+a = list(range(n))
+b = list(range(n, 2 * n))
+ops_slow, mem_slow = common_slow(a, b)
+ops_fast, mem_fast = common_fast(a, b)
+print("slow: ops =", ops_slow, " extra_mem =", mem_slow)
+print("fast: ops =", ops_fast, " extra_mem =", mem_fast)`}
+/>
+
+On disjoint lists, the slow version does full square comparisons and does not waste memory; fast - linear in time, but keeps a `set` of `n` elements. Doubling `n` quadruples the time for one and doubles for the other, and the memory of the fast version grows linearly. Same answer, different price on two axes at once.
+
+## Amortized difficulty: average over the series
+
+Some operations are either cheap or expensive, and it is unfair to analyze them one by one. The most famous example is `list.append`. Usually it is instantaneous: putting an element in a free cell is `O(1)`. But when the allocated space for the list runs out, Python allocates a larger block and **copies the entire list** to a new location - and this is `O(n)`. It turns out that a separate `append` costs either `O(1)` or suddenly `O(n)`.
+
+Amortized complexity answers the question “how much does an operation cost **on average over a long series**.” The list grows with a margin - about one and a half to two times at a time - so expensive copying happens less and less as it grows. If you spread the cost of all copies over all `appends`, there is a constant for each operation. That's why `append` is called amortized `O(1)`: not every call is cheap, but `n` calls cost `O(n)` in total, that is `O(1)` per piece.
+
+<Figure caption="Most appends cost 1 step; rare peaks are copying during expansion. The average price for the series is a constant.">
+  <BarChart
+    title="Cost of individual appends as the list grows (steps)"
+    unit="steps"
+    data={[
+      { label: "#1", value: 1 },
+      { label: "#2 (growth)", value: 2 },
+      { label: "#3", value: 1 },
+      { label: "#4 (growth)", value: 4 },
+      { label: "#5", value: 1 },
+      { label: "#6", value: 1 },
+      { label: "#7", value: 1 },
+      { label: "#8 (growth)", value: 8 },
+    ]}
+    highlight={["#2 (growth)", "#4 (growth)", "#8 (growth)"]}
+  />
+</Figure>
+
+The peaks on the graph are moments of copying, and they become increasingly rare: more and more cheap inserts are placed between them. The sum of all columns for `n` operations remains of order `n`, so the average height is a constant. This is the meaning of depreciation: a rare expensive operation is “paid for” by many previous cheap ones.
+
+<MarginNote label="Not to be confused with the average case">Амортизированная сложность - это гарантия на **любую** серию операций, а не вероятностное среднее. Средний случай зависит от распределения данных; амортизация - от структуры серии и верна всегда.</MarginNote>
+
+## An edge case that will surprise you
+
+Amortized `O(1)` does not mean that every single call is fast. If you are building a list of a million elements and the latency of **each** operation is critical (for example, in a real-time system), the rare `append` will still take `O(n)` at the time of copying - and this pause can violate the deadline. Depreciation promises a good **total** value, but is silent about the peaks.
+
+And the opposite surprise: `list.insert(0, x)` - insertion at the beginning - **not** amortized `O(1)`, but honestly `O(n)` every time, because it shifts all the elements. A call similar to `append` turns out to be fundamentally more expensive. When frequent insertions at the beginning are needed, take `collections.deque`, which has `O(1)` amortization at both ends. Moral: the name of the method does not guarantee anything - the price must be known for each operation separately.
+
+## Common mistakes
+
+- **Forget about input memory versus additional memory.** Space complexity considers what the algorithm runs **over** the input. A function returning a new list of length `n` consumes `O(n)` additional memory; function with one accumulator is `O(1)`.
+- **Ignore the recursion stack.** A recursion of depth `n` takes `O(n)` memory on the stack, even without a single object created. This is a common cause of `RecursionError` on large inputs.
+- **Consider `insert(0, x)` as cheap as `append`.** `append` is `O(1)` amortized, but inserting at the beginning of the list is `O(n)`: shifts all elements. To have a queue at both ends, you need `deque`.
+
+<Detail summary="Where does the list growth factor come from?">
+
+When space in the list runs out, CPython allocates a new block using a formula approximately “current size plus a quarter” (the exact formula has changed between versions). A growth factor greater than one is the key to amortized `O(1)`: when growing by a fixed number of times, the total cost of all copies forms a geometric progression that converges to `O(n)` rather than `O(n²)`. If the list grew by a constant number of cells, rather than exponentially, the copies would happen too often, and `append` would become `O(n)` amortized. Geometric growth is what makes dynamic array practical.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Space complexity is a function of n, counting the additional memory above the input: the accumulator is O(1), the result accumulator is O(n).",
+    "A recursion stack is also memory: a recursion of depth n costs O(n), even if the body does not create objects.",
+    "Time and memory are often traded off: set speeds up checking from O(n) to O(1) at the cost of O(n) additional memory.",
+    "Amortized complexity is the average cost of an operation over a long series: list.append is O(1) amortized, although individual calls copy the entire list in O(n) time.",
+    "Amortized O(1) guarantees total cost, but not no peaks; insert(0, x) is honestly O(n), not amortized O(1).",
+  ]}
+/>
+
+## Links
+
+- [Python Wiki - TimeComplexity (list, deque, dict, set)](https://wiki.python.org/moin/TimeComplexity)
+- [Python documentation - collections.deque](https://docs.python.org/3/library/collections.html#collections.deque)
+- [Wikipedia - Amortized analysis](https://en.wikipedia.org/wiki/Amortized_analysis)

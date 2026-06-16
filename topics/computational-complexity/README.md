@@ -14,3 +14,22 @@
 Нет. Достаточно базового знания Python: функции, циклы, списки и словари.
 
 Generated via `lesson-forge`.
+
+## English
+
+# Computational complexity and asymptotics
+
+A practical guide to evaluating algorithms independent of hardware and language: count steps instead of seconds, express growth with O, Theta, and Omega, read complexity straight from code with loops and recursion, and distinguish memory from time and amortized cost from single-operation cost. For anyone already writing Python who wants to understand why one approach scales and another does not.
+
+## Concepts
+
+- What complexity is: steps, not seconds
+- Asymptotics: O, Theta, Omega
+- Analyzing code: loops, nesting, recursion
+- Memory and amortized complexity
+
+## Prerequisites
+
+None. Basic Python is enough: functions, loops, lists, and dictionaries.
+
+Generated via `lesson-forge`.

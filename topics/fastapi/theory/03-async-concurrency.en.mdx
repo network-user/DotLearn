@@ -1,0 +1,139 @@
+---
+conceptId: async-concurrency
+title: "async and concurrency in FastAPI"
+estimatedMinutes: 45
+---
+
+# When async speeds up a service and when it doesn't
+
+FastAPI allows you to write handlers in two ways: regular `def` and asynchronous `async def`. The temptation is simple - “async is faster, I write everything using `async def`”. But this is a half-truth, which in production turns into a frozen service. Asynchrony speeds up not calculations, but waiting; and if you put a blocking call inside the `async def` handler, you can do worse than if you didn't touch `async` at all.
+
+To choose between `def` and `async def` consciously, you need a model of what's going on under the hood: what an event loop is, how "waiting" differs from "working", and why a single thread can serve thousands of simultaneous requests while they wait for something. By the end of the section, you will be able to, by the nature of the handler - whether it counts or waits - choose the correct form and recognize a call that will block the entire server.
+
+## Mental model: one cook, many pots
+
+Imagine a kitchen with one cook. If he is making soup and just stands there looking at the pot while it boils, all other orders are waiting. If, after putting the soup on the fire, he goes to cut the salad for the next order and returns to the soup when it is ready, he will serve more guests in the same time. There is only one cook here (one stream), and “put it on the fire and walked away” is `await`.
+
+An event loop is a cycle that executes one coroutine until it reaches `await` on a wait operation (a request to the database, a call to another service over the network). At the `await` point, the coroutine says “I’m waiting, do something else” - and the loop switches to the next ready task. When the expected has completed, the loop will return and continue from the same place.
+
+<Figure caption="On await, the coroutine yields to loop, and it takes the next request. While the first one is waiting for the network, the second one is being processed. One thread serves multiple requests, blocking their waits.">
+  <Sketch viewBox="0 0 460 180" title="Event loop switches to await">
+    <SketchLabel x={30} y={30} anchor="start" size={12} weight="bold">Запрос A</SketchLabel>
+    <SketchBox x={90} y={18} width={70} height={22} accent />
+    <SketchLabel x={125} y={33} mono size={10}>работа</SketchLabel>
+    <SketchBox x={165} y={18} width={120} height={22} hatched />
+    <SketchLabel x={225} y={33} mono size={10}>await: ждём сеть</SketchLabel>
+    <SketchBox x={290} y={18} width={70} height={22} accent />
+    <SketchLabel x={325} y={33} mono size={10}>ответ</SketchLabel>
+
+    <SketchLabel x={30} y={90} anchor="start" size={12} weight="bold">Запрос B</SketchLabel>
+    <SketchBox x={165} y={78} width={70} height={22} accent />
+    <SketchLabel x={200} y={93} mono size={10}>работа</SketchLabel>
+    <SketchBox x={240} y={78} width={45} height={22} hatched />
+
+    <SketchArrow from={[225, 40]} to={[200, 78]} dashed />
+    <SketchLabel x={235} y={62} muted size={10}>loop свободен → берёт B</SketchLabel>
+
+    <SketchLabel x={30} y={150} anchor="start" muted size={11}>время →</SketchLabel>
+    <SketchArrow from={[90, 145]} to={[360, 145]} />
+  </Sketch>
+</Figure>
+
+The main rule follows from this model. Async wins when the handler waits **a lot** for I/O: while it waits, loop does other useful work. Async gives nothing and even harms when the handler **counts a lot**: the calculation does not contain `await` points, so the loop gets stuck on it and cannot switch - all other requests are queued.
+
+## `def` vs `async def` in FastAPI
+
+FastAPI cleverly deals with both types of handlers, and this removes some of the danger.
+
+```python
+@app.get("/async")
+async def handler_async():
+    data = await fetch_from_db()
+    return data
+
+@app.get("/sync")
+def handler_sync():
+    data = blocking_db_call()
+    return data
+```
+
+The `async def` loop handler executes directly in the main thread: at each `await` it cedes control. FastAPI runs the `def` handler (regular, synchronous) in a separate thread pool so that its blocking code does not freeze the loop. Therefore, a synchronous handler with a blocking call is a safe choice: it does not interfere with others. But the blocking call inside `async def` is a problem: it is executed in the loop thread itself and freezes everything.
+
+<Callout type="warning">
+Selection rule: if there is `await` inside for real asynchronous I/O operations, write `async def`. If you use regular blocking libraries (synchronous database driver, `requests`, `time.sleep`) - write `def` and let FastAPI put it in the thread pool. Don't mix it up: a blocking call in `async def` is the worst option.
+</Callout>
+
+## Main pitfall: blocking inside async
+
+Let's show the difference in the most obvious case - a pause.
+
+```python
+import asyncio, time
+
+@app.get("/good")
+async def good():
+    await asyncio.sleep(1)
+    return {"ok": True}
+
+@app.get("/bad")
+async def bad():
+    time.sleep(1)
+    return {"ok": True}
+```
+
+`await asyncio.sleep(1)` - this is “set it on fire and walked away”: for this second the loop is free and serves other requests. `time.sleep(1)` inside `async def` is “stands and watches the pan”: for a whole second the loop is blocked in the coroutine thread, and no other request moves. One hundred simultaneous requests to `/bad` will be executed sequentially, for a second each; one hundred requests to `/good` will take approximately the same one second in total.
+
+<Figure caption="Under load, /good exceeds expectations and maintains an almost constant response time; /bad serializes requests, and response time increases linearly with the number of concurrent clients.">
+  <LineChart
+    title="Response time under load"
+    xLabel="simultaneous requests"
+    yLabel="response time, s"
+    series={[
+      { name: "/good (await sleep)", points: [
+        { x: 1, y: 1.0 }, { x: 25, y: 1.05 }, { x: 50, y: 1.1 }, { x: 75, y: 1.15 }, { x: 100, y: 1.2 }
+      ] },
+      { name: "/bad (time.sleep)", points: [
+        { x: 1, y: 1.0 }, { x: 25, y: 25 }, { x: 50, y: 50 }, { x: 75, y: 75 }, { x: 100, y: 100 }
+      ] },
+    ]}
+  />
+</Figure>
+
+The same effect is achieved by any heavy purely computational task in `async def`: parsing a giant file, multiplying matrices, hashing a password using a slow algorithm. These operations don't have `await` points, so the loop gets stuck on them. Their place is in a synchronous `def` handler (thread pool) or in a remote background executor.
+
+## Edge cases
+
+**`async def` without a single `await` is meaningless, but not harmful.** If there is not a single `await` in the asynchronous handler, it will run like a regular function in the loop thread, just without switches. There is no harm as long as there is no blockage inside; but there is also zero benefit from `async` - it’s more honest to declare it `def`.
+
+**Parallelism vs. concurrency.** One event loop in one thread gives **competition** (requests overlap in time), but not **parallelism** (simultaneous execution on different cores). To use multiple cores, multiple worker processes are launched (for example, through Uvicorn/Gunicorn). Async speeds up I/O-bound load; CPU-bound load is scaled by processes, not coroutines.
+
+**Forgotten `await` returns a coroutine, not a result.** Calling `fetch_from_db()` without `await` will return a coroutine object, not data. This is not an on-the-spot error, but a silent bug: further on in the code you operate with a “promise” rather than a value. Linters usually catch this, but the habit of checking `await` for each asynchronous call is more reliable.
+
+## Common mistakes
+
+- **They make an `async def` handler “for speed” and call the synchronous library inside.** `requests.get` or a synchronous database driver inside `async def` blocks the loop. Either take the asynchronous analogue and `await`, or leave the handler synchronous `def`.
+- **Place heavy calculations in `async def`.** CPU-bound code without `await` freezes all other requests for the duration of the calculation. Place it in a `def` handler or in a separate executor.
+- **Forget `await`.** Without it, the coroutine call is not executed, but the coroutine object itself is returned. The symptom is data that “for some reason” turned out to be a strange object, or a “coroutine was never awaited” warning.
+
+<Detail summary="Why one thread is not slow for I/O">
+
+The web service waits more often than it counts: it waits for a response from the database, a response from the payment gateway, or reading from the disk. In the traditional thread-per-request model, each waiting request holds a thread that does nothing but occupy memory (the stack) and burden the scheduler with context switches. A thousand waiting requests - a thousand almost idle threads. The event loop breaks this connection: the wait does not hold the thread, it only registers “wake me up when the response arrives” and releases the loop. Therefore, one loop thread serves thousands of simultaneous I/O-bound connections on modest memory. The price is discipline: not a single operation in the loop thread should block it for a long time, otherwise all the winnings will be destroyed.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Async speeds up waiting for I/O rather than computation: the await event loop switches to another request.",
+    "One thread with an event loop provides concurrency - requests overlap their expectations - but not parallelism across cores.",
+    "async def is needed when there is await inside for asynchronous I/O; for blocking libraries, write a regular def, and FastAPI will put it in the thread pool.",
+    "A blocking call (time.sleep, requests, heavy count) inside an async def freezes the loop and serializes all requests - the worst case scenario.",
+    "Forgotten await returns a coroutine object instead of a result: check for await on every asynchronous call.",
+  ]}
+/>
+
+## Links
+
+- [FastAPI - Concurrency and async / await](https://fastapi.tiangolo.com/async/)
+- [FastAPI - Path Operation, async](https://fastapi.tiangolo.com/tutorial/first-steps/)
+- [Python - asyncio](https://docs.python.org/3/library/asyncio.html)
+- [Python - Coroutines and Tasks](https://docs.python.org/3/library/asyncio-task.html)
