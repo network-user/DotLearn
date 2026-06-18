@@ -123,16 +123,7 @@ export const NmsViz = ({
   );
 
   const steps = useMemo(
-    () =>
-      buildSteps(
-        boxes,
-        order,
-        iouThreshold,
-        keptLabel,
-        suppressedLabel,
-        introHint,
-        doneHint,
-      ),
+    () => buildSteps(boxes, order, iouThreshold, keptLabel, suppressedLabel, introHint, doneHint),
     [boxes, order, iouThreshold, keptLabel, suppressedLabel, introHint, doneHint],
   );
 

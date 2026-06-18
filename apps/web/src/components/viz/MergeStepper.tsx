@@ -39,9 +39,7 @@ const computeSteps = (input: string[][]): MergeStep[] => {
   const result: string[] = [];
 
   while (working.length > 0) {
-    const heads = working
-      .map((seq) => seq[0])
-      .filter((head): head is string => head !== undefined);
+    const heads = working.map((seq) => seq[0]).filter((head): head is string => head !== undefined);
     const rejected: string[] = [];
     let picked: string | null = null;
 
@@ -62,8 +60,7 @@ const computeSteps = (input: string[][]): MergeStep[] => {
         candidate: heads[0] ?? null,
         rejected,
         picked: null,
-        caption:
-          'No head is free of every tail - the hierarchy is inconsistent and C3 fails here.',
+        caption: 'No head is free of every tail - the hierarchy is inconsistent and C3 fails here.',
         done: false,
         stuck: true,
       });
@@ -120,7 +117,10 @@ const initialStep: MergeStep = {
   stuck: false,
 };
 
-export const MergeStepper = ({ sequences = defaultSequences, label = 'C3 merge' }: MergeStepperProps) => {
+export const MergeStepper = ({
+  sequences = defaultSequences,
+  label = 'C3 merge',
+}: MergeStepperProps) => {
   const reduceMotion = useReducedMotion();
   const [index, setIndex] = useState(-1);
   const timerRef = useRef<number | null>(null);
@@ -140,7 +140,7 @@ export const MergeStepper = ({ sequences = defaultSequences, label = 'C3 merge' 
     setIndex(-1);
   }, [steps]);
 
-  const current = index < 0 ? initialStep : steps[index] ?? initialStep;
+  const current = index < 0 ? initialStep : (steps[index] ?? initialStep);
   const atEnd = index >= steps.length - 1;
 
   const step = (): void => {
@@ -160,7 +160,10 @@ export const MergeStepper = ({ sequences = defaultSequences, label = 'C3 merge' 
 
   const displaySequences = index < 0 ? sequences : current.sequences;
 
-  const headState = (item: string, position: number): 'idle' | 'candidate' | 'rejected' | 'picked' => {
+  const headState = (
+    item: string,
+    position: number,
+  ): 'idle' | 'candidate' | 'rejected' | 'picked' => {
     if (position !== 0 || index < 0) return 'idle';
     if (current.picked === item) return 'picked';
     if (current.rejected.includes(item)) return 'rejected';
@@ -188,13 +191,17 @@ export const MergeStepper = ({ sequences = defaultSequences, label = 'C3 merge' 
       <LayoutGroup>
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-2">
-            <span className="text-[11px] uppercase tracking-widest text-fg-subtle">Sequences to merge</span>
+            <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
+              Sequences to merge
+            </span>
             {displaySequences.length === 0 ? (
               <span className="font-mono text-[12px] text-fg-subtle">all empty</span>
             ) : (
               displaySequences.map((seq, seqIndex) => (
                 <div key={`seq-${seqIndex}`} className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-mono text-[11px] text-fg-subtle min-w-[20px]">L{seqIndex + 1}</span>
+                  <span className="font-mono text-[11px] text-fg-subtle min-w-[20px]">
+                    L{seqIndex + 1}
+                  </span>
                   {seq.map((item, position) => {
                     const state = headState(item, position);
                     return (
@@ -225,7 +232,9 @@ export const MergeStepper = ({ sequences = defaultSequences, label = 'C3 merge' 
           </div>
 
           <div className="flex flex-col gap-2 border-t border-border-base/60 pt-3">
-            <span className="text-[11px] uppercase tracking-widest text-fg-subtle">Result (MRO)</span>
+            <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
+              Result (MRO)
+            </span>
             <div className="flex flex-wrap items-center gap-1.5 min-h-[34px]">
               {current.result.length === 0 ? (
                 <span className="font-mono text-[12px] text-fg-subtle">empty</span>

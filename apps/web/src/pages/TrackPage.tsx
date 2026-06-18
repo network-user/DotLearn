@@ -90,7 +90,9 @@ export const TrackPage = () => {
   }, [steps]);
 
   const nextStep = useMemo(
-    () => steps.find((step) => !step.optional && !step.mastered) ?? steps.find((step) => !step.mastered),
+    () =>
+      steps.find((step) => !step.optional && !step.mastered) ??
+      steps.find((step) => !step.mastered),
     [steps],
   );
 
@@ -193,9 +195,7 @@ export const TrackPage = () => {
       ) : (
         <ol className="space-y-3">
           {steps.map((step, index) => {
-            const previousRequired = steps
-              .slice(0, index)
-              .filter((entry) => !entry.optional);
+            const previousRequired = steps.slice(0, index).filter((entry) => !entry.optional);
             const locked = !step.optional && previousRequired.some((entry) => !entry.mastered);
             const isNext = nextStep?.manifest.slug === step.manifest.slug;
             return (
@@ -228,7 +228,11 @@ export const TrackPage = () => {
                         <div className="flex items-center gap-2">
                           <h3 className="truncate font-medium text-fg">{step.manifest.title}</h3>
                           {locked && (
-                            <Lock size={13} className="shrink-0 text-warn" aria-label={t('locked')} />
+                            <Lock
+                              size={13}
+                              className="shrink-0 text-warn"
+                              aria-label={t('locked')}
+                            />
                           )}
                         </div>
                         <DualProgressBar

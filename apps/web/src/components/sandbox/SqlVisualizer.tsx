@@ -47,9 +47,7 @@ export const SqlVisualizer = ({
 
   const expectedRows = expected?.kind === 'result-set' ? (expected.rows ?? []) : [];
   const expectedColumns =
-    expected?.kind === 'result-set'
-      ? (expected.columns ?? Object.keys(expectedRows[0] ?? {}))
-      : [];
+    expected?.kind === 'result-set' ? (expected.columns ?? Object.keys(expectedRows[0] ?? {})) : [];
 
   return (
     <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>

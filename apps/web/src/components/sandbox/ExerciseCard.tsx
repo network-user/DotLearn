@@ -40,8 +40,7 @@ export const ExerciseCard = ({
     return () => window.clearTimeout(timer);
   }, [pulse, status]);
 
-  const statusTone =
-    status === 'pass' ? 'success' : status === 'fail' ? 'danger' : 'neutral';
+  const statusTone = status === 'pass' ? 'success' : status === 'fail' ? 'danger' : 'neutral';
 
   return (
     <div

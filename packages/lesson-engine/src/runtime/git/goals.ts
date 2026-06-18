@@ -137,10 +137,7 @@ const evaluateAssertion = (repo: GitRepo, assertion: GitGoalAssertion): GoalResu
   }
 };
 
-export const evaluateGitGoals = (
-  repo: GitRepo,
-  goal: GitGoalAssertion[],
-): GoalEvaluation => {
+export const evaluateGitGoals = (repo: GitRepo, goal: GitGoalAssertion[]): GoalEvaluation => {
   const results = goal.map((assertion) => evaluateAssertion(repo, assertion));
   return { met: results.every((result) => result.ok), results };
 };

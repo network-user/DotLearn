@@ -1,5 +1,4 @@
-export const normalizeQuery = (value: string): string =>
-  value.trim().toLowerCase();
+export const normalizeQuery = (value: string): string => value.trim().toLowerCase();
 
 export const tokenize = (value: string): string[] =>
   normalizeQuery(value)

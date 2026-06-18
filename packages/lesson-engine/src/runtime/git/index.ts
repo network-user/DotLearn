@@ -10,8 +10,4 @@ export {
   type RepoSnapshot,
   type StatusSnapshot,
 } from './engine';
-export {
-  evaluateGitGoals,
-  type GoalEvaluation,
-  type GoalResult,
-} from './goals';
+export { evaluateGitGoals, type GoalEvaluation, type GoalResult } from './goals';

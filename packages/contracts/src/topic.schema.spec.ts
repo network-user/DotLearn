@@ -38,8 +38,11 @@ describe('TopicManifest', () => {
 
   it('rejects duplicate availableLanguages', () => {
     expect(
-      TopicManifest.safeParse({ ...valid(), availableLanguages: ['ru', 'ru'], primaryLanguage: 'ru' })
-        .success,
+      TopicManifest.safeParse({
+        ...valid(),
+        availableLanguages: ['ru', 'ru'],
+        primaryLanguage: 'ru',
+      }).success,
     ).toBe(false);
   });
 

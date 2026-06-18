@@ -71,7 +71,12 @@ describe('formatGoldDetails', () => {
   it('formats a thrown case failure', () => {
     const out = formatGoldDetails({
       failures: [
-        { call: 'div(1, 0)', expected: 0, actual: null, thrown: { type: 'ZeroDivisionError', message: 'boom' } },
+        {
+          call: 'div(1, 0)',
+          expected: 0,
+          actual: null,
+          thrown: { type: 'ZeroDivisionError', message: 'boom' },
+        },
       ],
     });
     expect(out).toContain('! threw ZeroDivisionError: boom');

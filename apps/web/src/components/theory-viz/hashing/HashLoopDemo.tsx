@@ -22,8 +22,10 @@ const STRINGS = {
     pause: 'пауза',
     step: 'дальше',
     defaultInputs: ['Москва', 'Казань', 'Сочи', 'Пермь', 'Тула'],
-    caption: 'Функция одна, входы разные - отпечатки совершенно непохожи и всегда одной длины. Анимация идёт по кругу.',
-    reduced: 'Анимация отключена в настройках системы. Жмите «дальше», чтобы пролистать входы вручную.',
+    caption:
+      'Функция одна, входы разные - отпечатки совершенно непохожи и всегда одной длины. Анимация идёт по кругу.',
+    reduced:
+      'Анимация отключена в настройках системы. Жмите «дальше», чтобы пролистать входы вручную.',
   },
   en: {
     label: 'The same hash() on different inputs (loop)',
@@ -31,8 +33,10 @@ const STRINGS = {
     pause: 'pause',
     step: 'next',
     defaultInputs: ['Moscow', 'Kazan', 'Sochi', 'Perm', 'Tula'],
-    caption: 'One function, different inputs - the fingerprints are completely unalike and always the same length. The animation runs in a loop.',
-    reduced: 'Animation is disabled in your system settings. Press "next" to step through inputs manually.',
+    caption:
+      'One function, different inputs - the fingerprints are completely unalike and always the same length. The animation runs in a loop.',
+    reduced:
+      'Animation is disabled in your system settings. Press "next" to step through inputs manually.',
   },
 } as const;
 
@@ -105,18 +109,20 @@ export const HashLoopDemo = ({
           <div className="flex items-baseline gap-1 font-mono">
             <span className="text-fg-subtle text-xs">0x</span>
             <div className="flex gap-0.5 text-[18px] sm:text-xl font-semibold tracking-wide text-accent">
-              {toHex(hash).split('').map((digit, i) => (
-                <AnimatePresence mode="popLayout" key={i}>
-                  <motion.span
-                    key={`${digit}-${index}`}
-                    initial={reduceMotion ? false : { y: -8, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ duration: 0.25, delay: i * 0.02 }}
-                  >
-                    {digit}
-                  </motion.span>
-                </AnimatePresence>
-              ))}
+              {toHex(hash)
+                .split('')
+                .map((digit, i) => (
+                  <AnimatePresence mode="popLayout" key={i}>
+                    <motion.span
+                      key={`${digit}-${index}`}
+                      initial={reduceMotion ? false : { y: -8, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      transition={{ duration: 0.25, delay: i * 0.02 }}
+                    >
+                      {digit}
+                    </motion.span>
+                  </AnimatePresence>
+                ))}
             </div>
           </div>
         </div>

@@ -113,9 +113,7 @@ export const AggregateViz = ({
               key="rows"
               initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={
-                reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.7, filter: 'blur(4px)' }
-              }
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.7, filter: 'blur(4px)' }}
               transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
               className="w-full max-w-[420px] rounded-lg border border-border-base bg-surface overflow-hidden"
             >

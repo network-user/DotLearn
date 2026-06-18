@@ -25,10 +25,7 @@ describe('InterviewQuestionMeta schema', () => {
   it('parses a question with relatedTopics including an optional conceptId', () => {
     const result = InterviewQuestionMeta.safeParse({
       ...validQuestion,
-      relatedTopics: [
-        { slug: 'celery' },
-        { slug: 'python-storage-internals', conceptId: 'gil' },
-      ],
+      relatedTopics: [{ slug: 'celery' }, { slug: 'python-storage-internals', conceptId: 'gil' }],
     });
     expect(result.success).toBe(true);
     if (result.success) {

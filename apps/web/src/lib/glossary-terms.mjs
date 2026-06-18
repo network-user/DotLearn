@@ -1,6 +1,9 @@
 export const GLOSSARY_TERM_MATCHERS = [
   { id: 'acid', match: { ru: ['ACID'], en: ['ACID'] } },
-  { id: 'transaction', match: { ru: ['транзакция', 'транзакции'], en: ['transaction', 'transactions'] } },
+  {
+    id: 'transaction',
+    match: { ru: ['транзакция', 'транзакции'], en: ['transaction', 'transactions'] },
+  },
   { id: 'index', match: { ru: ['индекс'], en: ['database index'] } },
   { id: 'primary-key', match: { ru: ['первичный ключ'], en: ['primary key'] } },
   { id: 'foreign-key', match: { ru: ['внешний ключ'], en: ['foreign key'] } },
@@ -15,7 +18,10 @@ export const GLOSSARY_TERM_MATCHERS = [
   { id: 'mro', match: { ru: ['MRO'], en: ['MRO'] } },
   { id: 'hash-table', match: { ru: ['хеш-таблица', 'хеш-таблицы'], en: ['hash table'] } },
   { id: 'big-o', match: { ru: ['O-большое'], en: ['Big-O'] } },
-  { id: 'idempotency', match: { ru: ['идемпотентность', 'идемпотентный'], en: ['idempotency', 'idempotent'] } },
+  {
+    id: 'idempotency',
+    match: { ru: ['идемпотентность', 'идемпотентный'], en: ['idempotency', 'idempotent'] },
+  },
   { id: 'latency', match: { ru: ['латентность'], en: ['latency'] } },
   { id: 'throughput', match: { ru: ['пропускная способность'], en: ['throughput'] } },
   { id: 'embedding', match: { ru: ['эмбеддинг', 'эмбеддинги'], en: ['embedding', 'embeddings'] } },
@@ -23,5 +29,8 @@ export const GLOSSARY_TERM_MATCHERS = [
   { id: 'gradient-descent', match: { ru: ['градиентный спуск'], en: ['gradient descent'] } },
   { id: 'overfitting', match: { ru: ['переобучение'], en: ['overfitting'] } },
   { id: 'attention', match: { ru: ['механизм внимания'], en: ['attention mechanism'] } },
-  { id: 'hallucination', match: { ru: ['галлюцинация', 'галлюцинации'], en: ['hallucination', 'hallucinations'] } },
+  {
+    id: 'hallucination',
+    match: { ru: ['галлюцинация', 'галлюцинации'], en: ['hallucination', 'hallucinations'] },
+  },
 ];

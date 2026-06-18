@@ -61,11 +61,16 @@ const parseEnvelope = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
     const message =
       typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? (parsed as ErrorEnvelope).error?.message ?? `${response.status} ${response.statusText}`
+        ? ((parsed as ErrorEnvelope).error?.message ?? `${response.status} ${response.statusText}`)
         : `${response.status} ${response.statusText}`;
     throw new AuthApiError(response.status, message);
   }
-  if (typeof parsed === 'object' && parsed !== null && 'ok' in parsed && (parsed as SuccessEnvelope<T>).ok) {
+  if (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    'ok' in parsed &&
+    (parsed as SuccessEnvelope<T>).ok
+  ) {
     return (parsed as SuccessEnvelope<T>).data;
   }
   return parsed as T;

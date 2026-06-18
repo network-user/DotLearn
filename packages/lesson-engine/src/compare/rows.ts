@@ -93,10 +93,12 @@ export const compareRows = (
     }
   }
   const ok = missing.length === 0 && extra.length === 0;
-  const misordered = ok && actual.some((row, index) => {
-    const target = expected[index];
-    return target === undefined || canonicalKey(row) !== canonicalKey(target);
-  });
+  const misordered =
+    ok &&
+    actual.some((row, index) => {
+      const target = expected[index];
+      return target === undefined || canonicalKey(row) !== canonicalKey(target);
+    });
   return { ok, missing, extra, misordered, expectedColumns, actualColumns };
 };
 

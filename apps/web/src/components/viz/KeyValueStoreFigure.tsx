@@ -133,8 +133,7 @@ export const KeyValueStoreFigure = ({
     }
   })();
 
-  const activeBucket =
-    phase.kind === 'idle' ? null : phase.bucket;
+  const activeBucket = phase.kind === 'idle' ? null : phase.bucket;
   const hitValue = phase.kind === 'hit' ? phase.value : null;
 
   return (

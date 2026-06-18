@@ -374,7 +374,9 @@ export const TopicPage = () => {
       const target = event.target as HTMLElement | null;
       if (
         target &&
-        target.closest('.monaco-editor, input, textarea, select, pre, .overflow-x-auto, [data-no-swipe]')
+        target.closest(
+          '.monaco-editor, input, textarea, select, pre, .overflow-x-auto, [data-no-swipe]',
+        )
       ) {
         ignore = true;
       }
@@ -406,8 +408,7 @@ export const TopicPage = () => {
   const readyRuntime = state.kind === 'ready' ? state.bundle.manifest.runtime : undefined;
   useEffect(() => {
     if (readyRuntime !== 'pyodide' && readyRuntime !== 'sql.js') return;
-    const prewarm =
-      readyRuntime === 'pyodide' ? prewarmPythonRuntime : prewarmSqlRuntime;
+    const prewarm = readyRuntime === 'pyodide' ? prewarmPythonRuntime : prewarmSqlRuntime;
     const win = window as typeof window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
       cancelIdleCallback?: (handle: number) => void;
@@ -707,7 +708,11 @@ const PrerequisitesBanner = ({ prerequisites }: { prerequisites: string[] }) => 
           </span>
           {prereqs.map((entry, index) => (
             <span key={entry.slug} className="inline-flex items-center">
-              {index > 0 && <span aria-hidden className="mr-2 text-fg-subtle">·</span>}
+              {index > 0 && (
+                <span aria-hidden className="mr-2 text-fg-subtle">
+                  ·
+                </span>
+              )}
               <Link
                 to="/topics/$slug"
                 params={{ slug: entry.slug }}
@@ -1220,9 +1225,7 @@ const ConceptPanel = ({
         ))}
       </div>
 
-      {THEORY_HIGHLIGHTS_ENABLED ? (
-        <TheoryHighlighter slug={slug} conceptId={concept.id} />
-      ) : null}
+      {THEORY_HIGHLIGHTS_ENABLED ? <TheoryHighlighter slug={slug} conceptId={concept.id} /> : null}
 
       <section
         id="concept-exercises"

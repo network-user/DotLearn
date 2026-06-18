@@ -40,7 +40,13 @@ export const RowFilterFigure = ({
     showDropped: boolean,
   ): React.ReactNode => (
     <>
-      <SketchBox x={x} y={30} width={tableW} height={HEADER_H + tableRows.length * ROW_H} radius={6} />
+      <SketchBox
+        x={x}
+        y={30}
+        width={tableW}
+        height={HEADER_H + tableRows.length * ROW_H}
+        radius={6}
+      />
       {columns.map((column, columnIndex) => (
         <SketchLabel
           key={column}

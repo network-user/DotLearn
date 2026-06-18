@@ -4,11 +4,7 @@ import {
   type PythonRuntime,
 } from '@dotlearn/lesson-engine';
 
-import type {
-  PyodideInitProgress,
-  PyodideWorkerRequest,
-  PyodideWorkerResponse,
-} from './protocol';
+import type { PyodideInitProgress, PyodideWorkerRequest, PyodideWorkerResponse } from './protocol';
 
 export type { PyodideInitProgress } from './protocol';
 
@@ -155,9 +151,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
         })
         .catch((error: unknown) => {
           clearInitWatchdog();
-          throw error instanceof Error
-            ? error
-            : new PythonExecutionError(String(error));
+          throw error instanceof Error ? error : new PythonExecutionError(String(error));
         });
     }
     return initPromise;

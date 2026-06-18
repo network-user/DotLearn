@@ -195,9 +195,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
             >
               <p className="font-medium">{t('quiz.correct')}</p>
               {state.explanation && (
-                <p className="text-ok/80 leading-relaxed">
-                  {state.explanation}
-                </p>
+                <p className="text-ok/80 leading-relaxed">{state.explanation}</p>
               )}
             </motion.div>
           )}
@@ -211,11 +209,11 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
               className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-1"
             >
-              <p className="font-medium">{t('quiz.wrong', { reason: failureMessage(state.failure) })}</p>
+              <p className="font-medium">
+                {t('quiz.wrong', { reason: failureMessage(state.failure) })}
+              </p>
               {state.explanation && (
-                <p className="text-err/80 leading-relaxed">
-                  {state.explanation}
-                </p>
+                <p className="text-err/80 leading-relaxed">{state.explanation}</p>
               )}
             </motion.div>
           )}

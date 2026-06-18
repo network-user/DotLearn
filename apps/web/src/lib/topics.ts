@@ -1,10 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import {
-  languageOfTopicFile,
-  type TopicLanguage,
-  type TopicManifest,
-} from '@dotlearn/contracts';
+import { languageOfTopicFile, type TopicLanguage, type TopicManifest } from '@dotlearn/contracts';
 import {
   createLazyTopicSource,
   parseManifest,
@@ -18,10 +14,10 @@ import i18n, { getCurrentLanguage } from './i18n';
 import { getSettings, useSettings } from './settings';
 import manifestRecord from 'virtual:topic-manifests';
 
-const exerciseModules = import.meta.glob<string>(
-  '../../../../topics/*/exercises/*.yaml',
-  { query: '?raw', import: 'default' },
-);
+const exerciseModules = import.meta.glob<string>('../../../../topics/*/exercises/*.yaml', {
+  query: '?raw',
+  import: 'default',
+});
 
 const RELATIVE_PREFIX = '../../../../';
 
@@ -102,15 +98,10 @@ const filterConceptByLanguage = (
 ): ConceptBundle => ({
   conceptId: concept.conceptId,
   theory: concept.theory.filter((file) => languageOfTopicFile(file.filename) === language),
-  exercises: concept.exercises.filter(
-    (file) => languageOfTopicFile(file.filename) === language,
-  ),
+  exercises: concept.exercises.filter((file) => languageOfTopicFile(file.filename) === language),
 });
 
-const filterBundleByLanguage = (
-  bundle: TopicBundle,
-  language: TopicLanguage,
-): TopicBundle => ({
+const filterBundleByLanguage = (bundle: TopicBundle, language: TopicLanguage): TopicBundle => ({
   manifest: bundle.manifest,
   concepts: bundle.concepts.map((concept) => filterConceptByLanguage(concept, language)),
 });
@@ -138,10 +129,7 @@ export const prefetchTopic = (slug: string): void => {
   void loadRawBundle(slug, language).catch(() => undefined);
 };
 
-export const loadTopic = async (
-  slug: string,
-  language: TopicLanguage,
-): Promise<TopicBundle> => {
+export const loadTopic = async (slug: string, language: TopicLanguage): Promise<TopicBundle> => {
   const manifest = manifestOf(slug);
   if (!manifest) {
     return loadRawBundle(slug);
@@ -201,9 +189,7 @@ export const listManifests = async (): Promise<TopicManifest[]> => {
   const all = getAllManifests();
   void loadHiddenSlugs();
   const hidden = hiddenSlugsCache;
-  return hidden && hidden.size > 0
-    ? all.filter((manifest) => !hidden.has(manifest.slug))
-    : all;
+  return hidden && hidden.size > 0 ? all.filter((manifest) => !hidden.has(manifest.slug)) : all;
 };
 
 export const listAllManifestsIgnoringHidden = async (): Promise<TopicManifest[]> =>

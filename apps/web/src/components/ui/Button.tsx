@@ -62,10 +62,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       )}
     >
       {loading && (
-        <span
-          aria-hidden
-          className="absolute inset-0 grid place-items-center"
-        >
+        <span aria-hidden className="absolute inset-0 grid place-items-center">
           <span className="size-3.5 rounded-full border-2 border-current border-r-transparent animate-spin" />
         </span>
       )}

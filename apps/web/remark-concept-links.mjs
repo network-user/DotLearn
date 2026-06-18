@@ -181,7 +181,10 @@ export const remarkConceptLinks = () => (tree, file) => {
 
   const autolinkTerms = (node) => {
     if (!node || typeof node !== 'object' || SKIP_TYPES.has(node.type)) return;
-    if (node.type === 'mdxJsxTextElement' && (node.name === 'Term' || node.name === 'ConceptLink')) {
+    if (
+      node.type === 'mdxJsxTextElement' &&
+      (node.name === 'Term' || node.name === 'ConceptLink')
+    ) {
       return;
     }
     if (!Array.isArray(node.children)) return;

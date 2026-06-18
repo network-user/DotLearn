@@ -76,8 +76,7 @@ export const ActivationPlot = ({
     return height - padding - ((0 - curve.yMin) / span) * (height - padding * 2);
   })();
 
-  const zeroX =
-    padding + ((0 - domain.min) / (domain.max - domain.min)) * (width - padding * 2);
+  const zeroX = padding + ((0 - domain.min) / (domain.max - domain.min)) * (width - padding * 2);
 
   return (
     <VizShell
@@ -182,12 +181,7 @@ export const ActivationPlot = ({
             >
               x
             </text>
-            <text
-              x={zeroX + 6}
-              y={padding + 4}
-              className="fill-fg-subtle font-mono"
-              fontSize={9}
-            >
+            <text x={zeroX + 6} y={padding + 4} className="fill-fg-subtle font-mono" fontSize={9}>
               f(x)
             </text>
           </svg>

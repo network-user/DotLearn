@@ -37,7 +37,7 @@ DotLearn is a **modular monolith inside a pnpm workspaces monorepo**. The fronte
 
 ## Key invariants
 
-1. **`apps/web` must run with `apps/api` absent.** Local-first means the SPA reads `topics/` directly (Vite `import.meta.glob`), runs sandbox in Web Workers, and calls AI providers from the browser via BYOK. The backend is *optional enhancement*, never *required dependency*.
+1. **`apps/web` must run with `apps/api` absent.** Local-first means the SPA reads `topics/` directly (Vite `import.meta.glob`), runs sandbox in Web Workers, and calls AI providers from the browser via BYOK. The backend is _optional enhancement_, never _required dependency_.
 
 2. **`packages/contracts` is the only thing that touches both worlds.** Web validates topic manifests with the same Zod schemas the API uses for incoming submission DTOs. `z.infer<>` keeps TypeScript types synchronized for free.
 
@@ -49,10 +49,10 @@ DotLearn is a **modular monolith inside a pnpm workspaces monorepo**. The fronte
 
 ## Why a modular monolith (and not...)
 
-| Alternative | Why rejected |
-|---|---|
-| Single flat package | Agent codegen drifts; no separation between UI and domain logic; violates the user's NestJS DDD rule on backend side. |
-| Next.js full-stack (single app) | Couples frontend deploy to backend lifecycle; harder to self-host static-only; mixes API routes into UI code. |
+| Alternative                                              | Why rejected                                                                                                                              |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Single flat package                                      | Agent codegen drifts; no separation between UI and domain logic; violates the user's NestJS DDD rule on backend side.                     |
+| Next.js full-stack (single app)                          | Couples frontend deploy to backend lifecycle; harder to self-host static-only; mixes API routes into UI code.                             |
 | Polyrepo (separate frontend / backend / contracts repos) | Skill needs to see everything in one place; PR-based topic submissions become awkward across repos; type sync requires manual versioning. |
 
 The modular monolith captures the local-first philosophy (frontend independent) while preserving DDD boundaries on the backend.

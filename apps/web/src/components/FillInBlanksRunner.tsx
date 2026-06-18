@@ -138,8 +138,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
                   {failure.got !== undefined && (
                     <>
                       {' · '}
-                      {t('fillIn.got')}{' '}
-                      <code className="text-err">{failure.got}</code>
+                      {t('fillIn.got')} <code className="text-err">{failure.got}</code>
                     </>
                   )}
                 </li>

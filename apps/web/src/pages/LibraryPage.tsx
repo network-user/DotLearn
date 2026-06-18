@@ -181,12 +181,7 @@ export const LibraryPage = () => {
       const titles = resolveTitles(item.topicSlug, item.conceptId);
       return (
         hasTag(item.tags, activeTag) &&
-        matches(
-          trimmedQuery,
-          (item.tags ?? []).join(' '),
-          titles.conceptTitle,
-          titles.topicTitle,
-        )
+        matches(trimmedQuery, (item.tags ?? []).join(' '), titles.conceptTitle, titles.topicTitle)
       );
     });
   }, [bookmarks, resolveTitles, trimmedQuery, activeTag]);
@@ -251,7 +246,9 @@ export const LibraryPage = () => {
     (): Promise<SessionCard[]> =>
       loadUserCardSessionCards((record) => {
         const titles = resolveTitles(record.topicSlug, record.conceptId ?? record.topicSlug);
-        return record.conceptId ? `${titles.conceptTitle} · ${titles.topicTitle}` : titles.topicTitle;
+        return record.conceptId
+          ? `${titles.conceptTitle} · ${titles.topicTitle}`
+          : titles.topicTitle;
       }),
     [resolveTitles],
   );
@@ -333,7 +330,11 @@ export const LibraryPage = () => {
       </header>
 
       {tagApplies && availableTags.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('tags.filterLabel')}>
+        <div
+          className="flex flex-wrap items-center gap-1.5"
+          role="group"
+          aria-label={t('tags.filterLabel')}
+        >
           <TagChip
             label={t('tags.all')}
             active={activeTag === null}
@@ -583,7 +584,12 @@ const TabList = ({
         body={emptyBody}
         primaryAction={
           <Link to="/" hash="topics" className="block w-full sm:w-auto">
-            <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+            <Button
+              variant="primary"
+              size="md"
+              className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+              trailingIcon={<ArrowRight size={15} />}
+            >
               {t('exploreTopics')}
             </Button>
           </Link>
@@ -676,7 +682,10 @@ const TagsRow = ({ tags, onChange }: TagsRowProps) => {
 
   const commit = () => {
     const trimmed = value.trim();
-    if (trimmed.length > 0 && !list.some((entry) => entry.toLowerCase() === trimmed.toLowerCase())) {
+    if (
+      trimmed.length > 0 &&
+      !list.some((entry) => entry.toLowerCase() === trimmed.toLowerCase())
+    ) {
       onChange([...list, trimmed]);
     }
     setValue('');
@@ -787,7 +796,8 @@ const HighlightCard = ({ item, titles, onMakeCard }: HighlightCardProps) => {
               onClick={() =>
                 onMakeCard({
                   front: titles.conceptTitle,
-                  back: item.note && item.note.length > 0 ? `${item.text}\n\n${item.note}` : item.text,
+                  back:
+                    item.note && item.note.length > 0 ? `${item.text}\n\n${item.note}` : item.text,
                   topicSlug: item.topicSlug,
                   conceptId: item.conceptId,
                   sourceHighlightId: item.id,
@@ -946,7 +956,9 @@ const FlashcardDraftDialog = ({ draft, onClose, onSave }: FlashcardDraftDialogPr
   const [back, setBack] = useState('');
   const [seeded, setSeeded] = useState<string | null>(null);
 
-  const draftKey = draft ? `${draft.sourceNoteId ?? ''}|${draft.sourceHighlightId ?? ''}|${draft.topicSlug}` : null;
+  const draftKey = draft
+    ? `${draft.sourceNoteId ?? ''}|${draft.sourceHighlightId ?? ''}|${draft.topicSlug}`
+    : null;
   if (draft && draftKey !== seeded) {
     setFront(draft.front);
     setBack(draft.back);

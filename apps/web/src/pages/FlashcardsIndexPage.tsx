@@ -2,14 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { isCardDue } from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
-import {
-  ArrowRight,
-  GraduationCap,
-  Layers,
-  Play,
-  Shuffle,
-  Sparkles,
-} from 'lucide-react';
+import { ArrowRight, GraduationCap, Layers, Play, Shuffle, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
@@ -19,10 +12,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { flashcardTopicSlugs, loadTopicCards } from '@/lib/flashcard-decks';
 import { loadFlashcardStats, type FlashcardStats } from '@/lib/flashcard-sources';
-import {
-  interviewFlashcardCoverage,
-  loadInterviewCards,
-} from '@/lib/interview-flashcards';
+import { interviewFlashcardCoverage, loadInterviewCards } from '@/lib/interview-flashcards';
 import { interviewCategories } from '@/lib/interview';
 import { db } from '@/lib/progress-db';
 import { topicTitleOf, useContentLanguage } from '@/lib/topics';
@@ -155,7 +145,10 @@ export const FlashcardsIndexPage = () => {
       {coverage.missing > 0 && (
         <Surface variant="inset">
           <p className="p-4 text-sm text-fg-muted">
-            {t('coverageWarning', { missing: coverage.missing, total: coverage.cards + coverage.missing })}
+            {t('coverageWarning', {
+              missing: coverage.missing,
+              total: coverage.cards + coverage.missing,
+            })}
           </p>
         </Surface>
       )}
@@ -224,7 +217,12 @@ export const FlashcardsIndexPage = () => {
             body={t('hubEmptyBody')}
             primaryAction={
               <Link to="/" hash="topics" className="block w-full sm:w-auto">
-                <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                  trailingIcon={<ArrowRight size={15} />}
+                >
                   {t('exploreTopics')}
                 </Button>
               </Link>
@@ -285,7 +283,9 @@ export const FlashcardsIndexPage = () => {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-display text-xl tracking-tightish text-fg">{t('interviewDecksHeading')}</h2>
+            <h2 className="font-display text-xl tracking-tightish text-fg">
+              {t('interviewDecksHeading')}
+            </h2>
             <span className="text-sm text-fg-subtle">
               {t('interviewCategoriesCount', { count: interviewCategories.length })}
             </span>
@@ -305,7 +305,12 @@ export const FlashcardsIndexPage = () => {
             body={t('interviewEmptyBody')}
             primaryAction={
               <Link to="/interview" className="block w-full sm:w-auto">
-                <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                  trailingIcon={<ArrowRight size={15} />}
+                >
                   {t('openInterviewPrep')}
                 </Button>
               </Link>

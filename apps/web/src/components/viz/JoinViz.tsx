@@ -121,7 +121,10 @@ export const JoinViz = ({
               participates(side, row) ? 'opacity-100' : 'opacity-35',
             )}
           >
-            <span aria-hidden className={cx('size-2 rounded-full shrink-0', keyColor.get(row.key))} />
+            <span
+              aria-hidden
+              className={cx('size-2 rounded-full shrink-0', keyColor.get(row.key))}
+            />
             <span className="text-fg-subtle">
               {keyName}={row.key}
             </span>
@@ -196,7 +199,9 @@ export const JoinViz = ({
                       aria-hidden
                       className={cx('size-2 rounded-full shrink-0', keyColor.get(pair.left.key))}
                     />
-                    <span className="text-fg-subtle">{leftKeyName}={pair.left.key}</span>
+                    <span className="text-fg-subtle">
+                      {leftKeyName}={pair.left.key}
+                    </span>
                     <span className="text-fg">{pair.left.label}</span>
                   </>
                 ) : (
@@ -217,7 +222,9 @@ export const JoinViz = ({
                       aria-hidden
                       className={cx('size-2 rounded-full shrink-0', keyColor.get(pair.right.key))}
                     />
-                    <span className="text-fg-subtle">{rightKeyName}={pair.right.key}</span>
+                    <span className="text-fg-subtle">
+                      {rightKeyName}={pair.right.key}
+                    </span>
                     <span className="text-fg">{pair.right.label}</span>
                   </>
                 ) : (

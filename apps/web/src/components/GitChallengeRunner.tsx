@@ -24,10 +24,7 @@ interface GitChallengeRunnerProps {
   exercise: GitChallengeExercise;
 }
 
-type GradeState =
-  | { kind: 'idle' }
-  | { kind: 'pass' }
-  | { kind: 'fail'; failure: FailureReason };
+type GradeState = { kind: 'idle' } | { kind: 'pass' } | { kind: 'fail'; failure: FailureReason };
 
 export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerProps) => {
   const { t } = useTranslation('runners');

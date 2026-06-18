@@ -87,7 +87,10 @@ export const HashFunctionViz = ({ initialText, label, lang = 'ru' }: HashFunctio
     <VizShell
       label={label ?? t.label}
       actions={
-        <VizButton onClick={() => setText((current) => mutateOneChar(current, t.alphabet))} tone="ghost">
+        <VizButton
+          onClick={() => setText((current) => mutateOneChar(current, t.alphabet))}
+          tone="ghost"
+        >
           <Shuffle size={12} />
           {t.mutate}
         </VizButton>
@@ -96,7 +99,10 @@ export const HashFunctionViz = ({ initialText, label, lang = 'ru' }: HashFunctio
     >
       <div className="min-w-[300px] space-y-4">
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] uppercase tracking-widest text-fg-subtle" htmlFor="hashfn-input">
+          <label
+            className="text-[11px] uppercase tracking-widest text-fg-subtle"
+            htmlFor="hashfn-input"
+          >
             {t.inputLabel}
           </label>
           <input
@@ -109,27 +115,33 @@ export const HashFunctionViz = ({ initialText, label, lang = 'ru' }: HashFunctio
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] uppercase tracking-widest text-fg-subtle">{t.outputLabel}</span>
+          <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
+            {t.outputLabel}
+          </span>
           <div className="flex items-baseline gap-2 font-mono">
             <span className="text-fg-subtle text-sm">0x</span>
             <div className="flex gap-0.5 text-[20px] sm:text-2xl font-semibold tracking-wide">
-              {toHex(hash).split('').map((digit, i) => (
-                <motion.span
-                  key={`${i}-${digit}`}
-                  initial={reduceMotion ? false : { y: -6, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  transition={{ duration: 0.18 }}
-                  className="text-accent"
-                >
-                  {digit}
-                </motion.span>
-              ))}
+              {toHex(hash)
+                .split('')
+                .map((digit, i) => (
+                  <motion.span
+                    key={`${i}-${digit}`}
+                    initial={reduceMotion ? false : { y: -6, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ duration: 0.18 }}
+                    className="text-accent"
+                  >
+                    {digit}
+                  </motion.span>
+                ))}
             </div>
           </div>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] uppercase tracking-widest text-fg-subtle">{t.bitsLabel}</span>
+          <span className="text-[11px] uppercase tracking-widest text-fg-subtle">
+            {t.bitsLabel}
+          </span>
           <div className="grid grid-cols-[repeat(16,minmax(0,1fr))] gap-1">
             {bits.map((bit, i) => {
               const flipped = bit !== prevBits[i];

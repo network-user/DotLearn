@@ -134,11 +134,7 @@ export const useAllNotes = (): ConceptNoteRecord[] => {
 };
 
 export const useUserCards = (): UserCardRecord[] => {
-  const records = useLiveQuery(
-    () => db.userCards.orderBy('createdAt').reverse().toArray(),
-    [],
-    [],
-  );
+  const records = useLiveQuery(() => db.userCards.orderBy('createdAt').reverse().toArray(), [], []);
   return records ?? [];
 };
 

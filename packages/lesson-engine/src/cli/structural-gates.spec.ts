@@ -103,7 +103,9 @@ describe('checkCoverage', () => {
     const bundle = bundleWith([
       {
         conceptId: 'intro',
-        files: [{ filename: 'exercises/01-intro.ru.yaml', exercises: [quiz('e1', 1), quiz('e2', 4)] }],
+        files: [
+          { filename: 'exercises/01-intro.ru.yaml', exercises: [quiz('e1', 1), quiz('e2', 4)] },
+        ],
       },
     ]);
     const findings = checkCoverage(bundle);

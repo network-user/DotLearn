@@ -77,7 +77,7 @@ export const Breadcrumbs = () => {
           : `#${segment}`
         : undefined;
     crumbs.push({
-      label: navKey ? t(navKey) : interviewLabel ?? topicTitle ?? titleizeSlug(segment),
+      label: navKey ? t(navKey) : (interviewLabel ?? topicTitle ?? titleizeSlug(segment)),
       to: accumulated,
     });
     previousSegment = segment;

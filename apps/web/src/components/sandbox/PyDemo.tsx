@@ -195,7 +195,9 @@ export const PyDemo = ({ code, title, call, autoRun = false, chart }: PyDemoProp
         <PythonConsole
           lines={lines}
           status={status === 'pass' ? 'pass' : status === 'fail' ? 'fail' : status}
-          emptyMessage={t('sandbox.emptyConsole', { defaultValue: 'Запусти, чтобы увидеть вывод.' })}
+          emptyMessage={t('sandbox.emptyConsole', {
+            defaultValue: 'Запусти, чтобы увидеть вывод.',
+          })}
         />
       </div>
       {chartData && chartData.length > 0 && (

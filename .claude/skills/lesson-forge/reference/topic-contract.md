@@ -100,8 +100,8 @@ See [exercise-types.md](./exercise-types.md) for the catalog of allowed `type` v
 conceptId: select
 cards:
   - id: select-001
-    front: "What does SELECT * do?"
-    back: "Returns all columns of every matching row."
+    front: 'What does SELECT * do?'
+    back: 'Returns all columns of every matching row.'
     tags: [sql, basic]
 ```
 

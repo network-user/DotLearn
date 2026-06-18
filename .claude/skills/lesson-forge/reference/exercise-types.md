@@ -11,16 +11,16 @@ Multiple choice on a piece of theory. No code execution.
   concept: select
   type: theory-quiz
   difficulty: 1
-  prompt: "What does the SQL keyword SELECT do?"
+  prompt: 'What does the SQL keyword SELECT do?'
   choices:
     - id: a
-      text: "Removes rows from a table."
+      text: 'Removes rows from a table.'
     - id: b
-      text: "Retrieves rows from a table."
+      text: 'Retrieves rows from a table.'
     - id: c
-      text: "Creates a new table."
+      text: 'Creates a new table.'
   correct: [b]
-  explanation: "SELECT is the read operation."
+  explanation: 'SELECT is the read operation.'
 ```
 
 ## `sql-query`
@@ -32,7 +32,7 @@ Learner writes SQL. Runner executes against `fixture`, compares result-set to `e
   concept: select
   type: sql-query
   difficulty: 1
-  prompt: "Return users older than 18, sorted by name."
+  prompt: 'Return users older than 18, sorted by name.'
   fixture: |
     CREATE TABLE users(id INT, name TEXT, age INT);
     INSERT INTO users VALUES (1, 'Anna', 25), (2, 'Bob', 17), (3, 'Eva', 30);
@@ -43,8 +43,8 @@ Learner writes SQL. Runner executes against `fixture`, compares result-set to `e
       - { id: 1, name: 'Anna', age: 25 }
       - { id: 3, name: 'Eva', age: 30 }
   hints:
-    - "Use WHERE for filtering."
-    - "Use ORDER BY for sorting."
+    - 'Use WHERE for filtering.'
+    - 'Use ORDER BY for sorting.'
   solution: |
     SELECT * FROM users WHERE age > 18 ORDER BY name;
 ```
@@ -60,7 +60,7 @@ Learner writes a Python function with a known signature. Runner imports it and r
   concept: classes
   type: python-function
   difficulty: 2
-  prompt: "Implement `class Vector` with `.length()` returning Euclidean length."
+  prompt: 'Implement `class Vector` with `.length()` returning Euclidean length.'
   starter: |
     class Vector:
         def __init__(self, x: float, y: float):
@@ -68,11 +68,11 @@ Learner writes a Python function with a known signature. Runner imports it and r
         def length(self) -> float:
             ...
   cases:
-    - call: "Vector(3, 4).length()"
+    - call: 'Vector(3, 4).length()'
       expect: 5.0
-    - call: "Vector(0, 0).length()"
+    - call: 'Vector(0, 0).length()'
       expect: 0.0
-    - call: "Vector(1, 1).length()"
+    - call: 'Vector(1, 1).length()'
       expect_approx: 1.4142135
   solution: |
     class Vector:
@@ -96,12 +96,12 @@ Code with placeholders the learner fills in. Per-blank validation.
   concept: select
   type: fill-in-blanks
   difficulty: 1
-  prompt: "Complete the query."
+  prompt: 'Complete the query.'
   template: |
     SELECT ${col} FROM users WHERE ${cond};
   blanks:
     col:
-      accept: ["*", "id, name, age"]
+      accept: ['*', 'id, name, age']
     cond:
       accept_regex: '^age\s*>\s*18$'
 ```
@@ -115,7 +115,7 @@ Learner predicts what a snippet outputs.
   concept: select
   type: predict-output
   difficulty: 2
-  prompt: "What does the following query return?"
+  prompt: 'What does the following query return?'
   snippet: |
     SELECT COUNT(*) FROM users WHERE age > 100;
   fixture: |
@@ -153,7 +153,7 @@ Goal field reference (only the fields each kind reads are honored):
   concept: staging
   type: git-challenge
   difficulty: 1
-  prompt: "Создайте коммит с файлом notes.txt и сообщением «add notes»."
+  prompt: 'Создайте коммит с файлом notes.txt и сообщением «add notes».'
   setup:
     files:
       notes.txt: "first line\n"
@@ -163,7 +163,7 @@ Goal field reference (only the fields each kind reads are honored):
   goal:
     - { kind: file-tracked, path: notes.txt }
     - { kind: commit-count, equals: 1 }
-    - { kind: commit-message, contains: "add notes" }
+    - { kind: commit-message, contains: 'add notes' }
     - { kind: clean-tree }
   solution:
     - git add notes.txt
@@ -188,17 +188,17 @@ Rules:
   concept: aggregation
   type: sql-query
   difficulty: 1
-  prompt: "Посчитайте количество заказов."
+  prompt: 'Посчитайте количество заказов.'
   fixture: |
     CREATE TABLE orders(id INT, amount INT);
     INSERT INTO orders VALUES (1, 100), (2, 250), (3, 90);
   expected: { kind: scalar, value: 3 }
   solution: SELECT COUNT(*) FROM orders;
   variants:
-    - prompt: "Посчитайте количество заказов дороже 100."
+    - prompt: 'Посчитайте количество заказов дороже 100.'
       expected: { kind: scalar, value: 1 }
       solution: SELECT COUNT(*) FROM orders WHERE amount > 100;
-    - prompt: "Посчитайте сумму всех заказов."
+    - prompt: 'Посчитайте сумму всех заказов.'
       expected: { kind: scalar, value: 440 }
       solution: SELECT SUM(amount) FROM orders;
 ```

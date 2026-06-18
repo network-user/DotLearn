@@ -49,7 +49,9 @@ interface Facet {
   count: number;
 }
 
-const buildFacet = (pick: (meta: InterviewExerciseMeta) => { slug: string; label: string }): Facet[] => {
+const buildFacet = (
+  pick: (meta: InterviewExerciseMeta) => { slug: string; label: string },
+): Facet[] => {
   const map = new Map<string, Facet>();
   for (const meta of interviewExercises) {
     const { slug, label } = pick(meta);
@@ -150,7 +152,11 @@ export const InterviewExamPage = () => {
       <Surface variant="chrome" className="p-4 sm:p-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <ExamField label={t('exam.filterCategory')}>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="form-input">
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="form-input"
+            >
               <option value="all">{t('allTopics')}</option>
               {categories.map((item) => (
                 <option key={item.slug} value={item.slug}>
@@ -194,7 +200,11 @@ export const InterviewExamPage = () => {
             </select>
           </ExamField>
           <ExamField label={t('filterStatus')}>
-            <select value={studied} onChange={(e) => setStudied(e.target.value)} className="form-input">
+            <select
+              value={studied}
+              onChange={(e) => setStudied(e.target.value)}
+              className="form-input"
+            >
               <option value="all">{t('statusAll')}</option>
               <option value="studied">{t('statusStudied')}</option>
               <option value="not-studied">{t('statusNotStudied')}</option>
@@ -242,9 +252,7 @@ const PastExams = ({ exams }: { exams: ExamResultRecord[] }) => {
   if (exams.length === 0) return null;
 
   const last = exams[0] as ExamResultRecord;
-  const best = exams.reduce((acc, exam) =>
-    scorePercent(exam) > scorePercent(acc) ? exam : acc,
-  );
+  const best = exams.reduce((acc, exam) => (scorePercent(exam) > scorePercent(acc) ? exam : acc));
   const trend = [...exams].reverse().map(scorePercent);
 
   return (
@@ -433,7 +441,15 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
   }, [current]);
 
   if (finished) {
-    return <ExamDebrief session={session} setSession={setSession} resultOf={resultOf} buckets={buckets} correct={correct} />;
+    return (
+      <ExamDebrief
+        session={session}
+        setSession={setSession}
+        resultOf={resultOf}
+        buckets={buckets}
+        correct={correct}
+      />
+    );
   }
 
   return (
@@ -462,7 +478,11 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
       </div>
 
       {exercise ? (
-        <ExerciseRunner key={`${current?.path}:${current?.exerciseId}`} topicSlug={INTERVIEW_TOPIC_SLUG} exercise={exercise} />
+        <ExerciseRunner
+          key={`${current?.path}:${current?.exerciseId}`}
+          topicSlug={INTERVIEW_TOPIC_SLUG}
+          exercise={exercise}
+        />
       ) : current ? (
         <Skeleton rounded="2xl" className="h-56" />
       ) : (
@@ -485,7 +505,10 @@ interface DebriefProps {
   session: Session;
   setSession: (session: Session | undefined) => void;
   resultOf: (meta: InterviewExerciseMeta) => 'pass' | 'fail' | 'skipped';
-  buckets: { byType: Record<string, ExamScoreBucket>; byDifficulty: Record<string, ExamScoreBucket> };
+  buckets: {
+    byType: Record<string, ExamScoreBucket>;
+    byDifficulty: Record<string, ExamScoreBucket>;
+  };
   correct: number;
 }
 
@@ -636,7 +659,11 @@ const DebriefItem = ({ meta, position, result, onRetry }: DebriefItemProps) => {
     const related = relatedTopicsForQuestion(question);
     const first = related.find((entry) => topicTitleOf(entry.slug));
     if (!first) return undefined;
-    return { slug: first.slug, conceptId: first.conceptId, title: topicTitleOf(first.slug) as string };
+    return {
+      slug: first.slug,
+      conceptId: first.conceptId,
+      title: topicTitleOf(first.slug) as string,
+    };
   }, [question]);
 
   const tone =
@@ -644,7 +671,10 @@ const DebriefItem = ({ meta, position, result, onRetry }: DebriefItemProps) => {
       ? { ring: 'border-l-2 border-l-ok', icon: <CheckCircle2 size={16} className="text-ok" /> }
       : result === 'fail'
         ? { ring: 'border-l-2 border-l-err', icon: <XCircle size={16} className="text-err" /> }
-        : { ring: 'border-l-2 border-l-warn', icon: <MinusCircle size={16} className="text-warn" /> };
+        : {
+            ring: 'border-l-2 border-l-warn',
+            icon: <MinusCircle size={16} className="text-warn" />,
+          };
 
   return (
     <li>
@@ -712,7 +742,11 @@ const DebriefItem = ({ meta, position, result, onRetry }: DebriefItemProps) => {
                 </Button>
               </Link>
             ) : question ? (
-              <Link to="/interview/$id" params={{ id: String(question.id) }} className="w-full sm:w-auto">
+              <Link
+                to="/interview/$id"
+                params={{ id: String(question.id) }}
+                className="w-full sm:w-auto"
+              >
                 <Button
                   variant="ghost"
                   size="sm"

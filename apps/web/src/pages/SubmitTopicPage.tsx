@@ -82,7 +82,9 @@ export const SubmitTopicPage = () => {
 
     const parsed = CreateSubmissionInput.safeParse(candidate);
     if (!parsed.success) {
-      setErrors(parsed.error.issues.map((issue) => `${issue.path.join('.') || 'form'}: ${issue.message}`));
+      setErrors(
+        parsed.error.issues.map((issue) => `${issue.path.join('.') || 'form'}: ${issue.message}`),
+      );
       return;
     }
 
@@ -278,12 +280,7 @@ interface LanguagesPickerProps {
 
 const ALL_LANGUAGES: readonly SubmissionLanguage[] = ['ru', 'en'];
 
-const LanguagesPicker = ({
-  languages,
-  primary,
-  primaryLabel,
-  onChange,
-}: LanguagesPickerProps) => {
+const LanguagesPicker = ({ languages, primary, primaryLabel, onChange }: LanguagesPickerProps) => {
   const toggle = (lang: SubmissionLanguage): void => {
     const has = languages.includes(lang);
     if (has) {
@@ -292,8 +289,8 @@ const LanguagesPicker = ({
       const nextPrimary = primary === lang ? (next[0] as SubmissionLanguage) : primary;
       onChange(next, nextPrimary);
     } else {
-      const next = [...languages, lang].sort((a, b) =>
-        ALL_LANGUAGES.indexOf(a) - ALL_LANGUAGES.indexOf(b),
+      const next = [...languages, lang].sort(
+        (a, b) => ALL_LANGUAGES.indexOf(a) - ALL_LANGUAGES.indexOf(b),
       );
       onChange(next, primary);
     }

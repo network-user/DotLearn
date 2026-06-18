@@ -55,9 +55,7 @@ export const StepUpDialog = ({ action, onCancel, onVerified }: StepUpDialogProps
         className="w-full max-w-sm rounded-lg border border-border-base bg-surface p-5 shadow-card"
       >
         <h2 className="text-lg font-semibold">{t('stepUp.title')}</h2>
-        <p className="mt-1 text-sm text-fg-muted">
-          {t('stepUp.subtitle', { action })}
-        </p>
+        <p className="mt-1 text-sm text-fg-muted">{t('stepUp.subtitle', { action })}</p>
         <label className="mt-4 block">
           <span className="block text-xs uppercase tracking-wide text-fg-muted mb-1">
             {t('stepUp.totp')}

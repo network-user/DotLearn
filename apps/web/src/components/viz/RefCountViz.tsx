@@ -122,12 +122,12 @@ export const RefCountViz = ({ objectName = 'obj', label }: RefCountVizProps) => 
 
   const linearFooter = freed ? (
     <span className="text-fg-subtle">
-      refcount reached <span className="font-mono text-err">0</span> → object deallocated immediately
+      refcount reached <span className="font-mono text-err">0</span> → object deallocated
+      immediately
     </span>
   ) : (
     <span>
-      live names hold{' '}
-      <span className="font-mono text-accent">{linearCount}</span> strong reference
+      live names hold <span className="font-mono text-accent">{linearCount}</span> strong reference
       {linearCount === 1 ? '' : 's'}
     </span>
   );
@@ -143,8 +143,8 @@ export const RefCountViz = ({ objectName = 'obj', label }: RefCountVizProps) => 
       </span>
     ) : (
       <span>
-        A↔B each hold the other → refcount stuck at{' '}
-        <span className="font-mono text-accent">1</span>, but nothing outside reaches them
+        A↔B each hold the other → refcount stuck at <span className="font-mono text-accent">1</span>
+        , but nothing outside reaches them
       </span>
     );
 
@@ -158,9 +158,7 @@ export const RefCountViz = ({ objectName = 'obj', label }: RefCountVizProps) => 
             onClick={() => switchMode('linear')}
             className={cx(
               'rounded px-2 h-6 text-[11px] font-medium transition-colors duration-fast',
-              mode === 'linear'
-                ? 'bg-accent/15 text-accent'
-                : 'text-fg-muted hover:text-fg',
+              mode === 'linear' ? 'bg-accent/15 text-accent' : 'text-fg-muted hover:text-fg',
             )}
           >
             refcount
@@ -170,9 +168,7 @@ export const RefCountViz = ({ objectName = 'obj', label }: RefCountVizProps) => 
             onClick={() => switchMode('cycle')}
             className={cx(
               'rounded px-2 h-6 text-[11px] font-medium transition-colors duration-fast',
-              mode === 'cycle'
-                ? 'bg-accent/15 text-accent'
-                : 'text-fg-muted hover:text-fg',
+              mode === 'cycle' ? 'bg-accent/15 text-accent' : 'text-fg-muted hover:text-fg',
             )}
           >
             cycle
@@ -272,7 +268,11 @@ export const RefCountViz = ({ objectName = 'obj', label }: RefCountVizProps) => 
                     {node.id}.next = <span className="text-fg">{partner}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <VizButton onClick={() => addExternalRef(node.id)} disabled={phase !== 'idle'} tone="ghost">
+                    <VizButton
+                      onClick={() => addExternalRef(node.id)}
+                      disabled={phase !== 'idle'}
+                      tone="ghost"
+                    >
                       <Link2 size={11} />
                       bind
                     </VizButton>

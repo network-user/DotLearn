@@ -30,12 +30,7 @@ export type {
   StatusSnapshot,
 } from './runtime/git';
 
-export {
-  compareRows,
-  formatRowDiff,
-  type Row,
-  type RowDiff,
-} from './compare/rows';
+export { compareRows, formatRowDiff, type Row, type RowDiff } from './compare/rows';
 export { approximatelyEqual, compareValues, type ValueComparison } from './compare/value';
 
 export {

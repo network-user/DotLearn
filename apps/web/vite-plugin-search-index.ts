@@ -106,12 +106,20 @@ const readManifest = (manifestPath: string): Manifest | undefined => {
 
 const collectExercisePrompts = (filePath: string): string => {
   const parsed: unknown = parseYaml(readFileSync(filePath, 'utf8'));
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { exercises?: unknown }).exercises)) {
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !Array.isArray((parsed as { exercises?: unknown }).exercises)
+  ) {
     return '';
   }
   const prompts: string[] = [];
   for (const exercise of (parsed as { exercises: unknown[] }).exercises) {
-    if (exercise && typeof exercise === 'object' && typeof (exercise as { prompt?: unknown }).prompt === 'string') {
+    if (
+      exercise &&
+      typeof exercise === 'object' &&
+      typeof (exercise as { prompt?: unknown }).prompt === 'string'
+    ) {
       prompts.push((exercise as { prompt: string }).prompt);
     }
   }

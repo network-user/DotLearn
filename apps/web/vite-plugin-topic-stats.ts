@@ -13,7 +13,11 @@ type TopicStats = Record<string, Record<string, number>>;
 
 const countExercises = (filePath: string): number => {
   const parsed: unknown = parseYaml(readFileSync(filePath, 'utf8'));
-  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { exercises?: unknown }).exercises)) {
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    Array.isArray((parsed as { exercises?: unknown }).exercises)
+  ) {
     return (parsed as { exercises: unknown[] }).exercises.length;
   }
   return 0;

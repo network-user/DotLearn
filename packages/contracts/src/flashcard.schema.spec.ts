@@ -25,9 +25,9 @@ describe('FlashcardDeck schema', () => {
   });
 
   it('accepts a letter-leading tag with digits and hyphens', () => {
-    expect(Flashcard.safeParse({ id: 'c-1', front: 'aaa', back: 'bbb', tags: ['three-way'] }).success).toBe(
-      true,
-    );
+    expect(
+      Flashcard.safeParse({ id: 'c-1', front: 'aaa', back: 'bbb', tags: ['three-way'] }).success,
+    ).toBe(true);
   });
 
   it('rejects an empty deck', () => {
@@ -47,6 +47,8 @@ describe('FlashcardDeck schema', () => {
   });
 
   it('rejects an id with uppercase or spaces', () => {
-    expect(Flashcard.safeParse({ id: 'Merging 01', front: 'aaa', back: 'bbb' }).success).toBe(false);
+    expect(Flashcard.safeParse({ id: 'Merging 01', front: 'aaa', back: 'bbb' }).success).toBe(
+      false,
+    );
   });
 });

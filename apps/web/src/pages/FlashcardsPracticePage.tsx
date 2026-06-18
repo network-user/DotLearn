@@ -209,7 +209,11 @@ export const FlashcardsPracticePage = () => {
                 >
                   {t('practice.selectAll')}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => patchSearch({ topics: undefined })}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => patchSearch({ topics: undefined })}
+                >
                   {t('practice.clearAll')}
                 </Button>
               </div>

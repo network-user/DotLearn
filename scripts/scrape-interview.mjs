@@ -70,10 +70,22 @@ function stripTags(s) {
 
 function inlineToMd(html) {
   let s = html;
-  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/g, (_, c) => '`' + decodeEntities(stripTags(c)).trim() + '`');
-  s = s.replace(/<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/g, (_, c) => '**' + inlineToMd(c).trim() + '**');
-  s = s.replace(/<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/g, (_, c) => '*' + inlineToMd(c).trim() + '*');
-  s = s.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g, (_, href, c) => `[${stripTags(c).trim()}](${href})`);
+  s = s.replace(
+    /<code[^>]*>([\s\S]*?)<\/code>/g,
+    (_, c) => '`' + decodeEntities(stripTags(c)).trim() + '`',
+  );
+  s = s.replace(
+    /<(?:strong|b)[^>]*>([\s\S]*?)<\/(?:strong|b)>/g,
+    (_, c) => '**' + inlineToMd(c).trim() + '**',
+  );
+  s = s.replace(
+    /<(?:em|i)[^>]*>([\s\S]*?)<\/(?:em|i)>/g,
+    (_, c) => '*' + inlineToMd(c).trim() + '*',
+  );
+  s = s.replace(
+    /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g,
+    (_, href, c) => `[${stripTags(c).trim()}](${href})`,
+  );
   s = s.replace(/<br\s*\/?>/g, '\n');
   s = stripTags(s);
   s = decodeEntities(s);
@@ -96,11 +108,14 @@ function listToMd(inner, ordered) {
 function htmlToMarkdown(html) {
   const codeBlocks = [];
   let s = html;
-  s = s.replace(/<pre[^>]*>\s*<code[^>]*class="language-([^"]*)"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/g, (_, lang, code) => {
-    const cleaned = decodeEntities(code).replace(/\n+$/, '');
-    codeBlocks.push('```' + lang.trim() + '\n' + cleaned + '\n```');
-    return `<p>@@CB${codeBlocks.length - 1}@@</p>`;
-  });
+  s = s.replace(
+    /<pre[^>]*>\s*<code[^>]*class="language-([^"]*)"[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/g,
+    (_, lang, code) => {
+      const cleaned = decodeEntities(code).replace(/\n+$/, '');
+      codeBlocks.push('```' + lang.trim() + '\n' + cleaned + '\n```');
+      return `<p>@@CB${codeBlocks.length - 1}@@</p>`;
+    },
+  );
   s = s.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/g, (_, code) => {
     const cleaned = decodeEntities(code).replace(/\n+$/, '');
     codeBlocks.push('```\n' + cleaned + '\n```');
@@ -135,7 +150,13 @@ function htmlToMarkdown(html) {
       if (md) blocks.push(md);
     } else if (tag === 'blockquote') {
       const text = inlineToMd(inner);
-      if (text) blocks.push(text.split('\n').map((l) => '> ' + l).join('\n'));
+      if (text)
+        blocks.push(
+          text
+            .split('\n')
+            .map((l) => '> ' + l)
+            .join('\n'),
+        );
     }
   }
 
@@ -147,7 +168,8 @@ function htmlToMarkdown(html) {
 
 function parseList(html) {
   const out = [];
-  const itemRe = /<a href="\/question\/(\d+)\/[^"]*" class="question-link">\s*<li class="question-item ?" data-id="\d+">\s*<h2>([\s\S]*?)<\/h2>\s*<p class="question-topic\s*([a-z-]+)\s*">\s*([\s\S]*?)<\/p>/g;
+  const itemRe =
+    /<a href="\/question\/(\d+)\/[^"]*" class="question-link">\s*<li class="question-item ?" data-id="\d+">\s*<h2>([\s\S]*?)<\/h2>\s*<p class="question-topic\s*([a-z-]+)\s*">\s*([\s\S]*?)<\/p>/g;
   let m;
   while ((m = itemRe.exec(html))) {
     const id = Number(m[1]);

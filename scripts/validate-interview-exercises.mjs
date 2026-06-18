@@ -15,7 +15,8 @@ const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 
 function validateBase(ex, errors) {
   if (!isStr(ex.id) || !ID_RE.test(ex.id)) errors.push(`bad id: ${ex.id}`);
-  if (!isStr(ex.concept) || !SLUG_RE.test(ex.concept)) errors.push(`${ex.id}: bad concept "${ex.concept}"`);
+  if (!isStr(ex.concept) || !SLUG_RE.test(ex.concept))
+    errors.push(`${ex.id}: bad concept "${ex.concept}"`);
   if (!isInt(ex.difficulty, 1, 5)) errors.push(`${ex.id}: bad difficulty`);
   if (!isStr(ex.prompt, 5)) errors.push(`${ex.id}: prompt too short`);
 }
@@ -31,7 +32,9 @@ function validateQuiz(q, errors, ctx) {
     ids.add(c.id);
   }
   if (!Array.isArray(q.correct) || q.correct.length < 1) errors.push(`${ctx}: correct empty`);
-  else for (const c of q.correct) if (!ids.has(c)) errors.push(`${ctx}: correct "${c}" not a choice id`);
+  else
+    for (const c of q.correct)
+      if (!ids.has(c)) errors.push(`${ctx}: correct "${c}" not a choice id`);
 }
 
 function placeholders(template) {
@@ -48,12 +51,14 @@ function validateExercise(ex, errors) {
   switch (ex.type) {
     case 'theory-quiz': {
       validateQuiz(ex, errors, ctx);
-      if (ex.variants) ex.variants.forEach((v, i) => validateQuiz(v, errors, `${ctx}.variant[${i}]`));
+      if (ex.variants)
+        ex.variants.forEach((v, i) => validateQuiz(v, errors, `${ctx}.variant[${i}]`));
       break;
     }
     case 'predict-output': {
       if (!isStr(ex.snippet)) errors.push(`${ctx}: snippet missing`);
-      if (!ex.expected || !EXPECT_KINDS.has(ex.expected.kind)) errors.push(`${ctx}: bad expected.kind`);
+      if (!ex.expected || !EXPECT_KINDS.has(ex.expected.kind))
+        errors.push(`${ctx}: bad expected.kind`);
       break;
     }
     case 'fill-in-blanks': {
@@ -65,10 +70,12 @@ function validateExercise(ex, errors) {
           const spec = ex.blanks[key];
           const hasAccept = Array.isArray(spec?.accept) && spec.accept.length > 0;
           const hasRegex = isStr(spec?.accept_regex);
-          if (!hasAccept && !hasRegex) errors.push(`${ctx}: blank "${key}" has no accept/accept_regex`);
+          if (!hasAccept && !hasRegex)
+            errors.push(`${ctx}: blank "${key}" has no accept/accept_regex`);
           if (!ph.has(key)) errors.push(`${ctx}: blank "${key}" not in template`);
         }
-        for (const key of ph) if (!(key in ex.blanks)) errors.push(`${ctx}: placeholder "${key}" has no blank spec`);
+        for (const key of ph)
+          if (!(key in ex.blanks)) errors.push(`${ctx}: placeholder "${key}" has no blank spec`);
       }
       break;
     }

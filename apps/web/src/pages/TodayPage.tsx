@@ -44,15 +44,21 @@ import {
   type WeeklyComparison,
 } from '@/lib/recap';
 import { useSettings } from '@/lib/settings';
-import { loadDueAcrossDecks, loadFailedExercises, type DueCard, type FailedExercise } from '@/lib/today';
+import {
+  loadDueAcrossDecks,
+  loadFailedExercises,
+  type DueCard,
+  type FailedExercise,
+} from '@/lib/today';
 import { useContentLanguage } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useActivity, useStreakState } from '@/lib/use-progress';
 import { useXp, type XpState } from '@/lib/xp';
 
-const ACHIEVEMENT_ICON_BY_ID = new Map<AchievementId, (typeof ACHIEVEMENT_DEFINITIONS)[number]['icon']>(
-  ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition.icon]),
-);
+const ACHIEVEMENT_ICON_BY_ID = new Map<
+  AchievementId,
+  (typeof ACHIEVEMENT_DEFINITIONS)[number]['icon']
+>(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition.icon]));
 
 const RATINGS: { key: FlashcardRating; tone: string; hotkey: string }[] = [
   { key: 'again', tone: 'border-err/45 text-err hover:bg-err/10', hotkey: '1' },
@@ -430,11 +436,7 @@ const WeekCard = ({
 const Sparkline = ({ points, max }: { points: SparklinePoint[]; max: number }) => {
   const { t } = useTranslation('today');
   return (
-    <div
-      className="flex h-14 items-end gap-1.5"
-      role="img"
-      aria-label={t('week.sparklineAria')}
-    >
+    <div className="flex h-14 items-end gap-1.5" role="img" aria-label={t('week.sparklineAria')}>
       {points.map((point) => {
         const heightPercent = max > 0 ? Math.max(6, (point.value / max) * 100) : 6;
         return (
@@ -579,7 +581,12 @@ const ReviewSection = ({
           body={t('due.emptyBody')}
           primaryAction={
             <Link to="/flashcards" className="block w-full sm:w-auto">
-              <Button variant="primary" size="lg" className="w-full sm:w-auto" leadingIcon={<Layers size={16} />}>
+              <Button
+                variant="primary"
+                size="lg"
+                className="w-full sm:w-auto"
+                leadingIcon={<Layers size={16} />}
+              >
                 {t('due.browseDecks')}
               </Button>
             </Link>
@@ -739,7 +746,12 @@ const MistakesSection = ({
           body={t('mistakes.emptyBody')}
           primaryAction={
             <Link to="/" hash="topics" className="block w-full sm:w-auto">
-              <Button variant="outline" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+              <Button
+                variant="outline"
+                size="md"
+                className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                trailingIcon={<ArrowRight size={15} />}
+              >
                 {t('mistakes.exploreTopics')}
               </Button>
             </Link>

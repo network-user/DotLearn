@@ -76,7 +76,7 @@ export const AttentionHeatmap = ({
   const cellSize = tokens.length > 8 ? 34 : 44;
   const labelWidth = 64;
 
-  const active = hover ? matrix[hover.row]?.[hover.col] ?? 0 : null;
+  const active = hover ? (matrix[hover.row]?.[hover.col] ?? 0) : null;
 
   return (
     <VizShell

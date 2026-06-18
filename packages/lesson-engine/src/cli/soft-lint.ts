@@ -60,7 +60,9 @@ const requiresExplanation = (exercise: Exercise): boolean =>
 
 const lintHints = (scope: string, exercise: Exercise, warnings: LintWarning[]): void => {
   const hints = exercise.hints ?? [];
-  const solutions = exerciseSolutionText(exercise).map(normalize).filter((value) => value.length >= 4);
+  const solutions = exerciseSolutionText(exercise)
+    .map(normalize)
+    .filter((value) => value.length >= 4);
   hints.forEach((hint, index) => {
     const trimmed = hint.trim();
     if (trimmed.length < MIN_HINT_LENGTH) {
@@ -71,7 +73,10 @@ const lintHints = (scope: string, exercise: Exercise, warnings: LintWarning[]): 
     }
     const normalizedHint = normalize(trimmed);
     if (solutions.some((solution) => normalizedHint.includes(solution))) {
-      warnings.push({ scope, reason: `hint ${index + 1} appears to contain the solution verbatim` });
+      warnings.push({
+        scope,
+        reason: `hint ${index + 1} appears to contain the solution verbatim`,
+      });
     }
   });
 };

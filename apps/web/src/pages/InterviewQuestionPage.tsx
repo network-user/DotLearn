@@ -98,8 +98,8 @@ export const InterviewQuestionPage = () => {
       const title = topicTitleOf(entry.slug);
       return title ? { ...entry, title } : undefined;
     })
-    .filter((entry): entry is { slug: string; conceptId?: string; title: string } =>
-      entry !== undefined,
+    .filter(
+      (entry): entry is { slug: string; conceptId?: string; title: string } => entry !== undefined,
     );
   const position = interviewQuestions.findIndex((item) => item.id === question.id);
   const previous = position > 0 ? interviewQuestions[position - 1] : undefined;
@@ -178,9 +178,7 @@ export const InterviewQuestionPage = () => {
         <section className="space-y-3 pt-6 border-t-2 border-fg/80">
           <div className="flex items-center gap-2">
             <GraduationCap size={18} className="text-accent" />
-            <h2 className="font-display text-xl text-fg tracking-tightish">
-              {t('studyHeading')}
-            </h2>
+            <h2 className="font-display text-xl text-fg tracking-tightish">{t('studyHeading')}</h2>
           </div>
           <p className="text-sm text-fg-muted">{t('studySubtitle')}</p>
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">

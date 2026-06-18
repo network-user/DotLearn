@@ -167,10 +167,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     if (q.length < 2) return [];
     const out: InterviewQuestionMeta[] = [];
     for (const item of interview) {
-      if (
-        item.title.toLowerCase().includes(q) ||
-        item.categoryLabel.toLowerCase().includes(q)
-      ) {
+      if (item.title.toLowerCase().includes(q) || item.categoryLabel.toLowerCase().includes(q)) {
         out.push(item);
         if (out.length >= INTERVIEW_LIMIT) break;
       }
@@ -208,7 +205,13 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
       const snippet =
         bodyIndex >= 0
           ? buildSnippet(entry.text, q, bodyIndex)
-          : { before: '', hit: '', after: entry.text.slice(0, SNIPPET_RADIUS * 2) + (entry.text.length > SNIPPET_RADIUS * 2 ? '…' : '') };
+          : {
+              before: '',
+              hit: '',
+              after:
+                entry.text.slice(0, SNIPPET_RADIUS * 2) +
+                (entry.text.length > SNIPPET_RADIUS * 2 ? '…' : ''),
+            };
 
       ranked.push({
         key: `${entry.type}-${entry.slug}-${entry.conceptId}`,
@@ -400,7 +403,9 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                 {bookmarks.length > 0 && (
                   <Command.Group heading={t('groups.bookmarks')} className={GROUP_CLASS}>
                     {bookmarks.map((bookmark) => {
-                      const label = conceptLabelOf.get(`${bookmark.topicSlug}:${bookmark.conceptId}`);
+                      const label = conceptLabelOf.get(
+                        `${bookmark.topicSlug}:${bookmark.conceptId}`,
+                      );
                       if (!label) return null;
                       return (
                         <PaletteItem
@@ -518,9 +523,7 @@ const PaletteItem = ({ value, onSelect, icon, title, meta, dot }: PaletteItemPro
       <span className="text-[13.5px] truncate">{title}</span>
       {dot && <span aria-hidden className="size-1.5 rounded-full bg-accent shrink-0" />}
     </span>
-    {meta && (
-      <span className="text-[11px] text-fg-subtle tabular-nums shrink-0">{meta}</span>
-    )}
+    {meta && <span className="text-[11px] text-fg-subtle tabular-nums shrink-0">{meta}</span>}
   </Command.Item>
 );
 

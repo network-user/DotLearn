@@ -447,17 +447,16 @@ export const recordAttempt = async (
 
 export type StudyActivityKind = 'review' | 'read' | 'focus';
 
-const ACTIVITY_COUNTER: Record<StudyActivityKind, 'cardsReviewed' | 'conceptsRead' | 'focusBlocks'> =
-  {
-    review: 'cardsReviewed',
-    read: 'conceptsRead',
-    focus: 'focusBlocks',
-  };
+const ACTIVITY_COUNTER: Record<
+  StudyActivityKind,
+  'cardsReviewed' | 'conceptsRead' | 'focusBlocks'
+> = {
+  review: 'cardsReviewed',
+  read: 'conceptsRead',
+  focus: 'focusBlocks',
+};
 
-export const recordStudyActivity = async (
-  kind: StudyActivityKind,
-  count = 1,
-): Promise<void> => {
+export const recordStudyActivity = async (kind: StudyActivityKind, count = 1): Promise<void> => {
   const day = localDayKey();
   const counter = ACTIVITY_COUNTER[kind];
   await db.transaction('rw', db.activity, async () => {

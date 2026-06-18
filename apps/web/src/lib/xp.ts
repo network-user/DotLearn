@@ -71,10 +71,7 @@ export const computeXp = (inputs: XpInputs): XpState => {
   }
   exercises = Math.round(exercises);
 
-  const cardReviews = inputs.activity.reduce(
-    (sum, entry) => sum + (entry.cardsReviewed ?? 0),
-    0,
-  );
+  const cardReviews = inputs.activity.reduce((sum, entry) => sum + (entry.cardsReviewed ?? 0), 0);
   const reviews = cardReviews * XP_CARD_REVIEW;
   const concepts = inputs.conceptsReadCount * XP_CONCEPT_READ;
   const interview = inputs.interviewStudiedCount * XP_INTERVIEW_STUDIED;
