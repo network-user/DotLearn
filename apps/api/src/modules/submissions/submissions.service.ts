@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 
 import type {
   CreateSubmissionInput,
@@ -40,6 +46,18 @@ const toPublic = (submission: Submission): SubmissionPublic => {
   };
 };
 
+interface ListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+const parsePositiveInt = (raw: string | undefined, fallback: number): number => {
+  const parsed = raw ? Number.parseInt(raw, 10) : fallback;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const MAX_SUBMISSIONS = parsePositiveInt(process.env.SUBMISSIONS_MAX, 5000);
+
 @Injectable()
 export class SubmissionsService {
   private readonly logger = new Logger(SubmissionsService.name);
@@ -50,6 +68,15 @@ export class SubmissionsService {
   ) {}
 
   async create(input: CreateSubmissionInput, source: SubmissionSource): Promise<Submission> {
+    if (source === 'in-app') {
+      const existing = await this.repository.findAll();
+      if (existing.length >= MAX_SUBMISSIONS) {
+        this.logger.warn({ count: existing.length, max: MAX_SUBMISSIONS }, 'submission_store_full');
+        throw new ServiceUnavailableException(
+          'Submission storage is full; please try again later.',
+        );
+      }
+    }
     const entity = SubmissionEntity.create(input, source);
     await this.repository.save(entity);
     this.logger.log(
@@ -59,28 +86,28 @@ export class SubmissionsService {
     return entity.toContract();
   }
 
-  async list(status?: SubmissionStatus): Promise<Submission[]> {
+  async list(status?: SubmissionStatus, options: ListOptions = {}): Promise<Submission[]> {
     const entities = await this.repository.findMany(status ? { status } : {});
-    return entities.map((entity) => entity.toContract());
+    const offset = options.offset && options.offset > 0 ? options.offset : 0;
+    const sliced =
+      options.limit !== undefined
+        ? entities.slice(offset, offset + options.limit)
+        : entities.slice(offset);
+    return sliced.map((entity) => entity.toContract());
   }
 
-  async listPublic(status?: SubmissionStatus): Promise<SubmissionPublic[]> {
-    const submissions = await this.list(status);
+  async listPublic(
+    status?: SubmissionStatus,
+    options: ListOptions = {},
+  ): Promise<SubmissionPublic[]> {
+    const submissions = await this.list(status, options);
     return submissions.map(toPublic);
   }
 
   async findManyByIds(ids: string[]): Promise<Submission[]> {
     if (ids.length === 0) return [];
-    const all = await this.repository.findAll();
-    const map = new Map(all.map((entity) => [entity.id, entity]));
-    const ordered: Submission[] = [];
-    for (const id of ids) {
-      const entity = map.get(id);
-      if (entity) {
-        ordered.push(entity.toContract());
-      }
-    }
-    return ordered;
+    const entities = await Promise.all(ids.map((id) => this.repository.findById(id)));
+    return entities.flatMap((entity) => (entity ? [entity.toContract()] : []));
   }
 
   async findPublicByIds(ids: string[]): Promise<SubmissionPublic[]> {

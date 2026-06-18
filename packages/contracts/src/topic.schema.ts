@@ -34,9 +34,11 @@ export const TopicConcept = z.object({
 });
 export type TopicConcept = z.infer<typeof TopicConcept>;
 
+export const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+
 export const TopicSourceRef = z.object({
   title: z.string().min(1),
-  url: z.string().url(),
+  url: z.string().url().refine(isHttpUrl, { message: 'url must use the http(s) scheme' }),
 });
 export type TopicSourceRef = z.infer<typeof TopicSourceRef>;
 
@@ -46,7 +48,7 @@ const fileLanguage = (filename: string): TopicLanguage | undefined => {
   return undefined;
 };
 
-export const TopicManifest = z
+export const TopicManifestObject = z
   .object({
     slug: z.string().regex(SLUG_PATTERN).min(3).max(60),
     title: z.string().min(3).max(80),
@@ -64,91 +66,93 @@ export const TopicManifest = z
     license: TopicLicense,
     sources: z.array(TopicSourceRef).optional(),
   })
-  .strict()
-  .superRefine((manifest, ctx) => {
-    const folderInferredFromSlug = manifest.slug;
-    const expectedTotalMinutes = manifest.estimatedHours * 60;
-    const actualMinutes = manifest.concepts.reduce((sum, c) => sum + c.estimatedMinutes, 0);
-    const drift = Math.abs(actualMinutes - expectedTotalMinutes) / expectedTotalMinutes;
-    if (drift > 0.25) {
+  .strict();
+export type TopicManifestObject = z.infer<typeof TopicManifestObject>;
+
+export const TopicManifest = TopicManifestObject.superRefine((manifest, ctx) => {
+  const folderInferredFromSlug = manifest.slug;
+  const expectedTotalMinutes = manifest.estimatedHours * 60;
+  const actualMinutes = manifest.concepts.reduce((sum, c) => sum + c.estimatedMinutes, 0);
+  const drift = Math.abs(actualMinutes - expectedTotalMinutes) / expectedTotalMinutes;
+  if (drift > 0.25) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['estimatedHours'],
+      message: `estimatedHours (${manifest.estimatedHours}h = ${expectedTotalMinutes}min) drifts more than 25% from sum of concepts (${actualMinutes}min)`,
+    });
+  }
+  const uniqueAvailable = new Set(manifest.availableLanguages);
+  if (uniqueAvailable.size !== manifest.availableLanguages.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['availableLanguages'],
+      message: 'availableLanguages must not contain duplicates',
+    });
+  }
+  if (!uniqueAvailable.has(manifest.primaryLanguage)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['primaryLanguage'],
+      message: 'primaryLanguage must be listed in availableLanguages',
+    });
+  }
+  if (manifest.relatedTopics) {
+    const uniqueRelated = new Set(manifest.relatedTopics);
+    if (uniqueRelated.size !== manifest.relatedTopics.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['estimatedHours'],
-        message: `estimatedHours (${manifest.estimatedHours}h = ${expectedTotalMinutes}min) drifts more than 25% from sum of concepts (${actualMinutes}min)`,
+        path: ['relatedTopics'],
+        message: 'relatedTopics must not contain duplicates',
       });
     }
-    const uniqueAvailable = new Set(manifest.availableLanguages);
-    if (uniqueAvailable.size !== manifest.availableLanguages.length) {
+    if (uniqueRelated.has(manifest.slug)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['availableLanguages'],
-        message: 'availableLanguages must not contain duplicates',
+        path: ['relatedTopics'],
+        message: 'relatedTopics must not reference the topic itself',
       });
     }
-    if (!uniqueAvailable.has(manifest.primaryLanguage)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['primaryLanguage'],
-        message: 'primaryLanguage must be listed in availableLanguages',
-      });
-    }
-    if (manifest.relatedTopics) {
-      const uniqueRelated = new Set(manifest.relatedTopics);
-      if (uniqueRelated.size !== manifest.relatedTopics.length) {
+    const prerequisites = new Set(manifest.prerequisites);
+    for (const related of manifest.relatedTopics) {
+      if (prerequisites.has(related)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['relatedTopics'],
-          message: 'relatedTopics must not contain duplicates',
+          message: `relatedTopics must be distinct from prerequisites ("${related}" is already a prerequisite)`,
         });
-      }
-      if (uniqueRelated.has(manifest.slug)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['relatedTopics'],
-          message: 'relatedTopics must not reference the topic itself',
-        });
-      }
-      const prerequisites = new Set(manifest.prerequisites);
-      for (const related of manifest.relatedTopics) {
-        if (prerequisites.has(related)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['relatedTopics'],
-            message: `relatedTopics must be distinct from prerequisites ("${related}" is already a prerequisite)`,
-          });
-        }
       }
     }
-    const conceptIds = new Set<string>();
-    for (const [index, concept] of manifest.concepts.entries()) {
-      if (conceptIds.has(concept.id)) {
+  }
+  const conceptIds = new Set<string>();
+  for (const [index, concept] of manifest.concepts.entries()) {
+    if (conceptIds.has(concept.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['concepts', index, 'id'],
+        message: `Duplicate concept id "${concept.id}" within topic "${folderInferredFromSlug}"`,
+      });
+    }
+    conceptIds.add(concept.id);
+    for (const lang of manifest.availableLanguages) {
+      const hasTheory = concept.theoryFiles.some((file) => fileLanguage(file) === lang);
+      const hasExercise = concept.exerciseFiles.some((file) => fileLanguage(file) === lang);
+      if (!hasTheory) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['concepts', index, 'id'],
-          message: `Duplicate concept id "${concept.id}" within topic "${folderInferredFromSlug}"`,
+          path: ['concepts', index, 'theoryFiles'],
+          message: `Concept "${concept.id}" has no theory file for language "${lang}"`,
         });
       }
-      conceptIds.add(concept.id);
-      for (const lang of manifest.availableLanguages) {
-        const hasTheory = concept.theoryFiles.some((file) => fileLanguage(file) === lang);
-        const hasExercise = concept.exerciseFiles.some((file) => fileLanguage(file) === lang);
-        if (!hasTheory) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['concepts', index, 'theoryFiles'],
-            message: `Concept "${concept.id}" has no theory file for language "${lang}"`,
-          });
-        }
-        if (!hasExercise) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['concepts', index, 'exerciseFiles'],
-            message: `Concept "${concept.id}" has no exercise file for language "${lang}"`,
-          });
-        }
+      if (!hasExercise) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['concepts', index, 'exerciseFiles'],
+          message: `Concept "${concept.id}" has no exercise file for language "${lang}"`,
+        });
       }
     }
-  });
+  }
+});
 
 export type TopicManifest = z.infer<typeof TopicManifest>;
 

@@ -100,9 +100,26 @@ export const JavascriptFunctionExercise = BaseExercise.extend({
 });
 export type JavascriptFunctionExercise = z.infer<typeof JavascriptFunctionExercise>;
 
+const NESTED_QUANTIFIER = /\([^)]*[+*{][^)]*\)\s*[+*{]/;
+
+export const MAX_ACCEPT_REGEX_LENGTH = 200;
+
+// A topic-supplied accept_regex is compiled with new RegExp() in the learner's browser. Bound
+// its length and reject the canonical catastrophic-backtracking shape (a quantifier applied to a
+// group that itself contains a quantifier, e.g. "(a+)+") so a malicious/careless topic cannot
+// ship a ReDoS pattern that freezes the visitor's tab. pnpm validate enforces this at authoring.
+export const isBoundedUserRegex = (pattern: string): boolean =>
+  pattern.length <= MAX_ACCEPT_REGEX_LENGTH && !NESTED_QUANTIFIER.test(pattern);
+
 const BlankSpec = z.object({
   accept: z.array(z.string()).optional(),
-  accept_regex: z.string().optional(),
+  accept_regex: z
+    .string()
+    .max(MAX_ACCEPT_REGEX_LENGTH)
+    .refine((pattern) => !NESTED_QUANTIFIER.test(pattern), {
+      message: 'accept_regex must not contain nested quantifiers (ReDoS risk)',
+    })
+    .optional(),
 });
 
 export const FillInBlanksVariant = z.object({

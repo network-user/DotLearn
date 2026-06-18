@@ -31,7 +31,7 @@ const CONTENT_SECURITY_POLICY = [
   "font-src 'self' data:",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
-  "connect-src 'self' https://api.anthropic.com https://api.openai.com https://openrouter.ai http://localhost:* ws://localhost:* wss://localhost:*",
+  "connect-src 'self' http://localhost:* ws://localhost:* wss://localhost:*",
 ].join('; ');
 
 const PYODIDE_RUNTIME_FILES = [
@@ -156,7 +156,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,woff2,wasm}'],
+        globPatterns: ['**/*.{css,html,svg,woff2}'],
         globIgnores: ['**/pyodide/**'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: '/index.html',
@@ -169,6 +169,36 @@ export default defineConfig({
               cacheName: 'pyodide-runtime',
               expiration: {
                 maxEntries: 60,
+                maxAgeSeconds: 60 * 60 * 24 * 90,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+          {
+            urlPattern: ({ url, sameOrigin }) =>
+              sameOrigin && url.pathname.startsWith('/assets/') && url.pathname.endsWith('.js'),
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'app-chunks',
+              expiration: {
+                maxEntries: 400,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+          {
+            urlPattern: ({ url, sameOrigin }) =>
+              sameOrigin && url.pathname.startsWith('/assets/') && url.pathname.endsWith('.wasm'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'app-wasm',
+              expiration: {
+                maxEntries: 10,
                 maxAgeSeconds: 60 * 60 * 24 * 90,
               },
               cacheableResponse: {
@@ -207,18 +237,26 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 900,
+    modulePreload: {
+      resolveDependencies: (_filename, deps) =>
+        deps.filter((dep) => !/interview-(data|flashcards)/.test(dep)),
+    },
     rollupOptions: {
       output: {
         manualChunks: (id) => {
           const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('/packages/contracts/') || id.includes('node_modules/zod')) {
+            return 'contracts';
+          }
+          if (normalized.includes('/packages/lesson-engine/')) return 'lesson-engine';
           if (normalized.includes('/src/lib/interview.ts')) return 'interview-data';
-          if (normalized.includes('\0virtual:search-index')) return 'search-index';
+          if (normalized.includes('\0virtual:search-index/en')) return 'search-index-en';
+          if (normalized.includes('\0virtual:search-index')) return 'search-index-ru';
           if (normalized.includes('\0virtual:topic-manifests')) return 'topic-manifests';
           if (id.includes('monaco-editor')) return 'monaco';
           if (id.includes('@monaco-editor/react')) return 'monaco';
           if (id.includes('sql.js')) return 'sqljs';
           if (id.includes('pyodide')) return 'pyodide';
-          if (id.includes('framer-motion')) return 'motion';
           if (id.includes('@radix-ui')) return 'radix';
           if (id.includes('cmdk')) return 'cmdk';
           if (id.includes('sonner')) return 'sonner';

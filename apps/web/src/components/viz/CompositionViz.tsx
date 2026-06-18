@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import { RefreshCw, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

@@ -16,6 +16,7 @@ import { useDifficultyLabel } from './ExerciseRunner';
 interface FillInBlanksRunnerProps {
   topicSlug: string;
   exercise: FillInBlanksExercise;
+  conceptId?: string | undefined;
 }
 
 interface Segment {
@@ -49,7 +50,7 @@ type CheckState =
       failures: Array<{ blank: string; reason: string; got: string | undefined }>;
     };
 
-export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerProps) => {
+export const FillInBlanksRunner = ({ topicSlug, exercise, conceptId }: FillInBlanksRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const segments = useMemo(() => splitTemplate(exercise.template), [exercise.template]);
@@ -67,13 +68,19 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
       setState({ kind: 'pass' });
       toast.success(t('fillIn.correctToast'), { description: exercise.id });
       burstConfetti();
-      void recordAttempt(topicSlug, exercise.id, 'pass');
+      void recordAttempt(topicSlug, exercise.id, 'pass', {
+        difficulty: exercise.difficulty,
+        concept: conceptId,
+      });
     } else {
       const details = (result.details ?? {}) as {
         failures?: Array<{ blank: string; reason: string; got: string | undefined }>;
       };
       setState({ kind: 'fail', failures: details.failures ?? [] });
-      void recordAttempt(topicSlug, exercise.id, 'fail');
+      void recordAttempt(topicSlug, exercise.id, 'fail', {
+        difficulty: exercise.difficulty,
+        concept: conceptId,
+      });
     }
     setPulse((p) => p + 1);
   };
@@ -100,6 +107,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise }: FillInBlanksRunnerPr
                 value={values[segment.value] ?? ''}
                 onChange={(event) => update(segment.value, event.target.value)}
                 placeholder={segment.value}
+                maxLength={200}
                 className="inline-block min-w-[6ch] bg-surface-2 border-b-2 border-accent/60 px-1.5 py-1 sm:py-0 sm:px-1 text-[16px] sm:text-[12.5px] text-accent rounded-sm focus:outline-none focus:border-accent focus:bg-accent/8 transition-colors"
                 style={{ width: `${Math.max(8, (values[segment.value]?.length ?? 0) + 2)}ch` }}
               />

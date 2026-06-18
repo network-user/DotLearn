@@ -98,6 +98,25 @@ describe('ExerciseFile', () => {
   });
 });
 
+describe('fill-in-blanks accept_regex bounds (ReDoS guard)', () => {
+  const withRegex = (accept_regex: string) => ({
+    ...fillInBlanks,
+    blanks: { 1: { accept_regex } },
+  });
+
+  it('accepts a simple bounded regex', () => {
+    expect(Exercise.safeParse(withRegex('^\\d+$')).success).toBe(true);
+  });
+
+  it('rejects a nested-quantifier (catastrophic backtracking) regex', () => {
+    expect(Exercise.safeParse(withRegex('(a+)+$')).success).toBe(false);
+  });
+
+  it('rejects an over-long regex', () => {
+    expect(Exercise.safeParse(withRegex('a'.repeat(201))).success).toBe(false);
+  });
+});
+
 describe('variant helpers', () => {
   const withVariants = {
     ...theoryQuiz,

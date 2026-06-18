@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { isCardDue } from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import { CheckCircle2, Layers, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -51,7 +51,8 @@ export const FlashcardReviewSession = ({
   const [phase, setPhase] = useState<Phase>('loading');
 
   const buildQueue = useCallback(async (entries: SessionCard[]): Promise<number[]> => {
-    const records = await db.flashcardReviews.toArray();
+    const slugs = [...new Set(entries.map((entry) => entry.deckSlug))];
+    const records = await db.flashcardReviews.where('topicSlug').anyOf(slugs).toArray();
     const byKey = new Map(
       records.map((record) => [`${record.topicSlug}:${record.cardId}`, record]),
     );

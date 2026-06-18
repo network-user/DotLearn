@@ -4,8 +4,10 @@ import { basename, join, resolve } from 'node:path';
 import type { Plugin } from 'vite';
 import { parse as parseYaml } from 'yaml';
 
-const VIRTUAL_ID = 'virtual:search-index';
-const RESOLVED_ID = `\0${VIRTUAL_ID}`;
+const VIRTUAL_BASE = 'virtual:search-index';
+const SEARCH_LANGUAGES = ['ru', 'en'] as const;
+const virtualId = (language: SearchLanguage): string => `${VIRTUAL_BASE}/${language}`;
+const resolvedId = (language: SearchLanguage): string => `\0${virtualId(language)}`;
 
 const THEORY_SUFFIX = /\.(en|ru)\.mdx$/;
 const EXERCISE_SUFFIX = /\.(en|ru)\.yaml$/;
@@ -52,6 +54,29 @@ interface SearchEntry {
   language: SearchLanguage;
   text: string;
 }
+
+type EmittedEntry = Omit<SearchEntry, 'language'>;
+
+const entriesForLanguage = (entries: SearchEntry[], language: SearchLanguage): EmittedEntry[] => {
+  const slugsWithLanguage = new Set<string>();
+  for (const entry of entries) {
+    if (entry.language === language) slugsWithLanguage.add(entry.slug);
+  }
+  const emitted: EmittedEntry[] = [];
+  for (const entry of entries) {
+    const keep = slugsWithLanguage.has(entry.slug) ? entry.language === language : true;
+    if (!keep) continue;
+    emitted.push({
+      type: entry.type,
+      slug: entry.slug,
+      conceptId: entry.conceptId,
+      topicTitle: entry.topicTitle,
+      conceptTitle: entry.conceptTitle,
+      text: entry.text,
+    });
+  }
+  return emitted;
+};
 
 const stripMarkdown = (raw: string): string =>
   raw
@@ -211,14 +236,19 @@ export const searchIndexPlugin = (): Plugin => {
   return {
     name: 'dotlearn-search-index',
     resolveId(id) {
-      return id === VIRTUAL_ID ? RESOLVED_ID : undefined;
+      for (const language of SEARCH_LANGUAGES) {
+        if (id === virtualId(language)) return resolvedId(language);
+      }
+      return undefined;
     },
     load(id) {
-      if (id !== RESOLVED_ID) {
+      const language = SEARCH_LANGUAGES.find((candidate) => id === resolvedId(candidate));
+      if (!language) {
         return undefined;
       }
       const entries = buildIndex((file) => this.addWatchFile(file));
-      return `export default ${JSON.stringify(JSON.stringify(entries))};`;
+      const emitted = entriesForLanguage(entries, language);
+      return `export default ${JSON.stringify(JSON.stringify(emitted))};`;
     },
   };
 };

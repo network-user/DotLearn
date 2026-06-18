@@ -4,6 +4,7 @@ import {
   EXERCISE_FILE_PATTERN,
   THEORY_FILE_PATTERN,
   TopicManifest,
+  TopicManifestObject,
   languageOfTopicFile,
 } from './topic.schema';
 
@@ -115,6 +116,15 @@ describe('TopicManifest', () => {
     ).toBe(false);
   });
 
+  it('rejects a source with a javascript: scheme url', () => {
+    expect(
+      TopicManifest.safeParse({
+        ...valid(),
+        sources: [{ title: 'XSS', url: 'javascript:alert(1)' }],
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects a source missing a title', () => {
     expect(
       TopicManifest.safeParse({
@@ -166,6 +176,24 @@ describe('TopicManifest', () => {
   it('rejects a relatedTopics entry with an invalid slug', () => {
     const result = TopicManifest.safeParse({ ...valid(), relatedTopics: ['Bad_Slug'] });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('TopicManifestObject (runtime list-path schema)', () => {
+  it('applies the prerequisites default', () => {
+    const input: Record<string, unknown> = { ...valid() };
+    delete input.prerequisites;
+    const parsed = TopicManifestObject.parse(input);
+    expect(parsed.prerequisites).toEqual([]);
+  });
+
+  it('skips the cross-field superRefine that TopicManifest enforces', () => {
+    expect(TopicManifestObject.safeParse({ ...valid(), estimatedHours: 10 }).success).toBe(true);
+    expect(TopicManifest.safeParse({ ...valid(), estimatedHours: 10 }).success).toBe(false);
+  });
+
+  it('still validates field shapes (rejects a bad slug)', () => {
+    expect(TopicManifestObject.safeParse({ ...valid(), slug: 'Bad_Slug' }).success).toBe(false);
   });
 });
 

@@ -73,6 +73,8 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @UseGuards(AdminAuthGuard)
   @ApiOperation({ summary: 'Revoke the current refresh and access tokens.' })
   async logout(
     @Req() request: AuthenticatedRequest,

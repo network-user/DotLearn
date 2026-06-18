@@ -1,15 +1,6 @@
-import type { ProviderId } from '@dotlearn/ai-providers';
 import Dexie, { type Table } from 'dexie';
 
 export type ProgressStatus = 'pass' | 'fail';
-
-export interface ProviderCredentialsRecord {
-  providerId: ProviderId;
-  apiKey?: string;
-  baseUrl?: string;
-  defaultModel?: string;
-  updatedAt: string;
-}
 
 export interface ProgressRecord {
   id: string;
@@ -48,11 +39,6 @@ export interface FlashcardReviewRecord {
 export interface InterviewStudiedRecord {
   id: number;
   studiedAt: string;
-}
-
-export interface CryptoKeyRecord {
-  id: string;
-  key: CryptoKey;
 }
 
 export interface TopicPlaceRecord {
@@ -186,9 +172,7 @@ class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
   flashcardReviews!: Table<FlashcardReviewRecord, string>;
-  providerCredentials!: Table<ProviderCredentialsRecord, string>;
   interviewStudied!: Table<InterviewStudiedRecord, number>;
-  cryptoKeys!: Table<CryptoKeyRecord, string>;
   topicPlace!: Table<TopicPlaceRecord, string>;
   conceptNotes!: Table<ConceptNoteRecord, string>;
   bookmarks!: Table<BookmarkRecord, string>;
@@ -374,6 +358,13 @@ class ProgressDb extends Dexie {
       userCards: 'id, topicSlug, createdAt, sourceNoteId, sourceHighlightId',
       playgroundSnippets: 'id, language, updatedAt',
     });
+    // Drop the dead BYOK stores: the live site is pure-logic with no runtime AI, so the
+    // provider-credentials/crypto-key tables (and their helpers) were removed. This cleans up
+    // the obsolete stores from existing visitors' IndexedDB rather than leaving them orphaned.
+    this.version(14).stores({
+      providerCredentials: null,
+      cryptoKeys: null,
+    });
   }
 }
 
@@ -413,16 +404,37 @@ export const setInterviewStudied = async (id: number, studied: boolean): Promise
 
 const progressKey = (topicSlug: string, exerciseId: string): string => `${topicSlug}:${exerciseId}`;
 
+export interface RecordAttemptMeta {
+  difficulty?: number | undefined;
+  concept?: string | undefined;
+  hintsRevealed?: number | undefined;
+  durationMs?: number | undefined;
+  mode?: string | undefined;
+}
+
+const ATTEMPT_EVENT_CAP = 4000;
+
+const pruneAttemptEvents = async (): Promise<void> => {
+  const count = await db.attemptEvents.count();
+  if (count <= ATTEMPT_EVENT_CAP) return;
+  const oldest = await db.attemptEvents
+    .orderBy('id')
+    .limit(count - ATTEMPT_EVENT_CAP)
+    .primaryKeys();
+  if (oldest.length > 0) await db.attemptEvents.bulkDelete(oldest);
+};
+
 export const recordAttempt = async (
   topicSlug: string,
   exerciseId: string,
   status: ProgressStatus,
+  meta: RecordAttemptMeta = {},
 ): Promise<void> => {
   const id = progressKey(topicSlug, exerciseId);
   const day = localDayKey();
   const now = new Date().toISOString();
 
-  await db.transaction('rw', db.progress, db.activity, async () => {
+  await db.transaction('rw', db.progress, db.activity, db.attemptEvents, async () => {
     const existing = await db.progress.get(id);
     const nextStatus: ProgressStatus = existing?.status === 'pass' ? 'pass' : status;
     await db.progress.put({
@@ -442,7 +454,21 @@ export const recordAttempt = async (
       exercisesAttempted: (activity?.exercisesAttempted ?? 0) + 1,
       exercisesPassed: (activity?.exercisesPassed ?? 0) + (becomesPassed ? 1 : 0),
     });
+
+    await db.attemptEvents.add({
+      topicSlug,
+      exerciseId,
+      concept: meta.concept ?? '',
+      difficulty: meta.difficulty === undefined ? '' : String(meta.difficulty),
+      status,
+      ...(meta.hintsRevealed !== undefined ? { hintsRevealed: meta.hintsRevealed } : {}),
+      ...(meta.durationMs !== undefined ? { durationMs: meta.durationMs } : {}),
+      ...(meta.mode !== undefined ? { mode: meta.mode } : {}),
+      at: now,
+    });
   });
+
+  void pruneAttemptEvents();
 };
 
 export type StudyActivityKind = 'review' | 'read' | 'focus';

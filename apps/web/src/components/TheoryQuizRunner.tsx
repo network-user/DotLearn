@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import type { TheoryQuizExercise } from '@dotlearn/contracts';
 import { runTheoryQuiz } from '@dotlearn/lesson-engine';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, m as motion } from 'framer-motion';
 import { Check, CheckCircle2, Circle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -19,6 +19,7 @@ import { useDifficultyLabel } from './ExerciseRunner';
 interface TheoryQuizRunnerProps {
   topicSlug: string;
   exercise: TheoryQuizExercise;
+  conceptId?: string | undefined;
 }
 
 const shuffleArray = <T,>(items: readonly T[]): T[] => {
@@ -45,7 +46,7 @@ type CheckState =
       explanation?: string;
     };
 
-export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps) => {
+export const TheoryQuizRunner = ({ topicSlug, exercise, conceptId }: TheoryQuizRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const failureMessage = useFailureMessage();
@@ -74,7 +75,10 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
         ...(details.explanation !== undefined ? { explanation: details.explanation } : {}),
       });
       burstConfetti();
-      void recordAttempt(topicSlug, exercise.id, 'pass');
+      void recordAttempt(topicSlug, exercise.id, 'pass', {
+        difficulty: exercise.difficulty,
+        concept: conceptId,
+      });
     } else {
       const details = (result.details ?? {}) as {
         missing?: string[];
@@ -88,7 +92,10 @@ export const TheoryQuizRunner = ({ topicSlug, exercise }: TheoryQuizRunnerProps)
         ...(details.unexpected !== undefined ? { unexpected: details.unexpected } : {}),
         ...(details.explanation !== undefined ? { explanation: details.explanation } : {}),
       });
-      void recordAttempt(topicSlug, exercise.id, 'fail');
+      void recordAttempt(topicSlug, exercise.id, 'fail', {
+        difficulty: exercise.difficulty,
+        concept: conceptId,
+      });
     }
     setPulse((p) => p + 1);
   };

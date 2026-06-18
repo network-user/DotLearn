@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import { Boxes, Table2 } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';
