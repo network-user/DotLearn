@@ -88,6 +88,82 @@ describe('TopicManifest', () => {
   it('rejects unknown keys (strict)', () => {
     expect(TopicManifest.safeParse({ ...valid(), surprise: true }).success).toBe(false);
   });
+
+  it('accepts an optional sources array', () => {
+    expect(
+      TopicManifest.safeParse({
+        ...valid(),
+        sources: [{ title: 'PostgreSQL docs', url: 'https://www.postgresql.org/docs/' }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('treats sources as optional', () => {
+    const parsed = TopicManifest.parse(valid());
+    expect(parsed.sources).toBeUndefined();
+  });
+
+  it('rejects a source with an invalid url', () => {
+    expect(
+      TopicManifest.safeParse({
+        ...valid(),
+        sources: [{ title: 'Broken', url: 'not-a-url' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a source missing a title', () => {
+    expect(
+      TopicManifest.safeParse({
+        ...valid(),
+        sources: [{ url: 'https://example.com' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts optional relatedTopics distinct from prerequisites', () => {
+    const result = TopicManifest.safeParse({
+      ...valid(),
+      prerequisites: ['python-oop'],
+      relatedTopics: ['fastapi', 'celery'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('parses without relatedTopics (field stays optional)', () => {
+    const result = TopicManifest.safeParse(valid());
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.relatedTopics).toBeUndefined();
+    }
+  });
+
+  it('rejects relatedTopics that duplicate a prerequisite', () => {
+    const result = TopicManifest.safeParse({
+      ...valid(),
+      prerequisites: ['python-oop'],
+      relatedTopics: ['python-oop'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects relatedTopics that reference the topic itself', () => {
+    const result = TopicManifest.safeParse({ ...valid(), relatedTopics: ['demo'] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects duplicate relatedTopics', () => {
+    const result = TopicManifest.safeParse({
+      ...valid(),
+      relatedTopics: ['fastapi', 'fastapi'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a relatedTopics entry with an invalid slug', () => {
+    const result = TopicManifest.safeParse({ ...valid(), relatedTopics: ['Bad_Slug'] });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('file helpers', () => {

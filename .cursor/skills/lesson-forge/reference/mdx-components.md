@@ -422,6 +422,62 @@ Props: `initial?: { files?: Record<string, string>; commands?: string[] }` (seed
 
 `GitGraph` is internal to `GitTerminal` (it requires a live engine snapshot) and is **not** available as a standalone MDX tag — embed `GitTerminal` instead.
 
+### Hashing
+
+Interactive teaching visualizations for the `hashing` topic. All render fully with no props (Russian-defaulted labels), are responsive to 375px (wide content scrolls inside the `VizShell`), and are registered **unwrapped** (their controls stay live), so do not wrap them in `<Figure>`. For the basic hash-table mechanism (open addressing, load factor, resize/rehash) reuse the existing `HashTableViz` documented under domain visualizations - the components below cover the parts it does not.
+
+All five accept `lang?: 'ru' | 'en'` (default `'ru'`) which switches every built-in control, footer, and default dataset to that language. In an `.en.mdx` file pass `lang="en"`; in `.ru.mdx` omit it.
+
+#### HashFunctionViz
+
+A live hash function. Type into the input and watch a fixed-length hex fingerprint (a 32-bit FNV-1a hash) and a 32-cell bit grid update. The "изменить один символ" button mutates one character to demonstrate the avalanche effect: the footer reports how many of the 32 bits flipped. Use it for the hash-function-properties concept (determinism + avalanche).
+
+Props: `initialText?: string` (default `'Москва'`); `label?: string`; `lang?: 'ru' | 'en'`.
+
+```mdx
+<HashFunctionViz initialText="Иванов" />
+```
+
+#### HashLoopDemo
+
+A **looped** animation (autoplaying, not just on-demand): one hash function cycles through a list of inputs on a timer, morphing the hex fingerprint and bit grid each tick, with a play/pause toggle and a manual "next" step. Honors `prefers-reduced-motion` (no autoplay, manual stepping only). Use it as a lively intro figure where you want continuous motion rather than a control the reader must drive - e.g. the what-is-hashing concept.
+
+Props: `inputs?: string[]` (cycled values, language-defaulted); `intervalMs?: number` (default `2000`); `label?: string`; `lang?: 'ru' | 'en'`.
+
+```mdx
+<HashLoopDemo />
+```
+
+#### CollisionViz
+
+Contrasts the two collision-resolution strategies on the same key stream. Toggle between «цепочки» (chaining - each bucket holds a list) and «открытая адресация» (open addressing - one key per cell, linear probing to the next free slot), then step through insertions. In probing mode the probe path and growing clusters are visible. Use it for the collisions concept.
+
+Props: `size?: number` (bucket count, default `7`); `keys?: string[]` (insertion order, language-defaulted); `label?: string`; `lang?: 'ru' | 'en'`.
+
+```mdx
+<CollisionViz />
+```
+
+#### LoadFactorViz
+
+A focused load-factor gauge. Each "добавить элемент" raises α = elements / buckets; when α reaches the threshold the table doubles and rehashes (with a rehash counter), making the amortized-O(1) resize story concrete without the distraction of probing. Use it next to the hash-tables resize discussion.
+
+Props: `initialSize?: number` (default `4`); `threshold?: number` (default `0.75`); `label?: string`; `lang?: 'ru' | 'en'`.
+
+```mdx
+<LoadFactorViz threshold={0.75} />
+```
+
+#### ConsistentHashRing
+
+A consistent-hashing ring: nodes and keys sit on one circle, each key belongs to the first node clockwise (shown as colored ownership arcs). "узел +/-" adds or removes a node and pulses the keys that move; the footer reports how many of N keys were remapped, contrasting with `hash % N` where almost everything would move. Use it for the databases-and-systems concept (sharding / distributed caches).
+
+Props: `keys?: string[]` (language-defaulted); `label?: string`; `lang?: 'ru' | 'en'`.
+
+```mdx
+<ConsistentHashRing />
+```
+
 ## Rules
 
 - Never put a figure or sandbox inside a `Callout`/`Detail` unless it is genuinely optional material.

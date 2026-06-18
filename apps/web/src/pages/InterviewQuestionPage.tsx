@@ -3,7 +3,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { Exercise, InterviewStage } from '@dotlearn/contracts';
 import { Link, useParams } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, Dumbbell } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, Dumbbell, GraduationCap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
@@ -21,8 +21,10 @@ import {
   loadQuestionExercises,
   localizedInterviewTitle,
   relatedInterviewQuestions,
+  relatedTopicsForQuestion,
 } from '@/lib/interview';
 import { db, INTERVIEW_TOPIC_SLUG, setInterviewStudied } from '@/lib/progress-db';
+import { topicTitleOf } from '@/lib/topics';
 import { useInterviewStudied } from '@/lib/use-interview';
 
 const stageTone: Record<InterviewStage, 'accent' | 'info' | 'success'> = {
@@ -91,6 +93,14 @@ export const InterviewQuestionPage = () => {
   const locale = getCurrentLanguage();
   const Component = getInterviewComponentForLocale(question, locale);
   const related = relatedInterviewQuestions(question);
+  const studyLinks = relatedTopicsForQuestion(question)
+    .map((entry) => {
+      const title = topicTitleOf(entry.slug);
+      return title ? { ...entry, title } : undefined;
+    })
+    .filter((entry): entry is { slug: string; conceptId?: string; title: string } =>
+      entry !== undefined,
+    );
   const position = interviewQuestions.findIndex((item) => item.id === question.id);
   const previous = position > 0 ? interviewQuestions[position - 1] : undefined;
   const next =
@@ -161,6 +171,38 @@ export const InterviewQuestionPage = () => {
               />
             ))}
           </div>
+        </section>
+      )}
+
+      {studyLinks.length > 0 && (
+        <section className="space-y-3 pt-6 border-t-2 border-fg/80">
+          <div className="flex items-center gap-2">
+            <GraduationCap size={18} className="text-accent" />
+            <h2 className="font-display text-xl text-fg tracking-tightish">
+              {t('studyHeading')}
+            </h2>
+          </div>
+          <p className="text-sm text-fg-muted">{t('studySubtitle')}</p>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {studyLinks.map((link) => (
+              <li key={link.conceptId ? `${link.slug}:${link.conceptId}` : link.slug}>
+                <Link
+                  to="/topics/$slug"
+                  params={{ slug: link.slug }}
+                  search={{ concept: link.conceptId }}
+                  className="group flex items-center justify-between gap-3 rounded-xl border border-border-base px-4 py-3 transition-colors hover:border-border-strong hover:bg-fg/[0.03]"
+                >
+                  <span className="text-[14px] text-fg leading-snug group-hover:underline decoration-accent/50 underline-offset-2">
+                    {link.title}
+                  </span>
+                  <ArrowRight
+                    size={15}
+                    className="shrink-0 text-fg-subtle group-hover:text-accent transition-colors"
+                  />
+                </Link>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 

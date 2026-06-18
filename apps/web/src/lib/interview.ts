@@ -8,6 +8,7 @@ import {
   type InterviewCategory,
   type InterviewExerciseMeta,
   type InterviewQuestionMeta,
+  type InterviewRelatedTopic,
   type InterviewStage,
 } from '@dotlearn/contracts';
 
@@ -104,6 +105,39 @@ export const relatedInterviewQuestions = (
   scored.sort((a, b) => b.score - a.score || a.other.id - b.other.id);
   return scored.slice(0, limit).map((entry) => entry.other);
 };
+
+const categoryTopicSlugs: Record<string, string[]> = {
+  'data-storage': ['sql-fundamentals', 'database-types', 'python-orm', 'django-query-profiling'],
+  concurrency: ['python-storage-internals', 'celery', 'message-brokers'],
+  'web-networking': ['cors', 'websockets-realtime', 'fastapi', 'keycloak'],
+  'oop-patterns': ['python-oop', 'clean-architecture', 'dependency-injection'],
+  'python-core': [
+    'python-decorators',
+    'python-mro',
+    'python-context-managers',
+    'python-typevar',
+    'python-walrus',
+    'python-main-guard',
+  ],
+  'data-structures': ['python-algorithms', 'computational-complexity'],
+  infrastructure: ['git', 'celery', 'message-brokers'],
+  frameworks: ['fastapi', 'python-orm', 'django-query-profiling'],
+  'quality-process': ['clean-architecture', 'python-logging', 'computational-complexity'],
+  'system-design': ['clean-architecture', 'message-brokers', 'database-types'],
+};
+
+export const relatedTopicsForQuestion = (
+  question: InterviewQuestionMeta,
+): InterviewRelatedTopic[] => {
+  if (question.relatedTopics && question.relatedTopics.length > 0) {
+    return question.relatedTopics;
+  }
+  const slugs = categoryTopicSlugs[question.category] ?? [];
+  return slugs.map((slug) => ({ slug }));
+};
+
+export const topicSlugsForCategory = (category: InterviewCategory): string[] =>
+  categoryTopicSlugs[category] ?? [];
 
 interface MdxModule {
   default: ComponentType<Record<string, unknown>>;

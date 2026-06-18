@@ -1,27 +1,17 @@
-import { useEffect, useState } from 'react';
-
 import { useTranslation } from 'react-i18next';
 
-import { applyTheme, persistTheme, readStoredTheme, type Theme } from '@/lib/theme';
+import { setSettings, useSettings } from '@/lib/settings';
+import { resolveTheme } from '@/lib/theme';
 
 export const ThemeToggle = () => {
   const { t } = useTranslation('theme');
-  const [theme, setTheme] = useState<Theme>('dark');
-
-  useEffect(() => {
-    const initial = readStoredTheme();
-    setTheme(initial);
-    applyTheme(initial);
-  }, []);
+  const settings = useSettings();
+  const isDark = resolveTheme(settings.themePreference) === 'dark';
 
   const toggle = (): void => {
-    const next: Theme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    applyTheme(next);
-    persistTheme(next);
+    setSettings({ themePreference: isDark ? 'light' : 'dark' });
   };
 
-  const isDark = theme === 'dark';
   const label = isDark ? t('switchToLight') : t('switchToDark');
   return (
     <button

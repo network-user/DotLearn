@@ -171,6 +171,8 @@ export const MergeStepper = ({ sequences = defaultSequences, label = 'C3 merge' 
   return (
     <VizShell
       label={label}
+      description={`${label}: ${initialStep.caption}`}
+      liveCaption={current.caption}
       actions={
         <>
           <VizButton onClick={step} disabled={atEnd && index >= 0} tone="accent">

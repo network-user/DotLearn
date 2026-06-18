@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { Search, Settings } from 'lucide-react';
+import { ChevronDown, Keyboard, Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { openCommandPalette } from '@/lib/command-palette';
 import { isNavPathActive } from '@/lib/navigation';
+import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
 import { adminPath } from '@/router';
 
 import { AddTopicButton } from './AddTopicButton';
@@ -16,7 +17,7 @@ import { Breadcrumbs } from './Breadcrumbs';
 import { InstallPrompt } from './InstallPrompt';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Onboarding } from './Onboarding';
-import { ShortcutsHost } from './ShortcutsDialog';
+import { ShortcutsHost, openShortcuts } from './ShortcutsDialog';
 import { ThemeToggle } from './ThemeToggle';
 
 type LayoutProps = {
@@ -50,6 +51,9 @@ export const Layout = ({ children }: LayoutProps) => {
 
   const isActive = (path: string): boolean => isNavPathActive(pathname, path);
 
+  const overflowItems = secondaryNavItems.filter((item) => item.to !== '/settings');
+  const overflowActive = overflowItems.some((item) => isActive(item.to));
+
   return (
     <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
       <a
@@ -68,18 +72,61 @@ export const Layout = ({ children }: LayoutProps) => {
               </span>
             </Link>
 
-            <nav className="hidden md:flex items-center gap-0.5 self-stretch [&>a]:h-full">
-              <NavLink to="/" active={isActive('/')} label={t('topics')} />
-              <NavLink to="/today" active={isActive('/today')} label={t('today')} />
-              <NavLink to="/map" active={isActive('/map')} label={t('map')} />
-              <NavLink to="/interview" active={isActive('/interview')} label={t('interview')} />
-              <NavLink to="/sandbox" active={isActive('/sandbox')} label={t('sandbox')} />
-              <NavLink to="/proposals" active={isActive('/proposals')} label={t('proposals')} />
-              <NavLink to="/progress" active={isActive('/progress')} label={t('progress')} />
-              <NavLink to="/library" active={isActive('/library')} label={t('library')} />
+            <nav
+              aria-label={t('primaryNavigation')}
+              className="hidden md:flex items-center gap-0.5 self-stretch [&>a]:h-full"
+            >
+              {primaryNavItems.map((item) => (
+                <NavLink
+                  key={item.key}
+                  to={item.to}
+                  active={isActive(item.to)}
+                  label={t(item.labelKey)}
+                />
+              ))}
               {showAdminLink && (
                 <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
               )}
+              <details className="group/more relative my-2 [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden">
+                <summary
+                  aria-label={t('more')}
+                  className={cx(
+                    'px-2.5 lg:px-3.5 h-9 inline-flex items-center gap-1 rounded-full text-[13px] font-medium tracking-snug cursor-pointer transition-colors duration-fast',
+                    overflowActive
+                      ? 'bg-fg/[0.07] text-fg'
+                      : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+                  )}
+                >
+                  {t('more')}
+                  <ChevronDown
+                    size={14}
+                    aria-hidden
+                    className="transition-transform duration-fast group-open/more:rotate-180"
+                  />
+                </summary>
+                <div className="absolute right-0 top-[calc(100%+6px)] z-[var(--z-sheet)] min-w-[180px] rounded-xl border border-border-base glass-strong p-1.5 shadow-float">
+                  {overflowItems.map((item) => {
+                    const Icon = item.icon;
+                    const active = isActive(item.to);
+                    return (
+                      <Link
+                        key={item.key}
+                        to={item.to}
+                        aria-current={active ? 'page' : undefined}
+                        className={cx(
+                          'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors duration-fast',
+                          active
+                            ? 'bg-accent/[0.08] text-accent'
+                            : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+                        )}
+                      >
+                        <Icon size={15} aria-hidden />
+                        {t(item.labelKey)}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </details>
             </nav>
 
             <div className="flex items-center gap-1.5 shrink-0">
@@ -90,8 +137,17 @@ export const Layout = ({ children }: LayoutProps) => {
                 title={t('openSearch')}
                 className="group inline-flex items-center gap-2 h-9 rounded-full border border-border-base/70 text-fg-muted hover:text-fg hover:bg-fg/[0.04] transition-colors px-2.5 lg:px-3.5"
               >
-                <Search size={15} />
-                <span className="hidden lg:inline text-[13px]">{t('openSearch')}</span>
+                <Search size={15} aria-hidden />
+                <span className="hidden md:inline text-[13px]">{t('openSearch')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={openShortcuts}
+                aria-label={t('openShortcuts')}
+                title={t('openShortcuts')}
+                className="hidden md:inline-flex items-center justify-center rounded-md border border-border-base px-2 py-1.5 text-fg-muted hover:text-fg hover:bg-surface-2 transition-colors"
+              >
+                <Keyboard size={15} aria-hidden />
               </button>
               <LanguageSwitcher />
               <ThemeToggle />
@@ -106,7 +162,7 @@ export const Layout = ({ children }: LayoutProps) => {
                     : 'text-fg-muted hover:text-fg hover:bg-surface-2',
                 )}
               >
-                <Settings size={15} />
+                <Settings size={15} aria-hidden />
               </Link>
               <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
               <AddTopicButton />

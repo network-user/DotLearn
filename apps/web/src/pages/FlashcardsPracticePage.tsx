@@ -24,8 +24,7 @@ import {
   type FlashcardsPracticeSearch,
 } from '@dotlearn/lesson-engine';
 import { interviewCategories, interviewStages } from '@/lib/interview';
-import { getCurrentLanguage } from '@/lib/i18n';
-import { topicTitleOf } from '@/lib/topics';
+import { topicTitleOf, useContentLanguage } from '@/lib/topics';
 
 interface Session {
   cards: SessionCard[];
@@ -59,7 +58,7 @@ export const FlashcardsPracticePage = () => {
   const rawSearch = useSearch({ strict: false }) as Record<string, unknown>;
   const search = useMemo(() => parseFlashcardsPracticeSearch(rawSearch), [rawSearch]);
   const active = useMemo(() => resolvedSearch(search), [search]);
-  const language = getCurrentLanguage();
+  const language = useContentLanguage();
   const topicSlugs = useMemo(() => flashcardTopicSlugs(), []);
   const selectedTopics = useMemo(
     () => parseTopicsParam(active.topics, topicSlugs),

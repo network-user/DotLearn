@@ -10,6 +10,7 @@ import {
   loadPythonState,
   loadSqlState,
   saveActiveTab,
+  takeSandboxIncoming,
   type PlaygroundTab,
   type PythonPlaygroundState,
   type SqlPlaygroundState,
@@ -64,15 +65,25 @@ export const SandboxPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadActiveTab(), loadSqlState(), loadPythonState()])
-      .then(([tab, sql, python]) => {
+    Promise.all([loadActiveTab(), loadSqlState(), loadPythonState(), takeSandboxIncoming()])
+      .then(([tab, sql, python, incoming]) => {
         if (cancelled) return;
-        const resolvedTab = tab ?? 'sql';
+        let resolvedTab = tab ?? 'sql';
+        let sqlState = sql ?? defaultSqlState();
+        let pythonState = python ?? defaultPythonState();
+        if (incoming) {
+          resolvedTab = incoming.tab;
+          if (incoming.tab === 'sql') {
+            sqlState = { ...sqlState, query: incoming.code, view: 'workspace' };
+          } else {
+            pythonState = { ...pythonState, code: incoming.code, view: 'workspace' };
+          }
+        }
         setActiveTab(resolvedTab);
         setLoaded({
           activeTab: resolvedTab,
-          sql: sql ?? defaultSqlState(),
-          python: python ?? defaultPythonState(),
+          sql: sqlState,
+          python: pythonState,
         });
       })
       .catch(() => {

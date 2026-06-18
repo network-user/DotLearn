@@ -1,0 +1,112 @@
+---
+conceptId: collisions
+title: Collisions and how they are resolved
+estimatedMinutes: 45
+---
+
+# Collisions: why they happen sooner than you think
+
+We already know collisions are inevitable: more inputs than outputs. But intuition suggests that with a thousand buckets and a dozen keys a clash is rare, nothing to worry about. Intuition is wrong, and badly so. Collisions appear far sooner than common sense predicts - and a hash table must be ready for them from the very first inserts, not "someday later".
+
+In this section we work out why collisions are so frequent (the culprit is the same effect as in the famous birthday paradox) and the two main strategies for dealing with them: chaining and open addressing. By the end you will be able to explain how they differ, when to choose which, and why open addressing tends to gather keys into sticky clusters.
+
+## The birthday paradox: collisions come early
+
+How many people must gather in a room for two of them to share a birthday with probability above one half? It seems you need hundreds - there are 365 days in a year. In fact **23 people** are enough. The reason is that you count not "a match with one particular person" but a match of **any pair** - and there are quadratically many pairs in a group.
+
+For hashing this is a direct verdict: 365 "buckets"-days and just 23 "keys"-people already give a 50% chance of collision. The more buckets, the longer luck holds, but it still grows by the same quadratic law.
+
+<Figure caption="Probability of at least one collision when distributing keys across 365 buckets. By 23 keys it already passes half - long before the table fills.">
+  <LineChart
+    xLabel="keys"
+    yLabel="P(collision)"
+    area
+    series={[
+      {
+        name: "365 buckets",
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0.12 },
+          { x: 20, y: 0.41 },
+          { x: 23, y: 0.51 },
+          { x: 30, y: 0.71 },
+          { x: 40, y: 0.89 },
+          { x: 50, y: 0.97 },
+          { x: 60, y: 0.99 },
+        ],
+      },
+    ]}
+  />
+</Figure>
+
+## Compute it yourself
+
+Run the code: it computes the exact collision probability for various numbers of keys with 365 buckets. Then change `buckets` to `1_000_000` (like a small hash table) and see at how many keys the probability passes one half - it will be around 1200, a negligible fraction of a million.
+
+<PyDemo
+  title="Collision probability (the birthday paradox)"
+  code={`def collision_prob(keys, buckets):
+    p_no = 1.0
+    for i in range(keys):
+        p_no *= (buckets - i) / buckets
+    return 1 - p_no
+
+buckets = 365
+for keys in [10, 23, 30, 50]:
+    print(keys, "keys ->", round(collision_prob(keys, buckets), 3))`}
+/>
+
+The conclusion is unpleasant but honest: you cannot count on collisions being "almost none". The table must be able to live with them. There are two classic ways.
+
+## Two strategies: chaining and open addressing
+
+With **chaining** each bucket holds a list. All keys that landed in one bucket are simply stacked into that list. With **open addressing** each cell holds at most one key: if the "home" cell is taken, the key goes looking for the next free one (the simplest variant is linear probing: try cell after cell around the ring).
+
+Toggle the mode in the visualization and insert a few keys. In chaining mode collisions pile into one list; in open-addressing mode they spread across neighbouring cells, forming clusters.
+
+<CollisionViz lang="en" />
+
+The difference is not cosmetic. Chaining tolerates high load (the list just lengthens) and is simple to delete from, but spends memory on pointers and loses cache locality - the list is scattered across the heap. Open addressing is compact and cache-friendly (everything in one array), but degrades faster under high load and needs careful deletion.
+
+## Clustering: why linear probing sticks
+
+Linear probing has an insidious trouble. When several keys sit in neighbouring cells, they form a continuous occupied stretch - a **cluster**. Any new key whose home cell falls inside the cluster must traverse it to the end - and thereby lengthen it. Clusters grow, merge, and probe chains get longer. This is called primary clustering.
+
+<Callout type="warning">
+Linear probing degrades sharply above load ~0.7: the average probe length grows non-linearly. So open-addressing tables keep the load lower than chaining tables and must grow the array in time.
+</Callout>
+
+## Edge cases
+
+- **Deletion under open addressing.** You cannot just clear a cell: a probe that ran "through" it would break, and the keys behind it would become invisible. The cell is marked with a tombstone - empty for insertion, passable for a search.
+- **A full table under open addressing.** If there are no free cells, there is nowhere to insert - the probe circles the ring and returns. So open addressing is unthinkable without timely growth.
+- **A very long chain.** With a bad hash one bucket-list grows to O(n). Modern implementations (Java 8+ `HashMap`, for example) then turn a long chain into a balanced tree to bring lookup back to O(log n).
+
+## Common mistakes
+
+- **Thinking collisions are rare.** The birthday paradox says otherwise: they arrive at fractions of a percent of fill. Readiness for collisions is not an optimization but a condition of correctness.
+- **Clearing a cell on deletion under open addressing.** This breaks probe chains. You need tombstones or shifting of later keys.
+- **Keeping open addressing under high load.** Because of clustering it degrades earlier than chaining. Its load threshold is taken stricter.
+
+<Detail summary="Quadratic probing and double hashing">
+
+Linear probing tries cells `home, home+1, home+2, ...` - hence clusters. Quadratic probing steps `home+1, home+4, home+9, ...` (by squares), breaking clusters but producing secondary clustering: keys with one home cell still follow one route. Double hashing computes the step with a second, independent hash function: `home + i·hash2(key)`. Then different keys take different routes, and clustering almost vanishes - at the cost of a second hash computation. It is the highest-quality, though not the fastest, kind of open addressing.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Collisions come early: by the birthday paradox 23 keys on 365 buckets already give a 50% chance of a clash.",
+    "Chaining: a bucket holds a list; tolerant of high load and simple to delete from, but spends memory and cache locality.",
+    "Open addressing: one key per cell, on a clash a probe looks for the next free one; compact and cache-friendly.",
+    "Linear probing is prone to clustering: occupied stretches grow and lengthen probe chains.",
+    "Deletion under open addressing needs tombstones, otherwise probe chains break.",
+    "Quadratic probing and double hashing break clusters at the cost of a more complex probe step.",
+  ]}
+/>
+
+## References
+
+- [Wikipedia - Birthday problem](https://en.wikipedia.org/wiki/Birthday_problem)
+- [Wikipedia - Hash table: collision resolution](https://en.wikipedia.org/wiki/Hash_table#Collision_resolution)
+- [Wikipedia - Open addressing](https://en.wikipedia.org/wiki/Open_addressing)

@@ -6,7 +6,8 @@ import { useTranslation } from 'react-i18next';
 import { BarChart } from '@/components/article/charts/BarChart';
 import { LineChart } from '@/components/article/charts/LineChart';
 import { cx } from '@/components/ui/cx';
-import { getPythonRuntime } from '@/lib/python-runtime';
+import { formatReplValue } from '@/lib/python-repl';
+import { getPythonRuntime, prewarmPythonRuntime } from '@/lib/python-runtime';
 
 import { PythonConsole, type ConsoleLine } from './PythonConsole';
 
@@ -30,16 +31,6 @@ const splitLines = (text: string, idPrefix: string, tone: 'stdout' | 'fail'): Co
     .split('\n')
     .filter((line, index, arr) => !(index === arr.length - 1 && line === ''))
     .map((line, index) => ({ id: `${idPrefix}-${index}`, tone, text: line }));
-
-const formatValue = (value: unknown): string => {
-  if (value === null || value === undefined) return 'None';
-  if (typeof value === 'string') return `'${value}'`;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-};
 
 const toChartData = (value: unknown): { label: string; value: number }[] | null => {
   if (!Array.isArray(value) || value.length === 0) return null;
@@ -107,7 +98,7 @@ export const PyDemo = ({ code, title, call, autoRun = false, chart }: PyDemoProp
         next.push({
           id: `s${sid}-val`,
           tone: 'meta',
-          text: `→ ${formatValue(execution.result)}`,
+          text: `→ ${formatReplValue(execution.result)}`,
         });
       }
       if (next.length === 0) {
@@ -166,6 +157,8 @@ export const PyDemo = ({ code, title, call, autoRun = false, chart }: PyDemoProp
           <button
             type="button"
             onClick={run}
+            onPointerEnter={prewarmPythonRuntime}
+            onFocus={prewarmPythonRuntime}
             disabled={status === 'loading' || status === 'running'}
             className={cx(
               'inline-flex items-center gap-1 rounded-sm px-2 h-6 text-[11px] font-medium transition-colors duration-fast',

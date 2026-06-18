@@ -1,0 +1,113 @@
+---
+conceptId: cryptographic-hashing
+title: Cryptographic hashes
+estimatedMinutes: 45
+---
+
+# Cryptographic hashes: a fingerprint you can trust
+
+When you type a password into a web service, the server does not store it in the clear - otherwise a database leak would instantly compromise every account. When Git decides that two files are identical, it does not compare them byte by byte. And when you download a distribution, a "checksum" string often sits beside it, letting you verify the file is neither corrupted nor tampered with. Behind all three sits one tool - the **cryptographic hash**.
+
+It is still a hash function: data of any length to a short fingerprint. But to the properties from earlier sections it adds guarantees a fast polynomial hash does not have. In this section we work out those guarantees, see why a "salt" is mixed into passwords, and understand content addressing - the foundation under Git and deduplication systems.
+
+## What the "crypto" prefix adds
+
+A cryptographic hash (SHA-256, BLAKE2, SHA-3) keeps, beyond determinism and avalanche, three promises:
+
+1. **Preimage resistance (one-way).** From the hash you cannot compute the input. The only way to "reverse" it is to try candidates and compare their hashes.
+2. **Collision resistance.** You cannot, in reasonable time, find two different inputs with one hash (though by the pigeonhole principle they exist).
+3. **Maximal avalanche.** Changing one input bit flips on average half of the 256 output bits - you cannot predict the output from a "similar" input.
+
+<Figure caption="A cryptographic hash compresses input of any size into a fixed-length fingerprint (256 bits for SHA-256) that can be neither reversed nor forged.">
+  <Sketch viewBox="0 0 440 130" title="The SHA-256 pipeline">
+    <SketchLabel x={20} y={70} mono anchor="start">data</SketchLabel>
+    <SketchArrow from={[100, 65]} to={[150, 65]} />
+    <SketchBox x={150} y={42} width={150} height={46} accent />
+    <SketchLabel x={225} y={69} mono accent>SHA-256</SketchLabel>
+    <SketchArrow from={[300, 65]} to={[350, 65]} accent />
+    <SketchLabel x={360} y={60} mono anchor="start">256 bits</SketchLabel>
+    <SketchLabel x={360} y={78} muted anchor="start">9f86d0…</SketchLabel>
+  </Sketch>
+</Figure>
+
+The price of these guarantees is speed: a cryptographic hash is tens of times slower than a polynomial one. So inside `dict` it is needless, but where there is an adversary it is irreplaceable.
+
+## Touch it: determinism and avalanche
+
+`hashlib` from the standard library gives cryptographic hashes. Run the code: the same input always gives the same fingerprint, while replacing one letter flips it entirely. Change `"Moscow"` to `"moscow"` and compare - the two fingerprints share nothing.
+
+<PyDemo
+  title="SHA-256 in hashlib"
+  code={`import hashlib
+
+def sha(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+print(sha("Moscow"))
+print(sha("Moscow"))
+print(sha("moscow"))`}
+/>
+
+The first two lines match character for character - that is determinism. The third, with one letter changed in case, shares nothing with them - that is avalanche. This is exactly why you cannot "tweak" an input by its fingerprint: the smallest change makes the result unpredictable.
+
+## Passwords: hash plus salt
+
+The server stores not the password but its hash. On login it hashes what you typed and compares with the stored value - it never needs to know the password itself. But one hash is not enough: an attacker can precompute the hashes of millions of popular passwords (a rainbow table) and look for matches. The defense is a **salt**: a unique random string is mixed into each password and stored beside it. Then identical passwords of two users give different hashes, and precomputed tables are useless.
+
+<Figure caption="A salt - a unique random string per user - is mixed into the password before hashing, so identical passwords give different fingerprints.">
+  <Sketch viewBox="0 0 460 130" title="Hashing a password with salt">
+    <SketchBox x={20} y={42} width={90} height={40} />
+    <SketchLabel x={65} y={67} mono>password</SketchLabel>
+    <SketchBox x={20} y={92} width={90} height={30} dashed />
+    <SketchLabel x={65} y={112} mono muted>salt</SketchLabel>
+    <SketchArrow from={[112, 62]} to={[170, 70]} />
+    <SketchArrow from={[112, 105]} to={[170, 80]} />
+    <SketchBox x={170} y={50} width={130} height={46} accent />
+    <SketchLabel x={235} y={77} mono accent>KDF / hash</SketchLabel>
+    <SketchArrow from={[300, 73]} to={[355, 73]} accent />
+    <SketchLabel x={365} y={78} mono anchor="start">fingerprint</SketchLabel>
+  </Sketch>
+</Figure>
+
+<Callout type="warning">
+For passwords a fast hash is bad: the faster SHA-256, the more variants per second an attacker tries. So passwords are hashed with deliberately **slow** functions - KDFs: bcrypt, scrypt, Argon2. They run the hash thousands of times, making brute force expensive. Bare SHA-256 is not fit for passwords.
+</Callout>
+
+## Content addressing: a name from the content
+
+If you address data not by name and not by location but by the **hash of its content**, you get content addressing. Git stores each object (file, commit) under a name equal to the hash of its content: identical files are automatically deduplicated (one hash, one copy), and any change to the content changes the address, so history cannot be tampered with unnoticed. The same principle drives deduplicating storage and P2P networks: matching hash means matching content.
+
+## Edge cases
+
+- **MD5 and SHA-1 are broken.** Collisions have been found for them (different files with one hash). For checking integrity against random errors they still serve; against an adversary they do not. Use SHA-256 or newer.
+- **Matching hashes are not a guarantee for fast hashes.** Content addressing is reliable only on a cryptographic hash. On a polynomial one an attacker crafts a collision and substitutes the content.
+- **A salt is not a secret.** The salt is stored openly beside the hash - its job is not to hide but to be unique, so rainbow tables are not reused.
+
+## Common mistakes
+
+- **Storing a password with a fast or unsalted hash.** `sha256(password)` without salt and without slowdown is cracked by rainbow tables and brute force. You need a salt and a KDF (Argon2/bcrypt).
+- **Using MD5/SHA-1 for security.** They are compromised by collisions. Their only justified use is a quick check against random corruption, not malice.
+- **Confusing a hash with encryption.** A hash is irreversible and has no "decryption". If data must be read back later, that is encryption, not hashing.
+
+<Detail summary="How SHA compresses data">
+
+SHA-256 follows the Merkle-Damgard scheme: the input is padded to a multiple of a block (512 bits) and passes block by block through a compression function. Each block is mixed with the current internal state (256 bits) by a series of additions, bitwise rotations, and logical operations; the output of one block becomes the input state for the next. The final state is the fingerprint. Avalanche comes from many rounds of mixing: one changed input bit spreads across the whole state over dozens of rounds. Reversal resistance lies in the operations "gluing" bits so that untangling them backward is computationally infeasible.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A cryptographic hash adds, over an ordinary one, preimage resistance (irreversibility) and collision resistance.",
+    "It is deterministic and maximally avalanching, but tens of times slower - used where there is an adversary.",
+    "Passwords are stored as a hash with a unique salt, so identical passwords give different fingerprints and rainbow tables fail.",
+    "Passwords are hashed with deliberately slow KDFs (Argon2, bcrypt, scrypt), not bare SHA-256.",
+    "Content addressing names an object by the hash of its content - that is how Git deduplicates files and protects history.",
+    "MD5 and SHA-1 are broken by collisions: for protection against an adversary use SHA-256 or newer.",
+  ]}
+/>
+
+## References
+
+- [Python docs - hashlib](https://docs.python.org/3/library/hashlib.html)
+- [Wikipedia - SHA-2](https://en.wikipedia.org/wiki/SHA-2)
+- [Wikipedia - Salt (cryptography)](https://en.wikipedia.org/wiki/Salt_(cryptography))

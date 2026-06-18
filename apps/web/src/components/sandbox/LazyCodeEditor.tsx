@@ -1,8 +1,9 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 
-import type { EditorProps } from '@monaco-editor/react';
+import type { EditorProps, OnMount } from '@monaco-editor/react';
 
 import { Skeleton } from '@/components/ui/Skeleton';
+import { clearSqlSchema, registerSqlCompletion, setSqlSchema } from '@/lib/sql-completion';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -67,10 +68,32 @@ const defineEditorThemes = (monaco: MonacoApi): void => {
 
 interface LazyCodeEditorProps extends EditorProps {
   height: string;
+  sqlSchema?: string;
 }
 
-export const LazyCodeEditor = ({ height, beforeMount, ...props }: LazyCodeEditorProps) => {
+type EditorInstance = Parameters<OnMount>[0];
+
+export const LazyCodeEditor = ({
+  height,
+  beforeMount,
+  onMount,
+  sqlSchema,
+  ...props
+}: LazyCodeEditorProps) => {
   const dark = useResolvedDark();
+  const editorRef = useRef<EditorInstance | null>(null);
+  const isSql = props.language === 'sql';
+
+  useEffect(() => {
+    const model = editorRef.current?.getModel();
+    if (!model) return;
+    if (isSql && sqlSchema) {
+      setSqlSchema(model, sqlSchema);
+    } else {
+      clearSqlSchema(model);
+    }
+  }, [isSql, sqlSchema]);
+
   return (
     <Suspense fallback={<Skeleton rounded="sm" className="w-full" style={{ height }} />}>
       <MonacoEditor
@@ -78,7 +101,18 @@ export const LazyCodeEditor = ({ height, beforeMount, ...props }: LazyCodeEditor
         theme={dark ? INK_THEME : PAPER_THEME}
         beforeMount={(monaco) => {
           defineEditorThemes(monaco);
+          if (props.language === 'sql') {
+            registerSqlCompletion(monaco);
+          }
           beforeMount?.(monaco);
+        }}
+        onMount={(editor, monaco) => {
+          editorRef.current = editor;
+          const model = editor.getModel();
+          if (model && isSql && sqlSchema) {
+            setSqlSchema(model, sqlSchema);
+          }
+          onMount?.(editor, monaco);
         }}
         {...props}
       />

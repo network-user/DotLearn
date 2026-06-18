@@ -2,13 +2,14 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
-import { Code2, Database, FileText, FlaskConical, GitBranch, Lock } from 'lucide-react';
+import { Code2, Database, FileText, FlaskConical, GitBranch, Lock, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
 import { DualProgressRing } from '@/components/ui/DualProgressRing';
-import { computeMastery, type TopicMastery } from '@/lib/mastery';
+import { blendRecallIntoMastery, computeMastery, type BlendedMastery } from '@/lib/mastery';
+import type { TopicRecall } from '@/lib/retention';
 import { prefetchTopic } from '@/lib/topics';
 
 export interface MapNode {
@@ -17,9 +18,10 @@ export interface MapNode {
   passed: number;
   readConcepts: number;
   prerequisites: string[];
+  recall?: TopicRecall;
 }
 
-type NodeStatus = 'not-started' | 'in-progress' | 'mastered';
+type NodeStatus = 'not-started' | 'in-progress' | 'mastered' | 'needs-review';
 
 const DIFFICULTY_TONE: Record<string, 'success' | 'warning' | 'danger'> = {
   beginner: 'success',
@@ -37,10 +39,14 @@ const runtimeIcon = (runtime: string) => {
   return <FileText size={13} />;
 };
 
-const masteryOf = (node: MapNode): TopicMastery =>
-  computeMastery(node.readConcepts, node.manifest.concepts.length, node.passed, node.total);
+const masteryOf = (node: MapNode): BlendedMastery =>
+  blendRecallIntoMastery(
+    computeMastery(node.readConcepts, node.manifest.concepts.length, node.passed, node.total),
+    node.recall && node.recall.reviewedCards > 0 ? node.recall.recall : undefined,
+  );
 
-const statusOf = (mastery: TopicMastery): NodeStatus => {
+const statusOf = (mastery: BlendedMastery): NodeStatus => {
+  if (mastery.needsReview) return 'needs-review';
   if (mastery.mastery >= 0.999) return 'mastered';
   if (mastery.passedExercises === 0 && mastery.readConcepts === 0 && mastery.mastery === 0) {
     return 'not-started';
@@ -78,10 +84,69 @@ const computeLevels = (nodes: MapNode[]): Map<string, number> => {
   return levels;
 };
 
+const DIFFICULTY_RANK: Record<string, number> = {
+  beginner: 0,
+  intermediate: 1,
+  advanced: 2,
+};
+
+export const computeRecommendedNext = (nodes: MapNode[]): string | undefined => {
+  if (nodes.length === 0) return undefined;
+  const existingSlugs = new Set(nodes.map((node) => node.manifest.slug));
+  const masteredSlugs = new Set<string>();
+  for (const node of nodes) {
+    if (masteryOf(node).mastery >= 0.999) masteredSlugs.add(node.manifest.slug);
+  }
+  const levels = computeLevels(nodes);
+
+  const unlocked = nodes.filter((node) => {
+    if (masteredSlugs.has(node.manifest.slug)) return false;
+    const presentPrereqs = node.manifest.prerequisites.filter((slug) => existingSlugs.has(slug));
+    return presentPrereqs.every((slug) => masteredSlugs.has(slug));
+  });
+
+  const ranked = (candidates: MapNode[]): MapNode | undefined =>
+    [...candidates].sort((a, b) => {
+      const levelA = levels.get(a.manifest.slug) ?? 0;
+      const levelB = levels.get(b.manifest.slug) ?? 0;
+      if (levelA !== levelB) return levelA - levelB;
+      const diffA = DIFFICULTY_RANK[a.manifest.difficulty] ?? 1;
+      const diffB = DIFFICULTY_RANK[b.manifest.difficulty] ?? 1;
+      if (diffA !== diffB) return diffA - diffB;
+      return a.manifest.title.localeCompare(b.manifest.title);
+    })[0];
+
+  const inProgress = unlocked.filter((node) => statusOf(masteryOf(node)) === 'in-progress');
+  const fromInProgress = ranked(inProgress);
+  if (fromInProgress) return fromInProgress.manifest.slug;
+
+  const fromUnlocked = ranked(unlocked);
+  if (fromUnlocked) return fromUnlocked.manifest.slug;
+
+  const coldStart = ranked(
+    nodes.filter((node) => {
+      if (masteredSlugs.has(node.manifest.slug)) return false;
+      const presentPrereqs = node.manifest.prerequisites.filter((slug) =>
+        existingSlugs.has(slug),
+      );
+      return presentPrereqs.length === 0;
+    }),
+  );
+  return coldStart?.manifest.slug;
+};
+
 const statusRingTone: Record<NodeStatus, string> = {
   'not-started': 'border-border-base',
   'in-progress': 'border-accent/40',
   mastered: 'border-ok/50',
+  'needs-review': 'border-warn/50',
+};
+
+const statusLabelKey: Record<NodeStatus, string> = {
+  'not-started': 'status.notStarted',
+  'in-progress': 'status.inProgress',
+  mastered: 'status.mastered',
+  'needs-review': 'status.needsReview',
 };
 
 interface NodeCardProps {
@@ -89,15 +154,25 @@ interface NodeCardProps {
   locked: boolean;
   highlighted: boolean;
   dimmed: boolean;
+  recommended?: boolean;
   onHover: (slug: string | null) => void;
 }
 
-const NodeCard = ({ node, locked, highlighted, dimmed, onHover }: NodeCardProps) => {
+const NodeCard = ({
+  node,
+  locked,
+  highlighted,
+  dimmed,
+  recommended = false,
+  onHover,
+}: NodeCardProps) => {
   const { t } = useTranslation('map');
   const { manifest } = node;
   const mastery = masteryOf(node);
   const status = statusOf(mastery);
   const masteryPercent = Math.round(mastery.mastery * 100);
+  const showRecall = mastery.hasRecall && (status === 'needs-review' || status === 'mastered');
+  const recallPercent = Math.round(mastery.recall * 100);
   return (
     <Link
       to="/topics/$slug"
@@ -113,14 +188,22 @@ const NodeCard = ({ node, locked, highlighted, dimmed, onHover }: NodeCardProps)
       }}
       onBlur={() => onHover(null)}
       onTouchStart={() => prefetchTopic(manifest.slug)}
+      aria-current={recommended ? 'step' : undefined}
       className={cx(
-        'group block rounded-2xl border bg-surface p-3.5 shadow-card transition-[transform,box-shadow,border-color,opacity] duration-med ease-standard',
+        'group relative block rounded-2xl border bg-surface p-3.5 shadow-card transition-[transform,box-shadow,border-color,opacity] duration-med ease-standard',
         'hover:border-border-strong hover:shadow-float hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
         statusRingTone[status],
         highlighted && 'border-accent shadow-float',
+        recommended && 'border-accent ring-2 ring-accent/40 shadow-float',
         dimmed && 'opacity-45',
       )}
     >
+      {recommended && (
+        <span className="absolute -top-2.5 left-3 inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-surface dark:text-canvas shadow-card">
+          <Sparkles size={9} />
+          {t('recommendedNext')}
+        </span>
+      )}
       <div className="flex items-start gap-3">
         <DualProgressRing
           reading={mastery.readingRatio}
@@ -157,10 +240,25 @@ const NodeCard = ({ node, locked, highlighted, dimmed, onHover }: NodeCardProps)
         <Badge tone={DIFFICULTY_TONE[manifest.difficulty] ?? 'neutral'} variant="soft">
           {manifest.difficulty}
         </Badge>
-        <span className="text-[10px] uppercase tracking-widest text-fg-subtle">
-          {t(`status.${status === 'not-started' ? 'notStarted' : status === 'in-progress' ? 'inProgress' : 'mastered'}`)}
+        <span
+          className={cx(
+            'text-[10px] uppercase tracking-widest',
+            status === 'needs-review' ? 'text-warn' : 'text-fg-subtle',
+          )}
+        >
+          {t(statusLabelKey[status])}
         </span>
       </div>
+      {showRecall && (
+        <p
+          className={cx(
+            'mt-1.5 text-[11px] tabular-nums',
+            status === 'needs-review' ? 'text-warn' : 'text-fg-subtle',
+          )}
+        >
+          {t('recallHint', { percent: recallPercent })}
+        </p>
+      )}
     </Link>
   );
 };
@@ -172,7 +270,13 @@ interface EdgeGeometry {
   path: string;
 }
 
-const GraphView = ({ nodes }: { nodes: MapNode[] }) => {
+const GraphView = ({
+  nodes,
+  recommendedSlug,
+}: {
+  nodes: MapNode[];
+  recommendedSlug: string | undefined;
+}) => {
   const levels = useMemo(() => computeLevels(nodes), [nodes]);
   const existingSlugs = useMemo(
     () => new Set(nodes.map((node) => node.manifest.slug)),
@@ -181,7 +285,8 @@ const GraphView = ({ nodes }: { nodes: MapNode[] }) => {
   const masteredSlugs = useMemo(() => {
     const set = new Set<string>();
     for (const node of nodes) {
-      if (masteryOf(node).mastery >= 0.999) set.add(node.manifest.slug);
+      const blended = masteryOf(node);
+      if (blended.mastery >= 0.999 && !blended.needsReview) set.add(node.manifest.slug);
     }
     return set;
   }, [nodes]);
@@ -316,6 +421,7 @@ const GraphView = ({ nodes }: { nodes: MapNode[] }) => {
                     locked={locked}
                     highlighted={highlighted}
                     dimmed={dimmed}
+                    recommended={node.manifest.slug === recommendedSlug}
                     onHover={setActiveSlug}
                   />
                 </div>
@@ -328,7 +434,13 @@ const GraphView = ({ nodes }: { nodes: MapNode[] }) => {
   );
 };
 
-const ListView = ({ nodes }: { nodes: MapNode[] }) => {
+const ListView = ({
+  nodes,
+  recommendedSlug,
+}: {
+  nodes: MapNode[];
+  recommendedSlug: string | undefined;
+}) => {
   const { t } = useTranslation('map');
   const levels = useMemo(() => computeLevels(nodes), [nodes]);
   const existingSlugs = useMemo(
@@ -343,7 +455,8 @@ const ListView = ({ nodes }: { nodes: MapNode[] }) => {
   const masteredSlugs = useMemo(() => {
     const set = new Set<string>();
     for (const node of nodes) {
-      if (masteryOf(node).mastery >= 0.999) set.add(node.manifest.slug);
+      const blended = masteryOf(node);
+      if (blended.mastery >= 0.999 && !blended.needsReview) set.add(node.manifest.slug);
     }
     return set;
   }, [nodes]);
@@ -384,6 +497,7 @@ const ListView = ({ nodes }: { nodes: MapNode[] }) => {
                     locked={locked}
                     highlighted={false}
                     dimmed={false}
+                    recommended={node.manifest.slug === recommendedSlug}
                     onHover={() => undefined}
                   />
                   {presentPrereqs.length > 0 && (
@@ -414,13 +528,16 @@ const ListView = ({ nodes }: { nodes: MapNode[] }) => {
   );
 };
 
-export const LearningMap = ({ nodes }: { nodes: MapNode[] }) => (
-  <>
-    <div className="hidden md:block">
-      <GraphView nodes={nodes} />
-    </div>
-    <div className="md:hidden">
-      <ListView nodes={nodes} />
-    </div>
-  </>
-);
+export const LearningMap = ({ nodes }: { nodes: MapNode[] }) => {
+  const recommendedSlug = useMemo(() => computeRecommendedNext(nodes), [nodes]);
+  return (
+    <>
+      <div className="hidden md:block">
+        <GraphView nodes={nodes} recommendedSlug={recommendedSlug} />
+      </div>
+      <div className="md:hidden">
+        <ListView nodes={nodes} recommendedSlug={recommendedSlug} />
+      </div>
+    </>
+  );
+};

@@ -6,10 +6,10 @@ import { useTranslation } from 'react-i18next';
 
 import { LearningMap, type MapNode } from '@/components/LearningMap';
 import { Surface } from '@/components/ui/Surface';
-import { getCurrentLanguage } from '@/lib/i18n';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
-import { effectiveLanguage } from '@/lib/topics';
+import { useRecallByTopic } from '@/lib/retention';
+import { effectiveLanguage, useContentLanguage } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import topicStats from 'virtual:topic-stats';
 
@@ -18,7 +18,8 @@ export const LearningMapPage = () => {
   const manifests = useVisibleManifests();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
-  const language = getCurrentLanguage();
+  const recallByTopic = useRecallByTopic();
+  const language = useContentLanguage();
 
   const nodes = useMemo<MapNode[]>(() => {
     const existingSlugs = new Set(manifests.map((manifest) => manifest.slug));
@@ -28,14 +29,18 @@ export const LearningMapPage = () => {
         passedByTopic.set(record.topicSlug, (passedByTopic.get(record.topicSlug) ?? 0) + 1);
       }
     }
-    return manifests.map((manifest) => ({
-      manifest,
-      total: topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0,
-      passed: passedByTopic.get(manifest.slug) ?? 0,
-      readConcepts: countReadConcepts(manifest.concepts, readByTopic.get(manifest.slug)),
-      prerequisites: manifest.prerequisites.filter((slug) => existingSlugs.has(slug)),
-    }));
-  }, [manifests, progressRecords, readByTopic, language]);
+    return manifests.map((manifest) => {
+      const recall = recallByTopic.get(manifest.slug);
+      return {
+        manifest,
+        total: topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0,
+        passed: passedByTopic.get(manifest.slug) ?? 0,
+        readConcepts: countReadConcepts(manifest.concepts, readByTopic.get(manifest.slug)),
+        prerequisites: manifest.prerequisites.filter((slug) => existingSlugs.has(slug)),
+        ...(recall ? { recall } : {}),
+      };
+    });
+  }, [manifests, progressRecords, readByTopic, recallByTopic, language]);
 
   return (
     <div className="space-y-8">

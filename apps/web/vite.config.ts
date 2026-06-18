@@ -12,6 +12,8 @@ import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+import { remarkConceptLinks } from './remark-concept-links.mjs';
+
 import { searchIndexPlugin } from './vite-plugin-search-index';
 import { topicManifestsPlugin } from './vite-plugin-topic-manifests';
 import { topicStatsPlugin } from './vite-plugin-topic-stats';
@@ -114,7 +116,7 @@ export default defineConfig({
     {
       enforce: 'pre',
       ...mdx({
-        remarkPlugins: [remarkFrontmatter, remarkGfm, remarkMdxFrontmatter],
+        remarkPlugins: [remarkFrontmatter, remarkGfm, remarkMdxFrontmatter, remarkConceptLinks],
         rehypePlugins: [
           [
             rehypeShiki,
@@ -130,7 +132,7 @@ export default defineConfig({
     },
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       includeAssets: ['favicon.svg'],
       manifest: {
         name: '.learn',

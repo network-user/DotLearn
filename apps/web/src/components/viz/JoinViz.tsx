@@ -121,7 +121,7 @@ export const JoinViz = ({
               participates(side, row) ? 'opacity-100' : 'opacity-35',
             )}
           >
-            <span className={cx('size-2 rounded-full shrink-0', keyColor.get(row.key))} />
+            <span aria-hidden className={cx('size-2 rounded-full shrink-0', keyColor.get(row.key))} />
             <span className="text-fg-subtle">
               {keyName}={row.key}
             </span>
@@ -135,6 +135,16 @@ export const JoinViz = ({
   return (
     <VizShell
       label={label ?? t('join.label')}
+      description={t('join.description', {
+        leftTitle,
+        rightTitle,
+        leftKeyName,
+        rightKeyName,
+      })}
+      liveCaption={t('join.live', {
+        mode: modeSql[mode],
+        count: result.length,
+      })}
       actions={
         <div className="flex items-center rounded-lg border border-border-base bg-surface p-0.5">
           {joinModes.map((joinMode) => (
@@ -183,8 +193,10 @@ export const JoinViz = ({
                 {pair.left ? (
                   <>
                     <span
+                      aria-hidden
                       className={cx('size-2 rounded-full shrink-0', keyColor.get(pair.left.key))}
                     />
+                    <span className="text-fg-subtle">{leftKeyName}={pair.left.key}</span>
                     <span className="text-fg">{pair.left.label}</span>
                   </>
                 ) : (
@@ -202,8 +214,10 @@ export const JoinViz = ({
                 {pair.right ? (
                   <>
                     <span
+                      aria-hidden
                       className={cx('size-2 rounded-full shrink-0', keyColor.get(pair.right.key))}
                     />
+                    <span className="text-fg-subtle">{rightKeyName}={pair.right.key}</span>
                     <span className="text-fg">{pair.right.label}</span>
                   </>
                 ) : (

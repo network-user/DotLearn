@@ -26,6 +26,15 @@ import {
   type ReadingSize,
 } from '@/lib/settings';
 import { applyTheme, persistTheme, readStoredTheme, type Theme } from '@/lib/theme';
+import { useStorageHealth } from '@/lib/storage-health';
+
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+};
 
 const ACCENT_SWATCH: Record<AccentId, string> = {
   blue: 'rgb(0 113 227)',
@@ -113,6 +122,7 @@ function Segmented<T extends string>({ value, options, onChange, ariaLabel }: Se
 
 export const SettingsPage = () => {
   const { t } = useTranslation('settings');
+  const storage = useStorageHealth();
   const settings = useSettings();
   const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
   const [confirmReset, setConfirmReset] = useState(false);
@@ -291,6 +301,43 @@ export const SettingsPage = () => {
       </Section>
 
       <Section title={t('dataLabel')} description={t('dataDesc')}>
+        {storage.supported ? (
+          <div
+            className={cx(
+              'mb-3 rounded-xl border p-3 text-sm',
+              storage.persisted === false || (storage.percent ?? 0) >= 80
+                ? 'border-warn/40 bg-warn/5 text-fg'
+                : 'border-border-base bg-surface-2/40 text-fg-muted',
+            )}
+          >
+            <p className="text-fg">
+              {t('storageLocalNote', {
+                defaultValue:
+                  'Данные хранятся локально в этом браузере (IndexedDB «dotlearn-progress») и никуда не отправляются.',
+              })}
+            </p>
+            <p className="mt-1.5">
+              {storage.persisted === true
+                ? t('storagePersistent', {
+                    defaultValue: 'Хранилище постоянное — браузер не вытеснит ваш прогресс.',
+                  })
+                : t('storageAtRisk', {
+                    defaultValue:
+                      'Хранилище не закреплено — при нехватке места браузер может удалить прогресс. Сделайте экспорт на всякий случай.',
+                  })}
+            </p>
+            {storage.usageBytes !== null && storage.quotaBytes !== null ? (
+              <p className="mt-1.5 tabular-nums text-fg-subtle">
+                {t('storageUsage', {
+                  defaultValue: 'Занято {{used}} из ~{{quota}} ({{percent}}%)',
+                  used: formatBytes(storage.usageBytes),
+                  quota: formatBytes(storage.quotaBytes),
+                  percent: Math.round(storage.percent ?? 0),
+                })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button
             variant="outline"

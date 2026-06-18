@@ -25,6 +25,9 @@ export interface ActivityRecord {
   exercisesAttempted: number;
   exercisesPassed: number;
   interviewStudied?: number;
+  cardsReviewed?: number;
+  conceptsRead?: number;
+  focusBlocks?: number;
 }
 
 export interface FlashcardReviewRecord {
@@ -64,6 +67,7 @@ export interface ConceptNoteRecord {
   conceptId: string;
   text: string;
   updatedAt: string;
+  tags?: string[];
 }
 
 export interface BookmarkRecord {
@@ -71,6 +75,7 @@ export interface BookmarkRecord {
   topicSlug: string;
   conceptId: string;
   createdAt: string;
+  tags?: string[];
 }
 
 export interface ConceptReadRecord {
@@ -83,6 +88,16 @@ export interface ConceptReadRecord {
 export interface PlaygroundRecord {
   id: string;
   value: string;
+  updatedAt: string;
+}
+
+export type PlaygroundSnippetLanguage = 'python';
+
+export interface PlaygroundSnippetRecord {
+  id: string;
+  language: PlaygroundSnippetLanguage;
+  name: string;
+  code: string;
   updatedAt: string;
 }
 
@@ -108,6 +123,65 @@ export interface HighlightRecord {
   createdAt: string;
 }
 
+export interface UserCardRecord {
+  id: string;
+  front: string;
+  back: string;
+  topicSlug: string;
+  conceptId?: string;
+  sourceNoteId?: string;
+  sourceHighlightId?: string;
+  createdAt: string;
+}
+
+export type AttemptEventStatus = 'pass' | 'fail';
+
+export interface AttemptEventRecord {
+  id?: number;
+  topicSlug: string;
+  exerciseId: string;
+  concept: string;
+  difficulty: string;
+  status: AttemptEventStatus;
+  hintsRevealed?: number;
+  durationMs?: number;
+  mode?: string;
+  at: string;
+}
+
+export interface AchievementRecord {
+  id: string;
+  unlockedAt: string;
+}
+
+export type CheckpointResultStatus = 'pass' | 'fail';
+
+export interface CheckpointResultRecord {
+  id?: number;
+  topicSlug: string;
+  conceptId: string;
+  status: CheckpointResultStatus;
+  at: string;
+}
+
+export interface ExamScoreBucket {
+  total: number;
+  correct: number;
+}
+
+export interface ExamResultRecord {
+  id: string;
+  scope: string;
+  filters: Record<string, string>;
+  total: number;
+  correct: number;
+  byType: Record<string, ExamScoreBucket>;
+  byDifficulty: Record<string, ExamScoreBucket>;
+  durationMs: number;
+  startedAt: string;
+  finishedAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -122,6 +196,12 @@ class ProgressDb extends Dexie {
   playground!: Table<PlaygroundRecord, string>;
   conceptScroll!: Table<ConceptScrollRecord, string>;
   highlights!: Table<HighlightRecord, string>;
+  attemptEvents!: Table<AttemptEventRecord, number>;
+  achievements!: Table<AchievementRecord, string>;
+  checkpointResults!: Table<CheckpointResultRecord, number>;
+  examResults!: Table<ExamResultRecord, string>;
+  userCards!: Table<UserCardRecord, string>;
+  playgroundSnippets!: Table<PlaygroundSnippetRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -216,12 +296,99 @@ class ProgressDb extends Dexie {
       conceptScroll: 'id, topicSlug',
       highlights: 'id, topicSlug, conceptId, createdAt, [topicSlug+conceptId]',
     });
+    this.version(10).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
+      conceptScroll: 'id, topicSlug',
+      highlights: 'id, topicSlug, conceptId, createdAt, [topicSlug+conceptId]',
+      attemptEvents: '++id, topicSlug, exerciseId, concept, status, at, [topicSlug+at]',
+      achievements: 'id, unlockedAt',
+      checkpointResults: '++id, topicSlug, conceptId, status, at, [topicSlug+conceptId]',
+    });
+    this.version(11).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
+      conceptScroll: 'id, topicSlug',
+      highlights: 'id, topicSlug, conceptId, createdAt, [topicSlug+conceptId]',
+      attemptEvents: '++id, topicSlug, exerciseId, concept, status, at, [topicSlug+at]',
+      achievements: 'id, unlockedAt',
+      checkpointResults: '++id, topicSlug, conceptId, status, at, [topicSlug+conceptId]',
+      examResults: 'id, scope, finishedAt',
+    });
+    this.version(12).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
+      conceptScroll: 'id, topicSlug',
+      highlights: 'id, topicSlug, conceptId, createdAt, [topicSlug+conceptId]',
+      attemptEvents: '++id, topicSlug, exerciseId, concept, status, at, [topicSlug+at]',
+      achievements: 'id, unlockedAt',
+      checkpointResults: '++id, topicSlug, conceptId, status, at, [topicSlug+conceptId]',
+      examResults: 'id, scope, finishedAt',
+      userCards: 'id, topicSlug, createdAt, sourceNoteId, sourceHighlightId',
+    });
+    this.version(13).stores({
+      progress: 'id, topicSlug, status',
+      activity: 'day',
+      flashcardReviews: 'id, topicSlug, due',
+      providerCredentials: 'providerId',
+      interviewStudied: 'id',
+      cryptoKeys: 'id',
+      topicPlace: 'topicSlug, updatedAt',
+      conceptNotes: 'id, topicSlug',
+      bookmarks: 'id, topicSlug, createdAt',
+      conceptRead: 'id, topicSlug',
+      playground: 'id',
+      conceptScroll: 'id, topicSlug',
+      highlights: 'id, topicSlug, conceptId, createdAt, [topicSlug+conceptId]',
+      attemptEvents: '++id, topicSlug, exerciseId, concept, status, at, [topicSlug+at]',
+      achievements: 'id, unlockedAt',
+      checkpointResults: '++id, topicSlug, conceptId, status, at, [topicSlug+conceptId]',
+      examResults: 'id, scope, finishedAt',
+      userCards: 'id, topicSlug, createdAt, sourceNoteId, sourceHighlightId',
+      playgroundSnippets: 'id, language, updatedAt',
+    });
   }
 }
 
 export const db = new ProgressDb();
 
 export const INTERVIEW_TOPIC_SLUG = 'interview';
+
+export const USER_CARDS_DECK_SLUG = 'library:notes';
+
+export const localDayKey = (date: Date = new Date()): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export const setInterviewStudied = async (id: number, studied: boolean): Promise<void> => {
   await db.transaction('rw', db.interviewStudied, db.activity, async () => {
@@ -230,7 +397,7 @@ export const setInterviewStudied = async (id: number, studied: boolean): Promise
       if (existing) return;
       const now = new Date();
       await db.interviewStudied.put({ id, studiedAt: now.toISOString() });
-      const day = now.toISOString().slice(0, 10);
+      const day = localDayKey(now);
       const activity = await db.activity.get(day);
       await db.activity.put({
         day,
@@ -244,8 +411,6 @@ export const setInterviewStudied = async (id: number, studied: boolean): Promise
   });
 };
 
-const todayUtc = (): string => new Date().toISOString().slice(0, 10);
-
 const progressKey = (topicSlug: string, exerciseId: string): string => `${topicSlug}:${exerciseId}`;
 
 export const recordAttempt = async (
@@ -254,7 +419,7 @@ export const recordAttempt = async (
   status: ProgressStatus,
 ): Promise<void> => {
   const id = progressKey(topicSlug, exerciseId);
-  const day = todayUtc();
+  const day = localDayKey();
   const now = new Date().toISOString();
 
   await db.transaction('rw', db.progress, db.activity, async () => {
@@ -280,6 +445,52 @@ export const recordAttempt = async (
   });
 };
 
+export type StudyActivityKind = 'review' | 'read' | 'focus';
+
+const ACTIVITY_COUNTER: Record<StudyActivityKind, 'cardsReviewed' | 'conceptsRead' | 'focusBlocks'> =
+  {
+    review: 'cardsReviewed',
+    read: 'conceptsRead',
+    focus: 'focusBlocks',
+  };
+
+export const recordStudyActivity = async (
+  kind: StudyActivityKind,
+  count = 1,
+): Promise<void> => {
+  const day = localDayKey();
+  const counter = ACTIVITY_COUNTER[kind];
+  await db.transaction('rw', db.activity, async () => {
+    const activity = await db.activity.get(day);
+    await db.activity.put({
+      day,
+      exercisesAttempted: activity?.exercisesAttempted ?? 0,
+      exercisesPassed: activity?.exercisesPassed ?? 0,
+      ...(activity?.interviewStudied !== undefined
+        ? { interviewStudied: activity.interviewStudied }
+        : {}),
+      ...(activity?.cardsReviewed !== undefined ? { cardsReviewed: activity.cardsReviewed } : {}),
+      ...(activity?.conceptsRead !== undefined ? { conceptsRead: activity.conceptsRead } : {}),
+      ...(activity?.focusBlocks !== undefined ? { focusBlocks: activity.focusBlocks } : {}),
+      [counter]: (activity?.[counter] ?? 0) + count,
+    });
+  });
+};
+
+export const persistAchievementUnlocks = async (
+  unlockedIds: readonly string[],
+): Promise<{ newlyUnlocked: string[] }> => {
+  if (unlockedIds.length === 0) return { newlyUnlocked: [] };
+  return db.transaction('rw', db.achievements, async () => {
+    const existing = new Set((await db.achievements.toArray()).map((record) => record.id));
+    const toAdd = unlockedIds.filter((id) => !existing.has(id));
+    if (toAdd.length === 0) return { newlyUnlocked: [] };
+    const unlockedAt = new Date().toISOString();
+    await db.achievements.bulkPut(toAdd.map((id) => ({ id, unlockedAt })));
+    return { newlyUnlocked: toAdd };
+  });
+};
+
 const placeKey = (topicSlug: string, conceptId: string): string => `${topicSlug}:${conceptId}`;
 
 export const recordPlace = async (topicSlug: string, conceptId: string): Promise<void> => {
@@ -301,12 +512,14 @@ export const saveConceptNote = async (
     await db.conceptNotes.delete(id);
     return;
   }
+  const existing = await db.conceptNotes.get(id);
   await db.conceptNotes.put({
     id,
     topicSlug,
     conceptId,
     text,
     updatedAt: new Date().toISOString(),
+    ...(existing?.tags && existing.tags.length > 0 ? { tags: existing.tags } : {}),
   });
 };
 
@@ -330,6 +543,46 @@ export const setBookmark = async (
   }
 };
 
+const normalizeTags = (tags: readonly string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of tags) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+};
+
+export const setNoteTags = async (id: string, tags: readonly string[]): Promise<void> => {
+  const normalized = normalizeTags(tags);
+  const record = await db.conceptNotes.get(id);
+  if (!record) return;
+  const next: ConceptNoteRecord = { ...record };
+  if (normalized.length > 0) {
+    next.tags = normalized;
+  } else {
+    delete next.tags;
+  }
+  await db.conceptNotes.put(next);
+};
+
+export const setBookmarkTags = async (id: string, tags: readonly string[]): Promise<void> => {
+  const normalized = normalizeTags(tags);
+  const record = await db.bookmarks.get(id);
+  if (!record) return;
+  const next: BookmarkRecord = { ...record };
+  if (normalized.length > 0) {
+    next.tags = normalized;
+  } else {
+    delete next.tags;
+  }
+  await db.bookmarks.put(next);
+};
+
 export const setConceptRead = async (
   topicSlug: string,
   conceptId: string,
@@ -345,6 +598,7 @@ export const setConceptRead = async (
       conceptId,
       readAt: new Date().toISOString(),
     });
+    await recordStudyActivity('read');
   } else {
     await db.conceptRead.delete(id);
   }
@@ -427,4 +681,63 @@ export const setHighlightNote = async (id: string, note: string): Promise<void> 
   const next: HighlightRecord = { ...record };
   delete next.note;
   await db.highlights.put(next);
+};
+
+const newExamResultId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `exam-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+
+export interface ExamResultInput {
+  scope: string;
+  filters: Record<string, string>;
+  total: number;
+  correct: number;
+  byType: Record<string, ExamScoreBucket>;
+  byDifficulty: Record<string, ExamScoreBucket>;
+  durationMs: number;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export const recordExamResult = async (input: ExamResultInput): Promise<ExamResultRecord> => {
+  const record: ExamResultRecord = { id: newExamResultId(), ...input };
+  await db.examResults.put(record);
+  return record;
+};
+
+const newUserCardId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `uc-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+
+export interface UserCardInput {
+  front: string;
+  back: string;
+  topicSlug: string;
+  conceptId?: string;
+  sourceNoteId?: string;
+  sourceHighlightId?: string;
+}
+
+export const createUserCard = async (input: UserCardInput): Promise<UserCardRecord> => {
+  const record: UserCardRecord = {
+    id: newUserCardId(),
+    front: input.front.trim(),
+    back: input.back.trim(),
+    topicSlug: input.topicSlug,
+    createdAt: new Date().toISOString(),
+    ...(input.conceptId ? { conceptId: input.conceptId } : {}),
+    ...(input.sourceNoteId ? { sourceNoteId: input.sourceNoteId } : {}),
+    ...(input.sourceHighlightId ? { sourceHighlightId: input.sourceHighlightId } : {}),
+  };
+  await db.userCards.put(record);
+  return record;
+};
+
+export const deleteUserCard = async (id: string): Promise<void> => {
+  await db.transaction('rw', db.userCards, db.flashcardReviews, async () => {
+    await db.userCards.delete(id);
+    await db.flashcardReviews.delete(`${USER_CARDS_DECK_SLUG}:${id}`);
+  });
 };

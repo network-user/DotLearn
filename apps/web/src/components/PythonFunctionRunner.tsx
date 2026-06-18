@@ -2,13 +2,15 @@ import { useCallback, useMemo, useState } from 'react';
 
 import type { PythonFunctionExercise } from '@dotlearn/contracts';
 import { runPythonFunction } from '@dotlearn/lesson-engine';
-import { Play, RotateCcw, Terminal } from 'lucide-react';
+import { AlertTriangle, Play, RotateCcw, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { LazyCodeEditor } from '@/components/sandbox/LazyCodeEditor';
+import { RunnerStatus } from '@/components/sandbox/RunnerStatus';
+import { SolutionReveal } from '@/components/sandbox/SolutionReveal';
 import {
   PythonConsole,
   TestList,
@@ -24,7 +26,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { coarsePointerQuery, useMediaQuery } from '@/hooks/useMediaQuery';
 import { buildEditorHeight, buildEditorOptions } from '@/lib/editor-options';
 import { recordAttempt } from '@/lib/progress-db';
-import { getPythonRuntime } from '@/lib/python-runtime';
+import { getPythonRuntime, prewarmPythonRuntime } from '@/lib/python-runtime';
+import { classifyRuntimeError, type RuntimeErrorKind } from '@/lib/runtime-error';
+import { useSettings } from '@/lib/settings';
 
 import { useDifficultyLabel } from './ExerciseRunner';
 
@@ -46,10 +50,11 @@ type RunState =
   | { kind: 'running' }
   | { kind: 'pass'; casesPassed: number }
   | { kind: 'fail'; reason: string; failures: CaseFailure[] }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; runtimeKind: RuntimeErrorKind };
 
 export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunnerProps) => {
   const { t } = useTranslation('runners');
+  const { t: tErr } = useTranslation('errors');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const [answer, setAnswer] = useState<string>(exercise.starter);
   const [state, setState] = useState<RunState>({ kind: 'idle' });
@@ -58,7 +63,14 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
     buildIdleLines(`# ${exercise.cases.length} test case(s) ready`),
   );
   const [tab, setTab] = useState<'console' | 'tests' | 'starter'>('console');
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [hintsExhausted, setHintsExhausted] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const isCoarsePointer = useMediaQuery(coarsePointerQuery);
+  const editorPrefs = useSettings().editor;
+
+  const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
   const cardStatus: ExerciseCardStatus =
     state.kind === 'pass' ? 'pass' : state.kind === 'fail' || state.kind === 'error' ? 'fail' : 'idle';
@@ -106,6 +118,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
 
   const handleRun = useCallback(async () => {
     setState({ kind: 'loading' });
+    setStatusMessage(t('common.status.running'));
     const session = pulse + 1;
     setPulse(session);
     setConsoleLines([
@@ -140,6 +153,9 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
         ]);
         toast.success(t('python.allPassedToast'), { description: exercise.id });
         burstConfetti();
+        setStatusMessage(
+          t('common.status.passed', { passed, total: exercise.cases.length }),
+        );
         void recordAttempt(topicSlug, exercise.id, 'pass');
       } else {
         const details = (result.details ?? {}) as { failures?: CaseFailure[] };
@@ -176,22 +192,35 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
             text: `\n${exercise.cases.length - failed.size}/${exercise.cases.length} passed.`,
           },
         ]);
+        setFailedAttempts((count) => count + 1);
+        setStatusMessage(t('common.status.failed', { reason: result.reason }));
         void recordAttempt(topicSlug, exercise.id, 'fail');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setState({ kind: 'error', message });
+      const runtimeKind = classifyRuntimeError(error);
+      const friendly = tErr(`runtime.${runtimeKind}`);
+      setState({ kind: 'error', message, runtimeKind });
+      setStatusMessage(t('common.status.error', { message: friendly }));
       setConsoleLines((prev) => [
         ...prev,
-        { id: `s${session}-err`, tone: 'fail', text: `[ERROR] ${message}` },
+        { id: `s${session}-err`, tone: 'fail', text: `[ERROR] ${friendly}` },
       ]);
     }
-  }, [answer, exercise, pulse, t, topicSlug]);
+  }, [answer, exercise, pulse, t, tErr, topicSlug]);
 
   const handleReset = (): void => {
     setAnswer(exercise.starter);
     setState({ kind: 'idle' });
+    setStatusMessage('');
     setConsoleLines(buildIdleLines(`# starter restored`));
+  };
+
+  const handleRevealSolution = (): void => {
+    if (revealed) return;
+    setRevealed(true);
+    setStatusMessage(t('common.status.revealed'));
+    void recordAttempt(topicSlug, exercise.id, 'fail');
   };
 
   const running = state.kind === 'loading' || state.kind === 'running';
@@ -205,6 +234,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
       status={cardStatus}
       pulse={pulse}
     >
+      <RunnerStatus message={statusMessage} />
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
         <div className="space-y-3 min-w-0">
           <div
@@ -224,7 +254,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
               onChange={(value) => setAnswer(value ?? '')}
               language="python"
               height={buildEditorHeight(isCoarsePointer, '260px', 'min(45dvh, 320px)')}
-              options={buildEditorOptions(isCoarsePointer, 4)}
+              options={buildEditorOptions(isCoarsePointer, 4, editorPrefs)}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {
                   if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
@@ -244,6 +274,8 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
                 leadingIcon={<Play size={14} />}
                 loading={running}
                 onClick={handleRun}
+                onPointerEnter={prewarmPythonRuntime}
+                onFocus={prewarmPythonRuntime}
                 className="h-11 flex-1 sm:flex-initial sm:h-8"
               >
                 {state.kind === 'loading'
@@ -272,7 +304,38 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
                 : t('python.cases', { count: exercise.cases.length })}
             </Badge>
           </div>
-          <HintBlock hints={exercise.hints} />
+          {state.kind === 'error' && (
+            <div
+              role="alert"
+              className="rounded-lg border border-warn/40 bg-warn/[0.06] p-3 space-y-2.5"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warn" />
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium text-fg">{tErr('runtime.title')}</p>
+                  <p className="text-[13px] leading-relaxed text-fg-muted">
+                    {tErr(`runtime.${state.runtimeKind}`)}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                leadingIcon={<RotateCcw size={13} />}
+                onClick={handleRun}
+                className="h-11 w-full min-h-[var(--tap)] sm:h-8 sm:w-auto sm:min-h-0"
+              >
+                {tErr('runtime.restart')}
+              </Button>
+            </div>
+          )}
+          <HintBlock hints={exercise.hints} onAllHintsShown={() => setHintsExhausted(true)} />
+          <SolutionReveal
+            solution={exercise.solution}
+            language="python"
+            unlocked={solutionUnlocked}
+            onReveal={handleRevealSolution}
+          />
         </div>
 
         <div className="min-w-0">

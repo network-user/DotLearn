@@ -1,12 +1,15 @@
+import { isCardDue } from '@dotlearn/lesson-engine';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 import {
   db,
+  USER_CARDS_DECK_SLUG,
   type BookmarkRecord,
   type ConceptNoteRecord,
   type ConceptScrollRecord,
   type HighlightRecord,
   type TopicPlaceRecord,
+  type UserCardRecord,
 } from './progress-db';
 
 const conceptKey = (topicSlug: string, conceptId: string): string => `${topicSlug}:${conceptId}`;
@@ -128,4 +131,59 @@ export const useAllNotes = (): ConceptNoteRecord[] => {
     [],
   );
   return records ?? [];
+};
+
+export const useUserCards = (): UserCardRecord[] => {
+  const records = useLiveQuery(
+    () => db.userCards.orderBy('createdAt').reverse().toArray(),
+    [],
+    [],
+  );
+  return records ?? [];
+};
+
+export const useDueUserCardCount = (): number => {
+  const count = useLiveQuery(
+    async () => {
+      const [records, reviews] = await Promise.all([
+        db.userCards.toArray(),
+        db.flashcardReviews.where('topicSlug').equals(USER_CARDS_DECK_SLUG).toArray(),
+      ]);
+      const byKey = new Map(reviews.map((review) => [review.cardId, review]));
+      const now = new Date();
+      return records.filter((record) => isCardDue(byKey.get(record.id), now)).length;
+    },
+    [],
+    0,
+  );
+  return count ?? 0;
+};
+
+export const useLibraryTags = (): string[] => {
+  const tags = useLiveQuery(
+    async () => {
+      const [notes, bookmarks] = await Promise.all([
+        db.conceptNotes.toArray(),
+        db.bookmarks.toArray(),
+      ]);
+      const counts = new Map<string, { label: string; count: number }>();
+      for (const record of [...notes, ...bookmarks]) {
+        for (const tag of record.tags ?? []) {
+          const key = tag.toLowerCase();
+          const entry = counts.get(key);
+          if (entry) {
+            entry.count += 1;
+          } else {
+            counts.set(key, { label: tag, count: 1 });
+          }
+        }
+      }
+      return [...counts.values()]
+        .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+        .map((entry) => entry.label);
+    },
+    [],
+    [],
+  );
+  return tags ?? [];
 };

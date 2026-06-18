@@ -1,9 +1,11 @@
-import { db } from '@/lib/progress-db';
+import { isCardDue } from '@dotlearn/lesson-engine';
+
+import { db, USER_CARDS_DECK_SLUG, type UserCardRecord } from '@/lib/progress-db';
 
 import { flashcardTopicSlugs, loadTopicCards, type DeckCard } from './flashcard-decks';
 import { interviewFlashcardSlug, loadInterviewCards, type InterviewDeckCard } from './interview-flashcards';
 
-export type FlashcardSource = 'topics' | 'interview';
+export type FlashcardSource = 'topics' | 'interview' | 'user';
 
 export interface SessionCard {
   deckSlug: string;
@@ -34,6 +36,34 @@ const interviewCardToSession = (card: InterviewDeckCard): SessionCard => ({
   source: 'interview',
   sourceLabel: card.categoryLabel,
 });
+
+const userCardToSession = (record: UserCardRecord, sourceLabel: string): SessionCard => ({
+  deckSlug: USER_CARDS_DECK_SLUG,
+  card: {
+    id: record.id,
+    front: record.front,
+    back: record.back,
+    conceptId: record.conceptId ?? record.topicSlug,
+  },
+  source: 'user',
+  sourceLabel,
+});
+
+export const loadUserCardSessionCards = async (
+  resolveLabel: (record: UserCardRecord) => string,
+): Promise<SessionCard[]> => {
+  const records = await db.userCards.orderBy('createdAt').reverse().toArray();
+  return records.map((record) => userCardToSession(record, resolveLabel(record)));
+};
+
+export const countDueUserCards = async (now: Date = new Date()): Promise<number> => {
+  const [records, reviews] = await Promise.all([
+    db.userCards.toArray(),
+    db.flashcardReviews.where('topicSlug').equals(USER_CARDS_DECK_SLUG).toArray(),
+  ]);
+  const byKey = new Map(reviews.map((review) => [review.cardId, review]));
+  return records.filter((record) => isCardDue(byKey.get(record.id), now)).length;
+};
 
 export const loadTopicSessionCards = async (
   slugs: string[],
@@ -88,11 +118,7 @@ export const filterDueCards = async (
 ): Promise<SessionCard[]> => {
   const records = await db.flashcardReviews.toArray();
   const byKey = new Map(records.map((record) => [`${record.topicSlug}:${record.cardId}`, record]));
-  const nowMs = now.getTime();
-  return cards.filter((entry) => {
-    const record = byKey.get(`${entry.deckSlug}:${entry.card.id}`);
-    return !record || new Date(record.due).getTime() <= nowMs;
-  });
+  return cards.filter((entry) => isCardDue(byKey.get(`${entry.deckSlug}:${entry.card.id}`), now));
 };
 
 export const loadFlashcardStats = async (language: string): Promise<FlashcardStats> => {
@@ -115,8 +141,8 @@ export const loadFlashcardStats = async (language: string): Promise<FlashcardSta
     (entry): entry is { slug: string; count: number } => entry !== undefined,
   );
   const topicCards = activeDecks.reduce((sum, entry) => sum + entry.count, 0);
-  const nowMs = Date.now();
-  const due = records.filter((record) => new Date(record.due).getTime() <= nowMs).length;
+  const now = new Date();
+  const due = records.filter((record) => isCardDue(record, now)).length;
   return {
     topicDecks: activeDecks.length,
     topicCards,
