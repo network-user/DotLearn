@@ -82,7 +82,9 @@ export const CapTheoremFigure = ({
               onClick={() => setCombo((prev) => (prev === option ? null : option))}
               className={cx(
                 'rounded-md px-2.5 h-6 font-mono text-[11px] transition-colors duration-fast',
-                combo === option ? 'bg-accent text-surface dark:text-canvas' : 'text-fg-muted hover:text-fg',
+                combo === option
+                  ? 'bg-accent text-surface dark:text-canvas'
+                  : 'text-fg-muted hover:text-fg',
               )}
             >
               {option}
@@ -93,7 +95,12 @@ export const CapTheoremFigure = ({
       footer={current ? current.note : idleHint}
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[max-content_1fr] sm:items-center">
-        <svg viewBox="0 0 320 200" className="w-full max-w-[320px] mx-auto" role="img" aria-label={label}>
+        <svg
+          viewBox="0 0 320 200"
+          className="w-full max-w-[320px] mx-auto"
+          role="img"
+          aria-label={label}
+        >
           {edges.map((edge) => {
             const lit = combo === edge.combo;
             return (
@@ -105,7 +112,10 @@ export const CapTheoremFigure = ({
                 y2={coords[edge.b].y}
                 stroke="currentColor"
                 strokeWidth={lit ? 3 : 1.2}
-                className={cx('transition-colors duration-med', lit ? 'text-accent' : 'text-border-base')}
+                className={cx(
+                  'transition-colors duration-med',
+                  lit ? 'text-accent' : 'text-border-base',
+                )}
               />
             );
           })}
@@ -128,7 +138,10 @@ export const CapTheoremFigure = ({
                   textAnchor="middle"
                   y={5}
                   fontSize={15}
-                  className={cx('font-mono font-semibold', active ? 'fill-[rgb(var(--accent-1))]' : 'fill-[rgb(var(--fg-subtle))]')}
+                  className={cx(
+                    'font-mono font-semibold',
+                    active ? 'fill-[rgb(var(--accent-1))]' : 'fill-[rgb(var(--fg-subtle))]',
+                  )}
                 >
                   {vertex}
                 </text>
@@ -146,12 +159,16 @@ export const CapTheoremFigure = ({
                   <span
                     className={cx(
                       'inline-flex size-5 items-center justify-center rounded-md font-mono text-[11px] font-semibold',
-                      active ? 'bg-accent/15 text-accent' : 'bg-surface-2 text-fg-subtle line-through',
+                      active
+                        ? 'bg-accent/15 text-accent'
+                        : 'bg-surface-2 text-fg-subtle line-through',
                     )}
                   >
                     {vertex}
                   </span>
-                  <span className={cx(active ? 'text-fg' : 'text-fg-subtle')}>{vertexLabels[vertex]}</span>
+                  <span className={cx(active ? 'text-fg' : 'text-fg-subtle')}>
+                    {vertexLabels[vertex]}
+                  </span>
                 </li>
               );
             })}

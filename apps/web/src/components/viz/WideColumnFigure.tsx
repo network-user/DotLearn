@@ -87,7 +87,9 @@ export const WideColumnFigure = ({
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2 text-[12px]">
-          <span className="text-fg-subtle uppercase tracking-widest text-[10px]">читаем колонку</span>
+          <span className="text-fg-subtle uppercase tracking-widest text-[10px]">
+            читаем колонку
+          </span>
           {columns.map((column, index) => (
             <button
               key={column}
@@ -158,7 +160,9 @@ export const WideColumnFigure = ({
                         key={colIndex}
                         className={cx(
                           'px-3 py-1 border-b border-border-base/30 last:border-b-0',
-                          colIndex === target ? 'text-accent' : colPalette[colIndex % colPalette.length],
+                          colIndex === target
+                            ? 'text-accent'
+                            : colPalette[colIndex % colPalette.length],
                         )}
                       >
                         {value}
@@ -171,8 +175,8 @@ export const WideColumnFigure = ({
           </div>
           <p className="font-serif text-[14px] leading-relaxed text-fg-muted">
             Подсвечены ячейки колонки{' '}
-            <span className="font-mono text-accent">{columns[target]}</span>. Переключите раскладку и
-            проследите, лежат они подряд или вразброс.
+            <span className="font-mono text-accent">{columns[target]}</span>. Переключите раскладку
+            и проследите, лежат они подряд или вразброс.
           </p>
         </div>
       </div>

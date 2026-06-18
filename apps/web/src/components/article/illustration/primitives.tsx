@@ -129,13 +129,5 @@ interface SketchHighlightProps {
 }
 
 export const SketchHighlight = ({ x, y, width, height, radius = 6 }: SketchHighlightProps) => (
-  <rect
-    x={x}
-    y={y}
-    width={width}
-    height={height}
-    rx={radius}
-    fill={SKETCH_ACCENT}
-    opacity={0.12}
-  />
+  <rect x={x} y={y} width={width} height={height} rx={radius} fill={SKETCH_ACCENT} opacity={0.12} />
 );

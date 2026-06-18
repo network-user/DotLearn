@@ -67,7 +67,8 @@ export const NetworkModelFigure = ({
     ) : ownerCount >= 2 ? (
       <span>
         <span className="font-mono text-accent">{byId.get(active)?.label}</span> входит в{' '}
-        <span className="text-accent">{ownerCount}</span> набора-владельца сразу, в дереве так нельзя.
+        <span className="text-accent">{ownerCount}</span> набора-владельца сразу, в дереве так
+        нельзя.
       </span>
     ) : (
       <span>
@@ -112,7 +113,11 @@ export const NetworkModelFigure = ({
               markerEnd="url(#net-arrow)"
               className={cx(
                 'transition-colors duration-med',
-                touches(edge) ? 'text-accent' : active === null ? 'text-fg-subtle' : 'text-border-base',
+                touches(edge)
+                  ? 'text-accent'
+                  : active === null
+                    ? 'text-fg-subtle'
+                    : 'text-border-base',
               )}
               stroke="currentColor"
               strokeWidth={touches(edge) ? 2 : 1.2}

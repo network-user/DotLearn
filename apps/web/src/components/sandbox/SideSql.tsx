@@ -201,9 +201,7 @@ export const SideSql = ({
             )}
           </div>
         )}
-        {error && (
-          <p className="text-[12px] text-err font-mono whitespace-pre-wrap">{error}</p>
-        )}
+        {error && <p className="text-[12px] text-err font-mono whitespace-pre-wrap">{error}</p>}
       </div>
     </aside>
   );

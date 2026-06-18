@@ -111,10 +111,7 @@ export const InterviewListPage = () => {
   const [queryInput, setQueryInput] = useState(query);
   const debouncedQuery = useDebouncedValue(queryInput, 220);
 
-  const patch = (
-    next: Partial<InterviewSearch>,
-    options?: { replace?: boolean },
-  ): void => {
+  const patch = (next: Partial<InterviewSearch>, options?: { replace?: boolean }): void => {
     void navigate({
       to: '/interview',
       search: (prev): InterviewSearch => ({ ...(prev as InterviewSearch), ...next }),
@@ -136,8 +133,7 @@ export const InterviewListPage = () => {
 
   const setCategory = (value: string): void =>
     patch({ topic: value === 'all' ? undefined : value });
-  const setStage = (value: string): void =>
-    patch({ stage: value === 'all' ? undefined : value });
+  const setStage = (value: string): void => patch({ stage: value === 'all' ? undefined : value });
   const setStatus = (value: StatusFilter): void =>
     patch({ status: value === 'all' ? undefined : value });
   const setSort = (value: SortKey): void =>
@@ -167,13 +163,10 @@ export const InterviewListPage = () => {
     if (sort === 'title') {
       sorted.sort(byTitle);
     } else if (sort === 'topic') {
-      sorted.sort(
-        (a, b) => a.categoryLabel.localeCompare(b.categoryLabel, 'ru') || byTitle(a, b),
-      );
+      sorted.sort((a, b) => a.categoryLabel.localeCompare(b.categoryLabel, 'ru') || byTitle(a, b));
     } else if (sort === 'stage') {
       sorted.sort(
-        (a, b) =>
-          STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage) || byTitle(a, b),
+        (a, b) => STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage) || byTitle(a, b),
       );
     } else {
       sorted.sort((a, b) => a.id - b.id);
@@ -329,9 +322,7 @@ export const InterviewListPage = () => {
       </Surface>
 
       <div className="flex items-center justify-between gap-3">
-        <span className="eyebrow text-fg-subtle">
-          {t('shownCount', { count: visible.length })}
-        </span>
+        <span className="eyebrow text-fg-subtle">{t('shownCount', { count: visible.length })}</span>
       </div>
 
       {visible.length === 0 ? (
@@ -339,11 +330,7 @@ export const InterviewListPage = () => {
           <p className="px-4 py-10 text-center text-sm text-fg-subtle italic">{t('empty')}</p>
         </Surface>
       ) : (
-        <VirtualQuestionList
-          questions={visible}
-          studiedIds={studiedIds}
-          titleOf={titleOf}
-        />
+        <VirtualQuestionList questions={visible} studiedIds={studiedIds} titleOf={titleOf} />
       )}
     </div>
   );
@@ -420,28 +407,23 @@ const QuestionCard = memo(function QuestionCard({
   studied: boolean;
 }) {
   return (
-  <Link to="/interview/$id" params={{ id: String(question.id) }} className="block">
-    <Surface
-      interactive
-      className={cx('p-4 sm:p-5', studied && 'border-l-2 border-l-ok')}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 space-y-2.5">
-          <h2 className="font-display text-[17px] sm:text-[18px] leading-snug tracking-snug text-fg text-balance">
-            {title}
-          </h2>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone="neutral">{question.categoryLabel}</Badge>
-            <Badge tone={stageTone[question.stage]} variant="outline">
-              {question.stageLabel}
-            </Badge>
+    <Link to="/interview/$id" params={{ id: String(question.id) }} className="block">
+      <Surface interactive className={cx('p-4 sm:p-5', studied && 'border-l-2 border-l-ok')}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-2.5">
+            <h2 className="font-display text-[17px] sm:text-[18px] leading-snug tracking-snug text-fg text-balance">
+              {title}
+            </h2>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge tone="neutral">{question.categoryLabel}</Badge>
+              <Badge tone={stageTone[question.stage]} variant="outline">
+                {question.stageLabel}
+              </Badge>
+            </div>
           </div>
+          {studied && <CheckCircle2 size={18} className="shrink-0 text-ok" aria-label="studied" />}
         </div>
-        {studied && (
-          <CheckCircle2 size={18} className="shrink-0 text-ok" aria-label="studied" />
-        )}
-      </div>
-    </Surface>
-  </Link>
+      </Surface>
+    </Link>
   );
 });

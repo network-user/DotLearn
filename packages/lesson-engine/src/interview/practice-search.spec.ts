@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  parseFlashcardsPracticeSearch,
-  parseTopicsParam,
-  topicsToParam,
-} from './practice-search';
+import { parseFlashcardsPracticeSearch, parseTopicsParam, topicsToParam } from './practice-search';
 
 describe('parseFlashcardsPracticeSearch', () => {
   it('parses mode, filters, topics, and autostart', () => {

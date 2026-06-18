@@ -2,16 +2,16 @@
 name: lesson-forge
 description: Generate a new learning topic for DotLearn. Use whenever the user asks to add a topic, create lessons, generate exercises, or build a course. Produces a validated, standardized topic under topics/<slug>/.
 triggers:
-  - "add topic"
-  - "create lesson"
-  - "new topic"
-  - "generate exercises"
-  - "build a course"
-  - "добавь тему"
-  - "создай урок"
-  - "новая тема"
-  - "сгенерируй задания"
-  - "lesson-forge"
+  - 'add topic'
+  - 'create lesson'
+  - 'new topic'
+  - 'generate exercises'
+  - 'build a course'
+  - 'добавь тему'
+  - 'создай урок'
+  - 'новая тема'
+  - 'сгенерируй задания'
+  - 'lesson-forge'
 files:
   - topics/**
 ---
@@ -103,7 +103,7 @@ Required fields and their semantics are in [reference/topic-contract.md](./refer
 
 For each concept in the plan, in order, and **for each language** listed in `availableLanguages`:
 
-1. Write `theory/<NN>-<concept-id>.<lang>.mdx` as a longread article following [reference/content-style-guide.md](./reference/content-style-guide.md) (required skeleton: hook → mental model with the concept's primary figure → worked examples → live sandbox moment → edge cases → common mistakes → optional deep dives → KeyTakeaways → references). The article must be engaging and moderate (see *Engagement and moderation* in the style guide): no filler, a hook not a definition, and an interactive viz that reveals the mechanism wherever the runtime allows. For Russian content, default to Russian realia in examples (names, cities, services, rubles, ИНН/СНИЛС) - lightly, without contorting universal examples. Use components from [reference/mdx-components.md](./reference/mdx-components.md) - every concept needs at least one figure and, where the runtime allows, one live sandbox. Filenames always carry the explicit language suffix; there is no untagged variant.
+1. Write `theory/<NN>-<concept-id>.<lang>.mdx` as a longread article following [reference/content-style-guide.md](./reference/content-style-guide.md) (required skeleton: hook → mental model with the concept's primary figure → worked examples → live sandbox moment → edge cases → common mistakes → optional deep dives → KeyTakeaways → references). The article must be engaging and moderate (see _Engagement and moderation_ in the style guide): no filler, a hook not a definition, and an interactive viz that reveals the mechanism wherever the runtime allows. For Russian content, default to Russian realia in examples (names, cities, services, rubles, ИНН/СНИЛС) - lightly, without contorting universal examples. Use components from [reference/mdx-components.md](./reference/mdx-components.md) - every concept needs at least one figure and, where the runtime allows, one live sandbox. Filenames always carry the explicit language suffix; there is no untagged variant.
 2. Write `exercises/<NN>-<concept-id>.<lang>.yaml`. Every exercise must:
    - validate against `exercise.schema.json`
    - have a `solution` field

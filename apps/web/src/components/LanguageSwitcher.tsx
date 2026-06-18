@@ -68,9 +68,7 @@ export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps)
                 onChange={() => handleChange(lang)}
                 className="accent-[rgb(var(--accent-1))]"
               />
-              <span className="text-sm font-medium text-fg">
-                {t(lang)}
-              </span>
+              <span className="text-sm font-medium text-fg">{t(lang)}</span>
               <span className="ml-auto text-[10px] uppercase tracking-wide text-fg-subtle">
                 {lang}
               </span>

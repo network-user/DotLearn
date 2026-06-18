@@ -1,4 +1,11 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ZodError } from 'zod';
 
@@ -57,7 +64,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const response = exception.getResponse();
-      const message = typeof response === 'string' ? response : (response as { message?: string }).message ?? exception.message;
+      const message =
+        typeof response === 'string'
+          ? response
+          : ((response as { message?: string }).message ?? exception.message);
       return {
         ok: false,
         error: {

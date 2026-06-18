@@ -99,7 +99,9 @@ export const ClassFactory = ({
                 key={instance.seq}
                 layout
                 initial={
-                  reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.7, x: -32, filter: 'blur(4px)' }
+                  reduceMotion
+                    ? { opacity: 0 }
+                    : { opacity: 0, scale: 0.7, x: -32, filter: 'blur(4px)' }
                 }
                 animate={
                   reduceMotion

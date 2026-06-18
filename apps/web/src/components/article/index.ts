@@ -4,12 +4,7 @@ export { MarginNote } from './MarginNote';
 export { Footnotes, FootnoteProvider, Ref } from './Footnotes';
 export { Compare } from './Compare';
 export { Sketch, sketchCategory, useSketchRefs } from './illustration/Sketch';
-export {
-  SketchArrow,
-  SketchBox,
-  SketchHighlight,
-  SketchLabel,
-} from './illustration/primitives';
+export { SketchArrow, SketchBox, SketchHighlight, SketchLabel } from './illustration/primitives';
 export { PipelineFigure } from './illustration/PipelineFigure';
 export { RowFilterFigure } from './illustration/RowFilterFigure';
 export { SortLimitFigure } from './illustration/SortLimitFigure';

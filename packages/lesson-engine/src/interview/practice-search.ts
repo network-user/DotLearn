@@ -32,7 +32,10 @@ export const parseFlashcardsPracticeSearch = (
 
 export const parseTopicsParam = (topics: string | undefined, validSlugs: string[]): string[] => {
   if (!topics) return [];
-  const wanted = topics.split(',').map((entry) => entry.trim()).filter(Boolean);
+  const wanted = topics
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
   return wanted.filter((slug) => validSlugs.includes(slug));
 };
 

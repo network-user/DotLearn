@@ -8,6 +8,12 @@ interface AreaChartProps {
   stacked?: boolean | undefined;
 }
 
-export const AreaChart = ({ series, title = 'Area chart', xLabel, yLabel, stacked = false }: AreaChartProps) => (
+export const AreaChart = ({
+  series,
+  title = 'Area chart',
+  xLabel,
+  yLabel,
+  stacked = false,
+}: AreaChartProps) => (
   <LineChart series={series} title={title} xLabel={xLabel} yLabel={yLabel} area stacked={stacked} />
 );

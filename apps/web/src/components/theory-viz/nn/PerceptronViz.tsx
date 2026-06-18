@@ -190,13 +190,31 @@ export const PerceptronViz = ({
               key={formatNumber(weightedSum)}
               style={{ transformOrigin: `${sumX}px ${centerY}px` }}
             />
-            <text x={sumX} y={centerY - 2} textAnchor="middle" className="fill-fg-subtle" fontSize={15}>
+            <text
+              x={sumX}
+              y={centerY - 2}
+              textAnchor="middle"
+              className="fill-fg-subtle"
+              fontSize={15}
+            >
               Σ
             </text>
-            <text x={sumX} y={centerY + 13} textAnchor="middle" className="fill-fg font-mono" fontSize={10}>
+            <text
+              x={sumX}
+              y={centerY + 13}
+              textAnchor="middle"
+              className="fill-fg font-mono"
+              fontSize={10}
+            >
               {formatNumber(weightedSum)}
             </text>
-            <text x={sumX} y={viewHeight - 6} textAnchor="middle" className="fill-fg-subtle" fontSize={9.5}>
+            <text
+              x={sumX}
+              y={viewHeight - 6}
+              textAnchor="middle"
+              className="fill-fg-subtle"
+              fontSize={9.5}
+            >
               {sumLabel}
             </text>
 
@@ -209,10 +227,22 @@ export const PerceptronViz = ({
               stroke="rgb(var(--accent-1))"
               strokeWidth={1.4}
             />
-            <text x={outX} y={centerY + 4} textAnchor="middle" className="fill-fg font-mono" fontSize={11.5}>
+            <text
+              x={outX}
+              y={centerY + 4}
+              textAnchor="middle"
+              className="fill-fg font-mono"
+              fontSize={11.5}
+            >
               {formatNumber(output)}
             </text>
-            <text x={outX} y={centerY - 30} textAnchor="middle" className="fill-fg-subtle" fontSize={9.5}>
+            <text
+              x={outX}
+              y={centerY - 30}
+              textAnchor="middle"
+              className="fill-fg-subtle"
+              fontSize={9.5}
+            >
               {outputLabel}
             </text>
           </svg>
@@ -225,7 +255,9 @@ export const PerceptronViz = ({
                 <span className="font-mono">
                   w{index + 1} · {inputLabels?.[index] ?? `x${index + 1}`}={formatNumber(input)}
                 </span>
-                <span className="font-mono text-fg">{formatNumber(currentWeights[index] ?? 0)}</span>
+                <span className="font-mono text-fg">
+                  {formatNumber(currentWeights[index] ?? 0)}
+                </span>
               </span>
               <input
                 type="range"

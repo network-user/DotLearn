@@ -80,10 +80,7 @@ export class AuthController {
   ): Promise<void> {
     const refresh = request.cookies?.[REFRESH_COOKIE];
     const accessJti = request.admin?.jti;
-    await this.auth.logout(
-      typeof refresh === 'string' ? refresh : undefined,
-      accessJti,
-    );
+    await this.auth.logout(typeof refresh === 'string' ? refresh : undefined, accessJti);
     response.clearCookie(REFRESH_COOKIE, this.cookieOptions(true));
   }
 

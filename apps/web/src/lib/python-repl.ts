@@ -44,8 +44,7 @@ const isAssignment = (line: string): boolean => {
       if (prev === '=' || prev === '!' || prev === '<' || prev === '>') continue;
       if (next === '=') continue;
       return true;
-    }
-    else if (depth === 0 && char === ':' && line[index + 1] === '=') return true;
+    } else if (depth === 0 && char === ':' && line[index + 1] === '=') return true;
     else if (char === '#') break;
   }
   return false;
@@ -218,7 +217,10 @@ export const importedModules = (source: string): string[] => {
       found.add(match[1].split('.')[0] as string);
     } else if (match[2]) {
       for (const part of match[2].split(',')) {
-        const name = part.trim().split(/\s+as\s+/)[0]?.split('.')[0];
+        const name = part
+          .trim()
+          .split(/\s+as\s+/)[0]
+          ?.split('.')[0];
         if (name) found.add(name);
       }
     }

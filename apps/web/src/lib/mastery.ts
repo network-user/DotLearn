@@ -34,8 +34,7 @@ export const computeMastery = (
 ): TopicMastery => {
   const readingRatio = totalConcepts === 0 ? 0 : clamp01(readConcepts / totalConcepts);
   const solvingRatio = totalExercises === 0 ? 0 : clamp01(passedExercises / totalExercises);
-  const mastery =
-    totalExercises === 0 ? readingRatio : 0.5 * readingRatio + 0.5 * solvingRatio;
+  const mastery = totalExercises === 0 ? readingRatio : 0.5 * readingRatio + 0.5 * solvingRatio;
   return {
     readConcepts,
     totalConcepts,

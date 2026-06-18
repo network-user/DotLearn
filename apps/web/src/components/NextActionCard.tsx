@@ -52,9 +52,7 @@ const useNextAction = (): NextAction | undefined => {
       resolveNextAction({
         topics,
         recallByTopic,
-        lastPlace: place
-          ? { topicSlug: place.topicSlug, conceptId: place.conceptId }
-          : undefined,
+        lastPlace: place ? { topicSlug: place.topicSlug, conceptId: place.conceptId } : undefined,
       }),
     [topics, recallByTopic, place],
   );

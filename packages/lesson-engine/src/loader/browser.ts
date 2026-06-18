@@ -88,22 +88,22 @@ const buildConcepts = (
     const exercises: ExerciseFileBundle[] = concept.exerciseFiles
       .filter(includeFile)
       .map((filename) => {
-      const raw = exerciseBucket.get(filename);
-      if (raw === undefined) {
-        throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
-      }
-      const parsed = parseExerciseFile(slug, filename, raw);
-      for (const exercise of parsed) {
-        if (exercise.concept !== concept.id) {
-          throw new TopicLoadError(
-            slug,
-            filename,
-            `exercise ${exercise.id} declares concept "${exercise.concept}" but lives in concept "${concept.id}"`,
-          );
+        const raw = exerciseBucket.get(filename);
+        if (raw === undefined) {
+          throw new TopicLoadError(slug, filename, 'exercise file missing from glob input');
         }
-      }
-      return { filename, exercises: parsed };
-    });
+        const parsed = parseExerciseFile(slug, filename, raw);
+        for (const exercise of parsed) {
+          if (exercise.concept !== concept.id) {
+            throw new TopicLoadError(
+              slug,
+              filename,
+              `exercise ${exercise.id} declares concept "${exercise.concept}" but lives in concept "${concept.id}"`,
+            );
+          }
+        }
+        return { filename, exercises: parsed };
+      });
     return { conceptId: concept.id, theory, exercises };
   });
 
@@ -155,8 +155,7 @@ export const createLazyTopicSource = (input: LazyTopicGlobInput): TopicSource =>
       throw new TopicNotFoundError(slug);
     }
     const manifest = parseManifest(slug, rawManifest);
-    const importerBucket =
-      exerciseImporters.get(slug) ?? new Map<string, () => Promise<string>>();
+    const importerBucket = exerciseImporters.get(slug) ?? new Map<string, () => Promise<string>>();
 
     const languages = options?.languages;
     const includeFile = (filename: string): boolean => {
@@ -182,7 +181,13 @@ export const createLazyTopicSource = (input: LazyTopicGlobInput): TopicSource =>
 
     return {
       manifest,
-      concepts: buildConcepts(slug, manifest, new Map<string, string>(), exerciseBucket, includeFile),
+      concepts: buildConcepts(
+        slug,
+        manifest,
+        new Map<string, string>(),
+        exerciseBucket,
+        includeFile,
+      ),
     };
   };
 

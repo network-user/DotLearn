@@ -12,10 +12,9 @@ import {
   type InterviewStage,
 } from '@dotlearn/contracts';
 
-const indexModules = import.meta.glob<{ default: unknown }>(
-  '../../../../interview/index.json',
-  { eager: true },
-);
+const indexModules = import.meta.glob<{ default: unknown }>('../../../../interview/index.json', {
+  eager: true,
+});
 
 const rawIndex = Object.values(indexModules)[0]?.default ?? [];
 
@@ -66,14 +65,39 @@ export const interviewStages: StageInfo[] = buildFacets((q) => ({
   label: q.stageLabel,
 })).sort((a, b) => STAGE_ORDER.indexOf(a.slug) - STAGE_ORDER.indexOf(b.slug));
 
-export const getInterviewQuestion = (id: number): InterviewQuestionMeta | undefined =>
-  byId.get(id);
+export const getInterviewQuestion = (id: number): InterviewQuestionMeta | undefined => byId.get(id);
 
 export const interviewTitleOf = (id: number): string | undefined => byId.get(id)?.title;
 
 const STOP_WORDS = new Set([
-  'и', 'в', 'во', 'не', 'на', 'с', 'со', 'по', 'из', 'за', 'к', 'о', 'об', 'от', 'для',
-  'что', 'как', 'это', 'или', 'the', 'a', 'an', 'of', 'to', 'in', 'is', 'and', 'for',
+  'и',
+  'в',
+  'во',
+  'не',
+  'на',
+  'с',
+  'со',
+  'по',
+  'из',
+  'за',
+  'к',
+  'о',
+  'об',
+  'от',
+  'для',
+  'что',
+  'как',
+  'это',
+  'или',
+  'the',
+  'a',
+  'an',
+  'of',
+  'to',
+  'in',
+  'is',
+  'and',
+  'for',
 ]);
 
 const titleKeywords = (title: string): Set<string> => {
@@ -170,10 +194,8 @@ export const getInterviewComponent = (
   return Component;
 };
 
-export const localizedInterviewTitle = (
-  question: InterviewQuestionMeta,
-  locale: string,
-): string => (locale === 'en' && question.titleEn ? question.titleEn : question.title);
+export const localizedInterviewTitle = (question: InterviewQuestionMeta, locale: string): string =>
+  locale === 'en' && question.titleEn ? question.titleEn : question.title;
 
 export const getInterviewComponentForLocale = (
   question: InterviewQuestionMeta,

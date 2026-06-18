@@ -1,9 +1,4 @@
-export type RuntimeErrorKind =
-  | 'timeout'
-  | 'crash'
-  | 'stalled'
-  | 'terminated'
-  | 'unknown';
+export type RuntimeErrorKind = 'timeout' | 'crash' | 'stalled' | 'terminated' | 'unknown';
 
 const PATTERNS: { kind: RuntimeErrorKind; test: RegExp }[] = [
   { kind: 'timeout', test: /exceeded\s+\d+ms and was terminated/i },

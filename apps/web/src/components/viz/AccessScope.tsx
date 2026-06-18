@@ -58,9 +58,7 @@ export const AccessScope = ({
 
   const footer = probe ? (
     probe.kind === 'private' ? (
-      <span className="text-err">
-        {t('access.private', { mangled: mangled(probe.name) })}
-      </span>
+      <span className="text-err">{t('access.private', { mangled: mangled(probe.name) })}</span>
     ) : probe.kind === 'protected' ? (
       <span className="text-warn">{t('access.protected')}</span>
     ) : (
@@ -74,27 +72,26 @@ export const AccessScope = ({
     <VizShell label={label ?? t('access.label')} footer={footer}>
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_max-content] gap-4 items-start">
         <div className="rounded-lg border border-border-base bg-surface-2 px-4 py-3">
-          <div className="font-mono text-[13px] font-semibold text-fg mb-2">
-            class {className}:
-          </div>
+          <div className="font-mono text-[13px] font-semibold text-fg mb-2">class {className}:</div>
           <ul className="space-y-1.5">
             {rows.map((row) => {
               const active = probe?.name === row.name;
               return (
                 <motion.li
                   key={row.name}
-                  animate={
-                    active && !reduceMotion
-                      ? { x: [0, -3, 3, -2, 0] }
-                      : { x: 0 }
-                  }
+                  animate={active && !reduceMotion ? { x: [0, -3, 3, -2, 0] } : { x: 0 }}
                   transition={{ duration: 0.35 }}
                   className={cx(
                     'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 font-mono text-[12.5px] transition-colors duration-fast',
                     active ? kindStyle[row.kind].ring : 'border-transparent',
                   )}
                 >
-                  <span className={cx('rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider', kindStyle[row.kind].chip)}>
+                  <span
+                    className={cx(
+                      'rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider',
+                      kindStyle[row.kind].chip,
+                    )}
+                  >
                     {row.kind === 'private' ? <Lock size={10} className="inline" /> : null}{' '}
                     {row.kind}
                   </span>
@@ -102,9 +99,7 @@ export const AccessScope = ({
                   <span className="text-fg-subtle">=</span>
                   <span className="text-fg">{row.value}</span>
                   {active && row.kind === 'private' && (
-                    <span className="ml-auto text-[11px] text-err">
-                      → {mangled(row.name)}
-                    </span>
+                    <span className="ml-auto text-[11px] text-err">→ {mangled(row.name)}</span>
                   )}
                 </motion.li>
               );

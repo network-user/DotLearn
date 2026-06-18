@@ -23,7 +23,9 @@ describe('runFillInBlanks', () => {
   });
 
   it('passes when a blank matches accept_regex', () => {
-    expect(runFillInBlanks(exercise({ 1: { accept_regex: '^[0-9]+$' } }), { 1: '42' }).ok).toBe(true);
+    expect(runFillInBlanks(exercise({ 1: { accept_regex: '^[0-9]+$' } }), { 1: '42' }).ok).toBe(
+      true,
+    );
   });
 
   it('fails a missing blank', () => {
@@ -38,7 +40,9 @@ describe('runFillInBlanks', () => {
     const result = runFillInBlanks(exercise({ 1: { accept: ['x'] } }), { 1: 'y' });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
-    expect(result.details).toMatchObject({ failures: [{ blank: '1', got: 'y', reason: 'no-match' }] });
+    expect(result.details).toMatchObject({
+      failures: [{ blank: '1', got: 'y', reason: 'no-match' }],
+    });
   });
 
   it('treats an invalid regex as no-match instead of throwing', () => {

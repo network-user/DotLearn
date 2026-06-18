@@ -119,9 +119,7 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
         <span aria-hidden className="size-3 rounded-sm bg-accent" />
         <span>{t('more')}</span>
       </div>
-      <p className="text-[10px] text-fg-subtle">
-        {t('legendScale', { max: grid.max })}
-      </p>
+      <p className="text-[10px] text-fg-subtle">{t('legendScale', { max: grid.max })}</p>
     </div>
   );
 };

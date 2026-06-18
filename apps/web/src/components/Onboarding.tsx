@@ -63,7 +63,12 @@ export const Onboarding = () => {
       title={t(`onboarding.step${stepIndex}Title`)}
       footer={
         <div className="flex w-full items-center justify-between gap-2">
-          <Button variant="ghost" size="md" onClick={close} className="min-h-[var(--tap)] sm:min-h-0">
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={close}
+            className="min-h-[var(--tap)] sm:min-h-0"
+          >
             {t('onboarding.skip')}
           </Button>
           <div className="flex items-center gap-2">

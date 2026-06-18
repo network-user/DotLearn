@@ -29,10 +29,7 @@ const walk = (dir) => {
     const full = join(dir, entry);
     const st = statSync(full);
     if (st.isDirectory()) out.push(...walk(full));
-    else if (
-      (full.endsWith('.tsx') || full.endsWith('.ts')) &&
-      !full.endsWith('.d.ts')
-    )
+    else if ((full.endsWith('.tsx') || full.endsWith('.ts')) && !full.endsWith('.d.ts'))
       out.push(full);
   }
   return out;

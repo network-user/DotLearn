@@ -83,7 +83,8 @@ export const lintTheoryFrontmatter = (
   return issues;
 };
 
-const FIGURE_PATTERN = /<(Figure|[A-Z][A-Za-z0-9]*(?:Figure|Chart|Diagram|Viz|Illustration|Plot))\b/;
+const FIGURE_PATTERN =
+  /<(Figure|[A-Z][A-Za-z0-9]*(?:Figure|Chart|Diagram|Viz|Illustration|Plot))\b/;
 const PY_SANDBOX_PATTERN = /<PyDemo\b/;
 
 const openingTags = (body: string, component: string): string[] => {

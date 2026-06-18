@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  cleanInterviewAnswer,
-  extractInterviewAnswer,
-  stripFrontmatter,
-} from './flashcard-text';
+import { cleanInterviewAnswer, extractInterviewAnswer, stripFrontmatter } from './flashcard-text';
 
 const SAMPLE = `---
 id: 1345
@@ -63,8 +59,10 @@ describe('extractInterviewAnswer', () => {
   });
 
   it('extracts the English interview answer section', () => {
-    const en = SAMPLE.replace('## Что ответить на собесе', '## How to answer in an interview')
-      .replace('Декоратор - вызываемый объект.', 'A decorator is a callable object.');
+    const en = SAMPLE.replace(
+      '## Что ответить на собесе',
+      '## How to answer in an interview',
+    ).replace('Декоратор - вызываемый объект.', 'A decorator is a callable object.');
     expect(extractInterviewAnswer(en)).toContain('A decorator is a callable object.');
   });
 
@@ -73,8 +71,6 @@ describe('extractInterviewAnswer', () => {
   });
 
   it('returns undefined when the section is too short', () => {
-    expect(
-      extractInterviewAnswer('# Title\n\n## Что ответить на собесе\n\nOK'),
-    ).toBeUndefined();
+    expect(extractInterviewAnswer('# Title\n\n## Что ответить на собесе\n\nOK')).toBeUndefined();
   });
 });

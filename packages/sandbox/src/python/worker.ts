@@ -2,11 +2,7 @@
 
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 
-import type {
-  PyodideInitProgress,
-  PyodideWorkerRequest,
-  PyodideWorkerResponse,
-} from './protocol';
+import type { PyodideInitProgress, PyodideWorkerRequest, PyodideWorkerResponse } from './protocol';
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -136,7 +132,10 @@ const toPlain = (value: unknown): unknown => {
     return value;
   }
   if (typeof value === 'object' && value !== null && 'toJs' in value) {
-    const proxy = value as { toJs: (options?: { dict_converter?: unknown }) => unknown; destroy?: () => void };
+    const proxy = value as {
+      toJs: (options?: { dict_converter?: unknown }) => unknown;
+      destroy?: () => void;
+    };
     try {
       const converted = proxy.toJs({ dict_converter: Object.fromEntries });
       proxy.destroy?.();

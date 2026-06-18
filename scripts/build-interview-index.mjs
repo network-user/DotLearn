@@ -114,7 +114,10 @@ async function main() {
 
   index.sort((a, b) => a.category.localeCompare(b.category) || a.id - b.id);
   exercisesIndex.sort(
-    (a, b) => a.category.localeCompare(b.category) || a.qid - b.qid || a.exerciseId.localeCompare(b.exerciseId),
+    (a, b) =>
+      a.category.localeCompare(b.category) ||
+      a.qid - b.qid ||
+      a.exerciseId.localeCompare(b.exerciseId),
   );
 
   await writeFile(resolve(OUT_DIR, 'index.json'), JSON.stringify(index, null, 2) + '\n', 'utf-8');

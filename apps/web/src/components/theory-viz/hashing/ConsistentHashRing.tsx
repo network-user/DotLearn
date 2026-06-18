@@ -44,16 +44,26 @@ const STRINGS = {
     removed: (id: string) => `удалён узел ${id}`,
     moved: (op: string, count: number, total: number) => (
       <span>
-        {op}: переехало <strong className="text-accent">{count}</strong> из {total} ключей. При обычном{' '}
-        <code>hash % N</code> сменилось бы почти всё - здесь же двигается только дуга рядом с
-        изменением.
+        {op}: переехало <strong className="text-accent">{count}</strong> из {total} ключей. При
+        обычном <code>hash % N</code> сменилось бы почти всё - здесь же двигается только дуга рядом
+        с изменением.
       </span>
     ),
     idle: 'Узлы и ключи лежат на одном кольце. Ключ принадлежит первому узлу по часовой стрелке. Добавьте или уберите узел и посмотрите, какая часть ключей переедет.',
     ariaLabel: 'Хеш-кольцо с узлами и ключами',
     defaultKeys: [
-      'Анна', 'Борис', 'Вера', 'Глеб', 'Дина', 'Егор',
-      'Жанна', 'Зоя', 'Иван', 'Кира', 'Лев', 'Мира',
+      'Анна',
+      'Борис',
+      'Вера',
+      'Глеб',
+      'Дина',
+      'Егор',
+      'Жанна',
+      'Зоя',
+      'Иван',
+      'Кира',
+      'Лев',
+      'Мира',
     ],
   },
   en: {
@@ -73,8 +83,18 @@ const STRINGS = {
     idle: 'Nodes and keys live on one ring. A key belongs to the first node clockwise. Add or remove a node and watch what fraction of keys moves.',
     ariaLabel: 'Hash ring with nodes and keys',
     defaultKeys: [
-      'Anna', 'Boris', 'Vera', 'Gleb', 'Dina', 'Egor',
-      'Zhanna', 'Zoya', 'Ivan', 'Kira', 'Lev', 'Mira',
+      'Anna',
+      'Boris',
+      'Vera',
+      'Gleb',
+      'Dina',
+      'Egor',
+      'Zhanna',
+      'Zoya',
+      'Ivan',
+      'Kira',
+      'Lev',
+      'Mira',
     ],
   },
 } as const;
@@ -97,7 +117,10 @@ const arcPath = (start: number, end: number): string => {
   return `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${RADIUS} ${RADIUS} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
 };
 
-const ownersFor = (nodes: RingNode[], keys: { label: string; angle: number }[]): Record<string, string> => {
+const ownersFor = (
+  nodes: RingNode[],
+  keys: { label: string; angle: number }[],
+): Record<string, string> => {
   const sorted = [...nodes].sort((a, b) => a.angle - b.angle);
   const result: Record<string, string> = {};
   for (const key of keys) {
@@ -111,7 +134,10 @@ export const ConsistentHashRing = ({ keys, label, lang = 'ru' }: ConsistentHashR
   const t = STRINGS[lang];
   const reduceMotion = useReducedMotion();
   const ringKeys = useRef(
-    (keys ?? t.defaultKeys).map((labelText) => ({ label: labelText, angle: fnv1a(labelText) % 360 })),
+    (keys ?? t.defaultKeys).map((labelText) => ({
+      label: labelText,
+      angle: fnv1a(labelText) % 360,
+    })),
   ).current;
 
   const [activeIds, setActiveIds] = useState<string[]>(['A', 'B', 'C']);
@@ -124,7 +150,10 @@ export const ConsistentHashRing = ({ keys, label, lang = 'ru' }: ConsistentHashR
 
   const applyChange = (nextIds: string[], op: string): void => {
     const before = owners;
-    const after = ownersFor(POOL.filter((node) => nextIds.includes(node.id)), ringKeys);
+    const after = ownersFor(
+      POOL.filter((node) => nextIds.includes(node.id)),
+      ringKeys,
+    );
     const changed = new Set(
       ringKeys.filter((key) => before[key.label] !== after[key.label]).map((key) => key.label),
     );
@@ -174,8 +203,20 @@ export const ConsistentHashRing = ({ keys, label, lang = 'ru' }: ConsistentHashR
       footer={moved ? t.moved(moved.op, moved.count, ringKeys.length) : <span>{t.idle}</span>}
     >
       <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start sm:justify-center">
-        <svg viewBox="0 0 300 300" className="w-full max-w-[300px]" role="img" aria-label={t.ariaLabel}>
-          <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="none" stroke="rgb(var(--border))" strokeWidth={1} />
+        <svg
+          viewBox="0 0 300 300"
+          className="w-full max-w-[300px]"
+          role="img"
+          aria-label={t.ariaLabel}
+        >
+          <circle
+            cx={CENTER}
+            cy={CENTER}
+            r={RADIUS}
+            fill="none"
+            stroke="rgb(var(--border))"
+            strokeWidth={1}
+          />
 
           {sorted.map((node, i) => {
             const prevNode = sorted[(i - 1 + sorted.length) % sorted.length];
@@ -217,11 +258,31 @@ export const ConsistentHashRing = ({ keys, label, lang = 'ru' }: ConsistentHashR
             const ly = CENTER - (RADIUS + 20) * Math.cos((node.angle * Math.PI) / 180);
             return (
               <g key={`node-${node.id}`}>
-                <circle cx={x} cy={y} r={11} fill={fill(node.id)} stroke="rgb(var(--surface))" strokeWidth={2} />
-                <text x={x} y={y + 3.5} textAnchor="middle" fontSize={11} fontWeight={700} fill="rgb(var(--surface))">
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={11}
+                  fill={fill(node.id)}
+                  stroke="rgb(var(--surface))"
+                  strokeWidth={2}
+                />
+                <text
+                  x={x}
+                  y={y + 3.5}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fontWeight={700}
+                  fill="rgb(var(--surface))"
+                >
                   {node.id}
                 </text>
-                <text x={lx} y={ly + 3} textAnchor="middle" fontSize={9} fill="rgb(var(--fg-subtle))">
+                <text
+                  x={lx}
+                  y={ly + 3}
+                  textAnchor="middle"
+                  fontSize={9}
+                  fill="rgb(var(--fg-subtle))"
+                >
                   {t.nodeWord} {node.id}
                 </text>
               </g>
@@ -232,7 +293,10 @@ export const ConsistentHashRing = ({ keys, label, lang = 'ru' }: ConsistentHashR
         <ul className="grid grid-cols-2 gap-x-4 gap-y-0.5 self-center text-[11.5px] sm:max-w-[150px]">
           {active.map((node) => (
             <li key={node.id} className="flex items-center gap-1.5 font-mono text-fg-muted">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: fill(node.id) }} />
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: fill(node.id) }}
+              />
               {t.nodeWord} {node.id}
             </li>
           ))}

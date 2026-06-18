@@ -35,9 +35,7 @@ export const FigureProvider = ({ children }: { children: ReactNode }) => {
   );
   const value = useMemo<FigureNumbering>(() => ({ register, numberOf }), [register, numberOf]);
   return (
-    <FigureNumberingContext.Provider value={value}>
-      {children}
-    </FigureNumberingContext.Provider>
+    <FigureNumberingContext.Provider value={value}>{children}</FigureNumberingContext.Provider>
   );
 };
 
@@ -66,10 +64,7 @@ export const Figure = ({ caption, description, id, wide = false, children }: Fig
     <figure
       id={id}
       aria-describedby={description ? descriptionId : undefined}
-      className={cx(
-        'not-prose my-7',
-        wide && 'lg:-mx-16 xl:-mx-24',
-      )}
+      className={cx('not-prose my-7', wide && 'lg:-mx-16 xl:-mx-24')}
     >
       <div className="rounded-lg border border-border-base bg-surface px-4 py-5 overflow-x-auto">
         {children}

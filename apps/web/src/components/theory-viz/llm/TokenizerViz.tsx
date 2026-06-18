@@ -63,7 +63,7 @@ const bpeSplit = (text: string): string[] => {
     if (matched.length === 0) {
       const remainder = text.slice(cursor);
       const wordMatch = remainder.match(/^(\s*[\p{L}\p{N}]+|\s+|.)/u);
-      matched = wordMatch ? wordMatch[0] : remainder[0] ?? '';
+      matched = wordMatch ? wordMatch[0] : (remainder[0] ?? '');
     }
     pieces.push(matched);
     cursor += matched.length;

@@ -27,13 +27,7 @@ type ViewState =
 
 type StatusFilter = SubmissionStatus | 'all';
 
-const STATUS_OPTIONS: StatusFilter[] = [
-  'all',
-  'pending',
-  'approved',
-  'materialized',
-  'rejected',
-];
+const STATUS_OPTIONS: StatusFilter[] = ['all', 'pending', 'approved', 'materialized', 'rejected'];
 
 const RUNTIMES: TopicRuntime[] = ['none', 'sql.js', 'pyodide', 'javascript'];
 const DIFFICULTIES: TopicDifficulty[] = ['beginner', 'intermediate', 'advanced'];
@@ -350,7 +344,5 @@ const EmptyState = () => {
 };
 
 const ErrorBox = ({ message }: { message: string }) => (
-  <div className="rounded-lg border border-err/30 bg-err/10 p-5 text-sm text-err">
-    {message}
-  </div>
+  <div className="rounded-lg border border-err/30 bg-err/10 p-5 text-sm text-err">{message}</div>
 );

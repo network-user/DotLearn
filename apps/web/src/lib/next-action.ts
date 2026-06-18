@@ -32,9 +32,9 @@ export interface NextActionInput {
 
 const PRIORITY: Record<NextActionKind, number> = {
   'review-topic': 4,
-  'resume': 3,
+  resume: 3,
   'due-deck': 2,
-  'unlocked': 1,
+  unlocked: 1,
 };
 
 const masteredSlugsOf = (topics: readonly NextActionTopicInput[]): Set<string> => {

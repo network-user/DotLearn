@@ -30,7 +30,10 @@ const stageCaption: Record<Stage, string> = {
   return: 'Обёртка возвращает результат наружу — снаружи всё выглядит как обычный вызов.',
 };
 
-const activeAtStage: Record<Stage, { outer: boolean; before: boolean; inner: boolean; after: boolean }> = {
+const activeAtStage: Record<
+  Stage,
+  { outer: boolean; before: boolean; inner: boolean; after: boolean }
+> = {
   idle: { outer: false, before: false, inner: false, after: false },
   enter: { outer: true, before: false, inner: false, after: false },
   before: { outer: true, before: true, inner: false, after: false },
@@ -177,21 +180,24 @@ export const DecoratorWrap = ({
               <span className="rounded-md bg-accent/12 px-2 py-0.5 font-mono text-[11px] font-semibold text-accent">
                 wrapper
               </span>
-              <span className="font-mono text-[11px] text-fg-subtle">обёртка от @{decoratorName}</span>
+              <span className="font-mono text-[11px] text-fg-subtle">
+                обёртка от @{decoratorName}
+              </span>
             </div>
 
-            <HookRow text={before} kind="before" active={active.before} reduceMotion={!!reduceMotion} />
+            <HookRow
+              text={before}
+              kind="before"
+              active={active.before}
+              reduceMotion={!!reduceMotion}
+            />
 
             <motion.div
-              animate={
-                reduceMotion ? {} : { scale: active.inner ? 1.015 : 1 }
-              }
+              animate={reduceMotion ? {} : { scale: active.inner ? 1.015 : 1 }}
               transition={{ type: 'spring', stiffness: 420, damping: 24 }}
               className={cx(
                 'my-2 rounded-lg border px-3 py-2.5 transition-colors duration-fast',
-                active.inner
-                  ? 'border-ok/60 bg-ok/10'
-                  : 'border-border-base bg-surface',
+                active.inner ? 'border-ok/60 bg-ok/10' : 'border-border-base bg-surface',
               )}
             >
               <div className="flex items-center gap-2">
@@ -207,7 +213,12 @@ export const DecoratorWrap = ({
               </div>
             </motion.div>
 
-            <HookRow text={after} kind="after" active={active.after} reduceMotion={!!reduceMotion} />
+            <HookRow
+              text={after}
+              kind="after"
+              active={active.after}
+              reduceMotion={!!reduceMotion}
+            />
           </motion.div>
 
           <div className="flex w-full items-center justify-center font-mono text-[11px] text-fg-subtle">

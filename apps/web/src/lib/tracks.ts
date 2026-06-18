@@ -63,8 +63,7 @@ export const tracks: readonly Track[] = [
   },
 ];
 
-export const getTrack = (id: string): Track | undefined =>
-  tracks.find((track) => track.id === id);
+export const getTrack = (id: string): Track | undefined => tracks.find((track) => track.id === id);
 
 export const trackMemberSlugs = (track: Track): string[] => [
   ...track.topicSlugs,

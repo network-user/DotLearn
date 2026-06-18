@@ -11,11 +11,11 @@ Wrapper for any visual. Auto-numbers («Рис. N» / "Fig. N") in reading order
 ```mdx
 <Figure caption="Строки, не прошедшие WHERE, не доходят до SELECT.">
   <RowFilterFigure
-    columns={["name", "age"]}
+    columns={['name', 'age']}
     rows={[
-      { cells: ["Ana", "34"], kept: true },
-      { cells: ["Boris", "17"], kept: false },
-      { cells: ["Vera", "29"], kept: true },
+      { cells: ['Ana', '34'], kept: true },
+      { cells: ['Boris', '17'], kept: false },
+      { cells: ['Vera', '29'], kept: true },
     ]}
     condition="age >= 18"
     title="Фильтрация строк"
@@ -29,20 +29,20 @@ Props: `caption?: ReactNode`, `id?: string`, `wide?: boolean` (breaks out of the
 
 All accept `title` (accessible label). Wrap each in `<Figure>`.
 
-| Component | Use for | Key props |
-|---|---|---|
-| `PipelineFigure` | SQL logical execution order, any staged process | `stages: { label, note?, active? }[]` |
-| `RowFilterFigure` | WHERE / projection: rows in, kept rows out | `columns: string[]`, `rows: { cells: string[], kept: boolean }[]`, `condition?` |
-| `SortLimitFigure` | ORDER BY + LIMIT | `items: { label, value }[]`, `limit?`, `desc?`, `orderLabel?` |
-| `NestedQueryFigure` | Subquery evaluation order | `outerLabel`, `innerLabel`, `innerResult`, `resultLabel`, `footnote?` |
-| `ObjectMemoryFigure` | Names pointing to objects, instance attrs | `objects: { name, className, attrs: Record<string,string> }[]`, `sharedName?` |
-| `MroFigure` | Attribute lookup along the MRO chain | `chain: string[]`, `lookup?`, `foundIn?`, `startLabel?` |
+| Component            | Use for                                         | Key props                                                                       |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `PipelineFigure`     | SQL logical execution order, any staged process | `stages: { label, note?, active? }[]`                                           |
+| `RowFilterFigure`    | WHERE / projection: rows in, kept rows out      | `columns: string[]`, `rows: { cells: string[], kept: boolean }[]`, `condition?` |
+| `SortLimitFigure`    | ORDER BY + LIMIT                                | `items: { label, value }[]`, `limit?`, `desc?`, `orderLabel?`                   |
+| `NestedQueryFigure`  | Subquery evaluation order                       | `outerLabel`, `innerLabel`, `innerResult`, `resultLabel`, `footnote?`           |
+| `ObjectMemoryFigure` | Names pointing to objects, instance attrs       | `objects: { name, className, attrs: Record<string,string> }[]`, `sharedName?`   |
+| `MroFigure`          | Attribute lookup along the MRO chain            | `chain: string[]`, `lookup?`, `foundIn?`, `startLabel?`                         |
 
 Example:
 
 ```mdx
 <Figure caption="Поиск метода идёт слева направо и останавливается на первом совпадении.">
-  <MroFigure chain={["Dog", "Animal", "object"]} lookup="speak()" foundIn="Animal" title="MRO" />
+  <MroFigure chain={['Dog', 'Animal', 'object']} lookup="speak()" foundIn="Animal" title="MRO" />
 </Figure>
 ```
 
@@ -54,9 +54,13 @@ When no prebuilt fits, compose from primitives inside `Sketch` (SVG shell with a
 <Figure caption="Композиция: хост делегирует части.">
   <Sketch viewBox="0 0 400 160" title="Композиция">
     <SketchBox x={20} y={40} width={120} height={80} fill="rgb(var(--surface-2))" />
-    <SketchLabel x={80} y={85} mono>Order</SketchLabel>
+    <SketchLabel x={80} y={85} mono>
+      Order
+    </SketchLabel>
     <SketchBox x={260} y={55} width={110} height={50} accent />
-    <SketchLabel x={315} y={85} mono accent>Cart</SketchLabel>
+    <SketchLabel x={315} y={85} mono accent>
+      Cart
+    </SketchLabel>
     <SketchArrow from={[145, 80]} to={[255, 80]} accent />
     <SketchHighlight x={255} y={50} width={120} height={60} />
   </Sketch>
@@ -74,20 +78,20 @@ Hand-rolled SVG, zero dependencies. Wrap in `<Figure>` when they deserve a capti
   <BarChart
     title="Пользователи по странам"
     data={[
-      { label: "RU", value: 420 },
-      { label: "DE", value: 180 },
-      { label: "JP", value: 95 },
+      { label: 'RU', value: 420 },
+      { label: 'DE', value: 180 },
+      { label: 'JP', value: 95 },
     ]}
-    highlight={["RU", "DE"]}
+    highlight={['RU', 'DE']}
   />
 </Figure>
 ```
 
-| Component | Props |
-|---|---|
-| `BarChart` | `data: { label, value }[]`, `unit?`, `highlight?: string[]`, `colorByCategory?` |
-| `LineChart` | `series: { name, points: { x, y }[] }[]`, `xLabel?`, `yLabel?`, `area?`, `stacked?` |
-| `AreaChart` | same as LineChart minus `area` (always filled), plus `stacked?` |
+| Component           | Props                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `BarChart`          | `data: { label, value }[]`, `unit?`, `highlight?: string[]`, `colorByCategory?`                                  |
+| `LineChart`         | `series: { name, points: { x, y }[] }[]`, `xLabel?`, `yLabel?`, `area?`, `stacked?`                              |
+| `AreaChart`         | same as LineChart minus `area` (always filled), plus `stacked?`                                                  |
 | `DistributionChart` | `values: number[]`, `bins?`, `xLabel?`, `markers?: { value, label }[]` — histogram; markers for AVG/median lines |
 
 ## Live sandboxes
@@ -135,17 +139,17 @@ Step-through visualization of Python execution: `code`, `title?`, `speed?`.
 
 ## Prose devices
 
-| Component | Use | Example |
-|---|---|---|
-| `Callout` | Short note in flow; `type: "info" \| "warning" \| "success" \| "tip"`, `title?` | `<Callout type="warning">NULL не равен ничему, даже себе.</Callout>` |
-| `Detail` | Collapsible deep-dive; `summary`, `defaultOpen?` | `<Detail summary="Как это устроено внутри">...</Detail>` |
-| `Steps` | Numbered procedure | `<Steps><li>...</li><li>...</li></Steps>` |
-| `KeyTakeaways` | End-of-article résumé; `items: string[]`, `title?` | `<KeyTakeaways items={["...", "..."]} />` |
-| `MarginNote` | Side comment floated to the margin on wide screens; `label?` | `<MarginNote label="История">SQL появился в 1974.</MarginNote>` |
-| `PullQuote` | One striking sentence, max once per article; `attribution?` | `<PullQuote>Таблица - это множество, пока вы не попросите порядок.</PullQuote>` |
-| `Ref` + `Footnotes` | Numbered footnotes | `...формы<Ref id="codd" /> ... <Footnotes notes={[{ id: "codd", text: "Codd, 1970." }]} />` |
-| `Compare` | Two-column comparison, stacks on mobile; `leftTitle`, `rightTitle`, `left`, `right`, `verdict?` | `<Compare leftTitle="Наследование" rightTitle="Композиция" left={...} right={...} verdict="..." />` |
-| `SideViz` | Legacy floated panel; prefer `MarginNote` or `Figure` | — |
+| Component           | Use                                                                                             | Example                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Callout`           | Short note in flow; `type: "info" \| "warning" \| "success" \| "tip"`, `title?`                 | `<Callout type="warning">NULL не равен ничему, даже себе.</Callout>`                                |
+| `Detail`            | Collapsible deep-dive; `summary`, `defaultOpen?`                                                | `<Detail summary="Как это устроено внутри">...</Detail>`                                            |
+| `Steps`             | Numbered procedure                                                                              | `<Steps><li>...</li><li>...</li></Steps>`                                                           |
+| `KeyTakeaways`      | End-of-article résumé; `items: string[]`, `title?`                                              | `<KeyTakeaways items={["...", "..."]} />`                                                           |
+| `MarginNote`        | Side comment floated to the margin on wide screens; `label?`                                    | `<MarginNote label="История">SQL появился в 1974.</MarginNote>`                                     |
+| `PullQuote`         | One striking sentence, max once per article; `attribution?`                                     | `<PullQuote>Таблица - это множество, пока вы не попросите порядок.</PullQuote>`                     |
+| `Ref` + `Footnotes` | Numbered footnotes                                                                              | `...формы<Ref id="codd" /> ... <Footnotes notes={[{ id: "codd", text: "Codd, 1970." }]} />`         |
+| `Compare`           | Two-column comparison, stacks on mobile; `leftTitle`, `rightTitle`, `left`, `right`, `verdict?` | `<Compare leftTitle="Наследование" rightTitle="Композиция" left={...} right={...} verdict="..." />` |
+| `SideViz`           | Legacy floated panel; prefer `MarginNote` or `Figure`                                           | —                                                                                                   |
 
 ## Domain visualizations
 
@@ -164,7 +168,12 @@ Animates how a decorator wraps a plain function: nested boxes (outer wrapper aro
 Props: `decoratorName?: string` (default `'timed'`, shown after `@`); `funcName?: string` (default `'compute'`, wrapped function name); `before?: string` (default `'start = time()'`, code label for the before hook); `after?: string` (default `'log(time() - start)'`, code label for the after hook); `label?: string` (header override); `callExpression?: string` (default `` `${funcName}(x)` ``, text on the incoming call token).
 
 ```mdx
-<DecoratorWrap decoratorName="timed" funcName="compute" before="start = time()" after="log(time() - start)" />
+<DecoratorWrap
+  decoratorName="timed"
+  funcName="compute"
+  before="start = time()"
+  after="log(time() - start)"
+/>
 ```
 
 #### CallStackViz
@@ -196,7 +205,15 @@ An image area split into an SxS grid with anchor boxes overlaid. Highlights the 
 Props: `label?: string`; `grid?: number` (S, clamped 2..12); `anchors?: AnchorShape[]` where `AnchorShape = { w, h }` normalized 0..1; `object?: AnchorObjectBox` where the box is `{ cx, cy, w, h }` normalized 0..1; plus Russian-defaulted text props `objectLabel`, `cellLabel`, `anchorsTitle`, `showAnchorsLabel`, `hideAnchorsLabel`, `hintLabel`.
 
 ```mdx
-<AnchorGridViz grid={5} anchors={[{ w: 0.85, h: 0.35 }, { w: 0.4, h: 0.85 }, { w: 0.6, h: 0.6 }]} object={{ cx: 0.62, cy: 0.46, w: 0.34, h: 0.5 }} />
+<AnchorGridViz
+  grid={5}
+  anchors={[
+    { w: 0.85, h: 0.35 },
+    { w: 0.4, h: 0.85 },
+    { w: 0.6, h: 0.6 },
+  ]}
+  object={{ cx: 0.62, cy: 0.46, w: 0.34, h: 0.5 }}
+/>
 ```
 
 #### NmsViz
@@ -206,7 +223,14 @@ Several overlapping candidate boxes with confidence scores. Steps through non-ma
 Props: `label?: string`; `boxes?: NmsBox[]` where `NmsBox = { x, y, w, h, score }` in a 320x220 viewport; `iouThreshold?: number`; plus Russian-defaulted text props `stepLabel`, `resetLabel`, `keptLabel`, `suppressedLabel`, `candidateLabel`, `thresholdLabel`, `introHint`, `doneHint`.
 
 ```mdx
-<NmsViz iouThreshold={0.45} boxes={[{ x: 40, y: 40, w: 130, h: 120, score: 0.92 }, { x: 58, y: 58, w: 130, h: 118, score: 0.81 }, { x: 180, y: 70, w: 110, h: 110, score: 0.88 }]} />
+<NmsViz
+  iouThreshold={0.45}
+  boxes={[
+    { x: 40, y: 40, w: 130, h: 120, score: 0.92 },
+    { x: 58, y: 58, w: 130, h: 118, score: 0.81 },
+    { x: 180, y: 70, w: 110, h: 110, score: 0.88 },
+  ]}
+/>
 ```
 
 #### PrCurve
@@ -216,7 +240,16 @@ A precision-recall curve plotted on an SVG axis with the area under it (Average 
 Props: `label?: string`; `points?: PrPoint[]` where `PrPoint = [recall, precision]`, each 0..1; plus Russian-defaulted text props `apLabel`, `recallLabel`, `precisionLabel`, `interpolateLabel`, `rawLabel`, `hintLabel`.
 
 ```mdx
-<PrCurve points={[[0, 1], [0.2, 0.92], [0.4, 0.86], [0.6, 0.78], [0.8, 0.55], [1, 0.3]]} />
+<PrCurve
+  points={[
+    [0, 1],
+    [0.2, 0.92],
+    [0.4, 0.86],
+    [0.6, 0.78],
+    [0.8, 0.55],
+    [1, 0.3],
+  ]}
+/>
 ```
 
 ### LLM internals
@@ -238,7 +271,7 @@ Renders a tokens x tokens attention matrix as a cyan-intensity heatmap. Each row
 Props: `tokens?: string[]` (default 5 Russian tokens); `weights?: number[][]` (square matrix matching token count, rows auto-normalized; throws `AttentionShapeError` on mismatched dimensions); `label?`, `rowHint?`, `colHint?`, `emptyHint?: string`.
 
 ```mdx
-<AttentionHeatmap tokens={["Кошка", "села", "на", "коврик"]} />
+<AttentionHeatmap tokens={['Кошка', 'села', 'на', 'коврик']} />
 ```
 
 #### EmbeddingSpace
@@ -248,7 +281,14 @@ A 2D SVG scatter plot of words where semantically near words form colored cluste
 Props: `points?: EmbeddingPoint[]` where `EmbeddingPoint = [x: number (0..1), y: number (0..1), label: string]` (default 12 Russian words in 3 clusters); `label?`, `emptyHint?: string`.
 
 ```mdx
-<EmbeddingSpace points={[[0.2, 0.2, "король"], [0.25, 0.18, "королева"], [0.75, 0.2, "кошка"], [0.8, 0.26, "собака"]]} />
+<EmbeddingSpace
+  points={[
+    [0.2, 0.2, 'король'],
+    [0.25, 0.18, 'королева'],
+    [0.75, 0.2, 'кошка'],
+    [0.8, 0.26, 'собака'],
+  ]}
+/>
 ```
 
 #### SamplingBars
@@ -258,7 +298,14 @@ Next-token probability bars that recompute live from a temperature slider, plus 
 Props: `candidates?: SamplingCandidate[]` where `SamplingCandidate = [token: string, logit: number]` (default 7 Russian candidates); `label?`, `temperatureLabel?`, `topKLabel?`, `topPLabel?: string`.
 
 ```mdx
-<SamplingBars candidates={[["кофе", 3.2], ["чай", 2.7], ["воду", 2.1], ["сок", 1.4]]} />
+<SamplingBars
+  candidates={[
+    ['кофе', 3.2],
+    ['чай', 2.7],
+    ['воду', 2.1],
+    ['сок', 1.4],
+  ]}
+/>
 ```
 
 #### ContextWindowViz
@@ -268,7 +315,10 @@ A fixed-size window sliding over a token stream. Step forward/back to move the w
 Props: `tokens?: string[]` (default Russian story stream); `windowSize?: number` (default 8, clamped to token count); `label?`, `truncatedLabel?`, `contextLabel?`, `positionLabel?: string`.
 
 ```mdx
-<ContextWindowViz windowSize={6} tokens={["раз", "два", "три", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять"]} />
+<ContextWindowViz
+  windowSize={6}
+  tokens={['раз', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять', 'десять']}
+/>
 ```
 
 #### AgentLoopDiagram
@@ -288,7 +338,12 @@ A Model Context Protocol diagram: a host/client box connected over a pulsing JSO
 Props: `servers?: McpServer[]` where `McpServer = { name: string; capabilities: ('tools' | 'resources' | 'prompts')[]; detail?: string }` (default 3 Russian servers); `label?`, `hostLabel?`, `hostDetail?`, `emptyHint?: string`.
 
 ```mdx
-<McpDiagram servers={[{ name: "Файловая система", capabilities: ["resources", "tools"] }, { name: "GitHub", capabilities: ["tools"] }]} />
+<McpDiagram
+  servers={[
+    { name: 'Файловая система', capabilities: ['resources', 'tools'] },
+    { name: 'GitHub', capabilities: ['tools'] },
+  ]}
+/>
 ```
 
 ### Prompt engineering
@@ -338,11 +393,7 @@ Props: `label?: string` (default `'Цепочка рассуждений'`); `qu
 ```mdx
 <ChainOfThoughtViz
   question="В корзине было 23 яблока. Использовали 20 и докупили 6. Сколько осталось?"
-  steps={[
-    'Старт: 23 яблока.',
-    'Использовали 20: 23 − 20 = 3.',
-    'Докупили 6: 3 + 6 = 9.',
-  ]}
+  steps={['Старт: 23 яблока.', 'Использовали 20: 23 − 20 = 3.', 'Докупили 6: 3 + 6 = 9.']}
   answer="9 яблок"
   directAnswer="3 яблока"
   directIsWrong

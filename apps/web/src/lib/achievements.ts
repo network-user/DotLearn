@@ -157,9 +157,7 @@ export const ACHIEVEMENT_DEFINITIONS: readonly AchievementDefinition[] = [
 
 export const ACHIEVEMENT_FALLBACK_ICON: LucideIcon = Award;
 
-export const unlockedIdsForSnapshot = (
-  snapshot: AchievementSnapshot,
-): AchievementId[] =>
+export const unlockedIdsForSnapshot = (snapshot: AchievementSnapshot): AchievementId[] =>
   ACHIEVEMENT_DEFINITIONS.filter((definition) => definition.isUnlocked(snapshot)).map(
     (definition) => definition.id,
   );
@@ -181,9 +179,7 @@ export interface SnapshotInputs {
 const dayKeyOf = (iso: string): string => localDayKey(new Date(iso));
 
 export const buildSnapshot = (inputs: SnapshotInputs): AchievementSnapshot => {
-  const passedExercises = inputs.progress.filter(
-    (record) => record.status === 'pass',
-  ).length;
+  const passedExercises = inputs.progress.filter((record) => record.status === 'pass').length;
 
   const topicMasteredCount = inputs.topics.filter(
     (topic) => topic.totalConcepts > 0 && topic.readConcepts >= topic.totalConcepts,
@@ -316,7 +312,9 @@ export const useAchievements = (
     : undefined;
 
   const unlockedIds = snapshot ? unlockedIdsForSnapshot(snapshot) : [];
-  const persistedMap = new Map((persistedRecords ?? []).map((record) => [record.id, record.unlockedAt]));
+  const persistedMap = new Map(
+    (persistedRecords ?? []).map((record) => [record.id, record.unlockedAt]),
+  );
 
   const persistedKey = (persistedRecords ?? [])
     .map((record) => record.id)

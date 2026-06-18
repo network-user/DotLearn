@@ -42,9 +42,7 @@ for (const viewport of VIEWPORTS) {
     );
     const file = join(OUT_DIR, `${target.name}--${viewport.name}.png`);
     await page.screenshot({ path: file, fullPage: false });
-    console.warn(
-      `${target.name} @ ${viewport.name}: overflowX=${horizontalOverflow}px -> ${file}`,
-    );
+    console.warn(`${target.name} @ ${viewport.name}: overflowX=${horizontalOverflow}px -> ${file}`);
   }
   await context.close();
 }

@@ -86,7 +86,7 @@ export const EmbeddingSpace = ({
     }));
   }, [points]);
 
-  const hovered = hover !== null ? placed[hover] ?? null : null;
+  const hovered = hover !== null ? (placed[hover] ?? null) : null;
 
   return (
     <VizShell
@@ -104,12 +104,7 @@ export const EmbeddingSpace = ({
       }
     >
       <div className="mx-auto w-full max-w-[420px]">
-        <svg
-          viewBox={`0 0 ${VIEW} ${VIEW}`}
-          className="block w-full"
-          role="img"
-          aria-label={label}
-        >
+        <svg viewBox={`0 0 ${VIEW} ${VIEW}`} className="block w-full" role="img" aria-label={label}>
           <defs>
             <pattern id="embed-grid" width="32" height="32" patternUnits="userSpaceOnUse">
               <path

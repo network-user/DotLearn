@@ -142,9 +142,7 @@ export const AgentLoopDiagram = ({
                 key={`edge-${index}`}
                 d={`M ${sx} ${sy} Q ${midX} ${midY} ${ex} ${ey}`}
                 fill="none"
-                stroke={
-                  isActiveEdge ? 'rgb(var(--accent-1))' : 'rgb(var(--border-strong) / 0.6)'
-                }
+                stroke={isActiveEdge ? 'rgb(var(--accent-1))' : 'rgb(var(--border-strong) / 0.6)'}
                 strokeWidth={isActiveEdge ? 2 : 1.25}
                 markerEnd="url(#agent-arrow)"
                 className="transition-[stroke] duration-med"
@@ -171,11 +169,7 @@ export const AgentLoopDiagram = ({
               >
                 <motion.circle
                   r={NODE}
-                  animate={
-                    isActive && !reduceMotion
-                      ? { scale: [1, 1.08, 1] }
-                      : { scale: 1 }
-                  }
+                  animate={isActive && !reduceMotion ? { scale: [1, 1.08, 1] } : { scale: 1 }}
                   transition={
                     isActive && !reduceMotion
                       ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' }

@@ -61,7 +61,11 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
   const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
   const status: ExerciseCardStatus =
-    state.kind === 'pass' ? 'pass' : state.kind === 'fail' || state.kind === 'error' ? 'fail' : 'idle';
+    state.kind === 'pass'
+      ? 'pass'
+      : state.kind === 'fail' || state.kind === 'error'
+        ? 'fail'
+        : 'idle';
 
   const handleRun = useCallback(async () => {
     setState({ kind: 'running' });
@@ -118,7 +122,8 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
     state.kind === 'pass' || state.kind === 'fail'
       ? { columns: state.columns ?? [], rows: state.rows ?? [] }
       : undefined;
-  const visualizerStatus = state.kind === 'pass' ? 'pass' : state.kind === 'fail' ? 'fail' : undefined;
+  const visualizerStatus =
+    state.kind === 'pass' ? 'pass' : state.kind === 'fail' ? 'fail' : undefined;
 
   return (
     <ExerciseCard
@@ -172,10 +177,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
             >
               {state.kind === 'running' ? t('sql.running') : t('sql.run')}
             </Button>
-            <HintBlock
-              hints={exercise.hints}
-              onAllHintsShown={() => setHintsExhausted(true)}
-            />
+            <HintBlock hints={exercise.hints} onAllHintsShown={() => setHintsExhausted(true)} />
           </div>
           {state.kind === 'error' && (
             <p className="rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-[13px] text-warn">
@@ -207,9 +209,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
                   />
                 </div>
               )}
-              {state.misordered && (
-                <p className="text-[12.5px] text-warn">{t('sql.misordered')}</p>
-              )}
+              {state.misordered && <p className="text-[12.5px] text-warn">{t('sql.misordered')}</p>}
             </div>
           )}
           {state.kind === 'pass' && (

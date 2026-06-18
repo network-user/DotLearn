@@ -73,7 +73,11 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
   const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
   const cardStatus: ExerciseCardStatus =
-    state.kind === 'pass' ? 'pass' : state.kind === 'fail' || state.kind === 'error' ? 'fail' : 'idle';
+    state.kind === 'pass'
+      ? 'pass'
+      : state.kind === 'fail' || state.kind === 'error'
+        ? 'fail'
+        : 'idle';
 
   const consoleStatus =
     state.kind === 'loading'
@@ -131,7 +135,11 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
       setState({ kind: 'running' });
       setConsoleLines((prev) => [
         ...prev,
-        { id: `s${session}-run`, tone: 'system', text: `$ python -m runner --cases ${exercise.cases.length}` },
+        {
+          id: `s${session}-run`,
+          tone: 'system',
+          text: `$ python -m runner --cases ${exercise.cases.length}`,
+        },
       ]);
       const result = await runPythonFunction(exercise, answer, runtime);
       if (result.ok) {
@@ -153,9 +161,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
         ]);
         toast.success(t('python.allPassedToast'), { description: exercise.id });
         burstConfetti();
-        setStatusMessage(
-          t('common.status.passed', { passed, total: exercise.cases.length }),
-        );
+        setStatusMessage(t('common.status.passed', { passed, total: exercise.cases.length }));
         void recordAttempt(topicSlug, exercise.id, 'pass');
       } else {
         const details = (result.details ?? {}) as { failures?: CaseFailure[] };

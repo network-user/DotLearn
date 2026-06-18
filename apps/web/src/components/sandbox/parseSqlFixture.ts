@@ -35,14 +35,7 @@ const splitColumnDefs = (body: string): string[] => {
 const CREATE_TABLE_RE =
   /create\s+table\s+(?:if\s+not\s+exists\s+)?["`]?([a-zA-Z_][\w]*)["`]?\s*\(([\s\S]*?)\)\s*;/gi;
 
-const CONSTRAINT_KEYWORDS = new Set([
-  'primary',
-  'foreign',
-  'unique',
-  'check',
-  'constraint',
-  'key',
-]);
+const CONSTRAINT_KEYWORDS = new Set(['primary', 'foreign', 'unique', 'check', 'constraint', 'key']);
 
 export const parseSqlFixture = (fixture: string): ParsedTable[] => {
   const cleaned = stripComments(fixture);

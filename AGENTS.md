@@ -39,13 +39,13 @@ Use the `lesson-forge` skill. Never invent a topic structure ad-hoc.
 
 ## Where to find things
 
-| Looking for | Path |
-|---|---|
-| Vision and quickstart | `README.md` |
-| Architecture diagrams and invariants | `ARCHITECTURE.md` |
-| Phased plan | `ROADMAP.md` |
-| Topic submission rules | `CONTRIBUTING.md` |
-| Project-wide AI rules | `.cursor/rules/dotlearn.mdc` and `CLAUDE.md` |
-| Handoff prompt for the next agent | `docs/NEXT_AGENT_PROMPT.md` |
-| Zod schemas | `packages/contracts/src/*.schema.ts` |
+| Looking for                          | Path                                                                              |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| Vision and quickstart                | `README.md`                                                                       |
+| Architecture diagrams and invariants | `ARCHITECTURE.md`                                                                 |
+| Phased plan                          | `ROADMAP.md`                                                                      |
+| Topic submission rules               | `CONTRIBUTING.md`                                                                 |
+| Project-wide AI rules                | `.cursor/rules/dotlearn.mdc` and `CLAUDE.md`                                      |
+| Handoff prompt for the next agent    | `docs/NEXT_AGENT_PROMPT.md`                                                       |
+| Zod schemas                          | `packages/contracts/src/*.schema.ts`                                              |
 | JSON schemas (for skill consumption) | `.cursor/skills/lesson-forge/schemas/` and `.claude/skills/lesson-forge/schemas/` |

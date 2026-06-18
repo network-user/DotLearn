@@ -44,7 +44,15 @@ export const SortLimitFigure = ({
       const cut = withLimit && limit !== undefined && index >= limit;
       return (
         <Fragment key={item.label}>
-          <SketchLabel x={x} y={y + ROW_H / 2 + 4} anchor="start" mono size={11.5} muted={cut} weight={400}>
+          <SketchLabel
+            x={x}
+            y={y + ROW_H / 2 + 4}
+            anchor="start"
+            mono
+            size={11.5}
+            muted={cut}
+            weight={400}
+          >
             {item.label}
           </SketchLabel>
           <rect

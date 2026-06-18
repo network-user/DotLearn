@@ -60,7 +60,10 @@ export const ProgressRing = ({
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           stroke="currentColor"
-          className={cx('transition-[stroke-dashoffset] duration-slow ease-out', indicatorClassName)}
+          className={cx(
+            'transition-[stroke-dashoffset] duration-slow ease-out',
+            indicatorClassName,
+          )}
         />
       </svg>
       {label !== undefined && (

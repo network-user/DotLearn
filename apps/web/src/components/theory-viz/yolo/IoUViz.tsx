@@ -170,11 +170,7 @@ export const IoUViz = ({
             )}
 
             <g className="font-mono">
-              <text
-                x={movableBox.x + 4}
-                y={movableBox.y - 5}
-                className="fill-accent text-[10px]"
-              >
+              <text x={movableBox.x + 4} y={movableBox.y - 5} className="fill-accent text-[10px]">
                 {boxALabel}
               </text>
               <text

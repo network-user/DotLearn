@@ -25,11 +25,11 @@ The feature works but UX is unclear without these improvements:
 
 ## Key files
 
-| Area | Path |
-|---|---|
-| Feature flag | `apps/web/src/lib/feature-flags.ts` |
-| Selection toolbar | `apps/web/src/components/TheoryHighlighter.tsx` |
-| Topic page mount | `apps/web/src/pages/TopicPage.tsx` |
-| Library tab | `apps/web/src/pages/LibraryPage.tsx` |
-| Storage | `apps/web/src/lib/progress-db.ts` (`HighlightRecord`, `addHighlight`, …) |
-| Hooks | `apps/web/src/lib/use-learning.ts` (`useConceptHighlights`, `useAllHighlights`) |
+| Area              | Path                                                                            |
+| ----------------- | ------------------------------------------------------------------------------- |
+| Feature flag      | `apps/web/src/lib/feature-flags.ts`                                             |
+| Selection toolbar | `apps/web/src/components/TheoryHighlighter.tsx`                                 |
+| Topic page mount  | `apps/web/src/pages/TopicPage.tsx`                                              |
+| Library tab       | `apps/web/src/pages/LibraryPage.tsx`                                            |
+| Storage           | `apps/web/src/lib/progress-db.ts` (`HighlightRecord`, `addHighlight`, …)        |
+| Hooks             | `apps/web/src/lib/use-learning.ts` (`useConceptHighlights`, `useAllHighlights`) |

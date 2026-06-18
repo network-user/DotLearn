@@ -88,12 +88,17 @@ const unwrap = async <T>(response: Response): Promise<T> => {
     }
     const errorMessage =
       typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? extractErrorMessage((parsed as ErrorEnvelope).error) ??
-          `${response.status} ${response.statusText}`
+        ? (extractErrorMessage((parsed as ErrorEnvelope).error) ??
+          `${response.status} ${response.statusText}`)
         : `${response.status} ${response.statusText}`;
     throw new ApiError(response.status, errorMessage);
   }
-  if (typeof parsed === 'object' && parsed !== null && 'ok' in parsed && (parsed as SuccessEnvelope<T>).ok) {
+  if (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    'ok' in parsed &&
+    (parsed as SuccessEnvelope<T>).ok
+  ) {
     return (parsed as SuccessEnvelope<T>).data;
   }
   return parsed as T;
@@ -113,10 +118,7 @@ interface RequestOptions extends RequestInit {
   auth?: boolean;
 }
 
-const buildHeaders = (
-  init: RequestInit | undefined,
-  withAuth: boolean,
-): HeadersInit => {
+const buildHeaders = (init: RequestInit | undefined, withAuth: boolean): HeadersInit => {
   const baseHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -185,25 +187,22 @@ export const searchPublicSubmissions = (
   query: string,
   limit?: number,
 ): Promise<SubmissionPublic[]> =>
-  request<SubmissionPublic[]>(
-    `/api/submissions/search${buildQuery({ q: query, limit })}`,
-    { auth: false },
-  );
+  request<SubmissionPublic[]>(`/api/submissions/search${buildQuery({ q: query, limit })}`, {
+    auth: false,
+  });
 
 export const suggestSubmissions = (
   query: string,
   limit?: number,
 ): Promise<SubmissionSuggestion[]> =>
-  request<SubmissionSuggestion[]>(
-    `/api/submissions/suggest${buildQuery({ q: query, limit })}`,
-    { auth: false },
-  );
+  request<SubmissionSuggestion[]>(`/api/submissions/suggest${buildQuery({ q: query, limit })}`, {
+    auth: false,
+  });
 
 export const listAdminSubmissions = (status?: SubmissionStatus): Promise<Submission[]> =>
   request<Submission[]>(`/api/admin/submissions${buildQuery({ status })}`);
 
-export const listPendingSubmissions = (): Promise<Submission[]> =>
-  listAdminSubmissions('pending');
+export const listPendingSubmissions = (): Promise<Submission[]> => listAdminSubmissions('pending');
 
 export const reviewSubmission = (
   id: string,

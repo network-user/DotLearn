@@ -74,7 +74,11 @@ export const Footnotes = ({ notes }: FootnotesProps) => {
         {ordered.map((note) => {
           const number = registry?.numberOf(note.id);
           return (
-            <li key={note.id} id={`fn-${note.id}`} className="flex gap-2 text-[13px] text-fg-muted leading-relaxed">
+            <li
+              key={note.id}
+              id={`fn-${note.id}`}
+              className="flex gap-2 text-[13px] text-fg-muted leading-relaxed"
+            >
               <a
                 href={`#ref-${note.id}`}
                 className="shrink-0 text-accent font-semibold no-underline hover:underline"

@@ -55,7 +55,14 @@ export const MroFigure = ({
               accent={found}
               dashed={!searched}
             />
-            <SketchLabel x={x + BOX_W / 2} y={y + BOX_H / 2 + 4} mono size={12.5} accent={found} muted={!searched}>
+            <SketchLabel
+              x={x + BOX_W / 2}
+              y={y + BOX_H / 2 + 4}
+              mono
+              size={12.5}
+              accent={found}
+              muted={!searched}
+            >
               {cls}
             </SketchLabel>
             <SketchLabel x={x + BOX_W / 2} y={y - 12} muted size={10.5}>

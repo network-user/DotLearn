@@ -19,10 +19,7 @@ const post = (response: SqlWorkerResponse): void => {
   workerScope.postMessage(response);
 };
 
-const toRow = (
-  columns: string[],
-  values: ReadonlyArray<unknown>,
-): Record<string, unknown> => {
+const toRow = (columns: string[], values: ReadonlyArray<unknown>): Record<string, unknown> => {
   const row: Record<string, unknown> = {};
   for (let index = 0; index < columns.length; index += 1) {
     const column = columns[index];
@@ -66,7 +63,10 @@ const isWorkerRequest = (data: unknown): data is SqlWorkerRequest => {
     return request.wasmUrl === undefined || typeof request.wasmUrl === 'string';
   }
   if (request.type === 'execute') {
-    return typeof request.sql === 'string' && (request.fixture === undefined || typeof request.fixture === 'string');
+    return (
+      typeof request.sql === 'string' &&
+      (request.fixture === undefined || typeof request.fixture === 'string')
+    );
   }
   return false;
 };

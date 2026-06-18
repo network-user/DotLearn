@@ -1,12 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { normalizeQuery, scoreDocument, tokenMatchScore, tokenize } from './domain/fuzzy';
-import type {
-  SearchDocument,
-  SearchHit,
-  SearchService,
-  SearchSuggestion,
-} from './search.service';
+import type { SearchDocument, SearchHit, SearchService, SearchSuggestion } from './search.service';
 
 const DEFAULT_SEARCH_LIMIT = 20;
 const DEFAULT_SUGGEST_LIMIT = 8;

@@ -24,11 +24,7 @@ import { Button } from '@/components/ui/Button';
 import { DualProgressBar } from '@/components/ui/DualProgressBar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressRing } from '@/components/ui/ProgressRing';
-import {
-  useAchievements,
-  type AchievementView,
-  type TopicReadInput,
-} from '@/lib/achievements';
+import { useAchievements, type AchievementView, type TopicReadInput } from '@/lib/achievements';
 import { interviewQuestions } from '@/lib/interview';
 import {
   weakestConcepts,
@@ -228,9 +224,7 @@ export const ProgressPage = () => {
     }
   };
 
-  const handleImportFile = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ): Promise<void> => {
+  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
@@ -306,9 +300,7 @@ export const ProgressPage = () => {
       </section>
 
       <section className="space-y-3">
-        <h2 className="eyebrow border-b border-border-base pb-2">
-          {t('interview.heading')}
-        </h2>
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('interview.heading')}</h2>
         <Link
           to="/interview"
           className="block rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-5"
@@ -405,7 +397,12 @@ export const ProgressPage = () => {
             body={t('empty.noTopicsBody')}
             primaryAction={
               <Link to="/" hash="topics" className="block w-full sm:w-auto">
-                <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                  trailingIcon={<ArrowRight size={15} />}
+                >
                   {t('empty.exploreTopics')}
                 </Button>
               </Link>
@@ -423,7 +420,12 @@ export const ProgressPage = () => {
                   params={{ slug: recommendedTopic.slug }}
                   className="block w-full sm:w-auto"
                 >
-                  <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                    trailingIcon={<ArrowRight size={15} />}
+                  >
                     {t('empty.startRecommended')}
                   </Button>
                 </Link>
@@ -590,8 +592,7 @@ const RecapRow = ({
   hasLast: boolean;
 }) => {
   const { t } = useTranslation('progress');
-  const tone =
-    delta > 0 ? 'text-ok' : delta < 0 ? 'text-err' : 'text-fg-subtle';
+  const tone = delta > 0 ? 'text-ok' : delta < 0 ? 'text-err' : 'text-fg-subtle';
   const Icon = delta > 0 ? ArrowUpRight : delta < 0 ? ArrowDownRight : Minus;
   return (
     <li className="rounded-lg border border-border-base bg-surface-2/40 p-3">
@@ -666,7 +667,8 @@ const AchievementsGrid = ({ views }: { views: AchievementView[] }) => {
             <div className="min-w-0">
               <p
                 className={
-                  'text-sm font-semibold leading-snug ' + (view.unlocked ? 'text-fg' : 'text-fg-muted')
+                  'text-sm font-semibold leading-snug ' +
+                  (view.unlocked ? 'text-fg' : 'text-fg-muted')
                 }
               >
                 {title}

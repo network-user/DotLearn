@@ -3,7 +3,11 @@ import { isCardDue } from '@dotlearn/lesson-engine';
 import { db, USER_CARDS_DECK_SLUG, type UserCardRecord } from '@/lib/progress-db';
 
 import { flashcardTopicSlugs, loadTopicCards, type DeckCard } from './flashcard-decks';
-import { interviewFlashcardSlug, loadInterviewCards, type InterviewDeckCard } from './interview-flashcards';
+import {
+  interviewFlashcardSlug,
+  loadInterviewCards,
+  type InterviewDeckCard,
+} from './interview-flashcards';
 
 export type FlashcardSource = 'topics' | 'interview' | 'user';
 
@@ -23,7 +27,11 @@ export interface FlashcardStats {
   reviewed: number;
 }
 
-const topicCardToSession = (deckSlug: string, card: DeckCard, sourceLabel: string): SessionCard => ({
+const topicCardToSession = (
+  deckSlug: string,
+  card: DeckCard,
+  sourceLabel: string,
+): SessionCard => ({
   deckSlug,
   card,
   source: 'topics',
@@ -103,7 +111,7 @@ export const loadMixedSessionCards = async (
   return [...topicCards, ...interviewCards];
 };
 
-export const shuffleCards = <T,>(input: T[]): T[] => {
+export const shuffleCards = <T>(input: T[]): T[] => {
   const result = [...input];
   for (let index = result.length - 1; index > 0; index -= 1) {
     const swap = Math.floor(Math.random() * (index + 1));

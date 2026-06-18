@@ -17,14 +17,14 @@ The material must be **interesting and easy to absorb**, not a dry reference dum
 - **Moderate length.** Cover the concept fully, then stop. Respect the 1200-2000 word budget; if a concept honestly needs more, split it into two. Do not pad with restatement or throat-clearing.
 - **No filler.** Cut any sentence that does not teach: no "as we all know", no marketing adjectives, no recap paragraphs that repeat the previous section. Density over volume.
 - **Hook, not definition.** Open every concept with a concrete problem or a surprising fact the reader cares about (see the skeleton). Never open with a definition, a list, or a code block.
-- **Earn attention with figures and live code.** Prefer an interactive or animated viz that *reveals* the mechanism (insert, collide, grow, remap) over a static figure that merely restates the prose. Pair it with a "change X and watch Y" invitation. This strengthens G10, it does not replace it.
+- **Earn attention with figures and live code.** Prefer an interactive or animated viz that _reveals_ the mechanism (insert, collide, grow, remap) over a static figure that merely restates the prose. Pair it with a "change X and watch Y" invitation. This strengthens G10, it does not replace it.
 - **Honest peer voice.** Name footguns the first time, show the one edge case that surprises, and tell a short bit of history where it illuminates - that is what makes a longread memorable instead of tedious.
 
 A concept that is correct but boring fails review. Optimize for the reader who is curious but busy.
 
 ## Required article skeleton
 
-Every theory file follows this narrative arc. Section headings are yours to write (make them concrete, not generic); the *order and presence* of these beats is mandatory.
+Every theory file follows this narrative arc. Section headings are yours to write (make them concrete, not generic); the _order and presence_ of these beats is mandatory.
 
 ```
 ---

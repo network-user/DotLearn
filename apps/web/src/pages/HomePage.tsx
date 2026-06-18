@@ -494,10 +494,7 @@ export const HomePage = () => {
         />
 
         {hasQuery && contentResults.length > 0 && (
-          <ContentResultsSection
-            results={contentResults}
-            topicTitleBySlug={topicTitleBySlug}
-          />
+          <ContentResultsSection results={contentResults} topicTitleBySlug={topicTitleBySlug} />
         )}
 
         {rows.length === 0 ? (
@@ -655,7 +652,9 @@ const TodayCard = () => {
 const TracksBand = () => {
   const { t } = useTranslation('tracks');
   const aggregates = useTrackAggregates();
-  const visible = tracks.filter((track) => (aggregates.get(track.id)?.presentSlugs.length ?? 0) > 0);
+  const visible = tracks.filter(
+    (track) => (aggregates.get(track.id)?.presentSlugs.length ?? 0) > 0,
+  );
   if (visible.length === 0) return null;
   return (
     <section className="space-y-4">
@@ -923,11 +922,7 @@ const CatalogToolbar = ({
 
       <FacetGroup label={t('facets.duration', { defaultValue: 'Длительность' })}>
         {DURATION_FILTERS.map((option) => (
-          <Chip
-            key={option}
-            active={duration === option}
-            onClick={() => onToggleDuration(option)}
-          >
+          <Chip key={option} active={duration === option} onClick={() => onToggleDuration(option)}>
             {t(DURATION_LABEL_KEY[option], { defaultValue: DURATION_DEFAULT_LABEL[option] })}
           </Chip>
         ))}
@@ -1032,9 +1027,7 @@ const CatalogToolbar = ({
         </div>
 
         {reduceMotion ? (
-          filtersOpen && (
-            <div id="catalog-facets">{facets}</div>
-          )
+          filtersOpen && <div id="catalog-facets">{facets}</div>
         ) : (
           <AnimatePresence initial={false}>
             {filtersOpen && (

@@ -122,9 +122,7 @@ export const AnchorGridViz = ({
   const cellCenterX = (responsibleCol + 0.5) * cell;
   const cellCenterY = (responsibleRow + 0.5) * cell;
 
-  const transitionClass = reduceMotion
-    ? ''
-    : 'transition-all duration-med ease-standard';
+  const transitionClass = reduceMotion ? '' : 'transition-all duration-med ease-standard';
 
   return (
     <VizShell
@@ -205,12 +203,7 @@ export const AnchorGridViz = ({
               rx={3}
             />
             <circle cx={object.cx * VIEW} cy={object.cy * VIEW} r={4} className="fill-ok" />
-            <circle
-              cx={cellCenterX}
-              cy={cellCenterY}
-              r={3}
-              className="fill-accent"
-            />
+            <circle cx={cellCenterX} cy={cellCenterY} r={3} className="fill-accent" />
             <text
               x={objectPx.x + 4}
               y={Math.max(12, objectPx.y - 5)}
