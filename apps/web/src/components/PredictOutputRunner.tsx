@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { PredictOutputExercise } from '@dotlearn/contracts';
 import { runPredictOutput } from '@dotlearn/lesson-engine';
+import { Plus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
+import { parseSqlFixture } from '@/components/sandbox/parseSqlFixture';
+import { SqlSchemaPreview } from '@/components/sandbox/SqlSchemaPreview';
 import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
 import { extractFailureReason, useFailureMessage, type FailureReason } from '@/lib/failure-reason';
@@ -41,21 +44,57 @@ const parseScalar = (raw: string): unknown => {
   return trimmed;
 };
 
+type GridRow = Record<string, string>;
+
+const emptyRow = (columns: string[]): GridRow =>
+  Object.fromEntries(columns.map((column) => [column, '']));
+
 export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const failureMessage = useFailureMessage();
+  const expected = exercise.expected;
+  const isResultSet = expected.kind === 'result-set';
+  const columns = useMemo(
+    () => (expected.kind === 'result-set' ? Object.keys(expected.rows[0] ?? {}) : []),
+    [expected],
+  );
   const [draft, setDraft] = useState('');
+  const [gridRows, setGridRows] = useState<GridRow[]>(() =>
+    expected.kind === 'result-set' ? [emptyRow(Object.keys(expected.rows[0] ?? {}))] : [],
+  );
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
   const [pulse, setPulse] = useState(0);
 
+  const fixture = exercise.fixture;
+  const hasSqlTables = useMemo(
+    () => (fixture ? parseSqlFixture(fixture).length > 0 : false),
+    [fixture],
+  );
+
+  const setCell = (rowIndex: number, column: string, cellValue: string): void => {
+    setGridRows((rows) =>
+      rows.map((row, index) => (index === rowIndex ? { ...row, [column]: cellValue } : row)),
+    );
+  };
+
+  const addRow = (): void => {
+    setGridRows((rows) => [...rows, emptyRow(columns)]);
+  };
+
+  const removeRow = (rowIndex: number): void => {
+    setGridRows((rows) => rows.filter((_, index) => index !== rowIndex));
+  };
+
   const handleCheck = (): void => {
     const value =
-      exercise.expected.kind === 'scalar'
+      expected.kind === 'scalar'
         ? parseScalar(draft)
-        : exercise.expected.kind === 'stdout'
+        : expected.kind === 'stdout'
           ? draft
-          : draft;
+          : gridRows.map((row) =>
+              Object.fromEntries(columns.map((column) => [column, parseScalar(row[column] ?? '')])),
+            );
     const result = runPredictOutput(exercise, value);
     if (result.ok) {
       setState({ kind: 'pass' });
@@ -76,9 +115,9 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
   };
 
   const inputHint =
-    exercise.expected.kind === 'scalar'
+    expected.kind === 'scalar'
       ? t('predict.hint.scalar')
-      : exercise.expected.kind === 'stdout'
+      : expected.kind === 'stdout'
         ? t('predict.hint.stdout')
         : t('predict.hint.rows');
 
@@ -94,10 +133,76 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
       pulse={pulse}
     >
       <div className="space-y-3">
+        {fixture && (
+          <div className="space-y-1.5">
+            <p className="eyebrow text-fg-subtle">{t('predict.fixtureLabel')}</p>
+            {hasSqlTables ? (
+              <SqlSchemaPreview fixture={fixture} />
+            ) : (
+              <pre className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
+                {fixture}
+              </pre>
+            )}
+          </div>
+        )}
         <pre className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
           {exercise.snippet}
         </pre>
-        {exercise.expected.kind === 'stdout' ? (
+        {isResultSet ? (
+          <div className="space-y-2">
+            <p className="text-[12px] text-fg-subtle">{inputHint}</p>
+            <div className="overflow-x-auto rounded-lg border border-border-base">
+              <table className="w-full border-collapse text-[12.5px] font-mono">
+                <thead>
+                  <tr className="bg-surface-2/60">
+                    {columns.map((column) => (
+                      <th
+                        key={column}
+                        className="border-b border-border-base px-2.5 py-1.5 text-left font-medium text-fg-muted"
+                      >
+                        {column}
+                      </th>
+                    ))}
+                    <th className="w-10 border-b border-border-base px-2 py-1.5" aria-hidden />
+                  </tr>
+                </thead>
+                <tbody>
+                  {gridRows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-b border-border-base/60 last:border-0">
+                      {columns.map((column) => (
+                        <td key={column} className="px-1.5 py-1">
+                          <input
+                            value={row[column] ?? ''}
+                            onChange={(event) => setCell(rowIndex, column, event.target.value)}
+                            className="w-full min-w-[6ch] rounded-md border border-transparent bg-code-bg px-2 py-1.5 text-[16px] sm:text-[13px] text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
+                          />
+                        </td>
+                      ))}
+                      <td className="px-1 py-1 text-center align-middle">
+                        <button
+                          type="button"
+                          onClick={() => removeRow(rowIndex)}
+                          aria-label={t('predict.grid.removeRow')}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-fg-subtle hover:bg-surface-2 hover:text-err"
+                        >
+                          <X size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              onClick={addRow}
+              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline underline-offset-2 min-h-[var(--tap)] sm:min-h-0"
+            >
+              <Plus size={13} />
+              {t('predict.grid.addRow')}
+            </button>
+          </div>
+        ) : expected.kind === 'stdout' ? (
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -118,7 +223,7 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
           <Button
             variant="primary"
             size="sm"
-            disabled={draft.trim().length === 0}
+            disabled={isResultSet ? gridRows.length === 0 : draft.trim().length === 0}
             onClick={handleCheck}
             className="h-11 flex-1 sm:flex-initial sm:h-8"
           >

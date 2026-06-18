@@ -4,12 +4,20 @@ import {
   type PythonRuntime,
 } from '@dotlearn/lesson-engine';
 
-import type { PyodideWorkerRequest, PyodideWorkerResponse } from './protocol';
+import type {
+  PyodideInitProgress,
+  PyodideWorkerRequest,
+  PyodideWorkerResponse,
+} from './protocol';
+
+export type { PyodideInitProgress } from './protocol';
 
 export interface PyodideRuntimeOptions {
   createWorker: () => Worker;
   indexUrl?: string;
   timeoutMs?: number;
+  initTimeoutMs?: number;
+  onInitProgress?: (progress: PyodideInitProgress) => void;
 }
 
 export interface PyodideRuntime extends PythonRuntime {
@@ -24,6 +32,7 @@ interface PendingResolver {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_INIT_TIMEOUT_MS = 120_000;
 
 let idCounter = 0;
 const nextId = (): string => {
@@ -33,13 +42,38 @@ const nextId = (): string => {
 
 export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRuntime => {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const initTimeoutMs = options.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
   const pending = new Map<string, PendingResolver>();
 
   let worker: Worker | undefined;
   let initPromise: Promise<void> | undefined;
+  let initWatchdog: ReturnType<typeof setTimeout> | undefined;
+
+  const clearInitWatchdog = (): void => {
+    if (initWatchdog !== undefined) {
+      clearTimeout(initWatchdog);
+      initWatchdog = undefined;
+    }
+  };
+
+  const armInitWatchdog = (): void => {
+    clearInitWatchdog();
+    initWatchdog = setTimeout(() => {
+      disposeWorker(
+        new PythonExecutionError(
+          `python runtime download stalled for ${initTimeoutMs}ms and was aborted`,
+        ),
+      );
+    }, initTimeoutMs);
+  };
 
   const onMessage = (event: MessageEvent<PyodideWorkerResponse>): void => {
     const response = event.data;
+    if (response.type === 'init-progress') {
+      armInitWatchdog();
+      options.onInitProgress?.(response.progress);
+      return;
+    }
     const resolver = pending.get(response.id);
     if (!resolver) {
       return;
@@ -52,6 +86,7 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
   };
 
   const disposeWorker = (error: Error, options?: { warmReinit?: boolean }): void => {
+    clearInitWatchdog();
     if (worker) {
       worker.removeEventListener('message', onMessage);
       worker.removeEventListener('error', onError);
@@ -110,11 +145,20 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
 
   const init = (): Promise<void> => {
     if (!initPromise) {
-      initPromise = send(buildInitRequest(), undefined).then((response) => {
-        if (response.type === 'error') {
-          throw new PythonExecutionError(response.message);
-        }
-      });
+      armInitWatchdog();
+      initPromise = send(buildInitRequest(), undefined)
+        .then((response) => {
+          clearInitWatchdog();
+          if (response.type === 'error') {
+            throw new PythonExecutionError(response.message);
+          }
+        })
+        .catch((error: unknown) => {
+          clearInitWatchdog();
+          throw error instanceof Error
+            ? error
+            : new PythonExecutionError(String(error));
+        });
     }
     return initPromise;
   };

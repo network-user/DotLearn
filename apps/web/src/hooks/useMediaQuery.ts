@@ -2,6 +2,8 @@ import { useCallback, useSyncExternalStore } from 'react';
 
 export const coarsePointerQuery = '(pointer: coarse)';
 
+const matchMediaSnapshot = (query: string): boolean => window.matchMedia(query).matches;
+
 export const useMediaQuery = (query: string): boolean => {
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
@@ -11,9 +13,6 @@ export const useMediaQuery = (query: string): boolean => {
     },
     [query],
   );
-  return useSyncExternalStore(
-    subscribe,
-    () => window.matchMedia(query).matches,
-    () => false,
-  );
+  const getSnapshot = useCallback(() => matchMediaSnapshot(query), [query]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 };

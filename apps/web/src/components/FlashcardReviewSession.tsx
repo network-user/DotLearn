@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { isCardDue } from '@dotlearn/lesson-engine';
+import { Link } from '@tanstack/react-router';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { RotateCcw } from 'lucide-react';
+import { CheckCircle2, Layers, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import type { SessionCard } from '@/lib/flashcard-sources';
@@ -50,13 +53,12 @@ export const FlashcardReviewSession = ({
   const buildQueue = useCallback(async (entries: SessionCard[]): Promise<number[]> => {
     const records = await db.flashcardReviews.toArray();
     const byKey = new Map(records.map((record) => [`${record.topicSlug}:${record.cardId}`, record]));
-    const now = Date.now();
+    const now = new Date();
     return entries
       .map((_, index) => index)
       .filter((index) => {
         const entry = entries[index]!;
-        const record = byKey.get(`${entry.deckSlug}:${entry.card.id}`);
-        return !record || new Date(record.due).getTime() <= now;
+        return isCardDue(byKey.get(`${entry.deckSlug}:${entry.card.id}`), now);
       });
   }, []);
 
@@ -160,28 +162,51 @@ export const FlashcardReviewSession = ({
       {phase === 'loading' && <Skeleton rounded="2xl" className="h-72" />}
 
       {phase === 'empty' && (
-        <Surface variant="inset">
-          <div className="space-y-4 p-8 text-center">
-            <p className="text-sm text-fg-muted">{emptyMessage ?? t('practice.noCards')}</p>
-            {onExit && (
-              <Button variant="outline" size="sm" onClick={onExit}>
+        <EmptyState
+          icon={<Layers size={22} className="text-accent" />}
+          title={t('emptyTitle')}
+          body={emptyMessage ?? t('practice.noCards')}
+          primaryAction={
+            <Link to="/flashcards" className="block w-full sm:w-auto">
+              <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" leadingIcon={<Layers size={16} />}>
+                {t('browseDecks')}
+              </Button>
+            </Link>
+          }
+          secondaryAction={
+            onExit ? (
+              <Button variant="ghost" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" onClick={onExit}>
                 {exitLabel ?? t('backToHub')}
               </Button>
-            )}
-          </div>
-        </Surface>
+            ) : undefined
+          }
+        />
       )}
 
       {phase === 'caught-up' && (
-        <Surface variant="inset" rule="top">
-          <div className="space-y-4 p-8 text-center">
-            <h2 className="font-display text-2xl text-fg">{t('caughtUpTitle')}</h2>
-            <p className="text-sm text-fg-muted">{t('caughtUpBody', { count: cards.length })}</p>
-            <Button variant="primary" size="md" onClick={reviewAll}>
-              {t('reviewAll')}
+        <EmptyState
+          icon={<CheckCircle2 size={22} className="text-ok" />}
+          title={t('caughtUpTitle')}
+          body={t('caughtUpBody', { count: cards.length })}
+          primaryAction={
+            <Button
+              variant="primary"
+              size="md"
+              className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+              leadingIcon={<RotateCcw size={16} />}
+              onClick={reviewAll}
+            >
+              {t('learnAhead')}
             </Button>
-          </div>
-        </Surface>
+          }
+          secondaryAction={
+            onExit ? (
+              <Button variant="ghost" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" onClick={onExit}>
+                {exitLabel ?? t('backToHub')}
+              </Button>
+            ) : undefined
+          }
+        />
       )}
 
       {phase === 'done' && (
@@ -211,7 +236,14 @@ export const FlashcardReviewSession = ({
       {phase === 'review' && current && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={total}
+              aria-valuenow={pos}
+              aria-valuetext={t('progress', { current: pos + 1, total })}
+              className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2"
+            >
               <div
                 className="h-full rounded-full bg-accent transition-[width] duration-med ease-standard"
                 style={{ width: `${percent}%` }}
@@ -224,11 +256,16 @@ export const FlashcardReviewSession = ({
 
           <div className="text-center text-[11px] text-fg-subtle">{current.sourceLabel}</div>
 
+          <p aria-live="polite" className="sr-only">
+            {flipped ? t('back') : t('front')}
+          </p>
+
           <button
             type="button"
             onClick={() => setFlipped((value) => !value)}
             className="block w-full text-left"
             aria-label={t('flipAria')}
+            aria-pressed={flipped}
           >
             <Surface interactive className="min-h-[260px]">
               <div className="flex min-h-[260px] flex-col p-6 sm:p-8">
@@ -242,7 +279,7 @@ export const FlashcardReviewSession = ({
                       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
                       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                       className={cx(
-                        'text-center font-serif leading-relaxed text-fg',
+                        'flashcard-face text-center font-serif leading-relaxed text-fg',
                         flipped ? 'text-[17px]' : 'text-[20px] font-medium',
                       )}
                     >
@@ -258,7 +295,11 @@ export const FlashcardReviewSession = ({
           </button>
 
           {flipped ? (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div
+              role="group"
+              aria-label={t('ratingGroup')}
+              className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+            >
               {RATINGS.map((entry) => (
                 <button
                   key={entry.key}

@@ -2,7 +2,11 @@
 
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 
-import type { PyodideWorkerRequest, PyodideWorkerResponse } from './protocol';
+import type {
+  PyodideInitProgress,
+  PyodideWorkerRequest,
+  PyodideWorkerResponse,
+} from './protocol';
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -59,17 +63,47 @@ const hardenWorkerScope = (): void => {
 
 let pyodidePromise: Promise<PyodideInterface> | undefined;
 
-const ensurePyodide = (indexUrl?: string): Promise<PyodideInterface> => {
+const WASM_FILE = 'pyodide.asm.wasm';
+
+const prefetchRuntimeBinary = async (
+  indexUrl: string,
+  onProgress: (progress: PyodideInitProgress) => void,
+): Promise<void> => {
+  const base = indexUrl.endsWith('/') ? indexUrl : `${indexUrl}/`;
+  const response = await fetch(`${base}${WASM_FILE}`);
+  if (!response.ok || !response.body) {
+    return;
+  }
+  const totalHeader = response.headers.get('content-length');
+  const totalBytes = totalHeader ? Number.parseInt(totalHeader, 10) || 0 : 0;
+  const reader = response.body.getReader();
+  let loadedBytes = 0;
+  onProgress({ phase: 'download', loadedBytes: 0, totalBytes });
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    loadedBytes += value?.byteLength ?? 0;
+    onProgress({ phase: 'download', loadedBytes, totalBytes });
+  }
+  onProgress({ phase: 'boot', loadedBytes, totalBytes: loadedBytes });
+};
+
+const ensurePyodide = (
+  indexUrl: string | undefined,
+  onProgress: (progress: PyodideInitProgress) => void,
+): Promise<PyodideInterface> => {
   if (!pyodidePromise) {
     if (!indexUrl) {
       return Promise.reject(
         new Error('Pyodide index URL is required; refusing to fall back to a remote CDN.'),
       );
     }
-    pyodidePromise = loadPyodide({ indexURL: indexUrl }).then((py) => {
+    pyodidePromise = (async () => {
+      await prefetchRuntimeBinary(indexUrl, onProgress).catch(() => undefined);
+      const py = await loadPyodide({ indexURL: indexUrl });
       hardenWorkerScope();
       return py;
-    });
+    })();
   }
   return pyodidePromise;
 };
@@ -114,9 +148,11 @@ const toPlain = (value: unknown): unknown => {
   return value;
 };
 
+const noopProgress = (): void => undefined;
+
 const runEvaluate = async (id: string, source: string, call: string): Promise<void> => {
   try {
-    const py = await ensurePyodide();
+    const py = await ensurePyodide(undefined, noopProgress);
     // Each evaluation runs in a fresh globals namespace so definitions, imports and any
     // __builtins__ monkeypatching from one run cannot leak into a later grading run.
     const namespace = py.toPy({});
@@ -170,7 +206,10 @@ workerScope.addEventListener('message', (event: MessageEvent<PyodideWorkerReques
     return;
   }
   if (request.type === 'init') {
-    ensurePyodide(request.indexUrl)
+    const reportProgress = (progress: PyodideInitProgress): void => {
+      post({ id: request.id, type: 'init-progress', progress });
+    };
+    ensurePyodide(request.indexUrl, reportProgress)
       .then(() => post({ id: request.id, type: 'ready' }))
       .catch((error: unknown) =>
         post({

@@ -9,5 +9,11 @@ export {
   createPyodideRuntime,
   type PyodideRuntime,
   type PyodideRuntimeOptions,
+  type PyodideInitProgress,
 } from './python/runtime';
-export type { PyodideWorkerRequest, PyodideWorkerResponse } from './python/protocol';
+export type {
+  PyodideInitPhase,
+  PyodideInitProgress as PyodideWorkerInitProgress,
+  PyodideWorkerRequest,
+  PyodideWorkerResponse,
+} from './python/protocol';

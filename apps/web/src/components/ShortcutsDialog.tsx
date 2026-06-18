@@ -4,6 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { Dialog } from '@/components/ui/Dialog';
 import { Kbd } from '@/components/ui/Kbd';
 
+export const SHORTCUTS_EVENT = 'dotlearn:open-shortcuts';
+
+export const openShortcuts = (): void => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(SHORTCUTS_EVENT));
+};
+
 interface ShortcutRow {
   id: string;
   keys: string[];
@@ -33,8 +40,13 @@ export const ShortcutsHost = () => {
       event.preventDefault();
       setOpen(true);
     };
+    const handleOpen = (): void => setOpen(true);
     window.addEventListener('keydown', handleKeydown);
-    return () => window.removeEventListener('keydown', handleKeydown);
+    window.addEventListener(SHORTCUTS_EVENT, handleOpen);
+    return () => {
+      window.removeEventListener('keydown', handleKeydown);
+      window.removeEventListener(SHORTCUTS_EVENT, handleOpen);
+    };
   }, []);
 
   const rows: ShortcutRow[] = [

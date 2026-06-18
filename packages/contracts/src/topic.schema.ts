@@ -34,6 +34,12 @@ export const TopicConcept = z.object({
 });
 export type TopicConcept = z.infer<typeof TopicConcept>;
 
+export const TopicSourceRef = z.object({
+  title: z.string().min(1),
+  url: z.string().url(),
+});
+export type TopicSourceRef = z.infer<typeof TopicSourceRef>;
+
 const fileLanguage = (filename: string): TopicLanguage | undefined => {
   if (filename.endsWith('.en.mdx') || filename.endsWith('.en.yaml')) return 'en';
   if (filename.endsWith('.ru.mdx') || filename.endsWith('.ru.yaml')) return 'ru';
@@ -51,10 +57,12 @@ export const TopicManifest = z
     estimatedHours: z.number().min(0.25).max(200),
     runtime: TopicRuntime,
     prerequisites: z.array(z.string().regex(SLUG_PATTERN)).default([]),
+    relatedTopics: z.array(z.string().regex(SLUG_PATTERN)).optional(),
     tags: z.array(z.string().regex(TAG_PATTERN)).min(1).max(8),
     author: TopicAuthor,
     concepts: z.array(TopicConcept).min(1),
     license: TopicLicense,
+    sources: z.array(TopicSourceRef).optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -83,6 +91,33 @@ export const TopicManifest = z
         path: ['primaryLanguage'],
         message: 'primaryLanguage must be listed in availableLanguages',
       });
+    }
+    if (manifest.relatedTopics) {
+      const uniqueRelated = new Set(manifest.relatedTopics);
+      if (uniqueRelated.size !== manifest.relatedTopics.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relatedTopics'],
+          message: 'relatedTopics must not contain duplicates',
+        });
+      }
+      if (uniqueRelated.has(manifest.slug)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relatedTopics'],
+          message: 'relatedTopics must not reference the topic itself',
+        });
+      }
+      const prerequisites = new Set(manifest.prerequisites);
+      for (const related of manifest.relatedTopics) {
+        if (prerequisites.has(related)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['relatedTopics'],
+            message: `relatedTopics must be distinct from prerequisites ("${related}" is already a prerequisite)`,
+          });
+        }
+      }
     }
     const conceptIds = new Set<string>();
     for (const [index, concept] of manifest.concepts.entries()) {

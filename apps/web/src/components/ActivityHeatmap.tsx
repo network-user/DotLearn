@@ -37,7 +37,10 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
     }
     const byDay = new Map(activity.map((record) => [record.day, record]));
     const totalOf = (record: ActivityRecord): number =>
-      record.exercisesAttempted + (record.interviewStudied ?? 0);
+      record.exercisesAttempted +
+      (record.cardsReviewed ?? 0) +
+      (record.conceptsRead ?? 0) +
+      (record.interviewStudied ?? 0);
     let max = 0;
     for (const record of activity) {
       const total = totalOf(record);
@@ -49,6 +52,8 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
       day: string;
       count: number;
       passed: number;
+      reviewed: number;
+      read: number;
       studied: number;
       inFuture: boolean;
     }> = [];
@@ -60,6 +65,8 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
         day,
         count: record ? totalOf(record) : 0,
         passed: record?.exercisesPassed ?? 0,
+        reviewed: record?.cardsReviewed ?? 0,
+        read: record?.conceptsRead ?? 0,
         studied: record?.interviewStudied ?? 0,
         inFuture: cursor > today,
       });
@@ -81,16 +88,21 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
               if (!cell || cell.inFuture) {
                 return <span key={dayOfWeek} className="size-3 rounded-sm bg-transparent" />;
               }
+              const cellLabel = t('tooltip', {
+                day: cell.day,
+                attempted: cell.count,
+                passed: cell.passed,
+                reviewed: cell.reviewed,
+                read: cell.read,
+                studied: cell.studied,
+              });
               return (
                 <span
                   key={dayOfWeek}
+                  role="img"
+                  aria-label={cellLabel}
                   className={`size-3 rounded-sm ${intensityClass(cell.count, grid.max)}`}
-                  title={t('tooltip', {
-                    day: cell.day,
-                    attempted: cell.count,
-                    passed: cell.passed,
-                    studied: cell.studied,
-                  })}
+                  title={cellLabel}
                 />
               );
             })}
@@ -99,14 +111,17 @@ export const ActivityHeatmap = ({ activity, weeks = 14 }: ActivityHeatmapProps) 
       </div>
       <div className="flex items-center gap-2 text-[10px] text-fg-subtle">
         <span>{t('less')}</span>
-        <span className="size-3 rounded-sm bg-surface-2" />
-        <span className="size-3 rounded-sm bg-accent/15" />
-        <span className="size-3 rounded-sm bg-accent/35" />
-        <span className="size-3 rounded-sm bg-accent/60" />
-        <span className="size-3 rounded-sm bg-accent/85" />
-        <span className="size-3 rounded-sm bg-accent" />
+        <span aria-hidden className="size-3 rounded-sm bg-surface-2" />
+        <span aria-hidden className="size-3 rounded-sm bg-accent/15" />
+        <span aria-hidden className="size-3 rounded-sm bg-accent/35" />
+        <span aria-hidden className="size-3 rounded-sm bg-accent/60" />
+        <span aria-hidden className="size-3 rounded-sm bg-accent/85" />
+        <span aria-hidden className="size-3 rounded-sm bg-accent" />
         <span>{t('more')}</span>
       </div>
+      <p className="text-[10px] text-fg-subtle">
+        {t('legendScale', { max: grid.max })}
+      </p>
     </div>
   );
 };

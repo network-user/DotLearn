@@ -1,8 +1,20 @@
-import { useState, type ComponentType, type ReactNode } from 'react';
+import {
+  isValidElement,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react';
 
 import { MDXProvider } from '@mdx-js/react';
-import { ChevronRight, Info, Lightbulb, Sparkles, TriangleAlert } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
+import { ChevronRight, FlaskConical, Info, Lightbulb, Sparkles, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+import { CopyButton } from '@/components/playground/CopyButton';
+import { stashSandboxIncoming, type PlaygroundTab } from '@/lib/playground';
 
 import {
   AreaChart,
@@ -30,6 +42,7 @@ import {
   SortLimitFigure,
 } from '@/components/article';
 import { Checkpoint } from '@/components/article/Checkpoint';
+import { ConceptLink } from '@/components/article/ConceptLink';
 import { Term } from '@/components/article/Term';
 import { PyDemo } from '@/components/sandbox/PyDemo';
 import { PyStepper } from '@/components/sandbox/PyStepper';
@@ -76,6 +89,11 @@ import { LossLandscape } from '@/components/theory-viz/nn/LossLandscape';
 import { NetworkDiagram } from '@/components/theory-viz/nn/NetworkDiagram';
 import { PerceptronViz } from '@/components/theory-viz/nn/PerceptronViz';
 import { GitTerminal } from '@/components/theory-viz/git/GitTerminal';
+import { CollisionViz } from '@/components/theory-viz/hashing/CollisionViz';
+import { ConsistentHashRing } from '@/components/theory-viz/hashing/ConsistentHashRing';
+import { HashFunctionViz } from '@/components/theory-viz/hashing/HashFunctionViz';
+import { HashLoopDemo } from '@/components/theory-viz/hashing/HashLoopDemo';
+import { LoadFactorViz } from '@/components/theory-viz/hashing/LoadFactorViz';
 
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
@@ -285,6 +303,64 @@ const zoomableDiagrams: Record<string, ComponentType<Record<string, unknown>>> =
   ]),
 );
 
+const languageFromCodeChild = (children: ReactNode): string | undefined => {
+  if (!isValidElement(children)) return undefined;
+  const childClassName = (children.props as { className?: string }).className ?? '';
+  const match = /language-([a-z0-9+-]+)/i.exec(childClassName);
+  return match?.[1]?.toLowerCase();
+};
+
+const sandboxTabForLanguage = (language: string | undefined): PlaygroundTab | undefined => {
+  if (language === 'python' || language === 'py') return 'python';
+  if (language === 'sql') return 'sql';
+  return undefined;
+};
+
+const CodeBlock = ({ children, ...rest }: React.HTMLAttributes<HTMLPreElement>) => {
+  const { t } = useTranslation('viz');
+  const navigate = useNavigate();
+  const preRef = useRef<HTMLPreElement>(null);
+  const [codeText, setCodeText] = useState('');
+
+  useEffect(() => {
+    setCodeText(preRef.current?.textContent ?? '');
+  }, [children]);
+
+  const sandboxTab = sandboxTabForLanguage(languageFromCodeChild(children));
+
+  const handleOpenInSandbox = useCallback(() => {
+    const code = preRef.current?.textContent ?? codeText;
+    if (!sandboxTab || code.length === 0) return;
+    void stashSandboxIncoming({ tab: sandboxTab, code }).then(() => navigate({ to: '/sandbox' }));
+  }, [sandboxTab, codeText, navigate]);
+
+  return (
+    <div className="group relative my-6">
+      <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-100 transition-opacity duration-fast md:opacity-0 md:focus-within:opacity-100 md:group-hover:opacity-100">
+        {sandboxTab ? (
+          <button
+            type="button"
+            onClick={handleOpenInSandbox}
+            title={t('code.openInSandbox', { defaultValue: 'Открыть в песочнице' })}
+            className="inline-flex min-h-[var(--tap)] items-center gap-1.5 rounded-md bg-surface-1/80 px-2 text-[11px] font-medium tracking-snug text-fg-subtle backdrop-blur transition-colors duration-fast hover:bg-surface-2/80 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-0 sm:py-1"
+          >
+            <FlaskConical size={13} aria-hidden />
+            <span>{t('code.openInSandbox', { defaultValue: 'В песочницу' })}</span>
+          </button>
+        ) : null}
+        <CopyButton text={codeText} className="bg-surface-1/80 backdrop-blur" />
+      </div>
+      <pre
+        ref={preRef}
+        {...rest}
+        className="rounded-lg border border-border-base bg-code-bg p-4 overflow-x-auto text-[13px] font-mono leading-relaxed"
+      >
+        {children}
+      </pre>
+    </div>
+  );
+};
+
 const mdxComponents = {
   h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
     <h1
@@ -339,12 +415,7 @@ const mdxComponents = {
       />
     );
   },
-  pre: (props: React.HTMLAttributes<HTMLPreElement>) => (
-    <pre
-      {...props}
-      className="rounded-lg border border-border-base bg-code-bg p-4 my-6 overflow-x-auto text-[13px] font-mono leading-relaxed"
-    />
-  ),
+  pre: CodeBlock,
   a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
     <a
       {...props}
@@ -377,6 +448,7 @@ const mdxComponents = {
   KeyTakeaways,
   Checkpoint,
   Term,
+  ConceptLink,
   SideViz,
   SideSql,
   PyDemo,
@@ -411,6 +483,11 @@ const mdxComponents = {
   GradientDescentViz,
   LossLandscape,
   GitTerminal,
+  HashFunctionViz,
+  HashLoopDemo,
+  CollisionViz,
+  LoadFactorViz,
+  ConsistentHashRing,
   ...zoomableDiagrams,
   img: LightboxImage,
 };

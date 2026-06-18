@@ -1,0 +1,119 @@
+---
+conceptId: hashing-in-python
+title: Hashing in Python
+estimatedMinutes: 50
+---
+
+# Hashing in Python: why a list cannot be a key
+
+Try to run `{[1, 2]: "value"}` - Python answers `TypeError: unhashable type: 'list'`. Yet a tuple `{(1, 2): "value"}` works fine. Why does one container qualify as a dict key and the other does not? The answer is the hashing contract, which runs through the whole language: `dict`, `set`, `frozenset` are built on hash tables, and any key object must obey the rules, or the table breaks.
+
+In this section we work out what makes an object **hashable**, how the `__hash__` and `__eq__` methods are connected, why mutable objects are forbidden as keys, and why Python mixes randomness into string hashes on every run. By the end you will be able to make your own class fit for dict keys - and avoid the classic traps.
+
+## Mental model: the `__hash__` and `__eq__` contract
+
+An object is hashable if it has a `__hash__` method returning an integer and an `__eq__` method checking equality. These two methods are bound by a strict contract:
+
+> If two objects are equal (`a == b`), their hashes must be equal (`hash(a) == hash(b)`).
+
+The converse is not required: different objects may by chance have the same hash (that is a collision, and the table handles it). But equal objects with different hashes are a disaster: a dict puts the key in one bucket and looks in another, and the value is "lost".
+
+<Figure caption="The contract: equality must imply equal hashes. The converse does not hold: the same hash for different objects is allowed (a collision).">
+  <Sketch viewBox="0 0 440 170" title="The __hash__ and __eq__ contract">
+    <SketchBox x={20} y={30} width={110} height={44} />
+    <SketchLabel x={75} y={56} mono>a == b</SketchLabel>
+    <SketchArrow from={[135, 52]} to={[235, 52]} accent />
+    <SketchLabel x={185} y={40} muted>requires</SketchLabel>
+    <SketchBox x={240} y={30} width={180} height={44} accent />
+    <SketchLabel x={330} y={56} mono accent>hash(a) == hash(b)</SketchLabel>
+
+    <SketchBox x={240} y={104} width={180} height={44} />
+    <SketchLabel x={330} y={130} mono>hash(a) == hash(b)</SketchLabel>
+    <SketchArrow from={[235, 126]} to={[135, 126]} dashed />
+    <SketchLabel x={185} y={114} muted>does not require</SketchLabel>
+    <SketchBox x={20} y={104} width={110} height={44} dashed />
+    <SketchLabel x={75} y={130} mono muted>a == b</SketchLabel>
+  </Sketch>
+</Figure>
+
+## What is hashable and what is not
+
+The rule is simple: **immutable** built-in types are hashable, mutable ones are not.
+
+```python
+hash(42)          # ok: int
+hash("Moscow")    # ok: str
+hash((1, 2, 3))   # ok: tuple of hashables
+hash([1, 2, 3])   # TypeError: list is mutable
+hash({1: 2})      # TypeError: dict is mutable
+```
+
+The logic is direct: a key is placed in a bucket by its hash. If the object is later **changed**, its hash changes, and it ends up in the "wrong" bucket - the dict no longer finds it. By forbidding mutable objects as keys, Python protects the table from such desync in advance. So a tuple (immutable) is a valid key and a list is not; `frozenset` is hashable while an ordinary `set` is not.
+
+## Make your own class hashable
+
+Run the code: the class `City` defines `__eq__` and `__hash__` via the tuple of its fields, so two different objects with the same data count as one key. Change `__hash__` to return a constant (say `return 0`) and run again: the dict still works correctly, but all keys fall into one bucket - a legal but catastrophically slow hash.
+
+<PyDemo
+  title="Your own class as a dict key"
+  code={`class City:
+    def __init__(self, name, region):
+        self.name = name
+        self.region = region
+
+    def __eq__(self, other):
+        return (isinstance(other, City)
+                and (self.name, self.region) == (other.name, other.region))
+
+    def __hash__(self):
+        return hash((self.name, self.region))
+
+population = {}
+population[City("Kazan", "Tatarstan")] = 1_300_000
+print(population[City("Kazan", "Tatarstan")])`}
+/>
+
+Notice: we store a value by one `City` object and read it by a **different** object with the same fields - and find it. That is the contract at work: equal objects give equal hashes, and the dict sees them as one key. Without `__hash__` (but with `__eq__`) the class would be unhashable; without `__eq__` two "identical" cities would count as different keys.
+
+## Randomness in string hashes
+
+Run `python -c "print(hash('a'))"` twice in a terminal and you get different numbers. This is not a bug: since version 3.3, Python mixes a random "seed" into the hash of strings and bytes, one per process run (the `PYTHONHASHSEED` variable). The goal is protection from the **HashDoS** attack: knowing the hash function, an attacker could send thousands of key-strings that all fall into one bucket and turn an O(1) dict into an O(n²) crawl. A random seed makes such crafting impossible.
+
+<Callout type="warning">
+Because of randomization you **cannot** store a string's `hash()` between runs or use it as a stable identifier: tomorrow the same word gives a different number. For a reproducible hash use `hashlib` (for example `sha256`) - it is deterministic.
+</Callout>
+
+## Edge cases
+
+- **`hash(-1)`.** In CPython the value `-1` is reserved as an error flag in C code, so `hash(-1)` returns `-2`. A trifle, but it shows the hash need not equal the number itself.
+- **Order in a dict.** Since 3.7 `dict` guarantees **insertion** order, not hash order. Do not rely on keys coming out "as they fell into buckets".
+- **A mutated key.** If you put a mutable object into the keys (via a clever `__hash__`) and then change it, the value disappears from the dict - the classic way to shoot yourself in the foot.
+
+## Common mistakes
+
+- **`__eq__` without `__hash__`.** Override only `__eq__` and Python makes the class **unhashable** (`__hash__` becomes `None`) - precisely so you do not break the contract by accident. Override equality - override the hash too.
+- **A mutable object in keys.** A list, set, or dict cannot go into keys. Use an immutable counterpart: a tuple instead of a list, `frozenset` instead of `set`.
+- **Trusting a string's `hash()` between runs.** Randomization breaks any attempt to cache or compare string hashes across processes. For that there is `hashlib`.
+
+<Detail summary="How dict is built inside">
+
+`dict` in CPython is a hash table with open addressing. On a collision it does not step linearly to the neighbouring cell but computes the next position by a perturbation formula: at each step the high bits of the original hash are mixed into the index, so probe chains of different keys diverge and clustering is suppressed. Since 3.6 the dict is also "compact": pairs are stored in a dense array in insertion order, while the hash table holds only indexes into that array - hence both the guaranteed insertion order and the memory savings. `set` is built similarly, but without values.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An object is hashable if it has a consistent __hash__ (integer) and __eq__.",
+    "Contract: a == b requires hash(a) == hash(b); the converse is not required (collisions are allowed).",
+    "Immutable built-in types are hashable (int, str, tuple, frozenset), mutable ones are not (list, dict, set).",
+    "Mutable keys are forbidden because changing the object would desync its hash and bucket.",
+    "String hash() is randomized on each run (PYTHONHASHSEED) to defend against HashDoS - do not use it as a stable id.",
+    "When overriding __eq__, override __hash__ too: otherwise the class becomes unhashable.",
+  ]}
+/>
+
+## References
+
+- [Python docs - object.__hash__](https://docs.python.org/3/reference/datamodel.html#object.__hash__)
+- [Python docs - hashable (glossary)](https://docs.python.org/3/glossary.html#term-hashable)
+- [Python docs - PYTHONHASHSEED](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED)

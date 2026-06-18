@@ -9,6 +9,8 @@ import { toast } from 'sonner';
 import { GitTerminal } from '@/components/theory-viz/git/GitTerminal';
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
+import { RunnerStatus } from '@/components/sandbox/RunnerStatus';
+import { SolutionReveal } from '@/components/sandbox/SolutionReveal';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
@@ -34,7 +36,13 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
   const [commands, setCommands] = useState<string[]>([]);
   const [state, setState] = useState<GradeState>({ kind: 'idle' });
   const [pulse, setPulse] = useState(0);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [hintsExhausted, setHintsExhausted] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const passedRecorded = useRef(false);
+
+  const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
   const initial = useMemo(() => {
     const setup: { files?: Record<string, string>; commands?: string[] } = {};
@@ -58,16 +66,20 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
             description: exercise.id,
           });
           burstConfetti();
+          setStatusMessage(t('common.status.passedSimple'));
           void recordAttempt(topicSlug, exercise.id, 'pass');
         }
       } else {
         passedRecorded.current = false;
-        setState({ kind: 'fail', failure: extractFailureReason(result) });
+        const failure = extractFailureReason(result);
+        setState({ kind: 'fail', failure });
+        setFailedAttempts((count) => count + 1);
+        setStatusMessage(t('common.status.failed', { reason: failureMessage(failure) }));
         void recordAttempt(topicSlug, exercise.id, 'fail');
       }
       setPulse((value) => value + 1);
     },
-    [exercise, t, topicSlug],
+    [exercise, t, topicSlug, failureMessage],
   );
 
   const handleCommandsChange = useCallback((next: string[]): void => {
@@ -89,6 +101,13 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
     void grade(commands);
   };
 
+  const handleRevealSolution = (): void => {
+    if (revealed) return;
+    setRevealed(true);
+    setStatusMessage(t('common.status.revealed'));
+    void recordAttempt(topicSlug, exercise.id, 'fail');
+  };
+
   const status: ExerciseCardStatus =
     state.kind === 'pass' ? 'pass' : state.kind === 'fail' ? 'fail' : 'idle';
 
@@ -100,6 +119,7 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
       status={status}
       pulse={pulse}
     >
+      <RunnerStatus message={statusMessage} />
       <div className="space-y-3">
         <GitTerminal
           initial={initial}
@@ -125,7 +145,7 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
               defaultValue: '{{count}} команд выполнено',
             })}
           </Badge>
-          <HintBlock hints={exercise.hints} />
+          <HintBlock hints={exercise.hints} onAllHintsShown={() => setHintsExhausted(true)} />
         </div>
 
         {state.kind === 'pass' && (
@@ -142,6 +162,13 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
             })}
           </div>
         )}
+
+        <SolutionReveal
+          solution={exercise.solution.join('\n')}
+          language="bash"
+          unlocked={solutionUnlocked}
+          onReveal={handleRevealSolution}
+        />
       </div>
     </ExerciseCard>
   );

@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react';
+
 import {
   languageOfTopicFile,
   type TopicLanguage,
@@ -12,7 +14,8 @@ import {
 } from '@dotlearn/lesson-engine';
 
 import { listHiddenTopics } from './api-client';
-import { getCurrentLanguage } from './i18n';
+import i18n, { getCurrentLanguage } from './i18n';
+import { getSettings, useSettings } from './settings';
 import manifestRecord from 'virtual:topic-manifests';
 
 const exerciseModules = import.meta.glob<string>(
@@ -65,9 +68,31 @@ export const listTopicSlugs = async (): Promise<string[]> => {
   return cachedSlugs;
 };
 
+export const resolveContentLanguage = (): TopicLanguage => {
+  const { contentLanguage } = getSettings();
+  return contentLanguage === 'follow-ui' ? getCurrentLanguage() : contentLanguage;
+};
+
+const subscribeToLocale = (listener: () => void): (() => void) => {
+  i18n.on('languageChanged', listener);
+  return () => {
+    i18n.off('languageChanged', listener);
+  };
+};
+
+export const useContentLanguage = (): TopicLanguage => {
+  const { contentLanguage } = useSettings();
+  const locale = useSyncExternalStore<TopicLanguage>(
+    subscribeToLocale,
+    () => getCurrentLanguage(),
+    () => 'ru',
+  );
+  return contentLanguage === 'follow-ui' ? locale : contentLanguage;
+};
+
 export const effectiveLanguage = (
   manifest: TopicManifest,
-  requested: TopicLanguage,
+  requested: TopicLanguage = resolveContentLanguage(),
 ): TopicLanguage =>
   manifest.availableLanguages.includes(requested) ? requested : manifest.primaryLanguage;
 
@@ -106,7 +131,7 @@ export const prefetchTopic = (slug: string): void => {
   let language: TopicLanguage | undefined;
   try {
     const manifest = manifestOf(slug);
-    language = manifest ? effectiveLanguage(manifest, getCurrentLanguage()) : undefined;
+    language = manifest ? effectiveLanguage(manifest, resolveContentLanguage()) : undefined;
   } catch {
     language = undefined;
   }

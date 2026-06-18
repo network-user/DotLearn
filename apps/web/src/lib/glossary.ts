@@ -146,6 +146,84 @@ export const GLOSSARY: GlossaryEntry[] = [
     },
     topicSlug: 'computational-complexity',
   },
+  {
+    id: 'idempotency',
+    term: { ru: 'Идемпотентность', en: 'Idempotency' },
+    def: {
+      ru: 'Свойство операции, при котором повторный её вызов с теми же входными данными даёт тот же результат и не меняет состояние сверх первого выполнения.',
+      en: 'A property where repeating an operation with the same input yields the same result and does not change state beyond the first execution.',
+    },
+  },
+  {
+    id: 'latency',
+    term: { ru: 'Латентность', en: 'Latency' },
+    def: {
+      ru: 'Задержка между отправкой запроса и получением ответа. Измеряет, как быстро система реагирует на отдельную операцию.',
+      en: 'The delay between sending a request and receiving a response. It measures how quickly a system reacts to a single operation.',
+    },
+  },
+  {
+    id: 'throughput',
+    term: { ru: 'Пропускная способность', en: 'Throughput' },
+    def: {
+      ru: 'Количество операций, которое система успевает обработать за единицу времени. В отличие от латентности описывает объём, а не скорость отклика.',
+      en: 'The number of operations a system can process per unit of time. Unlike latency, it describes volume rather than response speed.',
+    },
+  },
+  {
+    id: 'embedding',
+    term: { ru: 'Эмбеддинг', en: 'Embedding' },
+    def: {
+      ru: 'Представление слова, фразы или объекта в виде вектора чисел, где близость векторов отражает смысловую близость.',
+      en: 'A representation of a word, phrase, or object as a vector of numbers, where vector closeness reflects semantic similarity.',
+    },
+    topicSlug: 'llm-foundations',
+  },
+  {
+    id: 'token',
+    term: { ru: 'Токенизация', en: 'Tokenization' },
+    def: {
+      ru: 'Разбиение текста на токены - минимальные единицы, которыми оперирует языковая модель. Токен может быть словом, частью слова или символом.',
+      en: 'Splitting text into tokens - the smallest units a language model operates on. A token can be a word, a word piece, or a character.',
+    },
+    topicSlug: 'llm-foundations',
+  },
+  {
+    id: 'gradient-descent',
+    term: { ru: 'Градиентный спуск', en: 'Gradient descent' },
+    def: {
+      ru: 'Алгоритм оптимизации, который шаг за шагом меняет параметры модели в сторону уменьшения ошибки, двигаясь против градиента функции потерь.',
+      en: 'An optimization algorithm that adjusts model parameters step by step to reduce error, moving against the gradient of the loss function.',
+    },
+    topicSlug: 'neural-networks',
+  },
+  {
+    id: 'overfitting',
+    term: { ru: 'Переобучение', en: 'Overfitting' },
+    def: {
+      ru: 'Ситуация, когда модель слишком точно подстраивается под обучающие данные и теряет способность обобщать на новые примеры.',
+      en: 'When a model fits the training data too closely and loses the ability to generalize to new examples.',
+    },
+    topicSlug: 'neural-networks',
+  },
+  {
+    id: 'attention',
+    term: { ru: 'Механизм внимания', en: 'Attention mechanism' },
+    def: {
+      ru: 'Механизм в трансформерах, который позволяет модели для каждого токена взвешивать, насколько важны остальные токены контекста.',
+      en: 'A mechanism in transformers that lets the model weigh, for each token, how relevant the other tokens in the context are.',
+    },
+    topicSlug: 'llm-foundations',
+  },
+  {
+    id: 'hallucination',
+    term: { ru: 'Галлюцинация', en: 'Hallucination' },
+    def: {
+      ru: 'Уверенно сформулированный, но фактически неверный ответ языковой модели. Модель выдаёт правдоподобный текст без опоры на реальные данные.',
+      en: 'A confidently phrased but factually wrong answer from a language model. It produces plausible text without grounding in real data.',
+    },
+    topicSlug: 'llm-foundations',
+  },
 ];
 
 export const getGlossaryEntry = (id: string): GlossaryEntry | undefined => {

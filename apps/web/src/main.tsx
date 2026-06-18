@@ -1,16 +1,19 @@
 import { lazy, StrictMode, Suspense, useEffect, useState } from 'react';
 
+import { registerSW } from 'virtual:pwa-register';
+
 import { RouterProvider } from '@tanstack/react-router';
 import { MotionConfig } from 'framer-motion';
 import { createRoot } from 'react-dom/client';
-import { Toaster } from 'sonner';
+import { toast, Toaster } from 'sonner';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
-import './lib/i18n';
+import i18n from './lib/i18n';
 import { AuthProvider } from './lib/auth/AuthContext';
 import { COMMAND_PALETTE_EVENT } from './lib/command-palette';
 import { initSettings, useSettings } from './lib/settings';
-import { applyTheme, readStoredTheme } from './lib/theme';
+import { requestPersistAfterFirstWrite } from './lib/storage-health';
+import { watchSystemTheme } from './lib/theme';
 import { router } from './router';
 
 import './styles/global.css';
@@ -47,8 +50,30 @@ const CommandPaletteHost = () => {
   );
 };
 
-applyTheme(readStoredTheme());
 initSettings();
+watchSystemTheme();
+requestPersistAfterFirstWrite();
+
+const registerServiceWorker = (): void => {
+  const updateServiceWorker = registerSW({
+    onNeedRefresh() {
+      toast(i18n.t('common:pwa.updateTitle'), {
+        duration: Infinity,
+        action: {
+          label: i18n.t('common:pwa.update'),
+          onClick: () => {
+            void updateServiceWorker(true);
+          },
+        },
+      });
+    },
+    onOfflineReady() {
+      toast.success(i18n.t('common:pwa.offlineReady'));
+    },
+  });
+};
+
+registerServiceWorker();
 
 const AppRoot = () => {
   const settings = useSettings();

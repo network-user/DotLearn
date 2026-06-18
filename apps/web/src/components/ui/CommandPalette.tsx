@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import * as RadixDialog from '@radix-ui/react-dialog';
 import type { InterviewQuestionMeta } from '@dotlearn/contracts';
-import { Command } from 'cmdk';
+import { Command, useCommandState } from 'cmdk';
 import {
   ArrowRight,
   Bookmark,
@@ -37,7 +37,8 @@ import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { router } from '@/router';
 
-import { applyTheme, persistTheme, readStoredTheme } from '../../lib/theme';
+import { getSettings, setSettings } from '../../lib/settings';
+import { resolveTheme } from '../../lib/theme';
 import { cx } from './cx';
 import { Kbd } from './Kbd';
 
@@ -261,10 +262,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   };
 
   const toggleTheme = (): void => {
-    const current = readStoredTheme();
-    const next = current === 'dark' ? 'light' : 'dark';
-    applyTheme(next);
-    persistTheme(next);
+    const next = resolveTheme(getSettings().themePreference) === 'dark' ? 'light' : 'dark';
+    setSettings({ themePreference: next });
     setOpen(false);
   };
 
@@ -304,7 +303,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
           >
             <div>
               <div className="flex items-center gap-2 px-4 h-12 border-b border-border-base/50">
-                <Sparkles size={14} className="text-accent shrink-0" />
+                <Sparkles size={14} aria-hidden className="text-accent shrink-0" />
                 <Command.Input
                   autoFocus
                   value={query}
@@ -314,6 +313,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                 />
                 <Kbd>esc</Kbd>
               </div>
+              <ResultCountStatus />
               <Command.List className="max-h-[60vh] overflow-y-auto p-2">
                 <Command.Empty className="px-3 py-6 text-center text-[13px] text-fg-subtle">
                   {t('searchEmpty')}
@@ -481,6 +481,16 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     </RadixDialog.Root>
   );
 }
+
+const ResultCountStatus = () => {
+  const { t } = useTranslation('nav');
+  const count = useCommandState((state) => state.filtered.count);
+  return (
+    <div role="status" aria-live="polite" className="sr-only">
+      {t('resultCount', { count })}
+    </div>
+  );
+};
 
 interface PaletteItemProps {
   value: string;

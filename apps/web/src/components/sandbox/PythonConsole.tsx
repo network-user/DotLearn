@@ -4,6 +4,11 @@ import { Check, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
+import {
+  subscribePythonInitProgress,
+  getLatestPythonInitProgress,
+  type PyodideInitProgress,
+} from '@/lib/python-runtime';
 
 export type ConsoleLineTone = 'system' | 'prompt' | 'stdout' | 'pass' | 'fail' | 'meta';
 
@@ -17,7 +22,20 @@ interface PythonConsoleProps {
   lines: ConsoleLine[];
   status?: 'idle' | 'loading' | 'running' | 'pass' | 'fail' | 'error';
   emptyMessage: string;
+  showInitProgress?: boolean;
 }
+
+export const usePythonInitProgress = (active: boolean): PyodideInitProgress | undefined => {
+  const [progress, setProgress] = useState<PyodideInitProgress | undefined>(() =>
+    active ? getLatestPythonInitProgress() : undefined,
+  );
+  useEffect(() => {
+    if (!active) return;
+    setProgress(getLatestPythonInitProgress());
+    return subscribePythonInitProgress(setProgress);
+  }, [active]);
+  return active ? progress : undefined;
+};
 
 const toneClass: Record<ConsoleLineTone, string> = {
   system: 'text-fg-subtle',
@@ -46,8 +64,14 @@ const statusTint: Record<NonNullable<PythonConsoleProps['status']>, string> = {
   error: 'text-warn',
 };
 
-export const PythonConsole = ({ lines, status = 'idle', emptyMessage }: PythonConsoleProps) => {
+export const PythonConsole = ({
+  lines,
+  status = 'idle',
+  emptyMessage,
+  showInitProgress = true,
+}: PythonConsoleProps) => {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const progress = usePythonInitProgress(showInitProgress && status === 'loading');
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -63,6 +87,7 @@ export const PythonConsole = ({ lines, status = 'idle', emptyMessage }: PythonCo
           {statusLabel[status]}
         </span>
       </header>
+      {status === 'loading' && <PythonInitProgress progress={progress} />}
       <div
         ref={scrollRef}
         className="px-3 py-3 max-h-[40dvh] sm:max-h-[260px] overflow-y-auto whitespace-pre-wrap bg-code-bg text-fg [scrollbar-width:thin]"
@@ -73,6 +98,59 @@ export const PythonConsole = ({ lines, status = 'idle', emptyMessage }: PythonCo
           lines.map((line) => <ConsoleRow key={line.id} line={line} />)
         )}
       </div>
+    </div>
+  );
+};
+
+const formatMb = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
+
+const PythonInitProgress = ({ progress }: { progress: PyodideInitProgress | undefined }) => {
+  const { t } = useTranslation('runners');
+  const downloading = progress?.phase === 'download' && progress.totalBytes > 0;
+  const ratio = downloading
+    ? Math.min(1, progress.loadedBytes / progress.totalBytes)
+    : progress && progress.phase !== 'download'
+      ? 1
+      : 0;
+  const percent = Math.round(ratio * 100);
+  const phaseLabel = progress
+    ? progress.phase === 'download'
+      ? t('python.init.downloading')
+      : progress.phase === 'packages'
+        ? t('python.init.packages')
+        : t('python.init.starting')
+    : t('python.init.starting');
+  return (
+    <div
+      className="px-3 py-2 border-b border-border-base/60 bg-surface-2/40 space-y-1.5"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+      aria-label={t('python.init.aria')}
+    >
+      <div className="flex items-center justify-between gap-3 text-[11px] text-fg-muted">
+        <span className="normal-case tracking-normal">{phaseLabel}</span>
+        {downloading ? (
+          <span className="tabular-nums text-fg-subtle">
+            {formatMb(progress.loadedBytes)} / {formatMb(progress.totalBytes)} MB
+          </span>
+        ) : (
+          <span className="tabular-nums text-fg-subtle">{percent}%</span>
+        )}
+      </div>
+      <div className="h-1.5 rounded-full bg-border-base overflow-hidden">
+        <div
+          className={cx(
+            'h-full rounded-full bg-accent',
+            downloading ? 'transition-[width] duration-fast' : 'dl-anim-breathe',
+          )}
+          style={{ width: downloading ? `${percent}%` : '100%' }}
+        />
+      </div>
+      <p className="text-[10.5px] text-fg-subtle normal-case tracking-normal leading-snug">
+        {t('python.init.note')}
+      </p>
     </div>
   );
 };

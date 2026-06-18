@@ -1,0 +1,123 @@
+---
+conceptId: hash-functions
+title: How a hash function works
+estimatedMinutes: 45
+---
+
+# What turns arithmetic into a good hash function
+
+The naive hash from the previous section - the sum of character codes - works, but badly. It fails in two embarrassing ways. First, it ignores order: `"listen"` and `"silent"` give the same hash, because the sum is the same. Second, the sums of short words cluster tightly, and after the remainder they jam a few neighbouring buckets while the rest stay empty. A hash table built on such a hash quickly degrades into a slow scan.
+
+In this section we work out which properties turn arithmetic into a **good** hash function, feel the avalanche effect by hand, and understand why some functions suit `dict` while others suit passwords - and why those are different classes of function. By the end you will be able to explain why hashes multiply by prime numbers and what it means for a function to "mix the bits".
+
+## Four properties of a good hash function
+
+A good (non-cryptographic) hash function keeps four promises:
+
+1. **Determinism.** One input, one output, always. Without it the table breaks.
+2. **Uniformity.** Outputs scatter across the whole range without skew: each bucket gets roughly the same share of keys.
+3. **Avalanche.** Changing even one bit of the input changes about half the bits of the output. Similar keys (`"Ivanov"` and `"Ivanon"`) must give dissimilar hashes.
+4. **Speed.** The function runs on every lookup and insert, so it must compute in microseconds.
+
+The avalanche effect is easier to see once than to describe. Below is a live hash function: type into the field and watch the fingerprint. The "change one character" button alters exactly one letter - watch nearly half the output bits repaint.
+
+<HashFunctionViz initialText="Ivanov" lang="en" />
+
+Avalanche is what separates a hash from a naive sum. With a sum, neighbouring inputs give neighbouring outputs - they stick together. With a good function the link between "similar inputs" and "similar outputs" is broken: close keys fly apart across the table, and buckets fill evenly.
+
+## A polynomial hash: accounting for order
+
+To make a hash notice the order of characters, each next letter is mixed in with a growing weight. The classic trick is the polynomial (rolling) hash: at each step the accumulated value is multiplied by a base and the character code is added.
+
+```python
+def polynomial_hash(s, base=31, mod=2_000_000_011):
+    h = 0
+    for char in s:
+        h = (h * base + ord(char)) % mod
+    return h
+```
+
+Now `"listen"` and `"silent"` give different hashes: permuting letters changes the result, because each position enters with a different multiplier. The prime number `31` as a base is not magic but a way to mix the bits well; and `mod` is prime so the remainder does not "fold" bits into a heap the way a power of two does.
+
+## Touch the distribution
+
+Run the code: it scatters 1000 keys across 8 buckets, first with the naive sum, then with the polynomial hash, and prints how many keys landed in each bucket. Compare the spread. Then change `base` from 31 to 1 and run again - watch the polynomial hash instantly degenerate into the same naive sum.
+
+<PyDemo
+  title="Naive vs polynomial: spread across buckets"
+  code={`def naive(s, size):
+    return sum(ord(c) for c in s) % size
+
+def poly(s, size, base=31):
+    h = 0
+    for c in s:
+        h = (h * base + ord(c)) % 2_000_000_011
+    return h % size
+
+keys = [f"user{n}" for n in range(1000)]
+size = 8
+
+def spread(fn):
+    buckets = [0] * size
+    for k in keys:
+        buckets[fn(k)] += 1
+    return buckets
+
+print("naive:      ", spread(lambda k: naive(k, size)))
+print("polynomial: ", spread(lambda k: poly(k, size)))`}
+/>
+
+<Figure caption="A good hash function keeps buckets nearly equal; the skew of the naive sum leaves some buckets empty and others overfull.">
+  <BarChart
+    title="Keys per bucket (polynomial hash, 1000 keys, 8 buckets)"
+    data={[
+      { label: "0", value: 126 },
+      { label: "1", value: 121 },
+      { label: "2", value: 130 },
+      { label: "3", value: 124 },
+      { label: "4", value: 119 },
+      { label: "5", value: 128 },
+      { label: "6", value: 122 },
+      { label: "7", value: 130 },
+    ]}
+  />
+</Figure>
+
+## Cryptographic and non-cryptographic hashes are different tools
+
+The polynomial hash, FNV, MurmurHash are fast workhorses for hash tables. They are uniform and avalanching, but not protected against malice: knowing the function, an attacker can deliberately craft keys that all land in one bucket. For `dict` that is tolerable; for data arriving from the internet it is not.
+
+Cryptographic hashes (SHA-256, BLAKE2) add two more properties: from the hash you cannot find an input (preimage resistance) and you cannot find two inputs with one hash (collision resistance). The price is speed - they are tens of times slower. So you pick the tool by task: inside `dict` a crypto hash is needless and harmful, while for a password or a signature a fast polynomial hash is dangerous. Cryptographic hashes get their own section.
+
+<Callout type="warning">
+The "irreversibility" of an ordinary hash is not a cryptographic guarantee, just loss of information during compression. Do not confuse them: a polynomial hash is easy to "reverse" by brute-forcing short strings. Resistance to guessing comes only from a cryptographic hash.
+</Callout>
+
+## Common mistakes
+
+- **Sum instead of mixing.** `sum(ord(c))` ignores order and gives anagrams the same hash. Every position must enter with its own weight - hence the multiplication by a base.
+- **Modulo a power of two.** `hash % 1024` keeps only the low bits, and in a bad function those bits change the least - buckets skew. Use a prime modulus, or mix the bits thoroughly first.
+- **A cryptographic hash where speed is needed.** SHA-256 on every `dict` access is wasted cycles. Take a crypto hash only when you need protection from guessing, not just a spread.
+
+<Detail summary="Why prime numbers specifically">
+
+The multiplier and modulus are chosen prime to destroy any regularity in the input data. If the base and the table size share a common divisor, some buckets become unreachable: hashes "multiples" of that divisor occupy only every k-th cell. A prime modulus divides neither the base nor typical steps between keys evenly, so the remainders spread across the whole range. It is the same reason pseudo-random number generators build their periods on primes.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A good hash function is deterministic, uniform, avalanching, and fast all at once.",
+    "Avalanche effect: changing one input bit changes about half the output bits - similar keys give dissimilar hashes.",
+    "A polynomial hash accounts for character order by multiplying the running value by a base at each step.",
+    "Prime numbers as base and modulus destroy regularities and spread keys more evenly.",
+    "Non-cryptographic hashes are fast but guessable; cryptographic ones resist guessing but are tens of times slower.",
+    "Pick the tool by task: a fast hash for dict, a cryptographic hash for passwords and signatures.",
+  ]}
+/>
+
+## References
+
+- [Wikipedia - Hash function: properties](https://en.wikipedia.org/wiki/Hash_function#Properties)
+- [Wikipedia - Avalanche effect](https://en.wikipedia.org/wiki/Avalanche_effect)
+- [Wikipedia - Fowler–Noll–Vo hash function](https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function)

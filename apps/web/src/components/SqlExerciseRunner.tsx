@@ -10,6 +10,8 @@ import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/Exer
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { LazyCodeEditor } from '@/components/sandbox/LazyCodeEditor';
 import { ResultGrid } from '@/components/sandbox/ResultGrid';
+import { RunnerStatus } from '@/components/sandbox/RunnerStatus';
+import { SolutionReveal } from '@/components/sandbox/SolutionReveal';
 import { SqlVisualizer } from '@/components/sandbox/SqlVisualizer';
 import { Button } from '@/components/ui/Button';
 import { burstConfetti } from '@/components/ui/confetti';
@@ -50,13 +52,20 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
   const [answer, setAnswer] = useState<string>(initialAnswer);
   const [state, setState] = useState<RunState>({ kind: 'idle' });
   const [pulse, setPulse] = useState(0);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [hintsExhausted, setHintsExhausted] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const isCoarsePointer = useMediaQuery(coarsePointerQuery);
+
+  const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
   const status: ExerciseCardStatus =
     state.kind === 'pass' ? 'pass' : state.kind === 'fail' || state.kind === 'error' ? 'fail' : 'idle';
 
   const handleRun = useCallback(async () => {
     setState({ kind: 'running' });
+    setStatusMessage(t('common.status.running'));
     try {
       const runtime = getSqlRuntime();
       const execution = await runtime.execute(answer, exercise.fixture).catch((error) => {
@@ -67,6 +76,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
         setState({ kind: 'pass', columns: execution.columns, rows: execution.rows });
         toast.success(t('sql.correctToast'), { description: exercise.id });
         burstConfetti();
+        setStatusMessage(t('common.status.passedSimple'));
         void recordAttempt(topicSlug, exercise.id, 'pass');
       } else {
         const details = (result.details ?? {}) as {
@@ -74,26 +84,35 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
           extra?: Record<string, unknown>[];
           misordered?: boolean;
         };
+        const failure = extractFailureReason(result);
         setState({
           kind: 'fail',
-          failure: extractFailureReason(result),
+          failure,
           columns: execution.columns,
           rows: execution.rows,
           ...(details.missing !== undefined ? { missing: details.missing } : {}),
           ...(details.extra !== undefined ? { extra: details.extra } : {}),
           ...(details.misordered !== undefined ? { misordered: details.misordered } : {}),
         });
+        setFailedAttempts((count) => count + 1);
+        setStatusMessage(t('common.status.failed', { reason: failureMessage(failure) }));
         void recordAttempt(topicSlug, exercise.id, 'fail');
       }
     } catch (error) {
-      setState({
-        kind: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setState({ kind: 'error', message });
+      setStatusMessage(t('common.status.error', { message }));
     } finally {
       setPulse((p) => p + 1);
     }
-  }, [answer, exercise, topicSlug, t]);
+  }, [answer, exercise, topicSlug, t, failureMessage]);
+
+  const handleRevealSolution = (): void => {
+    if (revealed) return;
+    setRevealed(true);
+    setStatusMessage(t('common.status.revealed'));
+    void recordAttempt(topicSlug, exercise.id, 'fail');
+  };
 
   const visualizerResult =
     state.kind === 'pass' || state.kind === 'fail'
@@ -109,6 +128,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
       status={status}
       pulse={pulse}
     >
+      <RunnerStatus message={statusMessage} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="space-y-3 min-w-0">
           <div
@@ -127,6 +147,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="sql"
+              sqlSchema={exercise.fixture}
               height={buildEditorHeight(isCoarsePointer, '200px', 'min(40dvh, 280px)')}
               options={buildEditorOptions(isCoarsePointer, 2)}
               onMount={(editor) => {
@@ -151,7 +172,10 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
             >
               {state.kind === 'running' ? t('sql.running') : t('sql.run')}
             </Button>
-            <HintBlock hints={exercise.hints} />
+            <HintBlock
+              hints={exercise.hints}
+              onAllHintsShown={() => setHintsExhausted(true)}
+            />
           </div>
           {state.kind === 'error' && (
             <p className="rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-[13px] text-warn">
@@ -191,6 +215,12 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
           {state.kind === 'pass' && (
             <p className="text-[13px] text-ok font-medium">{t('sql.pass')}</p>
           )}
+          <SolutionReveal
+            solution={exercise.solution}
+            language="sql"
+            unlocked={solutionUnlocked}
+            onReveal={handleRevealSolution}
+          />
         </div>
 
         <div className="min-w-0">
