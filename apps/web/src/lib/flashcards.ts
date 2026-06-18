@@ -1,8 +1,27 @@
-import { createEmptyCard, fsrs, generatorParameters, Rating, type Card, type Grade } from 'ts-fsrs';
+import {
+  createEmptyCard,
+  FSRS,
+  fsrs,
+  generatorParameters,
+  Rating,
+  type Card,
+  type Grade,
+} from 'ts-fsrs';
 
-import { db, type FlashcardReviewRecord } from './progress-db';
+import { db, recordStudyActivity, type FlashcardReviewRecord } from './progress-db';
+import { getSettings } from './settings';
 
-const scheduler = fsrs(generatorParameters());
+let cachedScheduler: FSRS | undefined;
+let cachedRetention: number | undefined;
+
+const getScheduler = (): FSRS => {
+  const requestRetention = getSettings().targetRetention;
+  if (!cachedScheduler || cachedRetention !== requestRetention) {
+    cachedScheduler = fsrs(generatorParameters({ request_retention: requestRetention }));
+    cachedRetention = requestRetention;
+  }
+  return cachedScheduler;
+};
 
 const toRecord = (
   topicSlug: string,
@@ -73,9 +92,10 @@ export const reviewFlashcard = async (
   const id = `${topicSlug}:${cardId}`;
   const existing = await db.flashcardReviews.get(id);
   const card = existing ? toCard(existing) : createEmptyCard(now);
-  const item = scheduler.next(card, now, RATING_MAP[rating]);
+  const item = getScheduler().next(card, now, RATING_MAP[rating]);
   const record = toRecord(topicSlug, cardId, item.card, now.toISOString());
   await db.flashcardReviews.put(record);
+  await recordStudyActivity('review');
   return record;
 };
 

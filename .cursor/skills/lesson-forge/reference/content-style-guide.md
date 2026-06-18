@@ -10,6 +10,18 @@ The DotLearn voice is the voice of an experienced peer, not a textbook. Every th
 - **Second person, present tense.** "You write a WHERE clause", not "the user will then write".
 - **Narrative, not bullet-dump.** A longread carries the reader through a story: a problem appears, a mental model resolves it, examples stress-test the model, edge cases refine it. Bullets are for genuinely enumerable facts only.
 
+## Engagement and moderation (mandatory)
+
+The material must be **interesting and easy to absorb**, not a dry reference dump. Treat these as hard requirements, not aspirations:
+
+- **Moderate length.** Cover the concept fully, then stop. Respect the 1200-2000 word budget; if a concept honestly needs more, split it into two. Do not pad with restatement or throat-clearing.
+- **No filler.** Cut any sentence that does not teach: no "as we all know", no marketing adjectives, no recap paragraphs that repeat the previous section. Density over volume.
+- **Hook, not definition.** Open every concept with a concrete problem or a surprising fact the reader cares about (see the skeleton). Never open with a definition, a list, or a code block.
+- **Earn attention with figures and live code.** Prefer an interactive or animated viz that *reveals* the mechanism (insert, collide, grow, remap) over a static figure that merely restates the prose. Pair it with a "change X and watch Y" invitation. This strengthens G10, it does not replace it.
+- **Honest peer voice.** Name footguns the first time, show the one edge case that surprises, and tell a short bit of history where it illuminates - that is what makes a longread memorable instead of tedious.
+
+A concept that is correct but boring fails review. Optimize for the reader who is curious but busy.
+
 ## Required article skeleton
 
 Every theory file follows this narrative arc. Section headings are yours to write (make them concrete, not generic); the *order and presence* of these beats is mandatory.
@@ -108,3 +120,4 @@ Do not pretend to cite books or papers you have not read. If the claim is your o
 - "Вы", not "ты", for the second person — keep a respectful peer tone
 - Translate technical terms only when there is an established Russian translation; otherwise keep the English term (e.g. "merge", "rebase", "transaction" remain as-is in Russian content)
 - Lowercase the first word after a colon (no English-style capitalization)
+- Keep the Russian context in mind, lightly. The material is read in a Russian setting, so when an example needs a name, city, company, currency, or identifier, default to Russian realia: имена (Анна, Борис, Вера), города (Москва, Казань), сервисы (Яндекс, Сбер, Госуслуги, Ozon), рубли, ИНН/СНИЛС. This is a soft default for flavor and relatability, not a mandate - never contort a universal CS example to force "Russianness", and keep established English technical terms (hash, merge, shard, bucket) in English.

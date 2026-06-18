@@ -2,43 +2,18 @@ import { useState } from 'react';
 
 import { Link, useRouterState } from '@tanstack/react-router';
 import { motion, useReducedMotion } from 'framer-motion';
-import {
-  BarChart3,
-  CalendarCheck,
-  FlaskConical,
-  Inbox,
-  Layers,
-  LayoutGrid,
-  Library,
-  MessagesSquare,
-  MoreHorizontal,
-  PencilLine,
-  Settings,
-  Waypoints,
-} from 'lucide-react';
+import { MoreHorizontal, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
+import { openCommandPalette } from '@/lib/command-palette';
 import { isNavPathActive } from '@/lib/navigation';
+import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
 import { adminPath } from '@/router';
 
-const tabs = [
-  { to: '/', icon: LayoutGrid, labelKey: 'topics' },
-  { to: '/interview', icon: MessagesSquare, labelKey: 'interview' },
-  { to: '/sandbox', icon: FlaskConical, labelKey: 'sandbox' },
-  { to: '/flashcards', icon: Layers, labelKey: 'flashcards' },
-  { to: '/progress', icon: BarChart3, labelKey: 'progress' },
-] as const;
-
-const moreLinks = [
-  { to: '/today', icon: CalendarCheck, labelKey: 'today' },
-  { to: '/map', icon: Waypoints, labelKey: 'map' },
-  { to: '/library', icon: Library, labelKey: 'library' },
-  { to: '/proposals', icon: Inbox, labelKey: 'proposals' },
-  { to: '/submit', icon: PencilLine, labelKey: 'submit' },
-  { to: '/settings', icon: Settings, labelKey: 'settings' },
-] as const;
+const tabs = primaryNavItems;
+const moreLinks = secondaryNavItems;
 
 export const BottomTabBar = () => {
   const { t } = useTranslation('nav');
@@ -67,6 +42,15 @@ export const BottomTabBar = () => {
 
   return (
     <>
+      <button
+        type="button"
+        onClick={openCommandPalette}
+        aria-label={t('openSearch')}
+        title={t('openSearch')}
+        className="md:hidden fixed right-[calc(env(safe-area-inset-right,0px)+16px)] bottom-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] z-[var(--z-nav)] grid place-items-center size-14 rounded-full bg-accent text-surface dark:text-canvas shadow-float transition-transform duration-fast hover:bg-accent/90 active:scale-95"
+      >
+        <Search size={22} aria-hidden />
+      </button>
       <nav
         aria-label={t('primaryNavigation')}
         className="fixed bottom-0 inset-x-0 z-[var(--z-nav)] md:hidden"
@@ -143,7 +127,7 @@ export const BottomTabBar = () => {
                   )}
                 >
                   <span className="grid place-items-center size-9 rounded-lg border border-border-base text-fg-muted">
-                    <Icon size={18} />
+                    <Icon size={18} aria-hidden />
                   </span>
                   <span className="text-[15px] font-medium">{t(labelKey)}</span>
                 </Link>

@@ -10,3 +10,15 @@ export const getSqlRuntime = (): SqlJsRuntime => {
   }
   return cached;
 };
+
+let prewarmStarted = false;
+
+export const prewarmSqlRuntime = (): void => {
+  if (prewarmStarted) return;
+  prewarmStarted = true;
+  void getSqlRuntime()
+    .init()
+    .catch(() => {
+      prewarmStarted = false;
+    });
+};

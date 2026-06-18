@@ -1,0 +1,117 @@
+---
+conceptId: hash-tables
+title: "Hash table: O(1) on average"
+estimatedMinutes: 50
+---
+
+# Hash table: how a string key becomes a cell number
+
+An array is the fastest data structure there is: to read `array[5]` the processor computes the cell address at once and fetches it in a single step, without looking at the rest. But an array has a condition: the index is a number from zero to the length. In real life we search not by number but by key: by surname, by tax id, by city name. A hash table joins the two. It runs the key through a hash function, turns it into a cell number, and uses the array as if we had a numeric index all along.
+
+In this section we assemble a hash table from an array and a hash function, understand why access costs O(1) on average, what the load factor is, and why a table sometimes suddenly "grows by half". This machinery sits under `dict` in Python, `HashMap` in Java, and indexes in many databases.
+
+## Mental model: an array of buckets plus an index formula
+
+A hash table is a fixed-size array (its cells are called **buckets**) and a rule by which a key finds its bucket:
+
+```text
+index = hash(key) % bucket_count
+```
+
+To store a `key -> value` pair, compute the index and put the pair in that bucket. To find a value by key, compute the same index and look in the same bucket. No scanning the whole table: both insert and lookup go to one precomputed cell. Below is a live table with open addressing. Add cities with the buttons: each computes its "home" bucket, and if it is taken, slides to the next free one.
+
+<HashTableViz
+  label="Hash table: home and the search for a free cell"
+  presetKeys={["Moscow", "Kazan", "Sochi", "Perm", "Omsk", "Tula", "Ufa", "Orel"]}
+/>
+
+Watch the load counter at the top: the more keys, the tighter the table and the more often the "home" cell turns out to be taken. That is the first warning: once it overflows, you can no longer hide behind O(1).
+
+## Why O(1) on average
+
+If the hash function scatters keys evenly, each bucket holds about `n / m` elements, where `n` is the number of keys and `m` the number of buckets. That ratio is the **load factor** α. While α stays small (say below one), each bucket holds a handful of elements, and access costs a constant: compute the hash, jump to the bucket, check one or two keys.
+
+The word "on average" is essential here. In the worst case - if all keys collide in one bucket - the table degenerates into a list, and lookup becomes O(n). A good hash function makes that case vanishingly unlikely, but not impossible. So the correct statement is: **amortized and on average - O(1), worst case - O(n)**.
+
+## Assemble a table by hand
+
+Run the code: it is a tiny hash table on chained lists. `set` puts a pair into a bucket, `get` looks for it there. After `print` add your own city: `m.set("Tver", 420)` and `print(m.get("Tver"))` - the value is found in the same one step. Then change `capacity` to 1: everything falls into the single bucket, and `get` starts scanning the list linearly - a vivid demonstration of the worst case.
+
+<PyDemo
+  title="A hash table on chains"
+  code={`class TinyMap:
+    def __init__(self, capacity=8):
+        self.capacity = capacity
+        self.buckets = [[] for _ in range(capacity)]
+
+    def _index(self, key):
+        return hash(key) % self.capacity
+
+    def set(self, key, value):
+        bucket = self.buckets[self._index(key)]
+        for i, (k, _) in enumerate(bucket):
+            if k == key:
+                bucket[i] = (key, value)
+                return
+        bucket.append((key, value))
+
+    def get(self, key):
+        for k, v in self.buckets[self._index(key)]:
+            if k == key:
+                return v
+        raise KeyError(key)
+
+m = TinyMap()
+m.set("Moscow", 4400)
+m.set("Kazan", 1300)
+print(m.get("Moscow"), m.get("Kazan"))`}
+/>
+
+Inside `set` there is a loop over the bucket - needed to overwrite the value if the key already exists. While buckets stay short, that loop makes one or two steps. Bucket length stays short exactly as long as the load is small - and the growth mechanism watches over that.
+
+## Load factor and rehashing
+
+When α approaches the threshold (in Python's `dict` about 2/3, in many implementations 0.75), the table **grows**: it allocates an array twice as large and moves every element into it anew, because the new size has a different remainder `% m`, and the old indexes no longer fit. That move is called rehashing. Play with the threshold: add elements and catch the moment when the load bar crosses the red mark and the table doubles.
+
+<LoadFactorViz threshold={0.75} lang="en" />
+
+One rehash costs O(n) - you must touch every element. It seems to kill the O(1) promise. But doublings happen ever less often: filling a table from 8 cells, then 16, then 32 needs more and more inserts between growths. Spread the cost of all rehashes across all inserts, and one insert costs a constant. That is **amortized** O(1): individual inserts can be expensive, but on average over many operations - cheap.
+
+<Callout type="info">
+Doubling, rather than adding a little at a time, is no accident. Grow the table by a fixed number of cells and rehashes become frequent and add up to O(n²). Geometric growth (x2) makes them rare and gives amortized O(1).
+</Callout>
+
+## Edge cases
+
+- **Looking up a missing key.** Compute the index, arrive at the bucket, do not find the key - return "no". This is also O(1) on average: we checked only one bucket, not the whole table.
+- **Deletion under open addressing.** You cannot simply clear a cell: a probe that ran "through" it would break, and keys beyond it would be "lost". The deleted cell is marked with a special marker - a tombstone: empty for insertion, but passable for a search. More on this in the collisions section.
+- **Zero capacity.** You cannot divide by zero - a table always allocates at least one bucket and grows from it.
+
+## Common mistakes
+
+- **Treating O(1) as a guarantee, not an average.** With a bad hash function or malicious keys the table degenerates to O(n). O(1) is a promise about distribution, not a law.
+- **Keeping the load near full.** The closer α is to one (and above), the longer the buckets and probe chains. A threshold of 0.7-0.75 is a compromise between speed and memory, not over-caution.
+- **Forgetting rehashing in a hand-rolled table.** A table without growth is fast at first, then suddenly slow: buckets lengthen, access degrades. Growth is part of a hash table's contract.
+
+<Detail summary="Where the amortized constant comes from">
+
+Count roughly. To go from an empty table to n elements with doublings, we rehash at sizes about 1, 2, 4, 8, ..., n. The total rehashing work is `1 + 2 + 4 + ... + n`, and the sum of a geometric series with ratio 2 is about `2n`. Divide `2n` units of work by n inserts and you get 2 operations per insert on average, a constant. The key is geometric growth: with linear growth the sum would be `1 + 2 + 3 + ... + n ≈ n²/2`, and each insert would cost O(n).
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A hash table is an array of buckets plus the formula index = hash(key) % bucket_count.",
+    "Both insert and lookup go to one computed bucket, so they cost O(1) on average.",
+    "Load factor α = number of elements / number of buckets; it measures how crowded the table is.",
+    "On reaching the threshold (about 0.7) the table doubles and rehashes every element.",
+    "One rehash costs O(n), but doublings are rare, so the amortized cost of an insert is O(1).",
+    "In the worst case (all keys in one bucket) the table degenerates to O(n) - O(1) only holds for a good distribution.",
+  ]}
+/>
+
+## References
+
+- [Wikipedia - Hash table](https://en.wikipedia.org/wiki/Hash_table)
+- [Wikipedia - Dynamic array: amortized analysis](https://en.wikipedia.org/wiki/Dynamic_array#Geometric_expansion_and_amortized_cost)
+- [Python docs - Mapping Types: dict](https://docs.python.org/3/library/stdtypes.html#mapping-types-dict)

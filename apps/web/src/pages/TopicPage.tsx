@@ -8,10 +8,11 @@ import {
   type ComponentType,
 } from 'react';
 
-import type { Exercise } from '@dotlearn/contracts';
+import type { Exercise, TopicSourceRef } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { TopicNotFoundError } from '@dotlearn/lesson-engine';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowLeft,
@@ -22,12 +23,17 @@ import {
   BookmarkCheck,
   Check,
   Compass,
+  ExternalLink,
   Flame,
   Focus,
   Languages,
+  Layers,
+  Library,
   ListTree,
   Minimize2,
   NotebookPen,
+  RotateCcw,
+  Wand2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -47,16 +53,21 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { THEORY_HIGHLIGHTS_ENABLED } from '@/lib/feature-flags';
 import { getCurrentLanguage } from '@/lib/i18n';
-import { computeMastery } from '@/lib/mastery';
+import { nextTargetDifficulty, reorderByTargetDifficulty } from '@/lib/learner-model';
+import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db, recordPlace, saveConceptNote, setBookmark, setConceptRead } from '@/lib/progress-db';
 import type { ProgressRecord } from '@/lib/progress-db';
 import { getTheory } from '@/lib/theory';
 import { programmaticScrollTo } from '@/lib/reading-position';
-import { effectiveLanguage, loadTopic } from '@/lib/topics';
+import { recordRecentVisit } from '@/lib/recent-visits';
+import { prewarmPythonRuntime } from '@/lib/python-runtime';
+import { prewarmSqlRuntime } from '@/lib/sql-runtime';
+import { effectiveLanguage, getAllManifests, loadTopic, useContentLanguage } from '@/lib/topics';
 import type { TopicSearch } from '@/router';
 import { useConceptBookmarked, useConceptRead, useTopicReadConceptIds } from '@/lib/use-learning';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useStreak, useTopicProgress } from '@/lib/use-progress';
+import topicStats from 'virtual:topic-stats';
 
 type LoadState =
   | { kind: 'loading' }
@@ -180,12 +191,14 @@ export const TopicPage = () => {
   const { slug } = useParams({ from: '/topics/$slug' });
   const search = useSearch({ from: '/topics/$slug' });
   const navigate = useNavigate();
-  const { t, i18n } = useTranslation('topic');
+  const { t } = useTranslation('topic');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
+  const [retryToken, setRetryToken] = useState(0);
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
   const progress = useTopicProgress(slug);
   const streak = useStreak();
   const readConceptIds = useTopicReadConceptIds(slug);
+  const contentLanguage = useContentLanguage();
   const reduceMotion = useReducedMotion() ?? false;
   const requestedConceptRef = useRef<string | undefined>(search.concept);
   requestedConceptRef.current = search.concept;
@@ -243,8 +256,7 @@ export const TopicPage = () => {
   useEffect(() => {
     let cancelled = false;
     setState({ kind: 'loading' });
-    const language = getCurrentLanguage();
-    loadTopic(slug, language)
+    loadTopic(slug, contentLanguage)
       .then(async (bundle) => {
         if (cancelled) return;
         setState({ kind: 'ready', bundle });
@@ -279,7 +291,7 @@ export const TopicPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [slug, i18n.resolvedLanguage]);
+  }, [slug, contentLanguage, retryToken]);
 
   useEffect(() => {
     if (state.kind !== 'ready') return;
@@ -293,6 +305,7 @@ export const TopicPage = () => {
   useEffect(() => {
     if (state.kind !== 'ready' || !activeConceptId) return;
     void recordPlace(slug, activeConceptId);
+    recordRecentVisit(slug, activeConceptId);
   }, [slug, activeConceptId, state.kind]);
 
   useEffect(() => {
@@ -390,6 +403,23 @@ export const TopicPage = () => {
     };
   }, [state, activeConceptId, selectConcept, reduceMotion]);
 
+  const readyRuntime = state.kind === 'ready' ? state.bundle.manifest.runtime : undefined;
+  useEffect(() => {
+    if (readyRuntime !== 'pyodide' && readyRuntime !== 'sql.js') return;
+    const prewarm =
+      readyRuntime === 'pyodide' ? prewarmPythonRuntime : prewarmSqlRuntime;
+    const win = window as typeof window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof win.requestIdleCallback === 'function') {
+      const handle = win.requestIdleCallback(() => prewarm(), { timeout: 3_000 });
+      return () => win.cancelIdleCallback?.(handle);
+    }
+    const timer = window.setTimeout(prewarm, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [readyRuntime]);
+
   if (state.kind === 'loading') {
     return <TopicSkeleton />;
   }
@@ -421,12 +451,29 @@ export const TopicPage = () => {
       <Surface rule="left" className="border-l-err">
         <div className="p-6">
           <h2 className="font-display text-2xl text-err">{t('failed')}</h2>
-          <p className="mt-2 text-sm text-fg-muted">{state.message}</p>
-          <Link to="/" hash="topics">
-            <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />} className="mt-4">
-              {t('backToCatalog', { defaultValue: 'К каталогу тем' })}
+          <p className="mt-2 text-sm text-fg-muted">{t('failedBody')}</p>
+          <p className="mt-1 text-[12px] text-fg-subtle break-words">{state.message}</p>
+          <div className="mt-4 flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <Button
+              variant="primary"
+              size="md"
+              leadingIcon={<RotateCcw size={14} />}
+              className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+              onClick={() => setRetryToken((value) => value + 1)}
+            >
+              {t('retry')}
             </Button>
-          </Link>
+            <Link to="/" hash="topics" className="block w-full sm:w-auto">
+              <Button
+                variant="ghost"
+                size="md"
+                leadingIcon={<ArrowLeft size={14} />}
+                className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+              >
+                {t('backToCatalog')}
+              </Button>
+            </Link>
+          </div>
         </div>
       </Surface>
     );
@@ -434,9 +481,8 @@ export const TopicPage = () => {
 
   const { bundle } = state;
   const { manifest } = bundle;
-  const currentLang = getCurrentLanguage();
-  const usedLang = effectiveLanguage(manifest, currentLang);
-  const showFallbackBanner = usedLang !== currentLang;
+  const usedLang = effectiveLanguage(manifest, contentLanguage);
+  const showFallbackBanner = usedLang !== contentLanguage;
   const activeIndex = bundle.manifest.concepts.findIndex(
     (concept) => concept.id === activeConceptId,
   );
@@ -496,6 +542,7 @@ export const TopicPage = () => {
         streak={streak}
         readCount={readConceptIds.size}
       />
+      <PrerequisitesBanner prerequisites={manifest.prerequisites} />
       {showFallbackBanner && (
         <Surface variant="inset" rule="left" className="border-l-warn">
           <div className="px-4 py-3 text-sm text-warn flex items-center gap-2">
@@ -553,6 +600,11 @@ export const TopicPage = () => {
           </div>
         )}
         <section className={cx('min-w-0 space-y-6', focusMode && 'mx-auto w-full max-w-3xl')}>
+          <InPageSkipLinks
+            hasExercises={conceptExercises.length > 0}
+            hasNextConcept={Boolean(bundle.manifest.concepts[activeIndex + 1])}
+            onSkipToNextConcept={() => handleNav(1)}
+          />
           {activeConcept && activeManifestConcept ? (
             <ConceptTransition conceptId={activeConcept.conceptId}>
               <ConceptPanel
@@ -561,6 +613,7 @@ export const TopicPage = () => {
                 index={activeIndex}
                 theoryFiles={theoryFilenames}
                 exercises={conceptExercises}
+                progressByExercise={progress.byExercise}
                 passed={conceptPassed}
                 ratio={conceptRatio}
                 focusMode={focusMode}
@@ -593,7 +646,114 @@ export const TopicPage = () => {
           </div>
         )}
       </div>
+      {!focusMode && manifest.sources && manifest.sources.length > 0 && (
+        <SourcesBlock sources={manifest.sources} />
+      )}
     </div>
+  );
+};
+
+interface PrerequisiteState {
+  slug: string;
+  title: string;
+  mastered: boolean;
+}
+
+const PREREQ_MASTERY_THRESHOLD = 0.6;
+
+const PrerequisitesBanner = ({ prerequisites }: { prerequisites: string[] }) => {
+  const { t } = useTranslation('topic');
+  const language = getCurrentLanguage();
+  const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
+  const readByTopic = useReadConceptsByTopic();
+
+  const prereqs = useMemo<PrerequisiteState[]>(() => {
+    if (prerequisites.length === 0) return [];
+    const manifests = getAllManifests();
+    const passedByTopic = new Map<string, number>();
+    for (const record of progressRecords ?? []) {
+      if (record.status === 'pass') {
+        passedByTopic.set(record.topicSlug, (passedByTopic.get(record.topicSlug) ?? 0) + 1);
+      }
+    }
+    return prerequisites
+      .map((slug) => {
+        const manifest = manifests.find((entry) => entry.slug === slug);
+        if (!manifest) return undefined;
+        const totalExercises = topicStats[slug]?.[effectiveLanguage(manifest, language)] ?? 0;
+        const readConcepts = countReadConcepts(manifest.concepts, readByTopic.get(slug));
+        const m = computeMastery(
+          readConcepts,
+          manifest.concepts.length,
+          passedByTopic.get(slug) ?? 0,
+          totalExercises,
+        );
+        return { slug, title: manifest.title, mastered: m.mastery >= PREREQ_MASTERY_THRESHOLD };
+      })
+      .filter((entry): entry is PrerequisiteState => entry !== undefined);
+  }, [prerequisites, progressRecords, readByTopic, language]);
+
+  if (prereqs.length === 0) return null;
+
+  const masteredCount = prereqs.filter((entry) => entry.mastered).length;
+
+  return (
+    <Surface variant="inset" rule="left" className="border-l-accent/50">
+      <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          <span className="inline-flex items-center gap-1.5 text-fg-muted">
+            <Layers size={14} className="text-accent" />
+            {t('prereqs.buildsOn')}
+          </span>
+          {prereqs.map((entry, index) => (
+            <span key={entry.slug} className="inline-flex items-center">
+              {index > 0 && <span aria-hidden className="mr-2 text-fg-subtle">·</span>}
+              <Link
+                to="/topics/$slug"
+                params={{ slug: entry.slug }}
+                className={cx(
+                  'inline-flex items-center gap-1 underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent',
+                  entry.mastered ? 'text-ok' : 'text-accent',
+                )}
+              >
+                {entry.mastered && <Check size={13} aria-hidden />}
+                {entry.title}
+              </Link>
+            </span>
+          ))}
+        </div>
+        <span className="text-[12px] text-fg-subtle tabular-nums shrink-0">
+          {t('prereqs.mastered', { mastered: masteredCount, total: prereqs.length })}
+        </span>
+      </div>
+    </Surface>
+  );
+};
+
+const SourcesBlock = ({ sources }: { sources: TopicSourceRef[] }) => {
+  const { t } = useTranslation('topic');
+  return (
+    <section className="border-t-2 border-fg/80 pt-5">
+      <div className="mb-3 flex items-center gap-1.5 eyebrow eyebrow-accent">
+        <Library size={12} />
+        {t('sources.title')}
+      </div>
+      <ul className="space-y-2">
+        {sources.map((source) => (
+          <li key={source.url}>
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-start gap-1.5 text-[14px] text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent"
+            >
+              <ExternalLink size={13} className="mt-1 shrink-0" aria-hidden />
+              <span>{source.title}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 };
 
@@ -952,11 +1112,29 @@ interface ConceptPanelProps {
   index: number;
   theoryFiles: string[];
   exercises: Exercise[];
+  progressByExercise: Map<string, ProgressRecord>;
   passed: number;
   ratio: number;
   focusMode: boolean;
   onToggleFocus: () => void;
 }
+
+const recentResultsForExercises = (
+  exercises: Exercise[],
+  progressByExercise: Map<string, ProgressRecord>,
+): ('pass' | 'fail')[] =>
+  exercises
+    .map((exercise) => progressByExercise.get(exercise.id))
+    .filter((record): record is ProgressRecord => record !== undefined)
+    .sort((a, b) => a.lastAttemptAt.localeCompare(b.lastAttemptAt))
+    .map((record) => record.status);
+
+const ADAPTIVE_ORDER_KEY = 'dotlearn:adaptive-order';
+
+const readAdaptiveOrder = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(ADAPTIVE_ORDER_KEY) === 'on';
+};
 
 const ConceptPanel = ({
   slug,
@@ -964,6 +1142,7 @@ const ConceptPanel = ({
   index,
   theoryFiles,
   exercises,
+  progressByExercise,
   passed,
   ratio,
   focusMode,
@@ -971,9 +1150,20 @@ const ConceptPanel = ({
 }: ConceptPanelProps) => {
   const { t } = useTranslation('topic');
   const [notesOpen, setNotesOpen] = useState(false);
+  const [adaptiveOrder, setAdaptiveOrder] = useState(readAdaptiveOrder);
   useEffect(() => {
     setNotesOpen(false);
   }, [concept.id]);
+  useEffect(() => {
+    window.localStorage.setItem(ADAPTIVE_ORDER_KEY, adaptiveOrder ? 'on' : 'off');
+  }, [adaptiveOrder]);
+
+  const orderedExercises = useMemo(() => {
+    if (!adaptiveOrder || exercises.length < 2) return exercises;
+    const recentResults = recentResultsForExercises(exercises, progressByExercise);
+    const target = nextTargetDifficulty({ recentResults, baseDifficulty: 2 });
+    return reorderByTargetDifficulty(exercises, target);
+  }, [adaptiveOrder, exercises, progressByExercise]);
   const theories = useMemo(
     () => theoryFiles.map((filename) => ({ filename, resolved: getTheory(slug, filename) })),
     [slug, theoryFiles],
@@ -1017,8 +1207,8 @@ const ConceptPanel = ({
       {notesOpen && <NotesEditor key={concept.id} slug={slug} conceptId={concept.id} />}
 
       <div data-toc-root className="theory-root max-w-prose">
-        {bodyTheories.map(({ filename, resolved }) => (
-          <section key={filename}>
+        {bodyTheories.map(({ filename, resolved }, sectionIndex) => (
+          <section key={filename} className={cx(sectionIndex > 0 && 'cv-auto-theory')}>
             {resolved ? (
               <Suspense fallback={<Skeleton rounded="lg" className="h-40" />}>
                 <TheoryContent Component={resolved.Component} />
@@ -1034,21 +1224,46 @@ const ConceptPanel = ({
         <TheoryHighlighter slug={slug} conceptId={concept.id} />
       ) : null}
 
-      <section className="space-y-4 pt-4 border-t-2 border-fg/80">
-        <div className="flex items-center justify-between gap-3">
+      <section
+        id="concept-exercises"
+        tabIndex={-1}
+        className="space-y-4 pt-4 border-t-2 border-fg/80 outline-none scroll-mt-24"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-display text-2xl text-fg tracking-tightish">{t('practice')}</h3>
-          <span className="text-[12px] text-fg-muted tabular-nums">
-            {passed}/{exercises.length} · {Math.round(ratio * 100)}%
-          </span>
+          <div className="flex items-center gap-3">
+            {exercises.length >= 2 && (
+              <button
+                type="button"
+                onClick={() => setAdaptiveOrder((value) => !value)}
+                aria-pressed={adaptiveOrder}
+                title={adaptiveOrder ? t('adaptive.showOriginal') : t('adaptive.matchToMe')}
+                className={cx(
+                  'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] font-medium tracking-snug transition-colors',
+                  adaptiveOrder
+                    ? 'border-accent/50 bg-accent/[0.08] text-accent'
+                    : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+                )}
+              >
+                <Wand2 size={13} />
+                {adaptiveOrder ? t('adaptive.matched') : t('adaptive.matchToMe')}
+              </button>
+            )}
+            <span className="text-[12px] text-fg-muted tabular-nums">
+              {passed}/{exercises.length} · {Math.round(ratio * 100)}%
+            </span>
+          </div>
         </div>
-        {exercises.length === 0 ? (
+        {orderedExercises.length === 0 ? (
           <Surface variant="inset">
             <p className="px-4 py-6 text-sm text-fg-subtle italic">{t('noExercises')}</p>
           </Surface>
         ) : (
           <div className="space-y-4 stagger">
-            {exercises.map((exercise) => (
-              <ExerciseRunner key={exercise.id} topicSlug={slug} exercise={exercise} />
+            {orderedExercises.map((exercise, exerciseIndex) => (
+              <div key={exercise.id} className={cx(exerciseIndex > 0 && 'cv-auto-exercise')}>
+                <ExerciseRunner topicSlug={slug} exercise={exercise} />
+              </div>
             ))}
           </div>
         )}
@@ -1206,6 +1421,45 @@ const NotesEditor = ({ slug, conceptId }: { slug: string; conceptId: string }) =
         <p className="text-[10px] text-fg-subtle">{t('notes.hint')}</p>
       </div>
     </Surface>
+  );
+};
+
+interface InPageSkipLinksProps {
+  hasExercises: boolean;
+  hasNextConcept: boolean;
+  onSkipToNextConcept: () => void;
+}
+
+const skipLinkClassName =
+  'sr-only focus:not-sr-only focus:inline-flex focus:items-center focus:min-h-[var(--tap)] focus:rounded-md focus:border focus:border-border-base focus:bg-surface focus:px-4 focus:text-sm focus:font-medium focus:text-fg focus:shadow-float focus:outline-none focus:ring-2 focus:ring-accent/50';
+
+const InPageSkipLinks = ({
+  hasExercises,
+  hasNextConcept,
+  onSkipToNextConcept,
+}: InPageSkipLinksProps) => {
+  const { t } = useTranslation('topic');
+  if (!hasExercises && !hasNextConcept) return null;
+  const focusExercises = (event: React.MouseEvent<HTMLAnchorElement>): void => {
+    const target = document.getElementById('concept-exercises');
+    if (!target) return;
+    event.preventDefault();
+    target.scrollIntoView({ block: 'start' });
+    target.focus({ preventScroll: true });
+  };
+  return (
+    <div className="flex flex-wrap gap-2 focus-within:gap-2">
+      {hasExercises && (
+        <a href="#concept-exercises" onClick={focusExercises} className={skipLinkClassName}>
+          {t('skipToExercises')}
+        </a>
+      )}
+      {hasNextConcept && (
+        <button type="button" onClick={onSkipToNextConcept} className={skipLinkClassName}>
+          {t('skipToNextConcept')}
+        </button>
+      )}
+    </div>
   );
 };
 

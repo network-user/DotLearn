@@ -1,0 +1,104 @@
+---
+conceptId: hashing-in-databases-and-systems
+title: Hashing in databases and systems
+estimatedMinutes: 45
+---
+
+# Hashing in databases and distributed systems
+
+A query `WHERE user_id = 500123` against a hundred-million-row table returns instantly - the database does not read every row. A service with millions of users spreads them across ten servers so the load lands evenly. A cache remembers which of a hundred machines holds a given image without asking each one. Behind all three sits the same thing: hashing turns a key into a **location**, be it a bucket on disk, a server number, or a point on a ring.
+
+In this section we look at how hashing works beyond a single program: hash indexes and hash joins inside a DBMS, sharding by hash across servers, and consistent hashing, which saves distributed systems from a total reshuffle when a node is added. This is a direct continuation of hash tables - the same ideas, but at the scale of disk and network.
+
+## Hash index: instant lookup by equality
+
+To avoid scanning a table, a DBMS builds an index. A hash index is a hash table over a column: `hash(value)` leads to a list of pointers to rows with that value. Lookup by equality (`=`) becomes O(1): compute the hash, jump to the bucket, read the pointers.
+
+But a hash index has a hard limitation: it can do equality only. A query `WHERE age > 30` or `ORDER BY name` it will not speed up - a hash does not preserve order, neighbouring values are scattered across the table. For ranges and sorting you need a B-tree index, which stores keys in order. So a DBMS keeps both kinds: a hash index for point lookups, a B-tree for ranges.
+
+<Compare
+  leftTitle="Hash index"
+  rightTitle="B-tree index"
+  left={"Lookup by equality in O(1). Cannot do ranges or sorting - the key order is destroyed by the hash."}
+  right={"Lookup by equality in O(log n), but can do ranges (<, >, BETWEEN) and ORDER BY: keys are stored in order."}
+  verdict="Equality - a hash index; ranges and order - a B-tree. The DBMS chooses by the shape of the query."
+/>
+
+## Hash join: how big tables are joined
+
+Joining two tables by key "head on" - for each row of one scan every row of the other - is O(n·m), deadly slow on big data. A hash join does it differently: a hash table is built over the smaller table (the build phase), then the larger table is scanned once, and each of its rows finds matches in the hash table in O(1) (the probe phase). The result is O(n + m) instead of a product.
+
+<Figure caption="Hash join: a hash table is built over the smaller table, the larger one is probed through it in one pass. The product O(n·m) turns into the sum O(n+m).">
+  <Sketch viewBox="0 0 460 150" title="Hash join">
+    <SketchLabel x={20} y={35} muted anchor="start">smaller table</SketchLabel>
+    <SketchArrow from={[120, 50]} to={[180, 60]} />
+    <SketchBox x={180} y={42} width={110} height={40} accent />
+    <SketchLabel x={235} y={67} mono accent>hash table</SketchLabel>
+    <SketchLabel x={20} y={120} muted anchor="start">larger table</SketchLabel>
+    <SketchArrow from={[130, 115]} to={[235, 88]} accent dashed />
+    <SketchLabel x={300} y={67} muted anchor="start">probe →</SketchLabel>
+    <SketchArrow from={[290, 62]} to={[360, 62]} accent />
+    <SketchLabel x={365} y={67} mono anchor="start">pairs</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Sharding: hash % N and its trouble
+
+When data does not fit on one server, it is **sharded** - spread across several machines. The simplest rule: `server_number = hash(key) % N`. It smears the load evenly - with a good hash each of N servers gets roughly the same share.
+
+This rule has a catastrophic trouble: change N (add or remove a server) and the remainder `% N` changes for almost **every** key, so almost all data must move between servers. Run the code and see for yourself - moving from 4 to 5 servers relocates the vast majority of keys. Change `5` to `8` - the picture is the same.
+
+<PyDemo
+  title="hash % N: how many keys move when a server is added"
+  code={`def shard(key, n):
+    return key % n
+
+keys = list(range(1000))
+moved = sum(1 for k in keys if shard(k, 4) != shard(k, 5))
+print("moved", moved, "of", len(keys), "keys")`}
+/>
+
+For a database that is hours of downtime and terabytes of copying. You need a way to change the number of servers while touching only a small fraction of keys. That way is consistent hashing.
+
+## Consistent hashing: a ring instead of a remainder
+
+The idea: both servers (nodes) and keys are laid out on one **ring** of hash values. A key belongs to the first node clockwise from its position. Now adding a node affects only the arc between it and the previous node - only part of that arc's keys move, not the whole system. Spin the visualization: add and remove nodes and watch the number of moved keys at the bottom.
+
+<ConsistentHashRing lang="en" />
+
+Compare with `hash % N`, where almost everything would change. This is exactly why consistent hashing underlies Cassandra, DynamoDB, distributed caches (memcached clients), and CDNs: nodes come and go, while the reshuffle stays local. In practice each physical node is represented by dozens of virtual points on the ring - so the load spreads more evenly.
+
+## Edge cases
+
+- **Skew.** If the key is distributed unevenly (say sharding by city, where half the traffic is the capital), one partition becomes "hot". Cure it by choosing a more uniform shard key or by mixing.
+- **Range queries on a hash key.** Sharding by hash kills ranges: keys close in value sit on different servers. If you need ranges, shard by range, not by hash.
+- **A Bloom filter gives false "yes".** A probabilistic membership check (see below) never errs with "definitely no", but occasionally says "maybe present" where the element is absent.
+
+## Common mistakes
+
+- **A hash index for ranges.** `WHERE price BETWEEN 100 AND 200` a hash index will not speed up - it does equality only. For ranges you need a B-tree.
+- **Sharding via hash % N in a growing system.** Adding a server reshuffles almost all the data. For a changing number of nodes use consistent hashing.
+- **Ignoring key skew.** Even load is a property of the key, not of hash magic. A bad shard key creates hot partitions even with a perfect hash function.
+
+<Detail summary="Bloom filter: membership almost for free">
+
+A Bloom filter answers "is the element in the set", spending far less memory than the set itself - at the cost of rare false positives. It is a bit array and k independent hash functions. On adding an element, k hashes set k positions to one. On a check you look at those same k positions: if even one is zero, the element is **definitely not there**; if all are ones, it is **possibly there** (the bits could have been set by other elements). The filter never gives "definitely there", but "definitely not" is always honest. Databases use it to avoid going to disk for keys that are certainly absent; that is how the check works in LSM trees, for example.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A hash index speeds up lookup by equality to O(1), but cannot do ranges or sorting - for those you need a B-tree.",
+    "A hash join builds a hash table over the smaller table and probes it with the larger one: O(n+m) instead of O(n·m).",
+    "Sharding by hash % N spreads data evenly, but on a change of N reshuffles almost everything.",
+    "Consistent hashing puts nodes and keys on a ring; adding a node moves only part of one arc's keys.",
+    "That is why consistent hashing underlies Cassandra, DynamoDB, distributed caches, and CDNs.",
+    "A Bloom filter on several hashes gives a cheap membership check: 'definitely no' is honest, 'maybe yes' has rare false positives.",
+  ]}
+/>
+
+## References
+
+- [Wikipedia - Hash join](https://en.wikipedia.org/wiki/Hash_join)
+- [Wikipedia - Consistent hashing](https://en.wikipedia.org/wiki/Consistent_hashing)
+- [Wikipedia - Bloom filter](https://en.wikipedia.org/wiki/Bloom_filter)

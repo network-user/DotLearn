@@ -1,23 +1,58 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowRight, CalendarCheck, CheckCircle2, Flame, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  CalendarCheck,
+  CalendarRange,
+  CheckCircle2,
+  Flame,
+  Layers,
+  RotateCcw,
+  Sparkles,
+  Repeat2,
+  Trophy,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 
+import { NextActionTopCard } from '@/components/NextActionCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { celebrate } from '@/components/ui/confetti';
 import { cx } from '@/components/ui/cx';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
+import {
+  ACHIEVEMENT_DEFINITIONS,
+  useAchievements,
+  type AchievementId,
+  type TopicReadInput,
+} from '@/lib/achievements';
 import { reviewFlashcard, type FlashcardRating } from '@/lib/flashcards';
-import { getCurrentLanguage } from '@/lib/i18n';
-import { db } from '@/lib/progress-db';
+import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
+import { db, localDayKey } from '@/lib/progress-db';
+import {
+  compareWeeks,
+  lastSevenDays,
+  type SparklinePoint,
+  type WeeklyComparison,
+} from '@/lib/recap';
 import { useSettings } from '@/lib/settings';
 import { loadDueAcrossDecks, loadFailedExercises, type DueCard, type FailedExercise } from '@/lib/today';
-import { useStreak } from '@/lib/use-progress';
+import { useContentLanguage } from '@/lib/topics';
+import { useVisibleManifests } from '@/lib/use-manifests';
+import { useActivity, useStreakState } from '@/lib/use-progress';
+import { useXp, type XpState } from '@/lib/xp';
+
+const ACHIEVEMENT_ICON_BY_ID = new Map<AchievementId, (typeof ACHIEVEMENT_DEFINITIONS)[number]['icon']>(
+  ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition.icon]),
+);
 
 const RATINGS: { key: FlashcardRating; tone: string; hotkey: string }[] = [
   { key: 'again', tone: 'border-err/45 text-err hover:bg-err/10', hotkey: '1' },
@@ -28,41 +63,128 @@ const RATINGS: { key: FlashcardRating; tone: string; hotkey: string }[] = [
 
 type SessionPhase = 'idle' | 'review' | 'done';
 
-const todayUtc = (): string => new Date().toISOString().slice(0, 10);
+const REVIEW_WEIGHT = 0.25;
+const READ_WEIGHT = 0.5;
+
+const STREAK_MILESTONES = [7, 30, 100];
+
+const weightedDailyDone = (
+  exercisesPassed: number,
+  cardsReviewed: number,
+  conceptsRead: number,
+): number =>
+  Math.round(exercisesPassed + cardsReviewed * REVIEW_WEIGHT + conceptsRead * READ_WEIGHT);
 
 export const TodayPage = () => {
   const { t } = useTranslation('today');
   const { t: tTypes } = useTranslation('interview');
-  const language = getCurrentLanguage();
+  const { t: tProgress } = useTranslation('progress');
+  const language = useContentLanguage();
 
-  const streak = useStreak();
-  const { dailyGoal } = useSettings();
-  const activityToday = useLiveQuery(() => db.activity.get(todayUtc()), [], undefined);
+  const { current: streak, best: bestStreak } = useStreakState();
+  const { dailyGoal, weeklyGoalActiveDays } = useSettings();
+  const activity = useActivity();
+  const xp = useXp();
+  const weekly = useMemo(() => compareWeeks(activity), [activity]);
+  const sparkline = useMemo(() => lastSevenDays(activity), [activity]);
+  const activityToday = useLiveQuery(() => db.activity.get(localDayKey()), [], undefined);
   const solvedToday = activityToday?.exercisesPassed ?? 0;
+  const cardsReviewedToday = activityToday?.cardsReviewed ?? 0;
+  const conceptsReadToday = activityToday?.conceptsRead ?? 0;
+  const doneToday = weightedDailyDone(solvedToday, cardsReviewedToday, conceptsReadToday);
+  const goalReached = dailyGoal > 0 && doneToday >= dailyGoal;
 
-  const [due, setDue] = useState<DueCard[] | undefined>(undefined);
-  const [failed, setFailed] = useState<FailedExercise[] | undefined>(undefined);
+  const goalCelebratedRef = useRef(false);
+  useEffect(() => {
+    if (!goalReached) {
+      goalCelebratedRef.current = false;
+      return;
+    }
+    if (goalCelebratedRef.current) return;
+    goalCelebratedRef.current = true;
+    celebrate('goal-reached');
+    toast.success(t('celebrate.goal'));
+  }, [goalReached, t]);
+
+  const lastCelebratedStreakRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (streak <= 0) {
+      lastCelebratedStreakRef.current = streak;
+      return;
+    }
+    const previous = lastCelebratedStreakRef.current;
+    lastCelebratedStreakRef.current = streak;
+    if (previous === null || streak <= previous) return;
+    const hitMilestone = STREAK_MILESTONES.includes(streak);
+    const newPersonalBest = streak === bestStreak && bestStreak > previous;
+    if (!hitMilestone && !newPersonalBest) return;
+    celebrate('streak-milestone');
+    toast.success(
+      hitMilestone
+        ? t('celebrate.streakMilestone', { count: streak })
+        : t('celebrate.streakBest', { count: streak }),
+    );
+  }, [streak, bestStreak, t]);
+
+  const manifests = useVisibleManifests();
+  const readByTopic = useReadConceptsByTopic();
+  const achievementTopics = useMemo<TopicReadInput[]>(
+    () =>
+      manifests.map((manifest) => ({
+        totalConcepts: manifest.concepts.length,
+        readConcepts: countReadConcepts(manifest.concepts, readByTopic.get(manifest.slug)),
+      })),
+    [manifests, readByTopic],
+  );
+
+  const [unlockedThisVisit, setUnlockedThisVisit] = useState<AchievementId[]>([]);
+  const handleUnlock = useCallback(
+    (ids: AchievementId[]) => {
+      setUnlockedThisVisit((prev) => [...new Set([...prev, ...ids])]);
+      celebrate('streak-milestone');
+      const first = ids[0];
+      if (first) {
+        toast.success(
+          t('achievements.unlocked', {
+            title: tProgress(`achievements.items.${first}.title`),
+          }),
+        );
+      }
+    },
+    [t, tProgress],
+  );
+  useAchievements(achievementTopics, streak, handleUnlock);
+
+  const [due, setDue] = useState<DueCard[] | null | undefined>(undefined);
+  const [failed, setFailed] = useState<FailedExercise[] | null | undefined>(undefined);
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setDue(undefined);
+    setFailed(undefined);
     loadDueAcrossDecks(language)
       .then((cards) => {
         if (!cancelled) setDue(cards);
       })
       .catch(() => {
-        if (!cancelled) setDue([]);
+        if (!cancelled) setDue(null);
       });
     loadFailedExercises(language)
       .then((items) => {
         if (!cancelled) setFailed(items);
       })
       .catch(() => {
-        if (!cancelled) setFailed([]);
+        if (!cancelled) setFailed(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [language]);
+  }, [language, retryToken]);
+
+  const retry = useCallback(() => {
+    setRetryToken((value) => value + 1);
+  }, []);
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -75,9 +197,20 @@ export const TodayPage = () => {
         <p className="max-w-prose text-sm text-fg-muted">{t('subtitle')}</p>
       </header>
 
-      <GoalCard done={solvedToday} goal={dailyGoal} />
+      <NextActionTopCard />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <GoalCard
+        done={doneToday}
+        goal={dailyGoal}
+        weeklyGoal={weeklyGoalActiveDays}
+        weeklyActiveDays={weekly.thisWeek.activeDays}
+      />
+
+      {xp ? <LevelBar xp={xp} /> : null}
+
+      <WeekCard sparkline={sparkline} weekly={weekly} />
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <SummaryStat
           icon={<Flame size={16} className="text-accent" />}
           label={t('summary.streak')}
@@ -88,19 +221,79 @@ export const TodayPage = () => {
           label={t('summary.solvedToday')}
           value={solvedToday}
         />
+        <SummaryStat
+          icon={<Repeat2 size={16} className="text-accent" />}
+          label={t('summary.cardsReviewed')}
+          value={cardsReviewedToday}
+        />
       </div>
 
-      <ReviewSection due={due} />
+      {unlockedThisVisit.length > 0 && <NewBadgesRow ids={unlockedThisVisit} />}
 
-      <MistakesSection failed={failed} typeLabel={(type) => tTypes(`exam.types.${type}`, { defaultValue: type })} />
+      <ReviewSection due={due} onRetry={retry} />
+
+      <MistakesSection
+        failed={failed}
+        onRetry={retry}
+        typeLabel={(type) => tTypes(`exam.types.${type}`, { defaultValue: type })}
+      />
     </div>
   );
 };
 
-const GoalCard = ({ done, goal }: { done: number; goal: number }) => {
+const NewBadgesRow = ({ ids }: { ids: AchievementId[] }) => {
+  const { t } = useTranslation('today');
+  const { t: tProgress } = useTranslation('progress');
+  return (
+    <Surface variant="accent" rule="left">
+      <div className="space-y-3 p-4 sm:p-5">
+        <div className="flex items-center gap-2 eyebrow text-fg-subtle">
+          <Sparkles size={12} className="text-accent" />
+          <span>{t('achievements.heading')}</span>
+        </div>
+        <ul className="flex flex-wrap gap-2">
+          {ids.map((id) => {
+            const Icon = ACHIEVEMENT_ICON_BY_ID.get(id);
+            return (
+              <li
+                key={id}
+                className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-surface px-3 py-1.5 text-sm text-fg"
+              >
+                {Icon ? <Icon size={15} className="text-accent" aria-hidden /> : null}
+                <span>{tProgress(`achievements.items.${id}.title`)}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <Link
+          to="/progress"
+          className="inline-flex min-h-[var(--tap)] items-center gap-1.5 text-sm font-medium text-accent hover:underline"
+        >
+          {t('achievements.viewAll')}
+          <ArrowRight size={15} />
+        </Link>
+      </div>
+    </Surface>
+  );
+};
+
+const GoalCard = ({
+  done,
+  goal,
+  weeklyGoal,
+  weeklyActiveDays,
+}: {
+  done: number;
+  goal: number;
+  weeklyGoal: number | undefined;
+  weeklyActiveDays: number;
+}) => {
   const { t } = useTranslation('today');
   const ratio = goal > 0 ? Math.min(1, done / goal) : 0;
   const reached = goal > 0 && done >= goal;
+  const hasWeeklyGoal = typeof weeklyGoal === 'number' && weeklyGoal > 0;
+  const weeklyRatio = hasWeeklyGoal ? Math.min(1, weeklyActiveDays / weeklyGoal) : 0;
+  const weeklyReached = hasWeeklyGoal && weeklyActiveDays >= weeklyGoal;
   return (
     <Surface variant={reached ? 'accent' : 'chrome'} rule={reached ? 'left' : 'none'}>
       <div className="flex items-center gap-4 p-4 sm:p-5">
@@ -115,14 +308,147 @@ const GoalCard = ({ done, goal }: { done: number; goal: number }) => {
             {t('goal.progress', { done, goal })}
           </span>
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="eyebrow text-fg-subtle">{t('goal.heading')}</div>
           <p className={cx('mt-1 text-sm font-medium', reached ? 'text-ok' : 'text-fg')}>
             {reached ? t('goal.reached') : t('goal.remaining', { count: Math.max(0, goal - done) })}
           </p>
         </div>
+        {hasWeeklyGoal ? (
+          <div className="flex shrink-0 items-center gap-3 border-l border-border-base pl-4">
+            <div className="relative">
+              <ProgressRing
+                value={weeklyRatio}
+                size={48}
+                stroke={4}
+                indicatorClassName={weeklyReached ? 'text-ok' : 'text-accent'}
+                ariaLabel={t('weeklyGoal.aria', { done: weeklyActiveDays, goal: weeklyGoal })}
+              />
+              <span className="absolute inset-0 grid place-items-center text-[11px] font-display tabular-nums text-fg">
+                {t('weeklyGoal.progress', { done: weeklyActiveDays, goal: weeklyGoal })}
+              </span>
+            </div>
+            <div className="hidden min-w-0 sm:block">
+              <div className="eyebrow text-fg-subtle">{t('weeklyGoal.heading')}</div>
+              <p
+                className={cx(
+                  'mt-1 text-[12px] font-medium',
+                  weeklyReached ? 'text-ok' : 'text-fg-muted',
+                )}
+              >
+                {weeklyReached
+                  ? t('weeklyGoal.reached')
+                  : t('weeklyGoal.daysLabel', { count: weeklyActiveDays })}
+              </p>
+            </div>
+          </div>
+        ) : null}
       </div>
     </Surface>
+  );
+};
+
+const LevelBar = ({ xp }: { xp: XpState }) => {
+  const { t } = useTranslation('today');
+  const percent = Math.round(xp.ratioToNext * 100);
+  return (
+    <Surface variant="chrome">
+      <div className="flex items-center gap-4 p-4 sm:p-5">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-accent/10 text-accent">
+          <Trophy size={18} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium text-fg">
+              {t('level.label', { level: xp.level })}
+            </span>
+            <span className="text-[12px] tabular-nums text-fg-subtle">
+              {t('level.xp', { xp: xp.total })}
+            </span>
+          </div>
+          <div
+            className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2"
+            role="progressbar"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={t('level.nextAria', { remaining: Math.max(0, xp.nextLevelAt - xp.total) })}
+          >
+            <div
+              className="h-full rounded-full bg-accent transition-[width] duration-slow ease-out"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <p className="mt-1.5 text-[11px] text-fg-subtle tabular-nums">
+            {t('level.toNext', { remaining: Math.max(0, xp.nextLevelAt - xp.total) })}
+          </p>
+        </div>
+      </div>
+    </Surface>
+  );
+};
+
+const WeekCard = ({
+  sparkline,
+  weekly,
+}: {
+  sparkline: SparklinePoint[];
+  weekly: WeeklyComparison;
+}) => {
+  const { t } = useTranslation('today');
+  const max = sparkline.reduce((peak, point) => Math.max(peak, point.value), 0);
+  const tally = [
+    { key: 'concepts', value: weekly.thisWeek.conceptsRead },
+    { key: 'exercises', value: weekly.thisWeek.exercisesPassed },
+    { key: 'cards', value: weekly.thisWeek.cardsReviewed },
+  ] as const;
+  return (
+    <Surface variant="chrome">
+      <div className="space-y-4 p-4 sm:p-5">
+        <div className="flex items-center gap-2 eyebrow text-fg-subtle">
+          <CalendarRange size={12} className="text-accent" aria-hidden />
+          <span>{t('week.heading')}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {tally.map((entry) => (
+            <div key={entry.key} className="min-w-0">
+              <div className="font-display text-2xl leading-none tabular-nums text-fg">
+                {entry.value}
+              </div>
+              <div className="mt-1 text-[11px] uppercase tracking-widest text-fg-subtle">
+                {t(`week.${entry.key}`)}
+              </div>
+            </div>
+          ))}
+        </div>
+        <Sparkline points={sparkline} max={max} />
+      </div>
+    </Surface>
+  );
+};
+
+const Sparkline = ({ points, max }: { points: SparklinePoint[]; max: number }) => {
+  const { t } = useTranslation('today');
+  return (
+    <div
+      className="flex h-14 items-end gap-1.5"
+      role="img"
+      aria-label={t('week.sparklineAria')}
+    >
+      {points.map((point) => {
+        const heightPercent = max > 0 ? Math.max(6, (point.value / max) * 100) : 6;
+        return (
+          <div
+            key={point.day}
+            className={cx(
+              'flex-1 rounded-sm transition-[height] duration-med ease-standard',
+              point.value > 0 ? (point.isToday ? 'bg-accent' : 'bg-accent/45') : 'bg-surface-2',
+            )}
+            style={{ height: `${heightPercent}%` }}
+          />
+        );
+      })}
+    </div>
   );
 };
 
@@ -146,7 +472,13 @@ const SummaryStat = ({
   </Surface>
 );
 
-const ReviewSection = ({ due }: { due: DueCard[] | undefined }) => {
+const ReviewSection = ({
+  due,
+  onRetry,
+}: {
+  due: DueCard[] | null | undefined;
+  onRetry: () => void;
+}) => {
   const { t } = useTranslation('today');
   const { t: tCards } = useTranslation('flashcards');
   const reduceMotion = useReducedMotion() ?? false;
@@ -179,6 +511,12 @@ const ReviewSection = ({ due }: { due: DueCard[] | undefined }) => {
       return next;
     });
   }, [total]);
+
+  useEffect(() => {
+    if (phase === 'done') {
+      celebrate('queue-cleared');
+    }
+  }, [phase]);
 
   const rate = useCallback(
     (rating: FlashcardRating) => {
@@ -215,26 +553,54 @@ const ReviewSection = ({ due }: { due: DueCard[] | undefined }) => {
 
       {due === undefined && <Skeleton rounded="2xl" className="h-40" />}
 
-      {due !== undefined && phase === 'idle' && (
+      {due === null && (
+        <EmptyState
+          icon={<AlertTriangle size={22} className="text-warn" />}
+          title={t('error.dueTitle')}
+          body={t('error.dueBody')}
+          primaryAction={
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full sm:w-auto"
+              leadingIcon={<RotateCcw size={16} />}
+              onClick={onRetry}
+            >
+              {t('error.retry')}
+            </Button>
+          }
+        />
+      )}
+
+      {due != null && phase === 'idle' && total === 0 && (
+        <EmptyState
+          icon={<CheckCircle2 size={22} className="text-ok" />}
+          title={t('due.emptyTitle')}
+          body={t('due.emptyBody')}
+          primaryAction={
+            <Link to="/flashcards" className="block w-full sm:w-auto">
+              <Button variant="primary" size="lg" className="w-full sm:w-auto" leadingIcon={<Layers size={16} />}>
+                {t('due.browseDecks')}
+              </Button>
+            </Link>
+          }
+        />
+      )}
+
+      {due != null && phase === 'idle' && total > 0 && (
         <Surface variant="inset" rule="top">
           <div className="flex flex-col items-center gap-4 p-6 text-center sm:p-8">
-            {total === 0 ? (
-              <p className="text-sm text-fg-muted">{t('due.empty')}</p>
-            ) : (
-              <>
-                <div className="font-display text-4xl tabular-nums text-fg">{total}</div>
-                <p className="text-sm text-fg-muted">{t('due.count', { count: total })}</p>
-                <Button
-                  variant="primary"
-                  size="lg"
-                  className="w-full sm:w-auto"
-                  leadingIcon={<CalendarCheck size={16} />}
-                  onClick={start}
-                >
-                  {t('due.start')}
-                </Button>
-              </>
-            )}
+            <div className="font-display text-4xl tabular-nums text-fg">{total}</div>
+            <p className="text-sm text-fg-muted">{t('due.count', { count: total })}</p>
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full sm:w-auto"
+              leadingIcon={<CalendarCheck size={16} />}
+              onClick={start}
+            >
+              {t('due.start')}
+            </Button>
           </div>
         </Surface>
       )}
@@ -333,9 +699,11 @@ const ReviewSection = ({ due }: { due: DueCard[] | undefined }) => {
 
 const MistakesSection = ({
   failed,
+  onRetry,
   typeLabel,
 }: {
-  failed: FailedExercise[] | undefined;
+  failed: FailedExercise[] | null | undefined;
+  onRetry: () => void;
   typeLabel: (type: string) => string;
 }) => {
   const { t } = useTranslation('today');
@@ -345,15 +713,41 @@ const MistakesSection = ({
 
       {failed === undefined && <Skeleton rounded="2xl" className="h-28" />}
 
-      {failed !== undefined && failed.length === 0 && (
-        <Surface variant="inset">
-          <div className="p-6 text-center sm:p-8">
-            <p className="text-sm text-fg-muted">{t('mistakes.empty')}</p>
-          </div>
-        </Surface>
+      {failed === null && (
+        <EmptyState
+          icon={<AlertTriangle size={22} className="text-warn" />}
+          title={t('error.mistakesTitle')}
+          body={t('error.mistakesBody')}
+          primaryAction={
+            <Button
+              variant="primary"
+              size="md"
+              className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+              leadingIcon={<RotateCcw size={15} />}
+              onClick={onRetry}
+            >
+              {t('error.retry')}
+            </Button>
+          }
+        />
       )}
 
-      {failed !== undefined && failed.length > 0 && (
+      {failed != null && failed.length === 0 && (
+        <EmptyState
+          icon={<CheckCircle2 size={22} className="text-ok" />}
+          title={t('mistakes.emptyTitle')}
+          body={t('mistakes.emptyBody')}
+          primaryAction={
+            <Link to="/" hash="topics" className="block w-full sm:w-auto">
+              <Button variant="outline" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                {t('mistakes.exploreTopics')}
+              </Button>
+            </Link>
+          }
+        />
+      )}
+
+      {failed != null && failed.length > 0 && (
         <ul className="space-y-3">
           {failed.map((item) => (
             <li key={`${item.slug}:${item.exerciseId}`}>

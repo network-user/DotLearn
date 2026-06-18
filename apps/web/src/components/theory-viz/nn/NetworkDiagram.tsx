@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
 import { Pause, Play, RotateCcw } from 'lucide-react';
@@ -45,6 +45,8 @@ export const NetworkDiagram = ({
   const [activeLayer, setActiveLayer] = useState(0);
   const [playing, setPlaying] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const svgTitleId = useId();
+  const svgDescId = useId();
 
   const positions = useMemo<NeuronPosition[][]>(() => {
     const innerWidth = width - horizontalPadding * 2;
@@ -119,24 +121,31 @@ export const NetworkDiagram = ({
   return (
     <VizShell
       label={label}
+      description="Граф многослойной нейронной сети: слои нейронов соединены рёбрами; кнопки запускают прямой проход по слоям."
+      liveCaption={`Прямой проход: активен слой ${resolveLayerName(activeLayer)} (${activeLayer + 1} из ${layers.length}).`}
       actions={
         <>
           {playing ? (
             <VizButton onClick={pause} tone="ghost">
-              <Pause size={12} />
+              <Pause size={12} aria-hidden />
               Пауза
             </VizButton>
           ) : (
             <VizButton onClick={play}>
-              <Play size={12} />
+              <Play size={12} aria-hidden />
               {atEnd ? 'Заново' : 'Пуск'}
             </VizButton>
           )}
           <VizButton onClick={step} tone="ghost" disabled={atEnd}>
             Шаг
           </VizButton>
-          <VizButton onClick={reset} tone="ghost" disabled={activeLayer === 0 && !playing}>
-            <RotateCcw size={12} />
+          <VizButton
+            onClick={reset}
+            tone="ghost"
+            disabled={activeLayer === 0 && !playing}
+            label="Сбросить прямой проход"
+          >
+            <RotateCcw size={12} aria-hidden />
           </VizButton>
         </>
       }
@@ -153,8 +162,12 @@ export const NetworkDiagram = ({
           viewBox={`0 0 ${width} ${height}`}
           className="w-full min-w-[340px]"
           role="img"
-          aria-label="Граф многослойной нейронной сети с прямым проходом"
+          aria-labelledby={`${svgTitleId} ${svgDescId}`}
         >
+          <title id={svgTitleId}>Граф многослойной нейронной сети с прямым проходом</title>
+          <desc id={svgDescId}>
+            {`Слои: ${layers.join(', ')} нейронов. Сейчас активен слой ${resolveLayerName(activeLayer)} (${activeLayer + 1} из ${layers.length}).`}
+          </desc>
           {positions.slice(0, -1).map((layerPositions, layerIndex) =>
             layerPositions.flatMap((from, fromIndex) =>
               (positions[layerIndex + 1] ?? []).map((to, toIndex) => {

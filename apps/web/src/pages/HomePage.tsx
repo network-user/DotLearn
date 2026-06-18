@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Bookmark,
+  BookOpen,
   CalendarCheck,
   ChevronDown,
   Code2,
@@ -19,6 +20,7 @@ import {
   Layers,
   NotebookPen,
   RotateCcw,
+  Route as RouteIcon,
   Search,
   SlidersHorizontal,
   Sparkles,
@@ -26,20 +28,26 @@ import {
   X,
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
+import type { SearchEntry } from 'virtual:search-index';
 
+import { NextActionBanner } from '@/components/NextActionCard';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { DualProgressRing } from '@/components/ui/DualProgressRing';
+import { EmptyState as EmptyStateCard } from '@/components/ui/EmptyState';
 import { Surface } from '@/components/ui/Surface';
-import { getCurrentLanguage } from '@/lib/i18n';
+import { fuzzyScore } from '@/lib/fuzzy';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
-import { effectiveLanguage, prefetchTopic } from '@/lib/topics';
+import { effectiveLanguage, prefetchTopic, useContentLanguage } from '@/lib/topics';
+import { tracks } from '@/lib/tracks';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
+import { useTrackAggregates } from '@/lib/use-tracks';
+import type { HomeDuration, HomeSortKey } from '@/router';
 import topicStats from 'virtual:topic-stats';
 
 interface TopicRow {
@@ -47,6 +55,7 @@ interface TopicRow {
   total: number;
   passed: number;
   readConcepts: number;
+  totalMinutes: number;
 }
 
 type DifficultyFilter = 'all' | 'beginner' | 'intermediate' | 'advanced';
@@ -58,6 +67,47 @@ const STATUS_LABEL_KEY: Record<StatusFilter, string> = {
   'not-started': 'status.notStarted',
   'in-progress': 'status.inProgress',
   mastered: 'status.mastered',
+};
+
+const SORT_KEYS: HomeSortKey[] = ['relevance', 'difficulty', 'shortest', 'in-progress'];
+const SORT_LABEL_KEY: Record<HomeSortKey, string> = {
+  relevance: 'sort.relevance',
+  difficulty: 'sort.difficulty',
+  shortest: 'sort.shortest',
+  'in-progress': 'sort.inProgress',
+};
+const SORT_DEFAULT_LABEL: Record<HomeSortKey, string> = {
+  relevance: 'По релевантности',
+  difficulty: 'По сложности',
+  shortest: 'Сначала короткие',
+  'in-progress': 'Сначала начатые',
+};
+
+const DURATION_FILTERS: HomeDuration[] = ['short', 'medium', 'long'];
+const DURATION_LABEL_KEY: Record<HomeDuration, string> = {
+  short: 'duration.short',
+  medium: 'duration.medium',
+  long: 'duration.long',
+};
+const DURATION_DEFAULT_LABEL: Record<HomeDuration, string> = {
+  short: 'До 30 мин',
+  medium: '30-90 мин',
+  long: 'Более 90 мин',
+};
+
+const DIFFICULTY_RANK: Record<string, number> = {
+  beginner: 0,
+  intermediate: 1,
+  advanced: 2,
+};
+
+const CONTENT_RESULTS_LIMIT = 6;
+const CONCEPT_MATCHES_LIMIT = 3;
+
+const durationOfMinutes = (minutes: number): HomeDuration => {
+  if (minutes <= 30) return 'short';
+  if (minutes <= 90) return 'medium';
+  return 'long';
 };
 
 const RUNTIME_LABEL_KEY: Record<string, string> = {
@@ -89,6 +139,43 @@ const statusOfRow = (row: TopicRow): StatusFilter => {
   return 'in-progress';
 };
 
+const statusRank = (row: TopicRow): number => {
+  const status = statusOfRow(row);
+  if (status === 'in-progress') return 2;
+  if (status === 'mastered') return 1;
+  return 0;
+};
+
+const effectiveSearchLanguage = (language: string): SearchEntry['language'] =>
+  language === 'en' ? 'en' : 'ru';
+
+interface ContentHit {
+  slug: string;
+  conceptId: string;
+  conceptTitle: string;
+  score: number;
+}
+
+const useContentSearchIndex = (enabled: boolean): SearchEntry[] => {
+  const [entries, setEntries] = useState<SearchEntry[]>([]);
+  useEffect(() => {
+    if (!enabled || entries.length > 0) return;
+    let cancelled = false;
+    void import('virtual:search-index').then((module) => {
+      if (cancelled) return;
+      try {
+        setEntries(JSON.parse(module.default) as SearchEntry[]);
+      } catch {
+        setEntries([]);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, entries.length]);
+  return entries;
+};
+
 const toggleInArray = (values: string[], value: string): string[] =>
   values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
 
@@ -113,10 +200,17 @@ export const HomePage = () => {
   const status: StatusFilter = isStatusFilter(search.status) ? search.status : 'all';
   const runtimeFilter = useMemo(() => search.runtime ?? [], [search.runtime]);
   const tagFilter = useMemo(() => search.tags ?? [], [search.tags]);
+  const duration = search.duration;
   const query = search.q ?? '';
 
   const [queryInput, setQueryInput] = useState(query);
   const debouncedQuery = useDebouncedValue(queryInput, 300);
+
+  const trimmedQuery = debouncedQuery.trim();
+  const hasQuery = trimmedQuery.length > 0;
+  const sort: HomeSortKey = search.sort ?? (hasQuery ? 'relevance' : 'difficulty');
+
+  const contentEntries = useContentSearchIndex(hasQuery);
 
   const patch = useCallback(
     (next: Partial<HomeSearchPatch>): void => {
@@ -140,7 +234,7 @@ export const HomePage = () => {
     setQueryInput(query);
   }, [query]);
 
-  const language = getCurrentLanguage();
+  const language = useContentLanguage();
 
   const rows = useMemo<TopicRow[]>(() => {
     const passedByTopic = new Map<string, number>();
@@ -154,6 +248,7 @@ export const HomePage = () => {
       total: topicStats[manifest.slug]?.[effectiveLanguage(manifest, language)] ?? 0,
       passed: passedByTopic.get(manifest.slug) ?? 0,
       readConcepts: countReadConcepts(manifest.concepts, readByTopic.get(manifest.slug)),
+      totalMinutes: manifest.concepts.reduce((sum, concept) => sum + concept.estimatedMinutes, 0),
     }));
   }, [manifests, progressRecords, readByTopic, language]);
 
@@ -179,22 +274,125 @@ export const HomePage = () => {
     return [...seen].sort((a, b) => a.localeCompare(b, language));
   }, [rows, language]);
 
-  const filteredRows = useMemo(() => {
-    const needle = debouncedQuery.trim().toLowerCase();
-    return rows.filter((row) => {
-      const { manifest } = row;
-      if (difficulty !== 'all' && manifest.difficulty !== difficulty) return false;
-      if (runtimeFilter.length > 0 && !runtimeFilter.includes(manifest.runtime)) return false;
-      if (tagFilter.length > 0 && !tagFilter.every((tag) => manifest.tags.includes(tag)))
-        return false;
-      if (status !== 'all' && statusOfRow(row) !== status) return false;
-      if (needle) {
-        const haystack = [manifest.title, ...manifest.tags].join(' ').toLowerCase();
-        if (!haystack.includes(needle)) return false;
+  const contentBySlug = useMemo(() => {
+    if (!hasQuery) return new Map<string, ContentHit[]>();
+    const language5 = effectiveSearchLanguage(language);
+    const slugsWithCurrentLanguage = new Set<string>();
+    for (const entry of contentEntries) {
+      if (entry.language === language5) slugsWithCurrentLanguage.add(entry.slug);
+    }
+    const byConcept = new Map<string, ContentHit>();
+    for (const entry of contentEntries) {
+      if (entry.language !== language5 && slugsWithCurrentLanguage.has(entry.slug)) continue;
+      const score = fuzzyScore(trimmedQuery, [
+        { text: entry.conceptTitle, weight: 4 },
+        { text: entry.text, weight: 1 },
+      ]);
+      if (score <= 0) continue;
+      const key = `${entry.slug}:${entry.conceptId}`;
+      const existing = byConcept.get(key);
+      if (!existing || score > existing.score) {
+        byConcept.set(key, {
+          slug: entry.slug,
+          conceptId: entry.conceptId,
+          conceptTitle: entry.conceptTitle,
+          score,
+        });
       }
-      return true;
-    });
-  }, [rows, difficulty, runtimeFilter, tagFilter, status, debouncedQuery]);
+    }
+    const grouped = new Map<string, ContentHit[]>();
+    for (const hit of byConcept.values()) {
+      const list = grouped.get(hit.slug) ?? [];
+      list.push(hit);
+      grouped.set(hit.slug, list);
+    }
+    for (const list of grouped.values()) {
+      list.sort((a, b) => b.score - a.score);
+    }
+    return grouped;
+  }, [hasQuery, contentEntries, trimmedQuery, language]);
+
+  const scoredRows = useMemo(() => {
+    return rows
+      .filter((row) => {
+        const { manifest } = row;
+        if (difficulty !== 'all' && manifest.difficulty !== difficulty) return false;
+        if (runtimeFilter.length > 0 && !runtimeFilter.includes(manifest.runtime)) return false;
+        if (tagFilter.length > 0 && !tagFilter.every((tag) => manifest.tags.includes(tag)))
+          return false;
+        if (status !== 'all' && statusOfRow(row) !== status) return false;
+        if (duration !== undefined && durationOfMinutes(row.totalMinutes) !== duration)
+          return false;
+        return true;
+      })
+      .map((row) => {
+        const contentHits = contentBySlug.get(row.manifest.slug) ?? [];
+        const metaScore = hasQuery
+          ? fuzzyScore(trimmedQuery, [
+              { text: row.manifest.title, weight: 6 },
+              { text: row.manifest.tags.join(' '), weight: 3 },
+            ])
+          : 0;
+        const contentScore = contentHits[0]?.score ?? 0;
+        return { row, contentHits, score: metaScore + contentScore };
+      })
+      .filter((entry) => !hasQuery || entry.score > 0);
+  }, [
+    rows,
+    difficulty,
+    runtimeFilter,
+    tagFilter,
+    status,
+    duration,
+    hasQuery,
+    trimmedQuery,
+    contentBySlug,
+  ]);
+
+  const sortedRows = useMemo(() => {
+    const entries = [...scoredRows];
+    if (sort === 'relevance' && hasQuery) {
+      entries.sort((a, b) => b.score - a.score);
+    } else if (sort === 'shortest') {
+      entries.sort((a, b) => a.row.totalMinutes - b.row.totalMinutes);
+    } else if (sort === 'in-progress') {
+      entries.sort((a, b) => statusRank(b.row) - statusRank(a.row));
+    } else {
+      entries.sort(
+        (a, b) =>
+          (DIFFICULTY_RANK[a.row.manifest.difficulty] ?? 99) -
+          (DIFFICULTY_RANK[b.row.manifest.difficulty] ?? 99),
+      );
+    }
+    return entries;
+  }, [scoredRows, sort, hasQuery]);
+
+  const filteredRows = useMemo(() => sortedRows.map((entry) => entry.row), [sortedRows]);
+
+  const contentResults = useMemo(() => {
+    if (!hasQuery) return [];
+    const all: ContentHit[] = [];
+    for (const list of contentBySlug.values()) {
+      for (const hit of list) all.push(hit);
+    }
+    all.sort((a, b) => b.score - a.score);
+    return all.slice(0, CONTENT_RESULTS_LIMIT);
+  }, [hasQuery, contentBySlug]);
+
+  const topicTitleBySlug = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of rows) map.set(row.manifest.slug, row.manifest.title);
+    return map;
+  }, [rows]);
+
+  const conceptMatchesByRow = useMemo(() => {
+    const map = new Map<string, ContentHit[]>();
+    for (const entry of sortedRows) {
+      const hits = entry.contentHits;
+      if (hits.length > 0) map.set(entry.row.manifest.slug, hits.slice(0, CONCEPT_MATCHES_LIMIT));
+    }
+    return map;
+  }, [sortedRows]);
 
   const totalConcepts = rows.reduce((sum, row) => sum + row.manifest.concepts.length, 0);
   const runtimes = new Set(rows.map((row) => row.manifest.runtime));
@@ -204,7 +402,9 @@ export const HomePage = () => {
     difficulty !== 'all' ||
     status !== 'all' ||
     runtimeFilter.length > 0 ||
-    tagFilter.length > 0;
+    tagFilter.length > 0 ||
+    duration !== undefined ||
+    search.sort !== undefined;
 
   const resetFilters = useCallback((): void => {
     setQueryInput('');
@@ -214,8 +414,25 @@ export const HomePage = () => {
       status: undefined,
       runtime: undefined,
       tags: undefined,
+      duration: undefined,
+      sort: undefined,
     });
   }, [patch]);
+
+  const setSort = useCallback(
+    (value: HomeSortKey): void => {
+      const fallback: HomeSortKey = hasQuery ? 'relevance' : 'difficulty';
+      patch({ sort: value === fallback ? undefined : value });
+    },
+    [patch, hasQuery],
+  );
+
+  const setDuration = useCallback(
+    (value: HomeDuration): void => {
+      patch({ duration: duration === value ? undefined : value });
+    },
+    [patch, duration],
+  );
 
   const toggleRuntime = (value: string): void => {
     const next = toggleInArray(runtimeFilter, value);
@@ -234,9 +451,13 @@ export const HomePage = () => {
     <div className="space-y-14">
       <Hero stats={{ topics: rows.length, concepts: totalConcepts, runtimes: runtimes.size }} />
 
+      <NextActionBanner />
+
       <ContinueCard rows={rows} />
 
       <TodayCard />
+
+      <TracksBand />
 
       <section className="space-y-5" id="topics">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -263,9 +484,21 @@ export const HomePage = () => {
           availableTags={availableTags}
           tagFilter={tagFilter}
           onToggleTag={toggleTag}
+          duration={duration}
+          onToggleDuration={setDuration}
+          sort={sort}
+          onSortChange={setSort}
+          hasQuery={hasQuery}
           filtersActive={filtersActive}
           onReset={resetFilters}
         />
+
+        {hasQuery && contentResults.length > 0 && (
+          <ContentResultsSection
+            results={contentResults}
+            topicTitleBySlug={topicTitleBySlug}
+          />
+        )}
 
         {rows.length === 0 ? (
           <EmptyState />
@@ -275,7 +508,12 @@ export const HomePage = () => {
           <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger">
             {filteredRows.map((row) => (
               <li key={row.manifest.slug}>
-                <TopicCard row={row} activeTags={tagFilter} onToggleTag={toggleTag} />
+                <TopicCard
+                  row={row}
+                  activeTags={tagFilter}
+                  onToggleTag={toggleTag}
+                  conceptMatches={conceptMatchesByRow.get(row.manifest.slug)}
+                />
               </li>
             ))}
           </ul>
@@ -291,6 +529,8 @@ interface HomeSearchPatch {
   runtime?: string[] | undefined;
   tags?: string[] | undefined;
   status?: string | undefined;
+  sort?: HomeSortKey | undefined;
+  duration?: HomeDuration | undefined;
 }
 
 const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
@@ -409,6 +649,68 @@ const TodayCard = () => {
         </div>
       </Surface>
     </Link>
+  );
+};
+
+const TracksBand = () => {
+  const { t } = useTranslation('tracks');
+  const aggregates = useTrackAggregates();
+  const visible = tracks.filter((track) => (aggregates.get(track.id)?.presentSlugs.length ?? 0) > 0);
+  if (visible.length === 0) return null;
+  return (
+    <section className="space-y-4">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <div className="inline-flex items-center gap-1.5 eyebrow text-fg-subtle">
+            <RouteIcon size={12} className="text-accent" />
+            <span>{t('eyebrow')}</span>
+          </div>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tightish">{t('title')}</h2>
+        </div>
+        <Link
+          to="/tracks"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline underline-offset-2"
+        >
+          {t('open')}
+          <ArrowRight size={15} />
+        </Link>
+      </div>
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {visible.map((track) => {
+          const aggregate = aggregates.get(track.id);
+          const percent = Math.round((aggregate?.masteryAverage ?? 0) * 100);
+          const presentCount = aggregate?.presentSlugs.length ?? 0;
+          return (
+            <li key={track.id}>
+              <Link to="/tracks/$id" params={{ id: track.id }} className="group block h-full">
+                <Surface interactive className="h-full">
+                  <div className="flex h-full flex-col gap-3 p-4">
+                    {track.targetRole && (
+                      <div className="eyebrow text-[10px] text-accent">{track.targetRole}</div>
+                    )}
+                    <h3 className="font-display text-lg leading-tight tracking-tightish text-fg">
+                      {track.title}
+                    </h3>
+                    <div className="mt-auto space-y-1.5">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+                        <div
+                          className={cx('h-full', percent === 100 ? 'bg-ok' : 'bg-accent')}
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-fg-subtle tabular-nums">
+                        <span>{t('home.topicCount', { count: presentCount })}</span>
+                        <span>{percent}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </Surface>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 };
 
@@ -569,6 +871,11 @@ interface CatalogToolbarProps {
   availableTags: string[];
   tagFilter: string[];
   onToggleTag: (value: string) => void;
+  duration: HomeDuration | undefined;
+  onToggleDuration: (value: HomeDuration) => void;
+  sort: HomeSortKey;
+  onSortChange: (value: HomeSortKey) => void;
+  hasQuery: boolean;
   filtersActive: boolean;
   onReset: () => void;
 }
@@ -584,14 +891,25 @@ const CatalogToolbar = ({
   availableTags,
   tagFilter,
   onToggleTag,
+  duration,
+  onToggleDuration,
+  sort,
+  onSortChange,
+  hasQuery,
   filtersActive,
   onReset,
 }: CatalogToolbarProps) => {
   const { t } = useTranslation('home');
   const reduceMotion = useReducedMotion() ?? false;
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const sortLabel = (key: HomeSortKey): string =>
+    t(SORT_LABEL_KEY[key], { defaultValue: SORT_DEFAULT_LABEL[key] });
+  const sortOptions = hasQuery ? SORT_KEYS : SORT_KEYS.filter((key) => key !== 'relevance');
   const activeFacetCount =
-    (status !== 'all' ? 1 : 0) + runtimeFilter.length + tagFilter.length;
+    (status !== 'all' ? 1 : 0) +
+    runtimeFilter.length +
+    tagFilter.length +
+    (duration !== undefined ? 1 : 0);
 
   const facets = (
     <div className="space-y-4">
@@ -599,6 +917,18 @@ const CatalogToolbar = ({
         {STATUS_FILTERS.map((option) => (
           <Chip key={option} active={status === option} onClick={() => onStatusChange(option)}>
             {t(STATUS_LABEL_KEY[option])}
+          </Chip>
+        ))}
+      </FacetGroup>
+
+      <FacetGroup label={t('facets.duration', { defaultValue: 'Длительность' })}>
+        {DURATION_FILTERS.map((option) => (
+          <Chip
+            key={option}
+            active={duration === option}
+            onClick={() => onToggleDuration(option)}
+          >
+            {t(DURATION_LABEL_KEY[option], { defaultValue: DURATION_DEFAULT_LABEL[option] })}
           </Chip>
         ))}
       </FacetGroup>
@@ -647,6 +977,26 @@ const CatalogToolbar = ({
               placeholder={t('searchPlaceholder')}
               aria-label={t('searchPlaceholder')}
               className="form-input pl-10"
+            />
+          </label>
+          <label className="relative block w-full sm:w-auto shrink-0">
+            <span className="sr-only">{t('sort.label', { defaultValue: 'Сортировка' })}</span>
+            <select
+              value={sort}
+              onChange={(event) => onSortChange(event.target.value as HomeSortKey)}
+              aria-label={t('sort.label', { defaultValue: 'Сортировка' })}
+              className="form-input appearance-none pr-9 text-[16px] sm:text-sm w-full sm:w-auto cursor-pointer"
+            >
+              {sortOptions.map((key) => (
+                <option key={key} value={key}>
+                  {sortLabel(key)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={14}
+              aria-hidden
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle"
             />
           </label>
           <button
@@ -741,13 +1091,64 @@ const Chip = ({
   </button>
 );
 
+const ContentResultsSection = ({
+  results,
+  topicTitleBySlug,
+}: {
+  results: ContentHit[];
+  topicTitleBySlug: Map<string, string>;
+}) => {
+  const { t } = useTranslation('home');
+  return (
+    <Surface variant="inset" className="p-4 sm:p-5">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-fg-subtle">
+        <BookOpen size={14} className="text-accent" />
+        <span>{t('contentResults.heading', { defaultValue: 'Совпадения в материалах' })}</span>
+      </div>
+      <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {results.map((hit) => (
+          <li key={`${hit.slug}:${hit.conceptId}`}>
+            <Link
+              to="/topics/$slug"
+              params={{ slug: hit.slug }}
+              search={{ concept: hit.conceptId }}
+              onMouseEnter={() => prefetchTopic(hit.slug)}
+              onFocus={() => prefetchTopic(hit.slug)}
+              className="group flex min-h-[var(--tap)] items-center justify-between gap-3 rounded-xl border border-border-base px-3 py-2 transition-colors hover:border-border-strong hover:bg-fg/[0.03]"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-medium text-fg">
+                  {hit.conceptTitle}
+                </span>
+                <span className="block truncate text-[11px] text-fg-subtle">
+                  {topicTitleBySlug.get(hit.slug) ?? hit.slug}
+                </span>
+              </span>
+              <ArrowRight
+                size={14}
+                className="shrink-0 text-fg-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-accent"
+              />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Surface>
+  );
+};
+
 interface TopicCardProps {
   row: TopicRow;
   activeTags: string[];
   onToggleTag: (tag: string) => void;
+  conceptMatches?: ContentHit[] | undefined;
 }
 
-const TopicCard = memo(function TopicCard({ row, activeTags, onToggleTag }: TopicCardProps) {
+const TopicCard = memo(function TopicCard({
+  row,
+  activeTags,
+  onToggleTag,
+  conceptMatches,
+}: TopicCardProps) {
   const { t } = useTranslation('home');
   const { manifest, total, passed, readConcepts } = row;
   const totalConcepts = manifest.concepts.length;
@@ -846,6 +1247,18 @@ const TopicCard = memo(function TopicCard({ row, activeTags, onToggleTag }: Topi
             </div>
           )}
 
+          {conceptMatches && conceptMatches.length > 0 && (
+            <div className="flex items-start gap-1.5 text-[11px] text-fg-muted">
+              <BookOpen size={12} className="mt-0.5 shrink-0 text-accent" />
+              <span className="min-w-0">
+                <span className="text-fg-subtle">
+                  {t('matches.label', { defaultValue: 'Совпадения' })}:{' '}
+                </span>
+                {conceptMatches.map((hit) => hit.conceptTitle).join(', ')}
+              </span>
+            </div>
+          )}
+
           <div className="mt-auto pt-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 flex-wrap">
               <Badge tone={DIFFICULTY_TONE[manifest.difficulty] ?? 'neutral'} variant="soft">
@@ -887,34 +1300,35 @@ const Stat3 = ({
 const EmptyState = () => {
   const { t } = useTranslation('home');
   return (
-    <Surface variant="inset">
-      <div className="p-8 text-center">
-        <h3 className="font-display text-2xl text-fg">{t('empty.title')}</h3>
-        <p className="mt-2 text-sm text-fg-muted">
-          <Trans
-            i18nKey="home:empty.hint"
-            components={{ hint: <span className="text-accent" /> }}
-          />
-        </p>
-      </div>
-    </Surface>
+    <EmptyStateCard
+      icon={<Layers size={22} className="text-accent" />}
+      title={t('empty.title')}
+      body={
+        <Trans i18nKey="home:empty.hint" components={{ hint: <span className="text-accent" /> }} />
+      }
+    />
   );
 };
 
 const NoMatchesState = ({ onReset }: { onReset: () => void }) => {
   const { t } = useTranslation('home');
   return (
-    <Surface variant="inset">
-      <div className="p-8 text-center">
-        <h3 className="font-display text-2xl text-fg">{t('noMatches.title')}</h3>
-        <p className="mt-2 text-sm text-fg-muted">{t('noMatches.hint')}</p>
-        <div className="mt-5 flex justify-center">
-          <Button variant="outline" size="sm" leadingIcon={<X size={14} />} onClick={onReset}>
-            {t('reset')}
-          </Button>
-        </div>
-      </div>
-    </Surface>
+    <EmptyStateCard
+      icon={<Search size={22} className="text-fg-subtle" />}
+      title={t('noMatches.title')}
+      body={t('noMatches.hint')}
+      primaryAction={
+        <Button
+          variant="outline"
+          size="md"
+          className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+          leadingIcon={<X size={15} />}
+          onClick={onReset}
+        >
+          {t('reset')}
+        </Button>
+      }
+    />
   );
 };
 

@@ -12,14 +12,32 @@ const readPaletteColors = (): string[] => {
   return colors.length > 0 ? colors : FALLBACK_COLORS;
 };
 
-export const burstConfetti = (origin?: { x?: number; y?: number }): void => {
+export type ConfettiIntensity = 'soft' | 'normal' | 'grand';
+
+interface IntensityProfile {
+  mainCount: number;
+  mainVelocity: number;
+  trailCount: number;
+}
+
+const INTENSITY_PROFILES: Record<ConfettiIntensity, IntensityProfile> = {
+  soft: { mainCount: 36, mainVelocity: 32, trailCount: 12 },
+  normal: { mainCount: 60, mainVelocity: 38, trailCount: 20 },
+  grand: { mainCount: 120, mainVelocity: 46, trailCount: 44 },
+};
+
+export const burstConfetti = (
+  origin?: { x?: number; y?: number },
+  intensity: ConfettiIntensity = 'normal',
+): void => {
   const x = origin?.x ?? 0.5;
   const y = origin?.y ?? 0.55;
   const accent = readPaletteColors();
+  const profile = INTENSITY_PROFILES[intensity];
   void confetti({
-    particleCount: 60,
+    particleCount: profile.mainCount,
     spread: 70,
-    startVelocity: 38,
+    startVelocity: profile.mainVelocity,
     origin: { x, y },
     colors: accent,
     scalar: 0.85,
@@ -29,7 +47,7 @@ export const burstConfetti = (origin?: { x?: number; y?: number }): void => {
     disableForReducedMotion: true,
   });
   void confetti({
-    particleCount: 20,
+    particleCount: profile.trailCount,
     spread: 120,
     startVelocity: 22,
     origin: { x, y },
@@ -40,4 +58,16 @@ export const burstConfetti = (origin?: { x?: number; y?: number }): void => {
     ticks: 220,
     disableForReducedMotion: true,
   });
+};
+
+export type CelebrationKind = 'goal-reached' | 'streak-milestone' | 'queue-cleared';
+
+const CELEBRATION_INTENSITY: Record<CelebrationKind, ConfettiIntensity> = {
+  'goal-reached': 'normal',
+  'streak-milestone': 'grand',
+  'queue-cleared': 'soft',
+};
+
+export const celebrate = (kind: CelebrationKind): void => {
+  burstConfetti(undefined, CELEBRATION_INTENSITY[kind]);
 };

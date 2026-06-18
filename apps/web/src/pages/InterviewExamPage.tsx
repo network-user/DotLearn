@@ -1,23 +1,47 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Exercise, InterviewExerciseMeta } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowRight, GraduationCap, RotateCcw, X } from 'lucide-react';
+import {
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  GraduationCap,
+  History,
+  MinusCircle,
+  RotateCcw,
+  X,
+  XCircle,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import {
+  getInterviewQuestion,
   interviewExercises,
   interviewExerciseTypes,
   interviewDifficulties,
   loadExerciseById,
+  localizedInterviewTitle,
+  relatedTopicsForQuestion,
 } from '@/lib/interview';
-import { db, INTERVIEW_TOPIC_SLUG } from '@/lib/progress-db';
-import { useInterviewStudiedIds } from '@/lib/use-interview';
+import { getCurrentLanguage } from '@/lib/i18n';
+import {
+  db,
+  INTERVIEW_TOPIC_SLUG,
+  recordExamResult,
+  type ExamResultRecord,
+  type ExamScoreBucket,
+} from '@/lib/progress-db';
+import { topicTitleOf } from '@/lib/topics';
+import { useExamResults, useInterviewStudiedIds } from '@/lib/use-interview';
+
+const EXAM_SCOPE = 'interview';
 
 interface Facet {
   slug: string;
@@ -48,6 +72,9 @@ const shuffle = <T,>(input: T[]): T[] => {
 interface Session {
   pool: InterviewExerciseMeta[];
   index: number;
+  startedAt: number;
+  baseline: Record<string, string>;
+  filters: Record<string, string>;
 }
 
 export const InterviewExamPage = () => {
@@ -70,6 +97,7 @@ export const InterviewExamPage = () => {
   const [count, setCount] = useState('10');
   const [session, setSession] = useState<Session | undefined>(undefined);
   const studiedIds = useInterviewStudiedIds();
+  const pastExams = useExamResults(EXAM_SCOPE);
 
   const matching = useMemo(
     () =>
@@ -85,10 +113,21 @@ export const InterviewExamPage = () => {
     [category, stage, difficulty, type, studied, studiedIds],
   );
 
-  const start = (): void => {
+  const start = async (): Promise<void> => {
     const shuffled = shuffle(matching);
     const limit = count === 'all' ? shuffled.length : Number(count);
-    setSession({ pool: shuffled.slice(0, limit), index: 0 });
+    const pool = shuffled.slice(0, limit);
+    const ids = pool.map((meta) => `${INTERVIEW_TOPIC_SLUG}:${meta.exerciseId}`);
+    const existing = await db.progress.where('id').anyOf(ids).toArray();
+    const baseline: Record<string, string> = {};
+    for (const record of existing) baseline[record.exerciseId] = record.lastAttemptAt;
+    setSession({
+      pool,
+      index: 0,
+      startedAt: Date.now(),
+      baseline,
+      filters: { category, stage, difficulty, type, studied },
+    });
   };
 
   if (session) {
@@ -171,7 +210,11 @@ export const InterviewExamPage = () => {
           </ExamField>
         </div>
         <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <Button onClick={start} disabled={matching.length === 0} className="w-full sm:w-auto">
+          <Button
+            onClick={() => void start()}
+            disabled={matching.length === 0}
+            className="w-full sm:w-auto"
+          >
             {t('exam.start')}
           </Button>
           <span className="text-sm text-fg-subtle">
@@ -180,12 +223,115 @@ export const InterviewExamPage = () => {
         </div>
       </Surface>
 
+      <PastExams exams={pastExams} />
+
       <p className="text-sm text-fg-subtle">
         <Link to="/interview" className="text-accent hover:underline underline-offset-2">
           {t('exam.backToList')}
         </Link>
       </p>
     </div>
+  );
+};
+
+const scorePercent = (exam: ExamResultRecord): number =>
+  exam.total > 0 ? Math.round((exam.correct / exam.total) * 100) : 0;
+
+const PastExams = ({ exams }: { exams: ExamResultRecord[] }) => {
+  const { t } = useTranslation('interview');
+  if (exams.length === 0) return null;
+
+  const last = exams[0] as ExamResultRecord;
+  const best = exams.reduce((acc, exam) =>
+    scorePercent(exam) > scorePercent(acc) ? exam : acc,
+  );
+  const trend = [...exams].reverse().map(scorePercent);
+
+  return (
+    <Surface variant="chrome" className="p-4 sm:p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <History size={16} className="text-accent" />
+        <h2 className="font-display text-lg text-fg tracking-tightish">{t('exam.pastTitle')}</h2>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 sm:items-center">
+        <div className="flex gap-5">
+          <div>
+            <p className="eyebrow text-[10px] text-fg-subtle">{t('exam.lastScore')}</p>
+            <p className="font-display text-2xl text-fg tabular-nums">
+              {scorePercent(last)}
+              <span className="text-base text-fg-subtle">%</span>
+            </p>
+            <p className="text-[11px] text-fg-subtle tabular-nums">
+              {last.correct}/{last.total}
+            </p>
+          </div>
+          <div>
+            <p className="eyebrow text-[10px] text-fg-subtle">{t('exam.bestScore')}</p>
+            <p className="font-display text-2xl text-accent tabular-nums">
+              {scorePercent(best)}
+              <span className="text-base text-accent/70">%</span>
+            </p>
+            <p className="text-[11px] text-fg-subtle tabular-nums">
+              {best.correct}/{best.total}
+            </p>
+          </div>
+        </div>
+        {trend.length > 1 && <ScoreTrend values={trend} />}
+      </div>
+      <ul className="mt-4 space-y-1.5">
+        {exams.map((exam) => (
+          <li
+            key={exam.id}
+            className="flex items-center justify-between gap-3 text-[12.5px] text-fg-muted tabular-nums"
+          >
+            <span>{new Date(exam.finishedAt).toLocaleDateString(undefined, dateOpts)}</span>
+            <span className="text-fg">
+              {scorePercent(exam)}% · {exam.correct}/{exam.total}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Surface>
+  );
+};
+
+const dateOpts: Intl.DateTimeFormatOptions = {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+};
+
+const ScoreTrend = ({ values }: { values: number[] }) => {
+  const width = 132;
+  const height = 36;
+  const max = 100;
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  const points = values
+    .map((value, index) => {
+      const x = index * step;
+      const y = height - (value / max) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      width={width}
+      height={height}
+      className="text-accent shrink-0 justify-self-start sm:justify-self-end"
+      role="img"
+      aria-hidden
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 };
 
@@ -217,21 +363,62 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
     [progressIds],
     [],
   );
-  const statusByExercise = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const record of records ?? []) map.set(record.exerciseId, record.status);
+  const recordByExercise = useMemo(() => {
+    const map = new Map<string, { status: string; lastAttemptAt: string }>();
+    for (const record of records ?? [])
+      map.set(record.exerciseId, { status: record.status, lastAttemptAt: record.lastAttemptAt });
     return map;
   }, [records]);
-  const passed = pool.filter((meta) => statusByExercise.get(meta.exerciseId) === 'pass').length;
-  const byType = useMemo(() => {
-    const acc: Record<string, { passed: number; total: number }> = {};
+
+  const attemptedInSession = (meta: InterviewExerciseMeta): boolean => {
+    const record = recordByExercise.get(meta.exerciseId);
+    if (!record) return false;
+    return record.lastAttemptAt !== session.baseline[meta.exerciseId];
+  };
+
+  type ItemResult = 'pass' | 'fail' | 'skipped';
+  const resultOf = (meta: InterviewExerciseMeta): ItemResult => {
+    if (!attemptedInSession(meta)) return 'skipped';
+    return recordByExercise.get(meta.exerciseId)?.status === 'pass' ? 'pass' : 'fail';
+  };
+
+  const correct = pool.filter((meta) => resultOf(meta) === 'pass').length;
+
+  const buckets = useMemo(() => {
+    const byType: Record<string, ExamScoreBucket> = {};
+    const byDifficulty: Record<string, ExamScoreBucket> = {};
     for (const meta of pool) {
-      const entry = (acc[meta.type] ??= { passed: 0, total: 0 });
-      entry.total += 1;
-      if (statusByExercise.get(meta.exerciseId) === 'pass') entry.passed += 1;
+      const typeBucket = (byType[meta.type] ??= { total: 0, correct: 0 });
+      const diffKey = String(meta.difficulty);
+      const diffBucket = (byDifficulty[diffKey] ??= { total: 0, correct: 0 });
+      typeBucket.total += 1;
+      diffBucket.total += 1;
+      if (resultOf(meta) === 'pass') {
+        typeBucket.correct += 1;
+        diffBucket.correct += 1;
+      }
     }
-    return acc;
-  }, [pool, statusByExercise]);
+    return { byType, byDifficulty };
+  }, [pool, recordByExercise, session.baseline]);
+
+  const persistedRef = useRef(false);
+  useEffect(() => {
+    if (!finished || persistedRef.current) return;
+    if (records === undefined) return;
+    persistedRef.current = true;
+    const finishedAt = new Date();
+    void recordExamResult({
+      scope: EXAM_SCOPE,
+      filters: session.filters,
+      total: pool.length,
+      correct,
+      byType: buckets.byType,
+      byDifficulty: buckets.byDifficulty,
+      durationMs: finishedAt.getTime() - session.startedAt,
+      startedAt: new Date(session.startedAt).toISOString(),
+      finishedAt: finishedAt.toISOString(),
+    });
+  }, [finished, records, correct, buckets, pool.length, session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,42 +433,7 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
   }, [current]);
 
   if (finished) {
-    return (
-      <div className="space-y-6">
-        <Surface variant="accent" className="p-8 text-center">
-          <GraduationCap size={32} className="mx-auto text-accent" />
-          <h1 className="mt-3 font-display text-2xl text-fg">{t('exam.doneTitle')}</h1>
-          <div className="mt-3 inline-flex items-baseline gap-2">
-            <span className="font-display text-4xl text-accent tabular-nums">{passed}</span>
-            <span className="text-fg-subtle">
-              / {pool.length} {t('exam.solvedWord')}
-            </span>
-          </div>
-          <ul className="mt-4 mx-auto max-w-xs space-y-1.5 text-left">
-            {Object.entries(byType).map(([type, score]) => (
-              <li key={type} className="flex items-center justify-between text-[13px]">
-                <span className="text-fg-muted">
-                  {t(`exam.types.${type}`, { defaultValue: type })}
-                </span>
-                <span className="tabular-nums text-fg">
-                  {score.passed}/{score.total}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-5 flex flex-col sm:flex-row justify-center gap-3">
-            <Button onClick={() => setSession(undefined)} leadingIcon={<RotateCcw size={14} />}>
-              {t('exam.restart')}
-            </Button>
-            <Link to="/interview">
-              <Button variant="ghost" className="w-full sm:w-auto">
-                {t('exam.backToList')}
-              </Button>
-            </Link>
-          </div>
-        </Surface>
-      </div>
-    );
+    return <ExamDebrief session={session} setSession={setSession} resultOf={resultOf} buckets={buckets} correct={correct} />;
   }
 
   return (
@@ -319,7 +471,7 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
 
       <div className="flex justify-end">
         <Button
-          onClick={() => setSession({ pool, index: index + 1 })}
+          onClick={() => setSession({ ...session, index: index + 1 })}
           trailingIcon={<ArrowRight size={14} />}
         >
           {index + 1 >= pool.length ? t('exam.finish') : t('exam.next')}
@@ -327,4 +479,307 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
       </div>
     </div>
   );
+};
+
+interface DebriefProps {
+  session: Session;
+  setSession: (session: Session | undefined) => void;
+  resultOf: (meta: InterviewExerciseMeta) => 'pass' | 'fail' | 'skipped';
+  buckets: { byType: Record<string, ExamScoreBucket>; byDifficulty: Record<string, ExamScoreBucket> };
+  correct: number;
+}
+
+const ExamDebrief = ({ session, setSession, resultOf, buckets, correct }: DebriefProps) => {
+  const { t } = useTranslation('interview');
+  const { pool } = session;
+  const total = pool.length;
+  const percent = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const readiness = readinessLevel(percent);
+
+  const retry = (meta: InterviewExerciseMeta): void => {
+    const baseline = { ...session.baseline };
+    delete baseline[meta.exerciseId];
+    setSession({ ...session, pool: [meta], index: 0, startedAt: Date.now(), baseline });
+  };
+
+  const restartMissed = (): void => {
+    const missed = pool.filter((meta) => resultOf(meta) !== 'pass');
+    if (missed.length === 0) return;
+    const baseline = { ...session.baseline };
+    for (const meta of missed) delete baseline[meta.exerciseId];
+    setSession({ ...session, pool: missed, index: 0, startedAt: Date.now(), baseline });
+  };
+
+  const missedCount = pool.filter((meta) => resultOf(meta) !== 'pass').length;
+
+  return (
+    <div className="space-y-6">
+      <Surface variant="accent" className="p-6 sm:p-8 text-center">
+        <GraduationCap size={30} className="mx-auto text-accent" />
+        <h1 className="mt-3 font-display text-2xl text-fg">{t('exam.doneTitle')}</h1>
+        <div className="mt-3 inline-flex items-baseline gap-2">
+          <span className="font-display text-4xl text-accent tabular-nums">{percent}%</span>
+          <span className="text-fg-subtle tabular-nums">
+            {correct} / {total} {t('exam.solvedWord')}
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-fg-muted">{t(`exam.readiness.${readiness}`)}</p>
+
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
+          <ScoreBreakdown title={t('exam.byType')} buckets={buckets.byType} labelKey="exam.types" />
+          <ScoreBreakdown
+            title={t('exam.byDifficulty')}
+            buckets={buckets.byDifficulty}
+            difficulty
+          />
+        </div>
+
+        <div className="mt-5 flex flex-col sm:flex-row justify-center gap-3">
+          <Button onClick={() => setSession(undefined)} leadingIcon={<RotateCcw size={14} />}>
+            {t('exam.restart')}
+          </Button>
+          {missedCount > 0 && (
+            <Button variant="outline" onClick={restartMissed} className="w-full sm:w-auto">
+              {t('exam.retryMissed', { count: missedCount })}
+            </Button>
+          )}
+          <Link to="/interview">
+            <Button variant="ghost" className="w-full sm:w-auto">
+              {t('exam.backToList')}
+            </Button>
+          </Link>
+        </div>
+        <p className="mt-4 text-[11px] text-fg-subtle leading-relaxed max-w-prose mx-auto">
+          {t('exam.gradingNote')}
+        </p>
+      </Surface>
+
+      <section className="space-y-3">
+        <h2 className="font-display text-xl text-fg tracking-tightish">{t('exam.reviewTitle')}</h2>
+        <ul className="space-y-3">
+          {pool.map((meta, position) => (
+            <DebriefItem
+              key={`${meta.path}:${meta.exerciseId}`}
+              meta={meta}
+              position={position}
+              result={resultOf(meta)}
+              onRetry={() => retry(meta)}
+            />
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+};
+
+const readinessLevel = (percent: number): 'low' | 'medium' | 'high' =>
+  percent >= 80 ? 'high' : percent >= 50 ? 'medium' : 'low';
+
+interface ScoreBreakdownProps {
+  title: string;
+  buckets: Record<string, ExamScoreBucket>;
+  labelKey?: string;
+  difficulty?: boolean;
+}
+
+const ScoreBreakdown = ({ title, buckets, labelKey, difficulty }: ScoreBreakdownProps) => {
+  const { t } = useTranslation('interview');
+  const entries = Object.entries(buckets).sort((a, b) => a[0].localeCompare(b[0]));
+  if (entries.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-border-base bg-surface/60 p-3.5">
+      <p className="eyebrow text-[10px] text-fg-subtle mb-2">{title}</p>
+      <ul className="space-y-1.5">
+        {entries.map(([key, bucket]) => (
+          <li key={key} className="flex items-center justify-between gap-3 text-[13px]">
+            <span className="text-fg-muted truncate">
+              {difficulty
+                ? t('exam.difficulty', { level: key })
+                : t(`${labelKey}.${key}`, { defaultValue: key })}
+            </span>
+            <span className="tabular-nums text-fg">
+              {bucket.correct}/{bucket.total}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+interface DebriefItemProps {
+  meta: InterviewExerciseMeta;
+  position: number;
+  result: 'pass' | 'fail' | 'skipped';
+  onRetry: () => void;
+}
+
+const DebriefItem = ({ meta, position, result, onRetry }: DebriefItemProps) => {
+  const { t } = useTranslation('interview');
+  const [exercise, setExercise] = useState<Exercise | undefined>(undefined);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadExerciseById(meta).then((loaded) => {
+      if (!cancelled) setExercise(loaded);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [meta]);
+
+  const question = getInterviewQuestion(meta.qid);
+  const locale = getCurrentLanguage();
+  const conceptLink = useMemo(() => {
+    if (!question) return undefined;
+    const related = relatedTopicsForQuestion(question);
+    const first = related.find((entry) => topicTitleOf(entry.slug));
+    if (!first) return undefined;
+    return { slug: first.slug, conceptId: first.conceptId, title: topicTitleOf(first.slug) as string };
+  }, [question]);
+
+  const tone =
+    result === 'pass'
+      ? { ring: 'border-l-2 border-l-ok', icon: <CheckCircle2 size={16} className="text-ok" /> }
+      : result === 'fail'
+        ? { ring: 'border-l-2 border-l-err', icon: <XCircle size={16} className="text-err" /> }
+        : { ring: 'border-l-2 border-l-warn', icon: <MinusCircle size={16} className="text-warn" /> };
+
+  return (
+    <li>
+      <Surface className={tone.ring}>
+        <div className="p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 shrink-0">{tone.icon}</span>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[12px] uppercase tracking-widest text-fg-subtle tabular-nums">
+                  {position + 1}
+                </span>
+                <Badge tone="neutral" variant="outline">
+                  {t(`exam.types.${meta.type}`, { defaultValue: meta.type })}
+                </Badge>
+                <Badge tone="neutral" variant="outline">
+                  {t('exam.difficulty', { level: meta.difficulty })}
+                </Badge>
+                <span className="text-[12px] text-fg-subtle">{meta.categoryLabel}</span>
+              </div>
+              <p className="text-sm text-fg leading-snug">
+                {exercise ? exercise.prompt : <Skeleton className="h-4 w-2/3" />}
+              </p>
+            </div>
+          </div>
+
+          {exercise && (
+            <div className="pl-7 space-y-2">
+              <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-accent hover:underline underline-offset-2 min-h-[var(--tap)] sm:min-h-0"
+              >
+                <BookOpen size={13} />
+                {expanded ? t('exam.hideAnswer') : t('exam.showAnswer')}
+              </button>
+              {expanded && <AnswerSummary exercise={exercise} />}
+            </div>
+          )}
+
+          <div className="pl-7 flex flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRetry}
+              leadingIcon={<RotateCcw size={13} />}
+              className="w-full sm:w-auto"
+            >
+              {t('exam.retry')}
+            </Button>
+            {conceptLink ? (
+              <Link
+                to="/topics/$slug"
+                params={{ slug: conceptLink.slug }}
+                search={{ concept: conceptLink.conceptId }}
+                className="w-full sm:w-auto"
+              >
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  trailingIcon={<ArrowRight size={13} />}
+                  className="w-full sm:w-auto"
+                >
+                  {t('exam.studyConcept', { title: conceptLink.title })}
+                </Button>
+              </Link>
+            ) : question ? (
+              <Link to="/interview/$id" params={{ id: String(question.id) }} className="w-full sm:w-auto">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  trailingIcon={<ArrowRight size={13} />}
+                  className="w-full sm:w-auto"
+                >
+                  {t('exam.studyQuestion', {
+                    title: localizedInterviewTitle(question, locale),
+                  })}
+                </Button>
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </Surface>
+    </li>
+  );
+};
+
+const AnswerSummary = ({ exercise }: { exercise: Exercise }) => {
+  const { t } = useTranslation('interview');
+  const lines = answerLines(exercise);
+  const explanation = exercise.type === 'theory-quiz' ? exercise.explanation : undefined;
+  return (
+    <div className="rounded-lg border border-ok/30 bg-ok/8 px-3.5 py-2.5 text-[13px] text-fg space-y-1.5">
+      <p className="font-medium text-ok">{t('exam.correctAnswer')}</p>
+      {lines.map((line, i) => (
+        <pre
+          key={i}
+          className="whitespace-pre-wrap break-words font-mono text-[12.5px] text-fg leading-relaxed"
+        >
+          {line}
+        </pre>
+      ))}
+      {explanation && <p className="text-fg-muted leading-relaxed">{explanation}</p>}
+    </div>
+  );
+};
+
+const stringifyExpected = (expected: unknown): string => {
+  if (typeof expected !== 'object' || expected === null) return String(expected);
+  const value = expected as { kind?: string; value?: unknown; rows?: unknown };
+  if (value.kind === 'scalar' || value.kind === 'stdout') return JSON.stringify(value.value);
+  if (value.kind === 'result-set') return JSON.stringify(value.rows, null, 2);
+  return JSON.stringify(expected);
+};
+
+const answerLines = (exercise: Exercise): string[] => {
+  switch (exercise.type) {
+    case 'theory-quiz': {
+      const correct = exercise.choices.filter((choice) => exercise.correct.includes(choice.id));
+      return correct.map((choice) => `• ${choice.text}`);
+    }
+    case 'predict-output':
+      return [stringifyExpected(exercise.expected)];
+    case 'fill-in-blanks':
+      return Object.entries(exercise.blanks).map(([blank, spec]) => {
+        const accept = spec.accept?.[0] ?? spec.accept_regex ?? '';
+        return `${blank} = ${accept}`;
+      });
+    case 'sql-query':
+    case 'python-function':
+    case 'javascript-function':
+      return [exercise.solution];
+    case 'git-challenge':
+      return exercise.solution;
+    default:
+      return [];
+  }
 };

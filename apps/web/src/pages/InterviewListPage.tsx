@@ -17,11 +17,72 @@ import {
   interviewQuestions,
   interviewStages,
   localizedInterviewTitle,
+  topicSlugsForCategory,
 } from '@/lib/interview';
+import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
+import { useVisibleManifests } from '@/lib/use-manifests';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
 
 type SortKey = 'default' | 'title' | 'topic' | 'stage';
 type StatusFilter = 'all' | 'studied' | 'not-studied';
+type ReadinessBand = 'none' | 'low' | 'mid' | 'high';
+
+interface CategoryReadiness {
+  slug: string;
+  label: string;
+  read: number;
+  total: number;
+  ratio: number;
+  band: ReadinessBand;
+}
+
+const bandBarClass: Record<ReadinessBand, string> = {
+  none: 'bg-fg/15',
+  low: 'bg-err/60',
+  mid: 'bg-amber-500/70',
+  high: 'bg-ok',
+};
+
+const ReadinessPanel = ({
+  readiness,
+  onPick,
+}: {
+  readiness: CategoryReadiness[];
+  onPick: (slug: string) => void;
+}) => {
+  const { t } = useTranslation('interview');
+  const studied = readiness.filter((entry) => entry.read > 0);
+  if (studied.length === 0) return null;
+  const sorted = [...readiness].sort((a, b) => b.ratio - a.ratio);
+  return (
+    <Surface variant="chrome" className="p-3 sm:p-4">
+      <h2 className="eyebrow text-fg-subtle mb-3">
+        {t('readiness.heading', { defaultValue: 'Готовность по темам' })}
+      </h2>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {sorted.map((entry) => (
+          <button
+            key={entry.slug}
+            type="button"
+            onClick={() => onPick(entry.slug)}
+            className="flex items-center gap-3 rounded-lg border border-border-base px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-left transition-colors hover:bg-fg/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+          >
+            <span className="flex-1 truncate text-[13px] font-medium text-fg">{entry.label}</span>
+            <span className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-fg/10">
+              <span
+                className={`block h-full rounded-full ${bandBarClass[entry.band]}`}
+                style={{ width: `${Math.round(entry.ratio * 100)}%` }}
+              />
+            </span>
+            <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-fg-subtle">
+              {Math.round(entry.ratio * 100)}%
+            </span>
+          </button>
+        ))}
+      </div>
+    </Surface>
+  );
+};
 
 const STAGE_ORDER: InterviewStage[] = ['hr', 'tech', 'system-design'];
 
@@ -122,6 +183,27 @@ export const InterviewListPage = () => {
 
   const studiedCount = studiedIds.size;
 
+  const manifests = useVisibleManifests();
+  const readByTopic = useReadConceptsByTopic();
+
+  const readiness = useMemo<CategoryReadiness[]>(() => {
+    const manifestBySlug = new Map(manifests.map((manifest) => [manifest.slug, manifest]));
+    return interviewCategories.map((info) => {
+      let read = 0;
+      let total = 0;
+      for (const slug of topicSlugsForCategory(info.slug)) {
+        const manifest = manifestBySlug.get(slug);
+        if (!manifest) continue;
+        total += manifest.concepts.length;
+        read += countReadConcepts(manifest.concepts, readByTopic.get(slug));
+      }
+      const ratio = total === 0 ? 0 : read / total;
+      const band: ReadinessBand =
+        total === 0 ? 'none' : ratio >= 0.66 ? 'high' : ratio >= 0.33 ? 'mid' : 'low';
+      return { slug: info.slug, label: info.label, read, total, ratio, band };
+    });
+  }, [manifests, readByTopic]);
+
   const goRandom = (): void => {
     const pool = visible.length > 0 ? visible : interviewQuestions;
     const pick = pool[Math.floor(Math.random() * pool.length)];
@@ -170,6 +252,8 @@ export const InterviewListPage = () => {
           </Link>
         </div>
       </header>
+
+      <ReadinessPanel readiness={readiness} onPick={setCategory} />
 
       <Surface variant="chrome" className="p-3 sm:p-4">
         <div className="space-y-3">

@@ -14,7 +14,17 @@ export interface TopicMastery {
   mastery: number;
 }
 
+export interface BlendedMastery extends TopicMastery {
+  recall: number;
+  hasRecall: boolean;
+  blendedMastery: number;
+  needsReview: boolean;
+}
+
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+const RECALL_WEIGHT = 0.35;
+export const RECALL_REVIEW_THRESHOLD = 0.7;
 
 export const computeMastery = (
   readConcepts: number,
@@ -34,6 +44,27 @@ export const computeMastery = (
     readingRatio,
     solvingRatio,
     mastery,
+  };
+};
+
+export const blendRecallIntoMastery = (
+  base: TopicMastery,
+  recall: number | undefined,
+  reviewThreshold = RECALL_REVIEW_THRESHOLD,
+): BlendedMastery => {
+  const hasRecall = recall !== undefined && Number.isFinite(recall);
+  const safeRecall = hasRecall ? clamp01(recall as number) : 1;
+  const blendedMastery = hasRecall
+    ? clamp01((1 - RECALL_WEIGHT) * base.mastery + RECALL_WEIGHT * base.mastery * safeRecall)
+    : base.mastery;
+  const wasMastered = base.mastery >= 0.999;
+  const needsReview = hasRecall && wasMastered && safeRecall < reviewThreshold;
+  return {
+    ...base,
+    recall: safeRecall,
+    hasRecall,
+    blendedMastery,
+    needsReview,
   };
 };
 

@@ -8,6 +8,14 @@ export type InterviewStage = z.infer<typeof InterviewStage>;
 export const InterviewCategory = z.string().regex(SLUG_PATTERN);
 export type InterviewCategory = z.infer<typeof InterviewCategory>;
 
+export const InterviewRelatedTopic = z
+  .object({
+    slug: z.string().regex(SLUG_PATTERN),
+    conceptId: z.string().min(1).optional(),
+  })
+  .strict();
+export type InterviewRelatedTopic = z.infer<typeof InterviewRelatedTopic>;
+
 export const InterviewQuestionMeta = z
   .object({
     id: z.number().int().positive(),
@@ -19,6 +27,7 @@ export const InterviewQuestionMeta = z
     stageLabel: z.string().min(1),
     exerciseCount: z.number().int().nonnegative().default(0),
     path: z.string().regex(/^[a-z][a-z0-9-]*\/\d+\.ru\.mdx$/),
+    relatedTopics: z.array(InterviewRelatedTopic).optional(),
   })
   .strict();
 export type InterviewQuestionMeta = z.infer<typeof InterviewQuestionMeta>;

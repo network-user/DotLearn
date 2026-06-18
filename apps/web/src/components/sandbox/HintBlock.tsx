@@ -5,21 +5,28 @@ import { useTranslation } from 'react-i18next';
 
 interface HintBlockProps {
   hints: string[] | undefined;
+  onAllHintsShown?: () => void;
 }
 
-export const HintBlock = ({ hints }: HintBlockProps) => {
+export const HintBlock = ({ hints, onAllHintsShown }: HintBlockProps) => {
   const { t } = useTranslation('runners');
   const [shown, setShown] = useState(0);
   if (!hints || hints.length === 0) return null;
   const total = hints.length;
   const allShown = shown >= total;
+  const reveal = (next: number): void => {
+    setShown(next);
+    if (next >= total) {
+      onAllHintsShown?.();
+    }
+  };
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {shown === 0 ? (
           <button
             type="button"
-            onClick={() => setShown(1)}
+            onClick={() => reveal(1)}
             className="inline-flex items-center gap-1.5 text-[12px] text-fg-muted hover:text-fg transition-colors"
           >
             <Lightbulb size={12} className="text-warn" />
@@ -30,7 +37,7 @@ export const HintBlock = ({ hints }: HintBlockProps) => {
             {!allShown && (
               <button
                 type="button"
-                onClick={() => setShown((value) => Math.min(total, value + 1))}
+                onClick={() => reveal(Math.min(total, shown + 1))}
                 className="inline-flex items-center gap-1.5 text-[12px] font-medium text-warn hover:text-warn/80 transition-colors"
               >
                 <ChevronRight size={12} />

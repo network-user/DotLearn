@@ -68,3 +68,9 @@ export {
   type PracticeDueFilter,
   type PracticeMode,
 } from './interview/practice-search';
+export {
+  classifyCard,
+  isCardDue,
+  type CardClassification,
+  type CardScheduleRecord,
+} from './scheduling/due';

@@ -43,14 +43,16 @@ export const FigureProvider = ({ children }: { children: ReactNode }) => {
 
 interface FigureProps {
   caption?: ReactNode | undefined;
+  description?: ReactNode | undefined;
   id?: string | undefined;
   wide?: boolean | undefined;
   children: ReactNode;
 }
 
-export const Figure = ({ caption, id, wide = false, children }: FigureProps) => {
+export const Figure = ({ caption, description, id, wide = false, children }: FigureProps) => {
   const { t } = useTranslation('viz');
   const autoId = useId();
+  const descriptionId = useId();
   const figureId = id ?? autoId;
   const numbering = useContext(FigureNumberingContext);
   const register = numbering?.register;
@@ -63,6 +65,7 @@ export const Figure = ({ caption, id, wide = false, children }: FigureProps) => 
   return (
     <figure
       id={id}
+      aria-describedby={description ? descriptionId : undefined}
       className={cx(
         'not-prose my-7',
         wide && 'lg:-mx-16 xl:-mx-24',
@@ -71,6 +74,11 @@ export const Figure = ({ caption, id, wide = false, children }: FigureProps) => 
       <div className="rounded-lg border border-border-base bg-surface px-4 py-5 overflow-x-auto">
         {children}
       </div>
+      {description && (
+        <p id={descriptionId} className="sr-only">
+          {description}
+        </p>
+      )}
       {(caption || number !== null) && (
         <figcaption className="mt-2.5 pl-3 border-l-2 border-accent/60 text-[13px] leading-relaxed text-fg-muted">
           {number !== null && (

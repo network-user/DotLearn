@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
 
 import {
   Outlet,
@@ -87,6 +87,21 @@ const LibraryPage = lazy(() =>
     default: module.LibraryPage,
   })),
 );
+const GlossaryPage = lazy(() =>
+  import('./pages/GlossaryPage').then((module) => ({
+    default: module.GlossaryPage,
+  })),
+);
+const TracksPage = lazy(() =>
+  import('./pages/TracksPage').then((module) => ({
+    default: module.TracksPage,
+  })),
+);
+const TrackPage = lazy(() =>
+  import('./pages/TrackPage').then((module) => ({
+    default: module.TrackPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -95,10 +110,50 @@ const PageFallback = () => (
   </div>
 );
 
+const hasReadingRestore = (search: Record<string, unknown>): boolean =>
+  typeof search.concept === 'string' && search.concept.length > 0
+    ? true
+    : search.resume === '1' ||
+      search.resume === 1 ||
+      search.resume === true ||
+      search.resume === 'true';
+
+const RouteFocusManager = ({
+  pathname,
+  search,
+}: {
+  pathname: string;
+  search: Record<string, unknown>;
+}) => {
+  const previousPathname = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (previousPathname.current === pathname) return;
+    const isInitialMount = previousPathname.current === null;
+    previousPathname.current = pathname;
+
+    const isTopicRoute = pathname.startsWith('/topics/');
+    const restoringReadingPosition = isTopicRoute && hasReadingRestore(search);
+
+    if (!restoringReadingPosition) {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+
+    if (isInitialMount) return;
+
+    const main = document.getElementById('main');
+    main?.focus({ preventScroll: true });
+  }, [pathname, search]);
+
+  return null;
+};
+
 const RootComponent = () => {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const search = useRouterState({ select: (state) => state.location.search });
   return (
     <Layout>
+      <RouteFocusManager pathname={pathname} search={search} />
       <PageTransition>
         <ErrorBoundary variant="section" resetKey={pathname}>
           <Suspense fallback={<PageFallback />}>
@@ -114,12 +169,17 @@ const rootRoute = new RootRoute({
   component: RootComponent,
 });
 
+export type HomeSortKey = 'relevance' | 'difficulty' | 'shortest' | 'in-progress';
+export type HomeDuration = 'short' | 'medium' | 'long';
+
 export interface HomeSearch {
   q?: string | undefined;
   difficulty?: string | undefined;
   runtime?: string[] | undefined;
   tags?: string[] | undefined;
   status?: string | undefined;
+  sort?: HomeSortKey | undefined;
+  duration?: HomeDuration | undefined;
 }
 
 const homeRoute = new Route({
@@ -136,12 +196,25 @@ const homeRoute = new Route({
       );
       return cleaned.length > 0 ? cleaned : undefined;
     };
+    const sort: HomeSortKey | undefined =
+      search.sort === 'relevance' ||
+      search.sort === 'difficulty' ||
+      search.sort === 'shortest' ||
+      search.sort === 'in-progress'
+        ? search.sort
+        : undefined;
+    const duration: HomeDuration | undefined =
+      search.duration === 'short' || search.duration === 'medium' || search.duration === 'long'
+        ? search.duration
+        : undefined;
     return {
       q: str(search.q),
       difficulty: str(search.difficulty),
       runtime: strArray(search.runtime),
       tags: strArray(search.tags),
       status: str(search.status),
+      sort,
+      duration,
     };
   },
 });
@@ -296,6 +369,24 @@ const libraryRoute = new Route({
   component: LibraryPage,
 });
 
+const glossaryRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/glossary',
+  component: GlossaryPage,
+});
+
+const tracksRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/tracks',
+  component: TracksPage,
+});
+
+const trackRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/tracks/$id',
+  component: TrackPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   topicRoute,
@@ -314,6 +405,9 @@ const routeTree = rootRoute.addChildren([
   todayRoute,
   settingsRoute,
   libraryRoute,
+  glossaryRoute,
+  tracksRoute,
+  trackRoute,
 ]);
 
 export const router = new Router({

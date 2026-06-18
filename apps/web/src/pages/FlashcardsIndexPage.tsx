@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { isCardDue } from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
 import {
+  ArrowRight,
   GraduationCap,
   Layers,
   Play,
@@ -12,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { flashcardTopicSlugs, loadTopicCards } from '@/lib/flashcard-decks';
@@ -21,9 +24,8 @@ import {
   loadInterviewCards,
 } from '@/lib/interview-flashcards';
 import { interviewCategories } from '@/lib/interview';
-import { getCurrentLanguage } from '@/lib/i18n';
 import { db } from '@/lib/progress-db';
-import { topicTitleOf } from '@/lib/topics';
+import { topicTitleOf, useContentLanguage } from '@/lib/topics';
 
 interface DeckSummary {
   slug: string;
@@ -40,7 +42,7 @@ interface InterviewSummary {
 
 export const FlashcardsIndexPage = () => {
   const { t } = useTranslation('flashcards');
-  const language = getCurrentLanguage();
+  const language = useContentLanguage();
   const slugs = useMemo(() => flashcardTopicSlugs(), []);
   const [summaries, setSummaries] = useState<DeckSummary[] | undefined>(undefined);
   const [interviewSummaries, setInterviewSummaries] = useState<InterviewSummary[] | undefined>(
@@ -60,7 +62,7 @@ export const FlashcardsIndexPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    const now = Date.now();
+    const now = new Date();
     Promise.all(
       slugs.map(async (slug): Promise<DeckSummary | null> => {
         try {
@@ -69,10 +71,7 @@ export const FlashcardsIndexPage = () => {
             db.flashcardReviews.where('topicSlug').equals(slug).toArray(),
           ]);
           const reviewed = new Map(records.map((record) => [record.cardId, record]));
-          const due = cards.filter((card) => {
-            const record = reviewed.get(card.id);
-            return !record || new Date(record.due).getTime() <= now;
-          }).length;
+          const due = cards.filter((card) => isCardDue(reviewed.get(card.id), now)).length;
           return { slug, title: topicTitleOf(slug) ?? slug, total: cards.length, due };
         } catch (error) {
           console.warn(`Skipping flashcard deck "${slug}": failed to load`, error);
@@ -219,11 +218,18 @@ export const FlashcardsIndexPage = () => {
             ))}
           </ul>
         ) : summaries!.length === 0 ? (
-          <Surface variant="inset">
-            <div className="p-8 text-center">
-              <p className="text-sm text-fg-muted">{t('hubEmpty')}</p>
-            </div>
-          </Surface>
+          <EmptyState
+            icon={<Layers size={22} className="text-accent" />}
+            title={t('hubEmptyTitle')}
+            body={t('hubEmptyBody')}
+            primaryAction={
+              <Link to="/" hash="topics" className="block w-full sm:w-auto">
+                <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                  {t('exploreTopics')}
+                </Button>
+              </Link>
+            }
+          />
         ) : (
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {summaries!.map((summary) => (
@@ -293,11 +299,18 @@ export const FlashcardsIndexPage = () => {
         {!ready ? (
           <Skeleton rounded="2xl" className="h-32" />
         ) : interviewSummaries!.length === 0 ? (
-          <Surface variant="inset">
-            <div className="p-8 text-center">
-              <p className="text-sm text-fg-muted">{t('interviewEmpty')}</p>
-            </div>
-          </Surface>
+          <EmptyState
+            icon={<GraduationCap size={22} className="text-accent" />}
+            title={t('interviewEmptyTitle')}
+            body={t('interviewEmptyBody')}
+            primaryAction={
+              <Link to="/interview" className="block w-full sm:w-auto">
+                <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" trailingIcon={<ArrowRight size={15} />}>
+                  {t('openInterviewPrep')}
+                </Button>
+              </Link>
+            }
+          />
         ) : (
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {interviewSummaries!.map((summary) => (

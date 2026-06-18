@@ -187,6 +187,7 @@ export const SqlPlayground = ({ initialState }: SqlPlaygroundProps) => {
                 value={query}
                 onChange={(value) => setQuery(value ?? '')}
                 language="sql"
+                sqlSchema={schema}
                 height={buildEditorHeight(isCoarsePointer, '220px', 'min(34dvh, 300px)')}
                 options={editorOptions}
                 onMount={(editor) => {
