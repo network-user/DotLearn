@@ -16,6 +16,7 @@ import { TheoryQuizRunner } from './TheoryQuizRunner';
 interface ExerciseRunnerProps {
   topicSlug: string;
   exercise: Exercise;
+  conceptId?: string | undefined;
 }
 
 export const useDifficultyLabel = (difficulty: number): string => {
@@ -25,24 +26,24 @@ export const useDifficultyLabel = (difficulty: number): string => {
   });
 };
 
-const RunnerDispatch = ({ topicSlug, exercise }: ExerciseRunnerProps) => {
+const RunnerDispatch = ({ topicSlug, exercise, conceptId }: ExerciseRunnerProps) => {
   if (exercise.type === 'sql-query') {
-    return <SqlExerciseRunner topicSlug={topicSlug} exercise={exercise} />;
+    return <SqlExerciseRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   if (exercise.type === 'theory-quiz') {
-    return <TheoryQuizRunner topicSlug={topicSlug} exercise={exercise} />;
+    return <TheoryQuizRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   if (exercise.type === 'predict-output') {
-    return <PredictOutputRunner topicSlug={topicSlug} exercise={exercise} />;
+    return <PredictOutputRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   if (exercise.type === 'fill-in-blanks') {
-    return <FillInBlanksRunner topicSlug={topicSlug} exercise={exercise} />;
+    return <FillInBlanksRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   if (exercise.type === 'python-function') {
-    return <PythonFunctionRunner topicSlug={topicSlug} exercise={exercise} />;
+    return <PythonFunctionRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   if (exercise.type === 'git-challenge') {
-    return <GitChallengeRunner topicSlug={topicSlug} exercise={exercise} />;
+    return <GitChallengeRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   return (
     <UnknownRunner type={exercise.type} difficulty={exercise.difficulty} prompt={exercise.prompt} />
@@ -52,6 +53,7 @@ const RunnerDispatch = ({ topicSlug, exercise }: ExerciseRunnerProps) => {
 export const ExerciseRunner = memo(function ExerciseRunner({
   topicSlug,
   exercise,
+  conceptId,
 }: ExerciseRunnerProps) {
   const { t } = useTranslation('runners');
   const variantTotal = exerciseVariantCount(exercise);
@@ -62,7 +64,7 @@ export const ExerciseRunner = memo(function ExerciseRunner({
   );
 
   if (variantTotal <= 1) {
-    return <RunnerDispatch topicSlug={topicSlug} exercise={resolved} />;
+    return <RunnerDispatch topicSlug={topicSlug} exercise={resolved} conceptId={conceptId} />;
   }
 
   const pickAnotherVariant = (): void => {
@@ -90,7 +92,12 @@ export const ExerciseRunner = memo(function ExerciseRunner({
           {t('exercise.anotherVariant', { defaultValue: 'другой вариант' })}
         </button>
       </div>
-      <RunnerDispatch key={variantIndex} topicSlug={topicSlug} exercise={resolved} />
+      <RunnerDispatch
+        key={variantIndex}
+        topicSlug={topicSlug}
+        exercise={resolved}
+        conceptId={conceptId}
+      />
     </div>
   );
 });

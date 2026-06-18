@@ -6,7 +6,12 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export const compareValues = (actual: unknown, expected: unknown, path = '$'): ValueComparison => {
-  if (Number.isNaN(actual as number) && Number.isNaN(expected as number)) {
+  if (
+    typeof actual === 'number' &&
+    typeof expected === 'number' &&
+    Number.isNaN(actual) &&
+    Number.isNaN(expected)
+  ) {
     return { ok: true };
   }
   // Python None becomes JS undefined, while a YAML `null` expectation loads as JS null.

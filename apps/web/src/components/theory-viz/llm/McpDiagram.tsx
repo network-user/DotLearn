@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { Boxes, FileText, MessageSquare, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 

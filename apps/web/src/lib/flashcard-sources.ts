@@ -124,7 +124,8 @@ export const filterDueCards = async (
   cards: SessionCard[],
   now: Date = new Date(),
 ): Promise<SessionCard[]> => {
-  const records = await db.flashcardReviews.toArray();
+  const slugs = [...new Set(cards.map((entry) => entry.deckSlug))];
+  const records = await db.flashcardReviews.where('topicSlug').anyOf(slugs).toArray();
   const byKey = new Map(records.map((record) => [`${record.topicSlug}:${record.cardId}`, record]));
   return cards.filter((entry) => isCardDue(byKey.get(`${entry.deckSlug}:${entry.card.id}`), now));
 };

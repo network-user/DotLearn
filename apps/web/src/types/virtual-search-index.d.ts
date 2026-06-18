@@ -5,9 +5,16 @@ declare module 'virtual:search-index' {
     conceptId: string;
     topicTitle: string;
     conceptTitle: string;
-    language: 'en' | 'ru';
     text: string;
   }
+}
+
+declare module 'virtual:search-index/ru' {
+  const searchIndex: string;
+  export default searchIndex;
+}
+
+declare module 'virtual:search-index/en' {
   const searchIndex: string;
   export default searchIndex;
 }

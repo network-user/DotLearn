@@ -6,6 +6,7 @@ export interface SqlJsRuntimeOptions {
   createWorker: () => Worker;
   wasmUrl?: string;
   timeoutMs?: number;
+  initTimeoutMs?: number;
 }
 
 export interface SqlJsRuntime extends SqlRuntime {
@@ -20,6 +21,9 @@ interface PendingResolver {
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
+// The sql.js wasm is tiny and bundled same-origin, so a stalled init is a fault, not a slow
+// download. A much lower ceiling than Pyodide's 120s is appropriate.
+const DEFAULT_INIT_TIMEOUT_MS = 30_000;
 
 let idCounter = 0;
 const nextId = (): string => {
@@ -29,10 +33,30 @@ const nextId = (): string => {
 
 export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime => {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const initTimeoutMs = options.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
   const pending = new Map<string, PendingResolver>();
 
   let worker: Worker | undefined;
   let initPromise: Promise<void> | undefined;
+  let initWatchdog: ReturnType<typeof setTimeout> | undefined;
+
+  const clearInitWatchdog = (): void => {
+    if (initWatchdog !== undefined) {
+      clearTimeout(initWatchdog);
+      initWatchdog = undefined;
+    }
+  };
+
+  const armInitWatchdog = (): void => {
+    clearInitWatchdog();
+    initWatchdog = setTimeout(() => {
+      // A stalled initSqlJs would otherwise wedge SQL exercises forever with no recovery.
+      // Mirror the Python runtime: abort and rebuild the worker on the next call.
+      disposeWorker(new SqlExecutionError(`sql runtime init stalled for ${initTimeoutMs}ms`, ''), {
+        warmReinit: false,
+      });
+    }, initTimeoutMs);
+  };
 
   const onMessage = (event: MessageEvent<SqlWorkerResponse>): void => {
     const response = event.data;
@@ -48,6 +72,7 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
   };
 
   const disposeWorker = (error: Error, options?: { warmReinit?: boolean }): void => {
+    clearInitWatchdog();
     if (worker) {
       worker.removeEventListener('message', onMessage);
       worker.removeEventListener('error', onError);
@@ -68,7 +93,9 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
   };
 
   function onError(event: ErrorEvent): void {
-    disposeWorker(new SqlExecutionError(event.message || 'sql worker crashed', ''));
+    disposeWorker(new SqlExecutionError(event.message || 'sql worker crashed', ''), {
+      warmReinit: false,
+    });
   }
 
   const ensureWorker = (): Worker => {
@@ -92,6 +119,7 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
           pending.delete(request.id);
           disposeWorker(
             new SqlExecutionError(`sql execution exceeded ${timeout}ms and was terminated`, ''),
+            { warmReinit: false },
           );
         }, timeout);
       }
@@ -106,11 +134,20 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
 
   const init = (): Promise<void> => {
     if (!initPromise) {
-      initPromise = send(buildInitRequest(), undefined).then((response) => {
-        if (response.type === 'error') {
-          throw new SqlExecutionError(response.message, '');
-        }
-      });
+      armInitWatchdog();
+      initPromise = send(buildInitRequest(), undefined)
+        .then((response) => {
+          clearInitWatchdog();
+          if (response.type === 'error') {
+            throw new SqlExecutionError(response.message, '');
+          }
+        })
+        .catch((error: unknown) => {
+          clearInitWatchdog();
+          throw error instanceof SqlExecutionError
+            ? error
+            : new SqlExecutionError(String(error), '');
+        });
     }
     return initPromise;
   };

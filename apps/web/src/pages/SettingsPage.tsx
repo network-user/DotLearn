@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
 import {
+  MAX_IMPORT_FILE_BYTES,
   ProgressImportError,
   clearAllProgress,
   downloadProgressExport,
@@ -152,6 +153,9 @@ export const SettingsPage = () => {
     event.target.value = '';
     if (!file) return;
     try {
+      if (file.size > MAX_IMPORT_FILE_BYTES) {
+        throw new ProgressImportError('too-large');
+      }
       const parsed: unknown = JSON.parse(await file.text());
       const { imported } = await importProgress(parsed);
       toast.success(t('toast.imported', { count: imported }));

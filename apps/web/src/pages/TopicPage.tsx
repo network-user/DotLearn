@@ -13,7 +13,7 @@ import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { TopicNotFoundError } from '@dotlearn/lesson-engine';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowLeft,
   ArrowRight,
@@ -62,6 +62,7 @@ import { programmaticScrollTo } from '@/lib/reading-position';
 import { recordRecentVisit } from '@/lib/recent-visits';
 import { prewarmPythonRuntime } from '@/lib/python-runtime';
 import { prewarmSqlRuntime } from '@/lib/sql-runtime';
+import { sanitizeHref } from '@/lib/safe-url';
 import { effectiveLanguage, getAllManifests, loadTopic, useContentLanguage } from '@/lib/topics';
 import type { TopicSearch } from '@/router';
 import { useConceptBookmarked, useConceptRead, useTopicReadConceptIds } from '@/lib/use-learning';
@@ -747,7 +748,7 @@ const SourcesBlock = ({ sources }: { sources: TopicSourceRef[] }) => {
         {sources.map((source) => (
           <li key={source.url}>
             <a
-              href={source.url}
+              href={sanitizeHref(source.url)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-start gap-1.5 text-[14px] text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent"
@@ -779,22 +780,34 @@ const ReadingProgress = ({ slug, conceptId, solvedRatio }: ReadingProgressProps)
   }, [conceptId]);
 
   useEffect(() => {
+    let rafScheduled = false;
+    let lastPercent = -1;
     const compute = (): void => {
+      rafScheduled = false;
       const el = document.documentElement;
       const max = el.scrollHeight - el.clientHeight;
       const ratio = max <= 0 ? 0 : Math.min(1, Math.max(0, el.scrollTop / max));
-      setReadRatio(ratio);
+      const percent = Math.round(ratio * 100);
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        setReadRatio(ratio);
+      }
       if (max > 120 && ratio >= 0.95 && !markedRef.current) {
         markedRef.current = true;
         void setConceptRead(slug, conceptId, true);
       }
     };
+    const onScroll = (): void => {
+      if (rafScheduled) return;
+      rafScheduled = true;
+      window.requestAnimationFrame(compute);
+    };
     compute();
-    window.addEventListener('scroll', compute, { passive: true });
-    window.addEventListener('resize', compute);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
     return () => {
-      window.removeEventListener('scroll', compute);
-      window.removeEventListener('resize', compute);
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
     };
   }, [slug, conceptId]);
 
@@ -1265,7 +1278,7 @@ const ConceptPanel = ({
           <div className="space-y-4 stagger">
             {orderedExercises.map((exercise, exerciseIndex) => (
               <div key={exercise.id} className={cx(exerciseIndex > 0 && 'cv-auto-exercise')}>
-                <ExerciseRunner topicSlug={slug} exercise={exercise} />
+                <ExerciseRunner topicSlug={slug} exercise={exercise} conceptId={concept.id} />
               </div>
             ))}
           </div>

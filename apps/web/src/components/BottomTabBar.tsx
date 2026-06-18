@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { MoreHorizontal, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

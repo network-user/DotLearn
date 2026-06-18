@@ -112,6 +112,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const bookmarks = useBookmarks();
   const notedKeys = useAllNotedKeys();
 
+  const searchLanguage: 'en' | 'ru' = i18n.resolvedLanguage === 'en' ? 'en' : 'ru';
+
   useEffect(() => {
     if (!open) return;
     setQuery('');
@@ -119,7 +121,11 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     void import('@/lib/interview').then((module) => {
       if (!cancelled) setInterview(module.interviewQuestions);
     });
-    void import('virtual:search-index').then((module) => {
+    const loadIndex =
+      searchLanguage === 'en'
+        ? import('virtual:search-index/en')
+        : import('virtual:search-index/ru');
+    void loadIndex.then((module) => {
       if (cancelled) return;
       try {
         setSearchEntries(JSON.parse(module.default) as SearchEntry[]);
@@ -130,7 +136,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, searchLanguage]);
 
   const concepts = useMemo(
     () =>
@@ -179,20 +185,11 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     const q = query.trim().toLowerCase();
     if (q.length < 2) return [];
 
-    const currentLanguage = i18n.resolvedLanguage === 'en' ? 'en' : 'ru';
-    const slugsWithCurrentLanguage = new Set<string>();
-    for (const entry of searchEntries) {
-      if (entry.language === currentLanguage) slugsWithCurrentLanguage.add(entry.slug);
-    }
-
     type Ranked = ContentMatch & { titleHit: boolean; matchIndex: number };
     const ranked: Ranked[] = [];
     const seen = new Set<string>();
 
     for (const entry of searchEntries) {
-      const slugHasCurrentLanguage = slugsWithCurrentLanguage.has(entry.slug);
-      if (entry.language !== currentLanguage && slugHasCurrentLanguage) continue;
-
       const titleIndex = entry.conceptTitle.toLowerCase().indexOf(q);
       const bodyIndex = entry.text.toLowerCase().indexOf(q);
       if (titleIndex < 0 && bodyIndex < 0) continue;
@@ -233,7 +230,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     });
 
     return ranked.slice(0, CONTENT_LIMIT);
-  }, [searchEntries, query, i18n.resolvedLanguage]);
+  }, [searchEntries, query]);
 
   const go = (path: string): void => {
     setOpen(false);

@@ -27,6 +27,7 @@ import { useDifficultyLabel } from './ExerciseRunner';
 interface SqlExerciseRunnerProps {
   topicSlug: string;
   exercise: SqlQueryExercise;
+  conceptId?: string | undefined;
 }
 
 type RunState =
@@ -44,7 +45,7 @@ type RunState =
     }
   | { kind: 'error'; message: string };
 
-export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProps) => {
+export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExerciseRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const failureMessage = useFailureMessage();
@@ -81,7 +82,10 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
         toast.success(t('sql.correctToast'), { description: exercise.id });
         burstConfetti();
         setStatusMessage(t('common.status.passedSimple'));
-        void recordAttempt(topicSlug, exercise.id, 'pass');
+        void recordAttempt(topicSlug, exercise.id, 'pass', {
+          difficulty: exercise.difficulty,
+          concept: conceptId,
+        });
       } else {
         const details = (result.details ?? {}) as {
           missing?: Record<string, unknown>[];
@@ -100,7 +104,10 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
         });
         setFailedAttempts((count) => count + 1);
         setStatusMessage(t('common.status.failed', { reason: failureMessage(failure) }));
-        void recordAttempt(topicSlug, exercise.id, 'fail');
+        void recordAttempt(topicSlug, exercise.id, 'fail', {
+          difficulty: exercise.difficulty,
+          concept: conceptId,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -109,13 +116,16 @@ export const SqlExerciseRunner = ({ topicSlug, exercise }: SqlExerciseRunnerProp
     } finally {
       setPulse((p) => p + 1);
     }
-  }, [answer, exercise, topicSlug, t, failureMessage]);
+  }, [answer, exercise, topicSlug, t, failureMessage, conceptId]);
 
   const handleRevealSolution = (): void => {
     if (revealed) return;
     setRevealed(true);
     setStatusMessage(t('common.status.revealed'));
-    void recordAttempt(topicSlug, exercise.id, 'fail');
+    void recordAttempt(topicSlug, exercise.id, 'fail', {
+      difficulty: exercise.difficulty,
+      concept: conceptId,
+    });
   };
 
   const visualizerResult =

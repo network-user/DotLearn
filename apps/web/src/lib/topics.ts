@@ -1,9 +1,13 @@
 import { useSyncExternalStore } from 'react';
 
-import { languageOfTopicFile, type TopicLanguage, type TopicManifest } from '@dotlearn/contracts';
+import {
+  languageOfTopicFile,
+  TopicManifestObject,
+  type TopicLanguage,
+  type TopicManifest,
+} from '@dotlearn/contracts';
 import {
   createLazyTopicSource,
-  parseManifest,
   type ConceptBundle,
   type TopicBundle,
   type TopicSource,
@@ -47,7 +51,7 @@ const manifestOf = (slug: string): TopicManifest | undefined => {
   if (cached) return cached;
   const raw = manifests[`/topics/${slug}/manifest.json`];
   if (raw === undefined) return undefined;
-  const parsed = parseManifest(slug, raw);
+  const parsed = TopicManifestObject.parse(raw) as TopicManifest;
   parsedManifests.set(slug, parsed);
   return parsed;
 };

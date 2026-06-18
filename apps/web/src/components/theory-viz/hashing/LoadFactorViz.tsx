@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { Plus, RotateCcw } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';

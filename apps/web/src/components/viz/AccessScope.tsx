@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { Check, Lock, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

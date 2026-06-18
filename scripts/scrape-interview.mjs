@@ -38,6 +38,9 @@ async function fetchText(url, attempt = 0) {
   try {
     const res = await fetch(url, { headers: { 'User-Agent': UA } });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    if (new URL(res.url).host !== new URL(BASE).host) {
+      throw new Error(`Refusing content from a cross-origin redirect: ${url} -> ${res.url}`);
+    }
     return await res.text();
   } catch (err) {
     if (attempt < 3) {

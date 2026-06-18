@@ -55,10 +55,12 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
   const armInitWatchdog = (): void => {
     clearInitWatchdog();
     initWatchdog = setTimeout(() => {
+      // Lazy recreation: rebuild the worker on the next call rather than eagerly looping init.
       disposeWorker(
         new PythonExecutionError(
           `python runtime download stalled for ${initTimeoutMs}ms and was aborted`,
         ),
+        { warmReinit: false },
       );
     }, initTimeoutMs);
   };
@@ -103,7 +105,9 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
   };
 
   function onError(event: ErrorEvent): void {
-    disposeWorker(new PythonExecutionError(event.message || 'pyodide worker crashed'));
+    disposeWorker(new PythonExecutionError(event.message || 'pyodide worker crashed'), {
+      warmReinit: false,
+    });
   }
 
   const ensureWorker = (): Worker => {
@@ -125,8 +129,11 @@ export const createPyodideRuntime = (options: PyodideRuntimeOptions): PyodideRun
       if (timeout !== undefined) {
         resolver.timer = setTimeout(() => {
           pending.delete(request.id);
+          // Lazy recreation: the worker is rebuilt on the next call (ensureWorker), so a
+          // pathological exercise cannot drive a tight terminate -> eager-reinit thrash loop.
           disposeWorker(
             new PythonExecutionError(`python execution exceeded ${timeout}ms and was terminated`),
+            { warmReinit: false },
           );
         }, timeout);
       }

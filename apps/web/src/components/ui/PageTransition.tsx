@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 
 import { useRouterState } from '@tanstack/react-router';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 
 interface PageTransitionProps {
   children: ReactNode;

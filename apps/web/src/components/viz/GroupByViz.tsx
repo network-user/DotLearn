@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import { LayoutGroup, motion, useReducedMotion } from 'framer-motion';
+import { LayoutGroup, m as motion, useReducedMotion } from 'framer-motion';
 import { Combine, Split } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

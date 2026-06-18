@@ -3,7 +3,7 @@ import { lazy, StrictMode, Suspense, useEffect, useState } from 'react';
 import { registerSW } from 'virtual:pwa-register';
 
 import { RouterProvider } from '@tanstack/react-router';
-import { MotionConfig } from 'framer-motion';
+import { LazyMotion, MotionConfig } from 'framer-motion';
 import { createRoot } from 'react-dom/client';
 import { toast, Toaster } from 'sonner';
 
@@ -19,6 +19,8 @@ import { router } from './router';
 import './styles/global.css';
 
 const CommandPalette = lazy(() => import('./components/ui/CommandPalette'));
+
+const loadMotionFeatures = () => import('./lib/motion-features').then((module) => module.default);
 
 const CommandPaletteHost = () => {
   const [open, setOpen] = useState(false);
@@ -78,19 +80,21 @@ registerServiceWorker();
 const AppRoot = () => {
   const settings = useSettings();
   return (
-    <MotionConfig reducedMotion={settings.motion === 'reduced' ? 'always' : 'user'}>
-      <RouterProvider router={router} />
-      <CommandPaletteHost />
-      <Toaster
-        theme="system"
-        position="bottom-right"
-        toastOptions={{
-          classNames: {
-            toast: 'border border-border-base bg-surface/95 text-fg',
-          },
-        }}
-      />
-    </MotionConfig>
+    <LazyMotion features={loadMotionFeatures} strict>
+      <MotionConfig reducedMotion={settings.motion === 'reduced' ? 'always' : 'user'}>
+        <RouterProvider router={router} />
+        <CommandPaletteHost />
+        <Toaster
+          theme="system"
+          position="bottom-right"
+          toastOptions={{
+            classNames: {
+              toast: 'border border-border-base bg-surface/95 text-fg',
+            },
+          }}
+        />
+      </MotionConfig>
+    </LazyMotion>
   );
 };
 

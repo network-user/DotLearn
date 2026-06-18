@@ -21,15 +21,15 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @dotlearn/contracts build
 RUN pnpm --filter @dotlearn/sandbox build
 RUN pnpm --filter @dotlearn/lesson-engine build
-RUN pnpm --filter @dotlearn/ai-providers build
 RUN pnpm --filter @dotlearn/web build
 
-FROM nginx:alpine AS runtime
+# Unprivileged nginx: runs as the non-root `nginx` user and listens on 8080.
+FROM nginxinc/nginx-unprivileged:alpine AS runtime
 
 COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/web/security-headers.conf /etc/nginx/security-headers.conf
 
-EXPOSE 80
+EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]

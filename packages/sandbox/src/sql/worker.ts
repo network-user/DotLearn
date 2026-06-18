@@ -2,21 +2,29 @@
 
 import initSqlJs, { type SqlJsStatic } from 'sql.js';
 
+import { hardenWorkerScope } from '../harden-worker-scope';
 import type { SqlWorkerRequest, SqlWorkerResponse } from './protocol';
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
+
+// Capture postMessage before hardenWorkerScope neuters it, then reply through this reference
+// (mirrors the Python worker), so responses keep working after the escape globals are removed.
+const rawPostMessage = workerScope.postMessage.bind(workerScope);
 
 let sqlPromise: Promise<SqlJsStatic> | undefined;
 
 const ensureSql = (wasmUrl?: string): Promise<SqlJsStatic> => {
   if (!sqlPromise) {
-    sqlPromise = wasmUrl ? initSqlJs({ locateFile: () => wasmUrl }) : initSqlJs();
+    sqlPromise = (wasmUrl ? initSqlJs({ locateFile: () => wasmUrl }) : initSqlJs()).then((SQL) => {
+      hardenWorkerScope(workerScope);
+      return SQL;
+    });
   }
   return sqlPromise;
 };
 
 const post = (response: SqlWorkerResponse): void => {
-  workerScope.postMessage(response);
+  rawPostMessage(response);
 };
 
 const toRow = (columns: string[], values: ReadonlyArray<unknown>): Record<string, unknown> => {

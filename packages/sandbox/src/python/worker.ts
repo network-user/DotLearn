@@ -2,60 +2,12 @@
 
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 
+import { hardenWorkerScope } from '../harden-worker-scope';
 import type { PyodideInitProgress, PyodideWorkerRequest, PyodideWorkerResponse } from './protocol';
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
 const rawPostMessage = workerScope.postMessage.bind(workerScope);
-
-const ESCAPE_GLOBALS = [
-  'fetch',
-  'XMLHttpRequest',
-  'WebSocket',
-  'EventSource',
-  'importScripts',
-  'indexedDB',
-  'caches',
-  'Worker',
-  'SharedWorker',
-  'BroadcastChannel',
-  'postMessage',
-] as const;
-
-// navigator.sendBeacon is a self-contained cross-origin POST that does not depend on the
-// fetch global, so neutering fetch alone leaves an exfiltration channel open. serviceWorker
-// is removed for the same defense-in-depth reason.
-const ESCAPE_NAVIGATOR_METHODS = ['sendBeacon', 'serviceWorker'] as const;
-
-const neutralize = (target: Record<string, unknown>, name: string): void => {
-  try {
-    Object.defineProperty(target, name, {
-      value: undefined,
-      writable: false,
-      configurable: false,
-      enumerable: false,
-    });
-  } catch {
-    try {
-      target[name] = undefined;
-    } catch {
-      // a non-configurable, non-writable property cannot be neutralized; ignore
-    }
-  }
-};
-
-const hardenWorkerScope = (): void => {
-  const scope = workerScope as unknown as Record<string, unknown>;
-  for (const name of ESCAPE_GLOBALS) {
-    neutralize(scope, name);
-  }
-  const navigator = (scope as { navigator?: Record<string, unknown> }).navigator;
-  if (navigator) {
-    for (const name of ESCAPE_NAVIGATOR_METHODS) {
-      neutralize(navigator, name);
-    }
-  }
-};
 
 let pyodidePromise: Promise<PyodideInterface> | undefined;
 
@@ -97,7 +49,7 @@ const ensurePyodide = (
     pyodidePromise = (async () => {
       await prefetchRuntimeBinary(indexUrl, onProgress).catch(() => undefined);
       const py = await loadPyodide({ indexURL: indexUrl });
-      hardenWorkerScope();
+      hardenWorkerScope(workerScope);
       return py;
     })();
   }

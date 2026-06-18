@@ -1,5 +1,7 @@
 import {
+  Suspense,
   isValidElement,
+  lazy,
   useCallback,
   useEffect,
   useRef,
@@ -15,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 
 import { CopyButton } from '@/components/playground/CopyButton';
 import { stashSandboxIncoming, type PlaygroundTab } from '@/lib/playground';
+import { sanitizeHref } from '@/lib/safe-url';
 
 import {
   AreaChart,
@@ -50,54 +53,166 @@ import { SideSql } from '@/components/sandbox/SideSql';
 import { cx } from '@/components/ui/cx';
 import { LightboxProvider } from '@/components/ui/Lightbox';
 import { LightboxImage, withZoom } from '@/components/ui/Zoomable';
-import { AccessScope } from '@/components/viz/AccessScope';
-import { AggregateViz } from '@/components/viz/AggregateViz';
-import { CapTheoremFigure } from '@/components/viz/CapTheoremFigure';
-import { ClassFactory } from '@/components/viz/ClassFactory';
-import { CompositionViz } from '@/components/viz/CompositionViz';
-import { DocumentModelFigure } from '@/components/viz/DocumentModelFigure';
-import { GraphTraversalFigure } from '@/components/viz/GraphTraversalFigure';
-import { GroupByViz } from '@/components/viz/GroupByViz';
-import { HashTableViz } from '@/components/viz/HashTableViz';
-import { HierarchyTreeFigure } from '@/components/viz/HierarchyTreeFigure';
-import { InheritanceTree } from '@/components/viz/InheritanceTree';
-import { JoinViz } from '@/components/viz/JoinViz';
-import { KeyValueStoreFigure } from '@/components/viz/KeyValueStoreFigure';
-import { MergeStepper } from '@/components/viz/MergeStepper';
-import { NetworkModelFigure } from '@/components/viz/NetworkModelFigure';
-import { RefCountViz } from '@/components/viz/RefCountViz';
-import { WideColumnFigure } from '@/components/viz/WideColumnFigure';
-import { CallStackViz } from '@/components/theory-viz/decorators/CallStackViz';
-import { DecoratorWrap } from '@/components/theory-viz/decorators/DecoratorWrap';
-import { AgentLoopDiagram } from '@/components/theory-viz/llm/AgentLoopDiagram';
-import { AttentionHeatmap } from '@/components/theory-viz/llm/AttentionHeatmap';
-import { ContextWindowViz } from '@/components/theory-viz/llm/ContextWindowViz';
-import { EmbeddingSpace } from '@/components/theory-viz/llm/EmbeddingSpace';
-import { McpDiagram } from '@/components/theory-viz/llm/McpDiagram';
-import { SamplingBars } from '@/components/theory-viz/llm/SamplingBars';
-import { TokenizerViz } from '@/components/theory-viz/llm/TokenizerViz';
-import { ChainOfThoughtViz } from '@/components/theory-viz/prompt/ChainOfThoughtViz';
-import { FewShotViz } from '@/components/theory-viz/prompt/FewShotViz';
-import { PromptAnatomy } from '@/components/theory-viz/prompt/PromptAnatomy';
-import { AnchorGridViz } from '@/components/theory-viz/yolo/AnchorGridViz';
-import { IoUViz } from '@/components/theory-viz/yolo/IoUViz';
-import { NmsViz } from '@/components/theory-viz/yolo/NmsViz';
-import { PrCurve } from '@/components/theory-viz/yolo/PrCurve';
-import { ActivationPlot } from '@/components/theory-viz/nn/ActivationPlot';
-import { GradientDescentViz } from '@/components/theory-viz/nn/GradientDescentViz';
-import { LossLandscape } from '@/components/theory-viz/nn/LossLandscape';
-import { NetworkDiagram } from '@/components/theory-viz/nn/NetworkDiagram';
-import { PerceptronViz } from '@/components/theory-viz/nn/PerceptronViz';
-import { GitTerminal } from '@/components/theory-viz/git/GitTerminal';
-import { CollisionViz } from '@/components/theory-viz/hashing/CollisionViz';
-import { ConsistentHashRing } from '@/components/theory-viz/hashing/ConsistentHashRing';
-import { HashFunctionViz } from '@/components/theory-viz/hashing/HashFunctionViz';
-import { HashLoopDemo } from '@/components/theory-viz/hashing/HashLoopDemo';
-import { LoadFactorViz } from '@/components/theory-viz/hashing/LoadFactorViz';
-
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
 }
+
+const VizFallback = () => (
+  <div
+    className="not-prose my-6 h-56 rounded-lg border border-border-base bg-surface/60 animate-pulse"
+    aria-hidden
+  />
+);
+
+const lazyViz = (
+  load: () => Promise<Record<string, unknown>>,
+  exportName: string,
+): ComponentType<Record<string, unknown>> => {
+  const Lazy = lazy(async () => {
+    const module = await load();
+    return { default: module[exportName] as ComponentType<Record<string, unknown>> };
+  });
+  const Wrapped = (props: Record<string, unknown>) => (
+    <Suspense fallback={<VizFallback />}>
+      <Lazy {...props} />
+    </Suspense>
+  );
+  Wrapped.displayName = `LazyViz(${exportName})`;
+  return Wrapped;
+};
+
+const AccessScope = lazyViz(() => import('@/components/viz/AccessScope'), 'AccessScope');
+const AggregateViz = lazyViz(() => import('@/components/viz/AggregateViz'), 'AggregateViz');
+const CapTheoremFigure = lazyViz(
+  () => import('@/components/viz/CapTheoremFigure'),
+  'CapTheoremFigure',
+);
+const ClassFactory = lazyViz(() => import('@/components/viz/ClassFactory'), 'ClassFactory');
+const CompositionViz = lazyViz(() => import('@/components/viz/CompositionViz'), 'CompositionViz');
+const DocumentModelFigure = lazyViz(
+  () => import('@/components/viz/DocumentModelFigure'),
+  'DocumentModelFigure',
+);
+const GraphTraversalFigure = lazyViz(
+  () => import('@/components/viz/GraphTraversalFigure'),
+  'GraphTraversalFigure',
+);
+const GroupByViz = lazyViz(() => import('@/components/viz/GroupByViz'), 'GroupByViz');
+const HashTableViz = lazyViz(() => import('@/components/viz/HashTableViz'), 'HashTableViz');
+const HierarchyTreeFigure = lazyViz(
+  () => import('@/components/viz/HierarchyTreeFigure'),
+  'HierarchyTreeFigure',
+);
+const InheritanceTree = lazyViz(
+  () => import('@/components/viz/InheritanceTree'),
+  'InheritanceTree',
+);
+const JoinViz = lazyViz(() => import('@/components/viz/JoinViz'), 'JoinViz');
+const KeyValueStoreFigure = lazyViz(
+  () => import('@/components/viz/KeyValueStoreFigure'),
+  'KeyValueStoreFigure',
+);
+const MergeStepper = lazyViz(() => import('@/components/viz/MergeStepper'), 'MergeStepper');
+const NetworkModelFigure = lazyViz(
+  () => import('@/components/viz/NetworkModelFigure'),
+  'NetworkModelFigure',
+);
+const RefCountViz = lazyViz(() => import('@/components/viz/RefCountViz'), 'RefCountViz');
+const WideColumnFigure = lazyViz(
+  () => import('@/components/viz/WideColumnFigure'),
+  'WideColumnFigure',
+);
+
+const CallStackViz = lazyViz(
+  () => import('@/components/theory-viz/decorators/CallStackViz'),
+  'CallStackViz',
+);
+const DecoratorWrap = lazyViz(
+  () => import('@/components/theory-viz/decorators/DecoratorWrap'),
+  'DecoratorWrap',
+);
+const AgentLoopDiagram = lazyViz(
+  () => import('@/components/theory-viz/llm/AgentLoopDiagram'),
+  'AgentLoopDiagram',
+);
+const AttentionHeatmap = lazyViz(
+  () => import('@/components/theory-viz/llm/AttentionHeatmap'),
+  'AttentionHeatmap',
+);
+const ContextWindowViz = lazyViz(
+  () => import('@/components/theory-viz/llm/ContextWindowViz'),
+  'ContextWindowViz',
+);
+const EmbeddingSpace = lazyViz(
+  () => import('@/components/theory-viz/llm/EmbeddingSpace'),
+  'EmbeddingSpace',
+);
+const McpDiagram = lazyViz(() => import('@/components/theory-viz/llm/McpDiagram'), 'McpDiagram');
+const SamplingBars = lazyViz(
+  () => import('@/components/theory-viz/llm/SamplingBars'),
+  'SamplingBars',
+);
+const TokenizerViz = lazyViz(
+  () => import('@/components/theory-viz/llm/TokenizerViz'),
+  'TokenizerViz',
+);
+const ChainOfThoughtViz = lazyViz(
+  () => import('@/components/theory-viz/prompt/ChainOfThoughtViz'),
+  'ChainOfThoughtViz',
+);
+const FewShotViz = lazyViz(() => import('@/components/theory-viz/prompt/FewShotViz'), 'FewShotViz');
+const PromptAnatomy = lazyViz(
+  () => import('@/components/theory-viz/prompt/PromptAnatomy'),
+  'PromptAnatomy',
+);
+const AnchorGridViz = lazyViz(
+  () => import('@/components/theory-viz/yolo/AnchorGridViz'),
+  'AnchorGridViz',
+);
+const IoUViz = lazyViz(() => import('@/components/theory-viz/yolo/IoUViz'), 'IoUViz');
+const NmsViz = lazyViz(() => import('@/components/theory-viz/yolo/NmsViz'), 'NmsViz');
+const PrCurve = lazyViz(() => import('@/components/theory-viz/yolo/PrCurve'), 'PrCurve');
+const ActivationPlot = lazyViz(
+  () => import('@/components/theory-viz/nn/ActivationPlot'),
+  'ActivationPlot',
+);
+const GradientDescentViz = lazyViz(
+  () => import('@/components/theory-viz/nn/GradientDescentViz'),
+  'GradientDescentViz',
+);
+const LossLandscape = lazyViz(
+  () => import('@/components/theory-viz/nn/LossLandscape'),
+  'LossLandscape',
+);
+const NetworkDiagram = lazyViz(
+  () => import('@/components/theory-viz/nn/NetworkDiagram'),
+  'NetworkDiagram',
+);
+const PerceptronViz = lazyViz(
+  () => import('@/components/theory-viz/nn/PerceptronViz'),
+  'PerceptronViz',
+);
+const GitTerminal = lazyViz(() => import('@/components/theory-viz/git/GitTerminal'), 'GitTerminal');
+const CollisionViz = lazyViz(
+  () => import('@/components/theory-viz/hashing/CollisionViz'),
+  'CollisionViz',
+);
+const ConsistentHashRing = lazyViz(
+  () => import('@/components/theory-viz/hashing/ConsistentHashRing'),
+  'ConsistentHashRing',
+);
+const HashFunctionViz = lazyViz(
+  () => import('@/components/theory-viz/hashing/HashFunctionViz'),
+  'HashFunctionViz',
+);
+const HashLoopDemo = lazyViz(
+  () => import('@/components/theory-viz/hashing/HashLoopDemo'),
+  'HashLoopDemo',
+);
+const LoadFactorViz = lazyViz(
+  () => import('@/components/theory-viz/hashing/LoadFactorViz'),
+  'LoadFactorViz',
+);
 
 const slugify = (children: ReactNode): string => {
   const text =
@@ -416,14 +531,19 @@ const mdxComponents = {
     );
   },
   pre: CodeBlock,
-  a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-    <a
-      {...props}
-      className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent transition-colors"
-      target={props.href?.startsWith('http') ? '_blank' : undefined}
-      rel={props.href?.startsWith('http') ? 'noreferrer' : undefined}
-    />
-  ),
+  a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+    const safeHref = sanitizeHref(props.href);
+    const external = safeHref?.startsWith('http') ?? false;
+    return (
+      <a
+        {...props}
+        href={safeHref}
+        className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent transition-colors"
+        target={external ? '_blank' : undefined}
+        rel={external ? 'noreferrer' : undefined}
+      />
+    );
+  },
   blockquote: (props: React.HTMLAttributes<HTMLQuoteElement>) => (
     <blockquote
       {...props}

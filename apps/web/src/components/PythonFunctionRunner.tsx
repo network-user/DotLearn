@@ -35,6 +35,7 @@ import { useDifficultyLabel } from './ExerciseRunner';
 interface PythonFunctionRunnerProps {
   topicSlug: string;
   exercise: PythonFunctionExercise;
+  conceptId?: string | undefined;
 }
 
 interface CaseFailure {
@@ -52,7 +53,11 @@ type RunState =
   | { kind: 'fail'; reason: string; failures: CaseFailure[] }
   | { kind: 'error'; message: string; runtimeKind: RuntimeErrorKind };
 
-export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunnerProps) => {
+export const PythonFunctionRunner = ({
+  topicSlug,
+  exercise,
+  conceptId,
+}: PythonFunctionRunnerProps) => {
   const { t } = useTranslation('runners');
   const { t: tErr } = useTranslation('errors');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
@@ -162,7 +167,10 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
         toast.success(t('python.allPassedToast'), { description: exercise.id });
         burstConfetti();
         setStatusMessage(t('common.status.passed', { passed, total: exercise.cases.length }));
-        void recordAttempt(topicSlug, exercise.id, 'pass');
+        void recordAttempt(topicSlug, exercise.id, 'pass', {
+          difficulty: exercise.difficulty,
+          concept: conceptId,
+        });
       } else {
         const details = (result.details ?? {}) as { failures?: CaseFailure[] };
         const failures = details.failures ?? [];
@@ -200,7 +208,10 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
         ]);
         setFailedAttempts((count) => count + 1);
         setStatusMessage(t('common.status.failed', { reason: result.reason }));
-        void recordAttempt(topicSlug, exercise.id, 'fail');
+        void recordAttempt(topicSlug, exercise.id, 'fail', {
+          difficulty: exercise.difficulty,
+          concept: conceptId,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -213,7 +224,7 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
         { id: `s${session}-err`, tone: 'fail', text: `[ERROR] ${friendly}` },
       ]);
     }
-  }, [answer, exercise, pulse, t, tErr, topicSlug]);
+  }, [answer, exercise, pulse, t, tErr, topicSlug, conceptId]);
 
   const handleReset = (): void => {
     setAnswer(exercise.starter);
@@ -226,7 +237,10 @@ export const PythonFunctionRunner = ({ topicSlug, exercise }: PythonFunctionRunn
     if (revealed) return;
     setRevealed(true);
     setStatusMessage(t('common.status.revealed'));
-    void recordAttempt(topicSlug, exercise.id, 'fail');
+    void recordAttempt(topicSlug, exercise.id, 'fail', {
+      difficulty: exercise.difficulty,
+      concept: conceptId,
+    });
   };
 
   const running = state.kind === 'loading' || state.kind === 'running';

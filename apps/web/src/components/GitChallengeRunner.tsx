@@ -22,11 +22,12 @@ import { useDifficultyLabel } from './ExerciseRunner';
 interface GitChallengeRunnerProps {
   topicSlug: string;
   exercise: GitChallengeExercise;
+  conceptId?: string | undefined;
 }
 
 type GradeState = { kind: 'idle' } | { kind: 'pass' } | { kind: 'fail'; failure: FailureReason };
 
-export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerProps) => {
+export const GitChallengeRunner = ({ topicSlug, exercise, conceptId }: GitChallengeRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const failureMessage = useFailureMessage();
@@ -64,7 +65,10 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
           });
           burstConfetti();
           setStatusMessage(t('common.status.passedSimple'));
-          void recordAttempt(topicSlug, exercise.id, 'pass');
+          void recordAttempt(topicSlug, exercise.id, 'pass', {
+            difficulty: exercise.difficulty,
+            concept: conceptId,
+          });
         }
       } else {
         passedRecorded.current = false;
@@ -72,11 +76,14 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
         setState({ kind: 'fail', failure });
         setFailedAttempts((count) => count + 1);
         setStatusMessage(t('common.status.failed', { reason: failureMessage(failure) }));
-        void recordAttempt(topicSlug, exercise.id, 'fail');
+        void recordAttempt(topicSlug, exercise.id, 'fail', {
+          difficulty: exercise.difficulty,
+          concept: conceptId,
+        });
       }
       setPulse((value) => value + 1);
     },
-    [exercise, t, topicSlug, failureMessage],
+    [exercise, t, topicSlug, failureMessage, conceptId],
   );
 
   const handleCommandsChange = useCallback((next: string[]): void => {
@@ -102,7 +109,10 @@ export const GitChallengeRunner = ({ topicSlug, exercise }: GitChallengeRunnerPr
     if (revealed) return;
     setRevealed(true);
     setStatusMessage(t('common.status.revealed'));
-    void recordAttempt(topicSlug, exercise.id, 'fail');
+    void recordAttempt(topicSlug, exercise.id, 'fail', {
+      difficulty: exercise.difficulty,
+      concept: conceptId,
+    });
   };
 
   const status: ExerciseCardStatus =

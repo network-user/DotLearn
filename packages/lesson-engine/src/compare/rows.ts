@@ -66,9 +66,11 @@ export const compareRows = (
     return { ok, missing, extra, misordered: false, expectedColumns, actualColumns };
   }
 
+  const actualKeys: string[] = [];
   const actualCounts = new Map<string, { row: Row; count: number }>();
   for (const row of actual) {
     const key = canonicalKey(row);
+    actualKeys.push(key);
     const entry = actualCounts.get(key);
     if (entry) {
       entry.count += 1;
@@ -76,9 +78,11 @@ export const compareRows = (
       actualCounts.set(key, { row, count: 1 });
     }
   }
+  const expectedKeys: string[] = [];
   const missing: Row[] = [];
   for (const row of expected) {
     const key = canonicalKey(row);
+    expectedKeys.push(key);
     const entry = actualCounts.get(key);
     if (!entry || entry.count === 0) {
       missing.push(row);
@@ -93,12 +97,7 @@ export const compareRows = (
     }
   }
   const ok = missing.length === 0 && extra.length === 0;
-  const misordered =
-    ok &&
-    actual.some((row, index) => {
-      const target = expected[index];
-      return target === undefined || canonicalKey(row) !== canonicalKey(target);
-    });
+  const misordered = ok && actualKeys.some((key, index) => key !== expectedKeys[index]);
   return { ok, missing, extra, misordered, expectedColumns, actualColumns };
 };
 

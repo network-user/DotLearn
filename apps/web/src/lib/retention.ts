@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { forgetting_curve, State } from 'ts-fsrs';
 
 import { db, type FlashcardReviewRecord } from './progress-db';
 
@@ -13,6 +12,13 @@ export interface TopicRecall {
 
 const MS_PER_DAY = 86_400_000;
 
+const NEW_CARD_STATE = 0;
+const FSRS_DECAY = -0.5;
+const FSRS_FACTOR = 19 / 81;
+
+const forgettingCurve = (elapsedDays: number, stability: number): number =>
+  Number(Math.pow(1 + (FSRS_FACTOR * elapsedDays) / stability, FSRS_DECAY).toFixed(8));
+
 const elapsedDaysSince = (lastReviewAt: string | undefined, now: Date): number => {
   if (!lastReviewAt) return 0;
   const last = new Date(lastReviewAt).getTime();
@@ -21,9 +27,9 @@ const elapsedDaysSince = (lastReviewAt: string | undefined, now: Date): number =
 };
 
 export const cardRetrievability = (record: FlashcardReviewRecord, now: Date): number => {
-  if (record.state === State.New || record.stability <= 0) return 0;
+  if (record.state === NEW_CARD_STATE || record.stability <= 0) return 0;
   const elapsed = elapsedDaysSince(record.lastReviewAt, now);
-  const value = forgetting_curve(elapsed, record.stability);
+  const value = forgettingCurve(elapsed, record.stability);
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
 };
 
@@ -31,7 +37,7 @@ export const topicRecallFromRecords = (
   records: readonly FlashcardReviewRecord[],
   now: Date = new Date(),
 ): TopicRecall => {
-  const reviewed = records.filter((record) => record.state !== State.New);
+  const reviewed = records.filter((record) => record.state !== NEW_CARD_STATE);
   if (reviewed.length === 0) {
     return { recall: 1, reviewedCards: 0, dueCards: 0 };
   }
