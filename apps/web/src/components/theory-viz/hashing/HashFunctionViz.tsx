@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { Shuffle } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';

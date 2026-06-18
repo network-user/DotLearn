@@ -12,7 +12,11 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { flashcardTopicSlugs, loadTopicCards } from '@/lib/flashcard-decks';
 import { loadFlashcardStats, type FlashcardStats } from '@/lib/flashcard-sources';
-import { interviewFlashcardCoverage, loadInterviewCards } from '@/lib/interview-flashcards';
+import {
+  interviewFlashcardCoverage,
+  loadInterviewCards,
+  type InterviewFlashcardCoverage,
+} from '@/lib/interview-flashcards';
 import { interviewCategories } from '@/lib/interview';
 import { db } from '@/lib/progress-db';
 import { topicTitleOf, useContentLanguage } from '@/lib/topics';
@@ -107,7 +111,20 @@ export const FlashcardsIndexPage = () => {
     };
   }, [language]);
 
-  const coverage = useMemo(() => interviewFlashcardCoverage(language), [language]);
+  const [coverage, setCoverage] = useState<InterviewFlashcardCoverage>({
+    cards: 0,
+    missing: 0,
+    missingPaths: [],
+  });
+  useEffect(() => {
+    let cancelled = false;
+    void interviewFlashcardCoverage(language).then((result) => {
+      if (!cancelled) setCoverage(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
   const ready = summaries !== undefined && interviewSummaries !== undefined;
 
   const reviewAllInterviewSearch = {

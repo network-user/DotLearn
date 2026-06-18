@@ -59,5 +59,6 @@ export const terminatePythonRuntime = (): void => {
   cached = undefined;
   latestProgress = undefined;
   prewarmStarted = false;
-  prewarmPythonRuntime();
+  // Recreate lazily on the next getPythonRuntime()/init() (or the run button's prewarm-on-hover)
+  // rather than eagerly, so a Stop after a runaway exercise cannot thrash terminate -> reinit.
 };

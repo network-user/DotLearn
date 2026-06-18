@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { TopicManifest } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -146,7 +146,7 @@ const statusRank = (row: TopicRow): number => {
   return 0;
 };
 
-const effectiveSearchLanguage = (language: string): SearchEntry['language'] =>
+const effectiveSearchLanguage = (language: string): 'en' | 'ru' =>
   language === 'en' ? 'en' : 'ru';
 
 interface ContentHit {
@@ -156,12 +156,14 @@ interface ContentHit {
   score: number;
 }
 
-const useContentSearchIndex = (enabled: boolean): SearchEntry[] => {
+const useContentSearchIndex = (enabled: boolean, language: 'en' | 'ru'): SearchEntry[] => {
   const [entries, setEntries] = useState<SearchEntry[]>([]);
   useEffect(() => {
-    if (!enabled || entries.length > 0) return;
+    if (!enabled) return;
     let cancelled = false;
-    void import('virtual:search-index').then((module) => {
+    const loadIndex =
+      language === 'en' ? import('virtual:search-index/en') : import('virtual:search-index/ru');
+    void loadIndex.then((module) => {
       if (cancelled) return;
       try {
         setEntries(JSON.parse(module.default) as SearchEntry[]);
@@ -172,7 +174,7 @@ const useContentSearchIndex = (enabled: boolean): SearchEntry[] => {
     return () => {
       cancelled = true;
     };
-  }, [enabled, entries.length]);
+  }, [enabled, language]);
   return entries;
 };
 
@@ -210,7 +212,8 @@ export const HomePage = () => {
   const hasQuery = trimmedQuery.length > 0;
   const sort: HomeSortKey = search.sort ?? (hasQuery ? 'relevance' : 'difficulty');
 
-  const contentEntries = useContentSearchIndex(hasQuery);
+  const language = useContentLanguage();
+  const contentEntries = useContentSearchIndex(hasQuery, effectiveSearchLanguage(language));
 
   const patch = useCallback(
     (next: Partial<HomeSearchPatch>): void => {
@@ -233,8 +236,6 @@ export const HomePage = () => {
   useEffect(() => {
     setQueryInput(query);
   }, [query]);
-
-  const language = useContentLanguage();
 
   const rows = useMemo<TopicRow[]>(() => {
     const passedByTopic = new Map<string, number>();
@@ -276,14 +277,8 @@ export const HomePage = () => {
 
   const contentBySlug = useMemo(() => {
     if (!hasQuery) return new Map<string, ContentHit[]>();
-    const language5 = effectiveSearchLanguage(language);
-    const slugsWithCurrentLanguage = new Set<string>();
-    for (const entry of contentEntries) {
-      if (entry.language === language5) slugsWithCurrentLanguage.add(entry.slug);
-    }
     const byConcept = new Map<string, ContentHit>();
     for (const entry of contentEntries) {
-      if (entry.language !== language5 && slugsWithCurrentLanguage.has(entry.slug)) continue;
       const score = fuzzyScore(trimmedQuery, [
         { text: entry.conceptTitle, weight: 4 },
         { text: entry.text, weight: 1 },
@@ -310,7 +305,7 @@ export const HomePage = () => {
       list.sort((a, b) => b.score - a.score);
     }
     return grouped;
-  }, [hasQuery, contentEntries, trimmedQuery, language]);
+  }, [hasQuery, contentEntries, trimmedQuery]);
 
   const scoredRows = useMemo(() => {
     return rows

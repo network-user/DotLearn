@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { TAG_PATTERN, TopicDifficulty, TopicLanguage, TopicRuntime } from './topic.schema';
+import {
+  isHttpUrl,
+  TAG_PATTERN,
+  TopicDifficulty,
+  TopicLanguage,
+  TopicRuntime,
+} from './topic.schema';
 
 export const SubmissionStatus = z.enum(['pending', 'approved', 'rejected', 'materialized']);
 export type SubmissionStatus = z.infer<typeof SubmissionStatus>;
@@ -18,7 +24,16 @@ const CreateSubmissionShape = z
     suggestedPrimaryLanguage: TopicLanguage,
     estimatedHours: z.number().min(0.25).max(200),
     tags: z.array(z.string().regex(TAG_PATTERN)).min(1).max(8),
-    sources: z.array(z.string().url()).max(20).default([]),
+    sources: z
+      .array(
+        z
+          .string()
+          .url()
+          .max(2048)
+          .refine(isHttpUrl, { message: 'source url must use the http(s) scheme' }),
+      )
+      .max(20)
+      .default([]),
     contactEmail: z.string().email().optional(),
     notes: z.string().max(1000).optional(),
   })

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 
 import type { RepoSnapshot } from '@dotlearn/lesson-engine';
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';

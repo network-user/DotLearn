@@ -130,6 +130,11 @@ export class AuthService {
 
   async refresh(refreshToken: string): Promise<AuthTokens> {
     const claims = await this.verifyToken(refreshToken, this.config.refreshSecret, 'refresh');
+    if (this.revocation.isRevoked(claims.jti)) {
+      this.sessionEpoch.bump(claims.sub);
+      this.logger.warn({ sub: claims.sub, jti: claims.jti }, 'admin_refresh_token_reuse_detected');
+      throw new UnauthorizedException('Refresh token reuse detected');
+    }
     this.revocation.revoke(claims.jti, claims.exp);
     return this.issueTokens(claims.sub);
   }
@@ -201,7 +206,6 @@ export class AuthService {
       {
         secret: this.config.accessSecret,
         expiresIn: this.config.accessTtlSec,
-        jwtid: accessJti,
         algorithm: 'HS256',
       },
     );
@@ -210,7 +214,6 @@ export class AuthService {
       {
         secret: this.config.refreshSecret,
         expiresIn: this.config.refreshTtlSec,
-        jwtid: refreshJti,
         algorithm: 'HS256',
       },
     );

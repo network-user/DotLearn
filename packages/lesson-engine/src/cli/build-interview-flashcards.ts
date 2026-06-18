@@ -121,6 +121,18 @@ const main = async (): Promise<number> => {
     'utf-8',
   );
 
+  await writeFile(
+    resolve(OUT_DIR, 'flashcards-index.ru.json'),
+    `${JSON.stringify(index.ru, null, 2)}\n`,
+    'utf-8',
+  );
+
+  await writeFile(
+    resolve(OUT_DIR, 'flashcards-index.en.json'),
+    `${JSON.stringify(index.en, null, 2)}\n`,
+    'utf-8',
+  );
+
   console.log(
     `Rebuilt flashcards-index.json — ru: ${index.ru.cards.length} cards, ${index.ru.missing.length} missing; en: ${index.en.cards.length} cards, ${index.en.missing.length} missing.`,
   );

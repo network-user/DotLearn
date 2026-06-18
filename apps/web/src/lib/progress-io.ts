@@ -21,6 +21,11 @@ import { exportableSettings, importSettings, type AppSettingsBackup } from './se
 
 export const PROGRESS_EXPORT_VERSION = 4;
 
+// Reject oversized import files before reading/parsing them, so a crafted multi-hundred-MB
+// "backup" cannot freeze the tab in JSON.parse or balloon IndexedDB. A real export of a heavy
+// account is well under this.
+export const MAX_IMPORT_FILE_BYTES = 16 * 1024 * 1024;
+
 export interface ProgressExport {
   app: 'dotlearn';
   kind: 'progress-export';
@@ -122,6 +127,16 @@ const isString = (value: unknown): value is string => typeof value === 'string';
 const isNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
+// An imported progress file is fully user-controlled and bulkPut straight into IndexedDB. Bound
+// per-table record counts and free-text field lengths so a crafted/oversized "backup" cannot
+// exhaust the origin's storage quota and wedge the local-first store. See also the file-size
+// guard in the import handlers (ProgressPage / SettingsPage).
+const MAX_RECORDS_PER_TABLE = 100_000;
+const MAX_TEXT_FIELD_LENGTH = 20_000;
+
+const isBoundedString = (value: unknown, max = MAX_TEXT_FIELD_LENGTH): value is string =>
+  typeof value === 'string' && value.length <= max;
+
 interface CollectResult<T> {
   valid: T[];
   skipped: number;
@@ -134,6 +149,10 @@ const collect = <T>(value: unknown, guard: (entry: unknown) => entry is T): Coll
   const valid: T[] = [];
   let skipped = 0;
   for (const entry of value) {
+    if (valid.length >= MAX_RECORDS_PER_TABLE) {
+      skipped += 1;
+      continue;
+    }
     if (guard(entry)) {
       valid.push(entry);
     } else {
@@ -186,7 +205,7 @@ const isConceptNoteRecord = (value: unknown): value is ConceptNoteRecord =>
   isString(value.id) &&
   isString(value.topicSlug) &&
   isString(value.conceptId) &&
-  isString(value.text) &&
+  isBoundedString(value.text) &&
   isString(value.updatedAt);
 
 const isBookmarkRecord = (value: unknown): value is BookmarkRecord =>
@@ -219,7 +238,7 @@ const isHighlightRecord = (value: unknown): value is HighlightRecord =>
   isString(value.id) &&
   isString(value.topicSlug) &&
   isString(value.conceptId) &&
-  isString(value.text) &&
+  isBoundedString(value.text) &&
   isString(value.color) &&
   HIGHLIGHT_COLORS.has(value.color) &&
   isString(value.createdAt);
@@ -266,8 +285,8 @@ const isExamResultRecord = (value: unknown): value is ExamResultRecord =>
 const isUserCardRecord = (value: unknown): value is UserCardRecord =>
   isRecord(value) &&
   isString(value.id) &&
-  isString(value.front) &&
-  isString(value.back) &&
+  isBoundedString(value.front) &&
+  isBoundedString(value.back) &&
   isString(value.topicSlug) &&
   isString(value.createdAt) &&
   (value.conceptId === undefined || isString(value.conceptId)) &&

@@ -77,6 +77,21 @@ async function main() {
     }
   }
 
+  for (const locale of ['ru', 'en']) {
+    const localePath = resolve(OUT_DIR, `flashcards-index.${locale}.json`);
+    if (!existsSync(localePath)) {
+      errors.push(`flashcards-index.${locale}.json missing — run pnpm build:interview-flashcards`);
+      continue;
+    }
+    const localeData = JSON.parse(await readFile(localePath, 'utf-8'));
+    if (!Array.isArray(localeData?.cards)) {
+      errors.push(`flashcards-index.${locale}.json: cards must be an array`);
+    }
+    if (!Array.isArray(localeData?.missing)) {
+      errors.push(`flashcards-index.${locale}.json: missing must be an array`);
+    }
+  }
+
   // 3. exercises-index points at real files and known question ids
   for (const ex of exIndex) {
     if (!ids.has(ex.qid)) errors.push(`exercise ${ex.exerciseId} references unknown qid ${ex.qid}`);

@@ -33,8 +33,12 @@ Consequences:
   and `navigator.serviceWorker` (a beacon is a self-contained cross-origin POST
   that does not depend on the `fetch` global). This blocks
   `import js; js.fetch(...)` / `js.navigator.sendBeacon(...)` exfiltration.
-  Responses use a captured `rawPostMessage`. See `python/worker.ts`
-  (`hardenWorkerScope`).
+  Responses use a captured `rawPostMessage`. The neutering lives in a shared
+  `harden-worker-scope.ts`, and the **SQL worker now applies the same hardening**
+  after `initSqlJs` resolves (previously only Python did), so both
+  untrusted-code runners are at parity. The SQL runtime also arms an init
+  watchdog (like Python) so a stalled `initSqlJs` cannot wedge SQL exercises
+  with no recovery.
 - **Per-run namespace isolation.** Each evaluation runs in a fresh Python globals
   dict (`runPython(source, { globals })`), so definitions, imports, and
   `__builtins__` monkeypatching from one run cannot poison a later grading run.
@@ -72,20 +76,32 @@ Consequences:
   Keep all three in sync. Key directives: `script-src 'self' 'wasm-unsafe-eval'`
   (no `unsafe-eval`), `object-src 'none'`, `frame-ancestors 'none'`,
   `worker-src 'self' blob:`.
-  - `connect-src` is an **allowlist**: `'self'`, the four built-in provider
-    hosts (`api.anthropic.com`, `api.openai.com`, `openrouter.ai`,
-    `localhost:*` for Ollama), and localhost websockets for dev. The previous
-    blanket `https:` gave any XSS foothold an open channel to exfiltrate
-    decrypted BYOK keys to any host; the allowlist closes that. A user pointing
-    a provider at a custom host outside the allowlist must have the deployer
-    extend the policy — an intentional security/flexibility trade-off.
-- **BYOK key encryption at rest.** API keys are encrypted with a non-extractable
-  AES-GCM key (Web Crypto) before being written to IndexedDB; see
-  `lib/crypto-store.ts`, wired through `lib/provider-credentials.ts`. Legacy
-  plaintext keys are read transparently and re-encrypted on next save.
-  - Limits: this defeats casual inspection and at-rest plaintext exposure. It
-    does **not** defend against XSS (which can call decrypt) or a full browser
-    profile copy. The primary XSS defense is the CSP above.
+  - `connect-src` is a tight allowlist: `'self'` plus `localhost` / websocket
+    origins for local dev and `pnpm preview`. The site is **pure-logic with no
+    runtime AI** (see below), so the former provider hosts (`api.anthropic.com`,
+    `api.openai.com`, `openrouter.ai`) were removed: with no runtime path to
+    them they were pure data-exfiltration surface for any future XSS foothold. A
+    cross-origin backend must be added to the policy by the deployer. Keep the
+    three copies (`vite.config.ts`, `security-headers.conf`, `public/_headers`)
+    in sync; `_headers` also carries HSTS to match the nginx image.
+- **No runtime AI / BYOK.** The running app performs no LLM calls and stores no
+  provider keys. The former BYOK scaffolding (`lib/provider-credentials.ts`,
+  `lib/crypto-store.ts`, the `providerCredentials` / `cryptoKeys` IndexedDB
+  stores, and the `@dotlearn/ai-providers` dependency in `apps/web`) has been
+  removed; the Dexie schema (v14) drops those stores on upgrade. LLMs are used
+  only offline for content generation.
+- **Untrusted link hrefs are scheme-filtered.** Links whose href comes from
+  topic content (MDX prose, manifest `sources`, image `src`) pass through
+  `lib/safe-url.ts` (`isSafeHref`): only `http(s)`, `mailto:`, same-page
+  fragments and site-relative paths render; `javascript:` / `data:` are dropped.
+  The contract additionally rejects non-http(s) source URLs at `pnpm validate`.
+- **Topic-supplied regex is bounded.** `accept_regex` (fill-in-blanks) is capped
+  in length and rejected if it contains nested quantifiers (ReDoS shape) by the
+  contract, and the runner skips matching over-long answers, so a malicious
+  topic cannot freeze the visitor's tab.
+- **Progress import is bounded.** The import path caps file size, per-table
+  record counts, and free-text field lengths before writing to IndexedDB, so a
+  crafted "backup" cannot exhaust the origin's storage quota.
 - **MDX theory is executable.** Topic MDX compiles to JS and runs in every
   visitor's browser. It is trusted only because it passes PR review +
   `pnpm validate`. Treat topic content as code in review.
@@ -104,6 +120,11 @@ Consequences:
   - **JWT hardening:** algorithm is pinned to `HS256` on sign and verify;
     `ADMIN_REFRESH_SECRET` is now **required and must differ** from
     `ADMIN_JWT_SECRET`, so a leaked access secret cannot forge refresh tokens.
+  - **Refresh-token reuse detection:** presenting an already-rotated (revoked)
+    refresh token is treated as theft - the session epoch is bumped (killing
+    every outstanding token for that subject) and the request is rejected.
+  - **Logout revokes the access token:** the logout route is guarded so the
+    access `jti` is revoked, not just the refresh cookie.
   - **Durable auth state:** revoked token jtis, session epochs, consumed backup
     codes, and TOTP timesteps survive a restart (persisted via the JSON file
     store), so `logout`/`logout-all` and one-time backup codes are not undone by
@@ -113,7 +134,25 @@ Consequences:
     admin out); only a TOTP failure after a correct password escalates lockout.
     Password guessing is bounded by the per-route throttle.
 - Rate limiting: global `ThrottlerGuard` (100/min); public `POST /submissions`
-  tightened to 5/min.
+  tightened to 5/min; the public read/search/suggest routes carry a per-route
+  throttle (30/min) and `GET /submissions` is paginated (`limit`/`offset`).
+  `trust proxy` is env-gated (`TRUSTED_PROXY_HOPS`, default 0) so the throttler
+  keys per real client IP only when a known hop count is configured.
+- **Response headers + Swagger:** `x-powered-by` is disabled and the API sets
+  `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+  `Cross-Origin-Opener-Policy` (and HSTS in production). Swagger is mounted only
+  when `NODE_ENV !== 'production'`, so the admin surface is not enumerable in a
+  prod image.
+- **Search DoS bound:** the fuzzy matcher caps query/token length and skips the
+  Levenshtein DP when token lengths differ by more than the fuzziness threshold,
+  so an over-long query cannot pin the event loop.
+- **Storage bounds:** the public submission store is capped
+  (`SUBMISSIONS_MAX`, default 5000) and each `sources` URL is length-bounded, so
+  disk growth is bounded. On boot, a corrupt submissions/hidden-topics file is
+  quarantined (`.corrupt.<ts>`) and the service continues; a corrupt
+  **auth-state** file (revoked tokens, session epochs, consumed backup codes)
+  is fail-secure (refuses to start) rather than silently resurrecting revoked
+  sessions. Durable-write failures are logged, not swallowed.
 - No `child_process` / shell execution; submissions are not written to disk by
   user-controlled paths.
 

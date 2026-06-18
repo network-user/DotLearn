@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, LayoutGroup, m as motion, useReducedMotion } from 'framer-motion';
 
 import { cx } from '@/components/ui/cx';
 

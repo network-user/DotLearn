@@ -1,9 +1,17 @@
 export const normalizeQuery = (value: string): string => value.trim().toLowerCase();
 
-export const tokenize = (value: string): string[] =>
-  normalizeQuery(value)
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token.length > 0);
+const MAX_TOKEN_LENGTH = 64;
+const MAX_TOKENS = 32;
+
+export const tokenize = (value: string): string[] => {
+  const tokens: string[] = [];
+  for (const raw of normalizeQuery(value).split(/[^\p{L}\p{N}]+/u)) {
+    if (raw.length === 0) continue;
+    tokens.push(raw.length > MAX_TOKEN_LENGTH ? raw.slice(0, MAX_TOKEN_LENGTH) : raw);
+    if (tokens.length >= MAX_TOKENS) break;
+  }
+  return tokens;
+};
 
 export const levenshtein = (a: string, b: string): number => {
   if (a === b) return 0;
@@ -39,8 +47,11 @@ export const tokenMatchScore = (queryToken: string, candidateToken: string): num
   if (candidateToken.includes(queryToken)) {
     return 1;
   }
-  const distance = levenshtein(queryToken, candidateToken);
   const threshold = fuzzinessThreshold(queryToken);
+  if (Math.abs(queryToken.length - candidateToken.length) > threshold) {
+    return 0;
+  }
+  const distance = levenshtein(queryToken, candidateToken);
   if (distance <= threshold) {
     return Math.max(0, 1 - distance / Math.max(queryToken.length, 1));
   }

@@ -13,6 +13,8 @@ import * as RadixDialog from '@radix-ui/react-dialog';
 import { Download, ExternalLink, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { sanitizeHref } from '@/lib/safe-url';
+
 import { cx } from './cx';
 
 export type LightboxItem =
@@ -410,7 +412,7 @@ const ControlLink = ({
   target?: string;
 }) => (
   <a
-    href={href}
+    href={sanitizeHref(href)}
     aria-label={label}
     download={download}
     target={target}

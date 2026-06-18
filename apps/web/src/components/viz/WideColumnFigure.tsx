@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 
 import { cx } from '@/components/ui/cx';
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { m as motion, useReducedMotion } from 'framer-motion';
 import { Minus, Plus, RotateCcw } from 'lucide-react';
 
 import { VizButton, VizShell } from '@/components/viz/VizShell';

@@ -20,6 +20,7 @@ import { useDifficultyLabel } from './ExerciseRunner';
 interface PredictOutputRunnerProps {
   topicSlug: string;
   exercise: PredictOutputExercise;
+  conceptId?: string | undefined;
 }
 
 type CheckState =
@@ -49,7 +50,11 @@ type GridRow = Record<string, string>;
 const emptyRow = (columns: string[]): GridRow =>
   Object.fromEntries(columns.map((column) => [column, '']));
 
-export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunnerProps) => {
+export const PredictOutputRunner = ({
+  topicSlug,
+  exercise,
+  conceptId,
+}: PredictOutputRunnerProps) => {
   const { t } = useTranslation('runners');
   const difficultyLabel = useDifficultyLabel(exercise.difficulty);
   const failureMessage = useFailureMessage();
@@ -100,7 +105,10 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
       setState({ kind: 'pass' });
       toast.success(t('predict.correctToast'), { description: exercise.id });
       burstConfetti();
-      void recordAttempt(topicSlug, exercise.id, 'pass');
+      void recordAttempt(topicSlug, exercise.id, 'pass', {
+        difficulty: exercise.difficulty,
+        concept: conceptId,
+      });
     } else {
       const details = (result.details ?? {}) as { expected?: unknown; actual?: unknown };
       setState({
@@ -109,7 +117,10 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
         ...(details.expected !== undefined ? { expected: details.expected } : {}),
         ...(details.actual !== undefined ? { actual: details.actual } : {}),
       });
-      void recordAttempt(topicSlug, exercise.id, 'fail');
+      void recordAttempt(topicSlug, exercise.id, 'fail', {
+        difficulty: exercise.difficulty,
+        concept: conceptId,
+      });
     }
     setPulse((p) => p + 1);
   };

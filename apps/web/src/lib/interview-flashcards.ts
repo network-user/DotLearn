@@ -24,18 +24,25 @@ interface FlashcardsIndexLocale {
   missing: { questionId: number; path: string; locale: string; reason: string }[];
 }
 
-interface FlashcardsIndex {
-  generatedAt: string;
-  ru: FlashcardsIndexLocale;
-  en: FlashcardsIndexLocale;
-}
-
-const indexModules = import.meta.glob<{ default: FlashcardsIndex }>(
-  '../../../../interview/flashcards-index.json',
-  { eager: true },
+const ruIndexModules = import.meta.glob<{ default: FlashcardsIndexLocale }>(
+  '../../../../interview/flashcards-index.ru.json',
+);
+const enIndexModules = import.meta.glob<{ default: FlashcardsIndexLocale }>(
+  '../../../../interview/flashcards-index.en.json',
 );
 
-const rawIndex = Object.values(indexModules)[0]?.default;
+const localeCache = new Map<'ru' | 'en', FlashcardsIndexLocale>();
+
+const loadLocaleIndex = async (locale: string): Promise<FlashcardsIndexLocale> => {
+  const key: 'ru' | 'en' = locale === 'en' ? 'en' : 'ru';
+  const cached = localeCache.get(key);
+  if (cached) return cached;
+  const modules = key === 'en' ? enIndexModules : ruIndexModules;
+  const loader = Object.values(modules)[0];
+  const data = loader ? (await loader()).default : { cards: [], missing: [] };
+  localeCache.set(key, data);
+  return data;
+};
 
 const cardFromEntry = (entry: FlashcardIndexEntry): InterviewDeckCard => ({
   id: `q-${entry.questionId}`,
@@ -49,22 +56,12 @@ const cardFromEntry = (entry: FlashcardIndexEntry): InterviewDeckCard => ({
   stage: entry.stage,
 });
 
-const cardsForLocale = (locale: string): InterviewDeckCard[] => {
-  if (!rawIndex) return [];
-  const bundle = locale === 'en' ? rawIndex.en : rawIndex.ru;
-  return bundle.cards.map(cardFromEntry);
-};
-
-const missingForLocale = (locale: string): FlashcardsIndexLocale['missing'] => {
-  if (!rawIndex) return [];
-  const bundle = locale === 'en' ? rawIndex.en : rawIndex.ru;
-  return bundle.missing;
-};
-
 export const interviewFlashcardSlug = (): string => INTERVIEW_TOPIC_SLUG;
 
-export const loadInterviewCards = async (locale: string): Promise<InterviewDeckCard[]> =>
-  cardsForLocale(locale);
+export const loadInterviewCards = async (locale: string): Promise<InterviewDeckCard[]> => {
+  const index = await loadLocaleIndex(locale);
+  return index.cards.map(cardFromEntry);
+};
 
 export const loadInterviewCardsByCategory = async (
   category: string,
@@ -74,14 +71,19 @@ export const loadInterviewCardsByCategory = async (
   return all.filter((card) => card.category === category);
 };
 
-export const interviewFlashcardCoverage = (
+export interface InterviewFlashcardCoverage {
+  cards: number;
+  missing: number;
+  missingPaths: string[];
+}
+
+export const interviewFlashcardCoverage = async (
   locale: string,
-): { cards: number; missing: number; missingPaths: string[] } => {
-  const missing = missingForLocale(locale);
-  const cards = cardsForLocale(locale);
+): Promise<InterviewFlashcardCoverage> => {
+  const index = await loadLocaleIndex(locale);
   return {
-    cards: cards.length,
-    missing: missing.length,
-    missingPaths: missing.map((entry) => entry.path),
+    cards: index.cards.length,
+    missing: index.missing.length,
+    missingPaths: index.missing.map((entry) => entry.path),
   };
 };

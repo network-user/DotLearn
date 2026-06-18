@@ -35,6 +35,7 @@ import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib
 import { db } from '@/lib/progress-db';
 import { useRecallByTopic } from '@/lib/retention';
 import {
+  MAX_IMPORT_FILE_BYTES,
   ProgressImportError,
   downloadProgressExport,
   exportProgress,
@@ -229,6 +230,9 @@ export const ProgressPage = () => {
     event.target.value = '';
     if (!file) return;
     try {
+      if (file.size > MAX_IMPORT_FILE_BYTES) {
+        throw new ProgressImportError('too-large');
+      }
       const parsed: unknown = JSON.parse(await file.text());
       const { imported } = await importProgress(parsed);
       toast.success(t('data.imported', { count: imported }));

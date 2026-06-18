@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import { Link2, Recycle, Trash2 } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';
