@@ -109,19 +109,14 @@ export const InheritanceTree = ({
     nodes.filter((node) => (node.parent ?? null) === parentId);
 
   const renderNode = (node: TreeNode, depth: number): JSX.Element => {
-    const searchingHere =
-      lookup.kind === 'searching' && chain[lookup.step]?.id === node.id;
+    const searchingHere = lookup.kind === 'searching' && chain[lookup.step]?.id === node.id;
     const foundHere = lookup.kind === 'found' && lookup.nodeId === node.id;
     const inChain = chain.some((chainNode) => chainNode.id === node.id);
 
     return (
       <div key={node.id} className={cx(depth > 0 && 'ml-6 pl-4 border-l border-border-base/70')}>
         <motion.div
-          animate={
-            searchingHere
-              ? { scale: 1.02 }
-              : { scale: 1 }
-          }
+          animate={searchingHere ? { scale: 1.02 } : { scale: 1 }}
           transition={{ type: 'spring', stiffness: 400, damping: 20 }}
           className={cx(
             'inline-flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 my-1.5 transition-shadow duration-fast',
@@ -183,7 +178,9 @@ export const InheritanceTree = ({
               className={cx(
                 'rounded-md border border-border-base bg-surface px-2.5 py-1.5 font-mono text-[12px] text-left transition-colors duration-fast',
                 'hover:border-accent/50 hover:text-accent disabled:opacity-50 disabled:cursor-not-allowed',
-                lookup.kind !== 'idle' && lookup.method === method ? 'text-accent border-accent/50' : 'text-fg-muted',
+                lookup.kind !== 'idle' && lookup.method === method
+                  ? 'text-accent border-accent/50'
+                  : 'text-fg-muted',
               )}
             >
               {chain[0] ? `${chain[0].label.toLowerCase()}.${method}` : method}

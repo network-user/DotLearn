@@ -60,7 +60,10 @@ const pyodideAssetsPlugin = (): Plugin => {
         const path = (req.url ?? '').split('?')[0];
         const match = /\/pyodide\/([^/]+)$/.exec(path);
         const name = match?.[1];
-        if (!name || !PYODIDE_RUNTIME_FILES.includes(name as (typeof PYODIDE_RUNTIME_FILES)[number])) {
+        if (
+          !name ||
+          !PYODIDE_RUNTIME_FILES.includes(name as (typeof PYODIDE_RUNTIME_FILES)[number])
+        ) {
           next();
           return;
         }

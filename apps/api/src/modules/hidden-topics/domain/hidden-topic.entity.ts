@@ -11,7 +11,11 @@ export class HiddenTopicEntity {
     return new HiddenTopicEntity(slug, new Date(), reason ?? null);
   }
 
-  static restore(snapshot: { slug: string; hiddenAt: Date; reason: string | null }): HiddenTopicEntity {
+  static restore(snapshot: {
+    slug: string;
+    hiddenAt: Date;
+    reason: string | null;
+  }): HiddenTopicEntity {
     return new HiddenTopicEntity(snapshot.slug, snapshot.hiddenAt, snapshot.reason);
   }
 

@@ -76,7 +76,9 @@ export const CollisionViz = ({ size = 7, keys, label, lang = 'ru' }: CollisionVi
   const reduceMotion = useReducedMotion();
   const [mode, setMode] = useState<Mode>('chaining');
   const [chains, setChains] = useState<string[][]>(() => Array.from({ length: size }, () => []));
-  const [slots, setSlots] = useState<(string | null)[]>(() => Array.from({ length: size }, () => null));
+  const [slots, setSlots] = useState<(string | null)[]>(() =>
+    Array.from({ length: size }, () => null),
+  );
   const [queue, setQueue] = useState<string[]>([...initialKeys]);
   const [last, setLast] = useState<LastInsert | null>(null);
 
@@ -125,10 +127,16 @@ export const CollisionViz = ({ size = 7, keys, label, lang = 'ru' }: CollisionVi
       label={label ?? t.label}
       actions={
         <>
-          <VizButton onClick={() => reset('chaining')} tone={mode === 'chaining' ? 'accent' : 'ghost'}>
+          <VizButton
+            onClick={() => reset('chaining')}
+            tone={mode === 'chaining' ? 'accent' : 'ghost'}
+          >
             {t.chaining}
           </VizButton>
-          <VizButton onClick={() => reset('probing')} tone={mode === 'probing' ? 'accent' : 'ghost'}>
+          <VizButton
+            onClick={() => reset('probing')}
+            tone={mode === 'probing' ? 'accent' : 'ghost'}
+          >
             {t.probing}
           </VizButton>
           <VizButton onClick={step} disabled={done}>

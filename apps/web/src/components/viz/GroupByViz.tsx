@@ -144,7 +144,10 @@ export const GroupByViz = ({
             {rows.map((row, index) => chip(row, index))}
           </div>
         ) : (
-          <div className="grid gap-3 min-h-[72px]" style={{ gridTemplateColumns: `repeat(${Math.min(groups.length, 3)}, minmax(0, 1fr))` }}>
+          <div
+            className="grid gap-3 min-h-[72px]"
+            style={{ gridTemplateColumns: `repeat(${Math.min(groups.length, 3)}, minmax(0, 1fr))` }}
+          >
             {groups.map((group) => {
               const palette = paletteOf(group);
               return (
@@ -160,7 +163,12 @@ export const GroupByViz = ({
                     <motion.span
                       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.6 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: reduceMotion ? 0 : 0.35, type: 'spring', stiffness: 400, damping: 22 }}
+                      transition={{
+                        delay: reduceMotion ? 0 : 0.35,
+                        type: 'spring',
+                        stiffness: 400,
+                        damping: 22,
+                      }}
                       className="rounded-md bg-surface border border-border-base px-1.5 py-0.5 font-mono text-[11px] text-accent font-semibold"
                       title={t('group.result')}
                     >

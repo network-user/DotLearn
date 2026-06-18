@@ -141,7 +141,7 @@ const clampGoal = (value: number): number =>
     ? Math.min(DAILY_GOAL_MAX, Math.max(DAILY_GOAL_MIN, Math.round(value)))
     : DEFAULT_SETTINGS.dailyGoal;
 
-const oneOf = <T,>(allowed: readonly T[], value: unknown, fallback: T): T =>
+const oneOf = <T>(allowed: readonly T[], value: unknown, fallback: T): T =>
   allowed.includes(value as T) ? (value as T) : fallback;
 
 const sanitizeWeeklyGoal = (value: unknown): number | undefined => {
@@ -183,7 +183,8 @@ const sanitizeEditor = (value: unknown): EditorSettings => {
       DEFAULT_EDITOR_SETTINGS.fontSize,
     ),
     tabSize: oneOf(EDITOR_TAB_SIZES, entry.tabSize, DEFAULT_EDITOR_SETTINGS.tabSize),
-    wordWrap: typeof entry.wordWrap === 'boolean' ? entry.wordWrap : DEFAULT_EDITOR_SETTINGS.wordWrap,
+    wordWrap:
+      typeof entry.wordWrap === 'boolean' ? entry.wordWrap : DEFAULT_EDITOR_SETTINGS.wordWrap,
     autocomplete:
       typeof entry.autocomplete === 'boolean'
         ? entry.autocomplete
@@ -201,7 +202,12 @@ const sanitizeReminders = (value: unknown): ReminderSettings => {
   const quietHours = sanitizeQuietHours(entry.quietHours);
   return {
     enabled: typeof entry.enabled === 'boolean' ? entry.enabled : DEFAULT_REMINDER_SETTINGS.enabled,
-    hour: clampInt(entry.hour, REMINDER_HOUR_MIN, REMINDER_HOUR_MAX, DEFAULT_REMINDER_SETTINGS.hour),
+    hour: clampInt(
+      entry.hour,
+      REMINDER_HOUR_MIN,
+      REMINDER_HOUR_MAX,
+      DEFAULT_REMINDER_SETTINGS.hour,
+    ),
     minute: clampInt(
       entry.minute,
       REMINDER_MINUTE_MIN,
@@ -224,8 +230,16 @@ const sanitize = (raw: unknown): AppSettings => {
     readingSpacing: value.readingSpacing === 'relaxed' ? 'relaxed' : 'normal',
     readingWidth: oneOf(READING_WIDTHS, value.readingWidth, DEFAULT_SETTINGS.readingWidth),
     motion: value.motion === 'reduced' ? 'reduced' : 'system',
-    themePreference: oneOf(THEME_PREFERENCES, value.themePreference, DEFAULT_SETTINGS.themePreference),
-    contentLanguage: oneOf(CONTENT_LANGUAGES, value.contentLanguage, DEFAULT_SETTINGS.contentLanguage),
+    themePreference: oneOf(
+      THEME_PREFERENCES,
+      value.themePreference,
+      DEFAULT_SETTINGS.themePreference,
+    ),
+    contentLanguage: oneOf(
+      CONTENT_LANGUAGES,
+      value.contentLanguage,
+      DEFAULT_SETTINGS.contentLanguage,
+    ),
     density: oneOf(DENSITIES, value.density, DEFAULT_SETTINGS.density),
     contrast: oneOf(CONTRASTS, value.contrast, DEFAULT_SETTINGS.contrast),
     dailyGoal:
@@ -237,7 +251,11 @@ const sanitize = (raw: unknown): AppSettings => {
       DEFAULT_SETTINGS.newCardsPerDay,
     ),
     sessionLimit: oneOf(SESSION_LIMITS, value.sessionLimit, DEFAULT_SETTINGS.sessionLimit),
-    targetRetention: oneOf(TARGET_RETENTIONS, value.targetRetention, DEFAULT_SETTINGS.targetRetention),
+    targetRetention: oneOf(
+      TARGET_RETENTIONS,
+      value.targetRetention,
+      DEFAULT_SETTINGS.targetRetention,
+    ),
     ...(weeklyGoalActiveDays !== undefined ? { weeklyGoalActiveDays } : {}),
     challengeLevel: oneOf(CHALLENGE_LEVELS, value.challengeLevel, DEFAULT_SETTINGS.challengeLevel),
     editor: sanitizeEditor(value.editor),
@@ -303,7 +321,8 @@ const emit = (): void => {
 
 export const setSettings = (patch: Partial<AppSettings>): void => {
   current = { ...current, ...patch };
-  if (patch.dailyGoal !== undefined) current = { ...current, dailyGoal: clampGoal(current.dailyGoal) };
+  if (patch.dailyGoal !== undefined)
+    current = { ...current, dailyGoal: clampGoal(current.dailyGoal) };
   applySettings(current);
   persist();
   emit();

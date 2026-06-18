@@ -79,8 +79,7 @@ export const GradientDescentViz = ({
     [sampled],
   );
 
-  const clamp = (value: number): number =>
-    Math.min(fn.domain.max, Math.max(fn.domain.min, value));
+  const clamp = (value: number): number => Math.min(fn.domain.max, Math.max(fn.domain.min, value));
 
   const clearTimer = (): void => {
     if (timerRef.current !== null) {
@@ -209,9 +208,7 @@ export const GradientDescentViz = ({
               strokeWidth={2}
               animate={{ cx: ballX, cy: ballY }}
               transition={
-                reduceMotion
-                  ? { duration: 0 }
-                  : { type: 'spring', stiffness: 200, damping: 18 }
+                reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 200, damping: 18 }
               }
             />
           </svg>

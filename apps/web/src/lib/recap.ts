@@ -46,8 +46,7 @@ const isoWeekKey = (date: Date): string => {
   const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
   const firstDayNumber = (firstThursday.getUTCDay() + 6) % 7;
   firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNumber + 3);
-  const week =
-    1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * MS_PER_DAY));
+  const week = 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * MS_PER_DAY));
   return `${target.getUTCFullYear()}-W${`${week}`.padStart(2, '0')}`;
 };
 

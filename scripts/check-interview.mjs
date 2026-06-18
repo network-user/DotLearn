@@ -35,7 +35,10 @@ async function main() {
     if (ids.has(q.id)) errors.push(`duplicate question id ${q.id}`);
     ids.add(q.id);
     if (!existsSync(resolve(OUT_DIR, q.path))) errors.push(`index path missing: ${q.path}`);
-    if (q.exerciseCount > 0 && !existsSync(resolve(OUT_DIR, q.path.replace(/\.ru\.mdx$/, '.exercises.json')))) {
+    if (
+      q.exerciseCount > 0 &&
+      !existsSync(resolve(OUT_DIR, q.path.replace(/\.ru\.mdx$/, '.exercises.json')))
+    ) {
       errors.push(`exercise file missing for q${q.id}`);
     }
   }

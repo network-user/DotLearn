@@ -24,9 +24,7 @@ export const Term = ({ id, children }: TermProps) => {
     <Tooltip
       side="top"
       content={
-        <span className="block max-w-[260px] text-[12.5px] leading-snug">
-          {entry.def[lang]}
-        </span>
+        <span className="block max-w-[260px] text-[12.5px] leading-snug">{entry.def[lang]}</span>
       }
     >
       <button

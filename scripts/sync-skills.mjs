@@ -6,9 +6,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CURSOR_SKILLS = join(ROOT, '.cursor', 'skills');
 const CLAUDE_SKILLS = join(ROOT, '.claude', 'skills');
 
-const MIRRORS = [
-  { source: CURSOR_SKILLS, target: CLAUDE_SKILLS },
-];
+const MIRRORS = [{ source: CURSOR_SKILLS, target: CLAUDE_SKILLS }];
 
 const walk = (dir) => {
   const out = [];

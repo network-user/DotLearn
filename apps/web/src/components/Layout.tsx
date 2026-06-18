@@ -66,7 +66,9 @@ export const Layout = ({ children }: LayoutProps) => {
         <div className="mx-auto max-w-layout px-[var(--layout-content-gutter)]">
           <div className="flex items-center justify-between gap-2 lg:gap-4 h-14">
             <Link to="/" className="group flex items-baseline gap-0.5 shrink-0">
-              <span className="font-display font-semibold text-[22px] leading-none text-accent">.</span>
+              <span className="font-display font-semibold text-[22px] leading-none text-accent">
+                .
+              </span>
               <span className="font-display font-semibold text-[21px] leading-none text-fg tracking-tightish">
                 learn
               </span>
@@ -176,7 +178,9 @@ export const Layout = ({ children }: LayoutProps) => {
         tabIndex={-1}
         className="flex-1 mx-auto w-full max-w-layout px-[var(--layout-content-gutter)] py-8 outline-none"
       >
-        <div className="mb-4"><Breadcrumbs /></div>
+        <div className="mb-4">
+          <Breadcrumbs />
+        </div>
         {children}
       </main>
 

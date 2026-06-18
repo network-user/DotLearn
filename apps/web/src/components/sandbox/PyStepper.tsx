@@ -195,11 +195,7 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
                 )}
               >
                 <span className="text-fg-subtle/70 text-right select-none tabular-nums pr-1 border-r border-border-base/60">
-                  {active ? (
-                    <span className="text-accent">▸</span>
-                  ) : (
-                    lineNo
-                  )}
+                  {active ? <span className="text-accent">▸</span> : lineNo}
                 </span>
                 <code className="whitespace-pre text-fg">{line || ' '}</code>
               </div>
@@ -230,14 +226,10 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
               </p>
             )}
             {status === 'error' && (
-              <p className="text-[12.5px] text-err font-mono whitespace-pre-wrap">
-                {errorMessage}
-              </p>
+              <p className="text-[12.5px] text-err font-mono whitespace-pre-wrap">{errorMessage}</p>
             )}
             {status === 'ready' && step && step.event === 'exception' && (
-              <p className="text-[12.5px] text-err font-mono whitespace-pre-wrap">
-                {step.error}
-              </p>
+              <p className="text-[12.5px] text-err font-mono whitespace-pre-wrap">{step.error}</p>
             )}
             {status === 'ready' && step && Object.keys(step.locals).length === 0 && (
               <p className="text-[12.5px] text-fg-subtle italic">No locals.</p>
@@ -245,10 +237,7 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
             {status === 'ready' && step && Object.keys(step.locals).length > 0 && (
               <ul className="space-y-1 text-[12px] font-mono">
                 {Object.entries(step.locals).map(([name, value]) => (
-                  <li
-                    key={name}
-                    className="grid grid-cols-[max-content_1fr] gap-2 items-baseline"
-                  >
+                  <li key={name} className="grid grid-cols-[max-content_1fr] gap-2 items-baseline">
                     <span className="text-accent">{name}</span>
                     <span className="text-fg break-all">{value}</span>
                   </li>

@@ -63,7 +63,7 @@ Every new page or component is designed for **both mobile and desktop in the sam
 
 DotLearn is bilingual: **Russian is primary and the fallback language; English is secondary**. The runtime locale is detected from `localStorage` → `navigator.language`, defaulting to `ru` when neither yields `ru`/`en`. Users can override it via the switcher in the header or on `/settings`.
 
-**Russian context in content.** The material is read in a Russian setting. When a topic example needs a name, city, company, currency, or identifier, default to Russian realia (Анна/Борис, Москва/Казань, Яндекс/Сбер/Госуслуги/Ozon, рубли, ИНН/СНИЛС). This is a soft default for relatability, not a mandate - don't contort universal CS examples to force it, and keep established English technical terms in English. Material must also stay engaging and moderate (no filler, hook over definition, interactive visualizations). Both rules live in `.claude/skills/lesson-forge/reference/content-style-guide.md` (*Engagement and moderation* and *When generating in Russian*).
+**Russian context in content.** The material is read in a Russian setting. When a topic example needs a name, city, company, currency, or identifier, default to Russian realia (Анна/Борис, Москва/Казань, Яндекс/Сбер/Госуслуги/Ozon, рубли, ИНН/СНИЛС). This is a soft default for relatability, not a mandate - don't contort universal CS examples to force it, and keep established English technical terms in English. Material must also stay engaging and moderate (no filler, hook over definition, interactive visualizations). Both rules live in `.claude/skills/lesson-forge/reference/content-style-guide.md` (_Engagement and moderation_ and _When generating in Russian_).
 
 ### Adding UI strings
 

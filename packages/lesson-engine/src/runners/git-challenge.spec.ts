@@ -48,11 +48,7 @@ describe('runGitChallenge', () => {
   });
 
   it('ignores failed commands when replaying a solution with a typo followed by success', () => {
-    const typoThenSolution = [
-      'git stauts',
-      'git add README.md',
-      'git commit -m "init"',
-    ];
+    const typoThenSolution = ['git stauts', 'git add README.md', 'git commit -m "init"'];
     const result = runGitChallenge(exercise, typoThenSolution);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');

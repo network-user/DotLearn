@@ -1,11 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import {
-  Inject,
-  Injectable,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
 import { verifySync } from 'otplib';
@@ -33,17 +28,14 @@ export interface AuthClaims {
   iat: number;
 }
 
-const sha256 = (value: string): string =>
-  createHash('sha256').update(value).digest('hex');
+const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 const verifyTotp = (
   code: string,
   secret: string,
   backupHashes: string[],
   afterTimeStep: number | undefined,
-):
-  | { ok: true; usedBackupCodeHash?: string; timeStep?: number }
-  | { ok: false } => {
+): { ok: true; usedBackupCodeHash?: string; timeStep?: number } | { ok: false } => {
   const trimmed = code.trim();
   try {
     const result = verifySync({
@@ -105,9 +97,7 @@ export class AuthService {
     const lockoutKey = login.toLowerCase();
     const { locked, secondsRemaining } = this.lockout.isLocked(lockoutKey);
     if (locked) {
-      throw new UnauthorizedException(
-        `Too many failed attempts. Retry in ${secondsRemaining}s.`,
-      );
+      throw new UnauthorizedException(`Too many failed attempts. Retry in ${secondsRemaining}s.`);
     }
 
     // Username/password failures are NOT counted toward account lockout: that would let

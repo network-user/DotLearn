@@ -72,9 +72,27 @@ export const DualProgressRing = ({
       role={ariaLabel ? 'img' : undefined}
       aria-label={ariaLabel}
     >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden className="-rotate-90">
-        <Arc size={size} radius={outerRadius} stroke={stroke} value={reading} indicatorClassName="text-accent/45" />
-        <Arc size={size} radius={innerRadius} stroke={stroke} value={solving} indicatorClassName="text-accent" />
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        aria-hidden
+        className="-rotate-90"
+      >
+        <Arc
+          size={size}
+          radius={outerRadius}
+          stroke={stroke}
+          value={reading}
+          indicatorClassName="text-accent/45"
+        />
+        <Arc
+          size={size}
+          radius={innerRadius}
+          stroke={stroke}
+          value={solving}
+          indicatorClassName="text-accent"
+        />
       </svg>
       {label !== undefined && (
         <span className="absolute inset-0 grid place-items-center text-[11px] font-semibold tabular-nums tracking-tight">

@@ -98,9 +98,12 @@ export const FewShotViz = ({
       setPlaying(false);
       return;
     }
-    timerRef.current = window.setTimeout(() => {
-      setStep((value) => Math.min(value + 1, total - 1));
-    }, reduceMotion ? 350 : 900);
+    timerRef.current = window.setTimeout(
+      () => {
+        setStep((value) => Math.min(value + 1, total - 1));
+      },
+      reduceMotion ? 350 : 900,
+    );
     return clearTimer;
   }, [playing, step, total, reduceMotion]);
 
@@ -198,9 +201,15 @@ export const FewShotViz = ({
       <header className="flex items-center justify-between gap-2 px-3.5 py-2 border-b border-border-base bg-surface-2">
         <span className="text-[11px] uppercase tracking-widest text-fg-subtle">{label}</span>
         <div className="flex items-center gap-1">
-          <ControlButton onClick={togglePlay} active={playing} label={playing ? 'Пауза' : 'Запустить'}>
+          <ControlButton
+            onClick={togglePlay}
+            active={playing}
+            label={playing ? 'Пауза' : 'Запустить'}
+          >
             {playing ? <Pause size={13} /> : <Play size={13} />}
-            <span className="hidden sm:inline">{playing ? 'Пауза' : atEnd ? 'Снова' : 'Показать'}</span>
+            <span className="hidden sm:inline">
+              {playing ? 'Пауза' : atEnd ? 'Снова' : 'Показать'}
+            </span>
           </ControlButton>
           <ControlButton onClick={reset} disabled={step === 0 && !playing} label="Сбросить">
             <RotateCcw size={13} />
@@ -220,11 +229,7 @@ export const FewShotViz = ({
           <div className="my-1 flex items-center gap-2" aria-hidden>
             <span className="h-px flex-1 bg-border-base" />
             <motion.span
-              animate={
-                playing && !atEnd && !reduceMotion
-                  ? { scale: [1, 1.06, 1] }
-                  : { scale: 1 }
-              }
+              animate={playing && !atEnd && !reduceMotion ? { scale: [1, 1.06, 1] } : { scale: 1 }}
               transition={{ duration: 1, repeat: playing ? Infinity : 0 }}
               className="rounded-full border border-accent/40 bg-accent/8 px-2.5 py-0.5 font-mono text-[11px] text-accent"
             >

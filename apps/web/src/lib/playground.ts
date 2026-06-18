@@ -1,8 +1,4 @@
-import {
-  db,
-  type PlaygroundRecord,
-  type PlaygroundSnippetRecord,
-} from '@/lib/progress-db';
+import { db, type PlaygroundRecord, type PlaygroundSnippetRecord } from '@/lib/progress-db';
 
 export class PlaygroundStateError extends Error {
   constructor(message: string) {
@@ -189,9 +185,7 @@ const toSnippet = (record: PlaygroundSnippetRecord): PlaygroundSnippet => ({
 
 export const listPythonSnippets = async (): Promise<PlaygroundSnippet[]> => {
   const records = await db.playgroundSnippets.where('language').equals('python').toArray();
-  return records
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map(toSnippet);
+  return records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(toSnippet);
 };
 
 export const createPythonSnippet = async (
@@ -220,7 +214,11 @@ export const renamePythonSnippet = async (id: string, name: string): Promise<voi
   if (!record) return;
   const trimmed = name.trim();
   if (trimmed.length === 0) return;
-  await db.playgroundSnippets.put({ ...record, name: trimmed, updatedAt: new Date().toISOString() });
+  await db.playgroundSnippets.put({
+    ...record,
+    name: trimmed,
+    updatedAt: new Date().toISOString(),
+  });
 };
 
 export const deletePythonSnippet = async (id: string): Promise<void> => {

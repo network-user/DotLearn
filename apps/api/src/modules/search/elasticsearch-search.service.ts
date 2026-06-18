@@ -1,12 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Client } from '@elastic/elasticsearch';
 
-import type {
-  SearchDocument,
-  SearchHit,
-  SearchService,
-  SearchSuggestion,
-} from './search.service';
+import type { SearchDocument, SearchHit, SearchService, SearchSuggestion } from './search.service';
 
 const DEFAULT_SEARCH_LIMIT = 20;
 const DEFAULT_SUGGEST_LIMIT = 8;
@@ -58,11 +53,13 @@ export class ElasticsearchSearchService implements SearchService, OnModuleInit {
     await this.ensureIndex();
     await this.client.indices.refresh({ index: this.settings.indexName }).catch(() => undefined);
     if (documents.length === 0) {
-      await this.client.deleteByQuery({
-        index: this.settings.indexName,
-        query: { match_all: {} },
-        refresh: true,
-      }).catch(() => undefined);
+      await this.client
+        .deleteByQuery({
+          index: this.settings.indexName,
+          query: { match_all: {} },
+          refresh: true,
+        })
+        .catch(() => undefined);
       return;
     }
     const operations = documents.flatMap((doc) => [

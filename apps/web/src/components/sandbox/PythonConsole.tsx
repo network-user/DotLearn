@@ -83,7 +83,9 @@ export const PythonConsole = ({
     <div className="rounded-lg border border-border-base bg-surface overflow-hidden text-[13px] font-mono shadow-card">
       <header className="flex items-center justify-between gap-3 px-3 py-2 border-b border-border-base bg-surface-2/60">
         <span className="eyebrow">python · pyodide</span>
-        <span className={cx('text-[10.5px] uppercase tracking-widest tabular-nums', statusTint[status])}>
+        <span
+          className={cx('text-[10.5px] uppercase tracking-widest tabular-nums', statusTint[status])}
+        >
           {statusLabel[status]}
         </span>
       </header>
@@ -232,7 +234,10 @@ export const TestList = ({ cases }: TestListProps) => {
             <div className="mt-1.5 pl-7 space-y-0.5 text-[11.5px]">
               {test.thrown ? (
                 <p className="text-err">
-                  {t('python.raised')} <code>{test.thrown.type}: {test.thrown.message}</code>
+                  {t('python.raised')}{' '}
+                  <code>
+                    {test.thrown.type}: {test.thrown.message}
+                  </code>
                 </p>
               ) : (
                 <>
@@ -241,8 +246,7 @@ export const TestList = ({ cases }: TestListProps) => {
                     <code className="text-ok">{formatValue(test.expected)}</code>
                   </p>
                   <p className="text-fg-muted">
-                    {t('python.got')}{' '}
-                    <code className="text-err">{formatValue(test.actual)}</code>
+                    {t('python.got')} <code className="text-err">{formatValue(test.actual)}</code>
                   </p>
                 </>
               )}

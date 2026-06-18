@@ -127,7 +127,9 @@ export const GraphTraversalFigure = ({
     level < 0 ? (
       idleHint
     ) : level >= maxDepth ? (
-      <span className="text-ok">Граф обойдён за {maxDepth} уровня. Каждый узел посещён один раз.</span>
+      <span className="text-ok">
+        Граф обойдён за {maxDepth} уровня. Каждый узел посещён один раз.
+      </span>
     ) : (
       <span>
         уровень <span className="font-mono text-accent">{level}</span>:{' '}
@@ -172,7 +174,10 @@ export const GraphTraversalFigure = ({
               y2={py(b)}
               stroke="currentColor"
               strokeWidth={lit ? 2 : 1.2}
-              className={cx('transition-colors duration-med', lit ? 'text-accent' : 'text-border-base')}
+              className={cx(
+                'transition-colors duration-med',
+                lit ? 'text-accent' : 'text-border-base',
+              )}
             />
           );
         })}
@@ -187,7 +192,10 @@ export const GraphTraversalFigure = ({
                 fill="rgb(var(--surface-2))"
                 stroke="currentColor"
                 strokeWidth={on ? 2.5 : 1.2}
-                className={cx('transition-colors duration-med', on ? depthTone(depth) : 'text-border-base')}
+                className={cx(
+                  'transition-colors duration-med',
+                  on ? depthTone(depth) : 'text-border-base',
+                )}
               />
               <text
                 textAnchor="middle"

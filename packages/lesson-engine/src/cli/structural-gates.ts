@@ -54,7 +54,10 @@ export const checkSlugUniqueness = (slugs: string[]): StructuralFinding[] => {
   }
   for (const [slug, count] of seen) {
     if (count > 1) {
-      findings.push({ scope: slug, reason: `slug "${slug}" is used by ${count} topic directories` });
+      findings.push({
+        scope: slug,
+        reason: `slug "${slug}" is used by ${count} topic directories`,
+      });
     }
   }
   return findings;
@@ -68,7 +71,10 @@ export const checkPrerequisites = (
   const findings: StructuralFinding[] = [];
   for (const prerequisite of prerequisites) {
     if (prerequisite === manifestSlug) {
-      findings.push({ scope: manifestSlug, reason: `prerequisite "${prerequisite}" points at itself` });
+      findings.push({
+        scope: manifestSlug,
+        reason: `prerequisite "${prerequisite}" points at itself`,
+      });
       continue;
     }
     if (!knownSlugs.has(prerequisite)) {

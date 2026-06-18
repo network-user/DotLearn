@@ -225,7 +225,9 @@ const DepthGauge = ({ depth, total, reduceMotion }: DepthGaugeProps) => {
           className="absolute inset-y-0 left-0 rounded-full bg-accent"
           initial={false}
           animate={{ width: `${ratio * 100}%` }}
-          transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 320, damping: 30 }}
+          transition={
+            reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 320, damping: 30 }
+          }
         />
       </div>
       <span className="font-mono text-[11px] tabular-nums text-fg-muted">

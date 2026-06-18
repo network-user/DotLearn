@@ -200,7 +200,11 @@ export const SettingsPage = () => {
           label={t('accentLabel')}
           hint={t('accentDesc')}
           control={
-            <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label={t('accentLabel')}>
+            <div
+              className="flex flex-wrap items-center gap-2"
+              role="radiogroup"
+              aria-label={t('accentLabel')}
+            >
               {ACCENT_IDS.map((accent) => {
                 const active = settings.accent === accent;
                 return (
@@ -243,7 +247,10 @@ export const SettingsPage = () => {
               ariaLabel={t('readingLabel')}
               value={settings.reading}
               onChange={(reading: ReadingSize) => setSettings({ reading })}
-              options={READING_SIZES.map((size) => ({ value: size, label: t(`readingNames.${size}`) }))}
+              options={READING_SIZES.map((size) => ({
+                value: size,
+                label: t(`readingNames.${size}`),
+              }))}
             />
           }
         />

@@ -197,8 +197,8 @@ export const HashTableViz = ({
       case 'resizing':
         return (
           <span className="text-warn">
-            Load factor crossed {(loadFactorThreshold * 100).toFixed(0)}% — resizing{' '}
-            {phase.from} → {phase.to} and rehashing every key.
+            Load factor crossed {(loadFactorThreshold * 100).toFixed(0)}% — resizing {phase.from} →{' '}
+            {phase.to} and rehashing every key.
           </span>
         );
       case 'full':
@@ -244,7 +244,9 @@ export const HashTableViz = ({
                 loadFactor > loadFactorThreshold ? 'bg-warn' : 'bg-accent',
               )}
               animate={{ width: `${Math.min(loadFactor, 1) * 100}%` }}
-              transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 260, damping: 30 }}
+              transition={
+                reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 260, damping: 30 }
+              }
             />
             <div
               className="absolute inset-y-0 w-px bg-border-strong"
@@ -257,7 +259,9 @@ export const HashTableViz = ({
           <motion.div
             className="flex flex-wrap gap-2"
             animate={
-              phase.kind === 'resizing' && !reduceMotion ? { opacity: [1, 0.45, 1] } : { opacity: 1 }
+              phase.kind === 'resizing' && !reduceMotion
+                ? { opacity: [1, 0.45, 1] }
+                : { opacity: 1 }
             }
             transition={{ duration: STEP_MS / 1000 }}
           >

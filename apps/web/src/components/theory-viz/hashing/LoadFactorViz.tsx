@@ -122,7 +122,9 @@ export const LoadFactorViz = ({
           <motion.div
             className={cx('h-full', alpha > threshold ? 'bg-warn/60' : 'bg-accent/55')}
             animate={{ width: `${fillPercent}%` }}
-            transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 180, damping: 24 }}
+            transition={
+              reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 180, damping: 24 }
+            }
           />
           <div
             className="absolute inset-y-0 w-px bg-err/70"

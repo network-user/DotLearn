@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type {
-  HiddenTopic,
-  Submission,
-  SubmissionStatus,
-  TopicManifest,
-} from '@dotlearn/contracts';
+import type { HiddenTopic, Submission, SubmissionStatus, TopicManifest } from '@dotlearn/contracts';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -69,25 +64,22 @@ export const AdminPage = () => {
   const [hidingSlug, setHidingSlug] = useState<string | null>(null);
   const [pendingStepUp, setPendingStepUp] = useState<PendingStepUp | null>(null);
 
-  const guardedAction = useCallback(
-    async (run: () => Promise<void>): Promise<void> => {
-      try {
-        await run();
-      } catch (error) {
-        if (error instanceof StepUpRequiredError) {
-          setPendingStepUp({
-            action: error.action,
-            retry: async () => {
-              await run();
-            },
-          });
-          return;
-        }
-        throw error;
+  const guardedAction = useCallback(async (run: () => Promise<void>): Promise<void> => {
+    try {
+      await run();
+    } catch (error) {
+      if (error instanceof StepUpRequiredError) {
+        setPendingStepUp({
+          action: error.action,
+          retry: async () => {
+            await run();
+          },
+        });
+        return;
       }
-    },
-    [],
-  );
+      throw error;
+    }
+  }, []);
 
   const updateSubmissionsTab = useCallback(
     (status: SubmissionStatus, updater: (prev: SubmissionsTabState) => SubmissionsTabState) => {
@@ -261,9 +253,7 @@ export const AdminPage = () => {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>
           <p className="mt-1 text-sm text-fg-muted max-w-2xl">{t('subtitle')}</p>
-          <p className="mt-1 text-xs text-fg-subtle">
-            {t('session', { login: authState.login })}
-          </p>
+          <p className="mt-1 text-xs text-fg-subtle">{t('session', { login: authState.login })}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -318,9 +308,7 @@ export const AdminPage = () => {
         <SubmissionsTab
           status={activeTab}
           state={tabState[activeTab]}
-          onQueryChange={(query) =>
-            updateSubmissionsTab(activeTab, (prev) => ({ ...prev, query }))
-          }
+          onQueryChange={(query) => updateSubmissionsTab(activeTab, (prev) => ({ ...prev, query }))}
           onNoteChange={(id, value) =>
             updateSubmissionsTab(activeTab, (prev) => ({
               ...prev,
@@ -356,8 +344,7 @@ export const AdminPage = () => {
           setPendingStepUp(null);
           if (pending) {
             void pending.retry().catch((error) => {
-              const message =
-                error instanceof ApiError ? error.message : t('networkError');
+              const message = error instanceof ApiError ? error.message : t('networkError');
               toast.error(t('reviewFailed', { message }));
             });
           }
@@ -382,9 +369,7 @@ const TabButton = ({ active, onClick, label, badge }: TabButtonProps) => (
     onClick={onClick}
     className={cx(
       '-mb-px px-3 py-2 text-sm border-b-2 transition-colors',
-      active
-        ? 'border-accent text-fg'
-        : 'border-transparent text-fg-muted hover:text-fg',
+      active ? 'border-accent text-fg' : 'border-transparent text-fg-muted hover:text-fg',
     )}
   >
     {label}
@@ -462,9 +447,7 @@ const SubmissionsTab = ({
                 materializeSlug={state.materializeSlugs[submission.id] ?? ''}
                 busy={state.pending === submission.id}
                 onNoteChange={(value) => onNoteChange(submission.id, value)}
-                onMaterializeSlugChange={(value) =>
-                  onMaterializeSlugChange(submission.id, value)
-                }
+                onMaterializeSlugChange={(value) => onMaterializeSlugChange(submission.id, value)}
                 onApprove={() => onReview(submission, 'approve')}
                 onReject={() => onReview(submission, 'reject')}
                 onMaterialize={() => onMaterialize(submission)}
@@ -562,9 +545,7 @@ const SubmissionRow = ({
           <span className="text-fg-subtle uppercase tracking-wide text-[10px]">
             {t('fields.reviewerNote')}
           </span>
-          <div className="mt-1 whitespace-pre-wrap text-fg-muted">
-            {submission.reviewerNote}
-          </div>
+          <div className="mt-1 whitespace-pre-wrap text-fg-muted">{submission.reviewerNote}</div>
         </div>
       )}
 
@@ -680,9 +661,7 @@ const HiddenTopicsTab = ({
               <span
                 className={cx(
                   'text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 border',
-                  isHidden
-                    ? 'text-err border-err/40 bg-err/10'
-                    : 'text-ok border-ok/40 bg-ok/10',
+                  isHidden ? 'text-err border-err/40 bg-err/10' : 'text-ok border-ok/40 bg-ok/10',
                 )}
               >
                 {isHidden ? t('hidden.statusHidden') : t('hidden.statusVisible')}
@@ -726,7 +705,5 @@ const SkeletonList = () => (
 );
 
 const ErrorBox = ({ message }: { message: string }) => (
-  <div className="rounded-lg border border-err/30 bg-err/10 p-5 text-sm text-err">
-    {message}
-  </div>
+  <div className="rounded-lg border border-err/30 bg-err/10 p-5 text-sm text-err">{message}</div>
 );

@@ -92,8 +92,7 @@ const computeBestStreak = (activeDays: Set<string>): number => {
   const sorted = [...activeDays].sort();
   const oldest = new Date(`${sorted[0]}T00:00:00`);
   const newest = new Date(`${sorted[sorted.length - 1]}T00:00:00`);
-  const totalDays =
-    Math.round((newest.getTime() - oldest.getTime()) / 86_400_000) + 1;
+  const totalDays = Math.round((newest.getTime() - oldest.getTime()) / 86_400_000) + 1;
 
   let best = 0;
   let run = 0;
@@ -152,9 +151,7 @@ const computeCurrentStreak = (activeDays: Set<string>): number => {
 export const useStreakState = (): StreakState => {
   const activity = useActivity();
   return useMemo(() => {
-    const activeDays = new Set(
-      activity.filter(isActiveDay).map((record) => record.day),
-    );
+    const activeDays = new Set(activity.filter(isActiveDay).map((record) => record.day));
     return {
       current: computeCurrentStreak(activeDays),
       best: computeBestStreak(activeDays),

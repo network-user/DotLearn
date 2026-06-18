@@ -73,12 +73,7 @@ const ChoiceMode = ({
 
       {answered && (
         <div className="mt-3">
-          <p
-            className={cx(
-              'text-[14px] font-medium',
-              isCorrect ? 'text-ok' : 'text-err',
-            )}
-          >
+          <p className={cx('text-[14px] font-medium', isCorrect ? 'text-ok' : 'text-err')}>
             {isCorrect ? t('checkpoint.correct') : t('checkpoint.incorrect')}
           </p>
           {explain && <p className="mt-1.5 text-[14px] text-fg-muted">{explain}</p>}

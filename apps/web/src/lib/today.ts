@@ -41,9 +41,7 @@ const dueFromCards = (
     .filter((card) => isCardDue(records.get(`${deckSlug}:${card.id}`), now))
     .map((card) => ({ deckSlug, title, sourceLabel, card }));
 
-export const loadDueAcrossDecks = async (
-  language: SupportedLanguage,
-): Promise<DueCard[]> => {
+export const loadDueAcrossDecks = async (language: SupportedLanguage): Promise<DueCard[]> => {
   try {
     const now = new Date();
     const allRecords = await db.flashcardReviews.toArray();
@@ -97,10 +95,7 @@ export const loadFailedExercises = async (
         }
       }),
     );
-    const exerciseIndex = new Map<
-      string,
-      { conceptId: string; prompt: string; type: string }
-    >();
+    const exerciseIndex = new Map<string, { conceptId: string; prompt: string; type: string }>();
     for (const entry of bundles) {
       if (!entry.bundle) continue;
       for (const concept of entry.bundle.concepts) {

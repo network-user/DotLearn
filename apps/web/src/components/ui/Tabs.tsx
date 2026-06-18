@@ -21,7 +21,11 @@ interface TabsListProps {
 
 export const TabsList = ({ className, children }: TabsListProps) => (
   <RadixTabs.List
-    className={cx('inline-flex items-center gap-4 border-b border-border-base', 'self-start', className)}
+    className={cx(
+      'inline-flex items-center gap-4 border-b border-border-base',
+      'self-start',
+      className,
+    )}
   >
     {children}
   </RadixTabs.List>

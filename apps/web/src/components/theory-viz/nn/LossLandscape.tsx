@@ -93,9 +93,12 @@ export const LossLandscape = ({
       setPlaying(false);
       return;
     }
-    timerRef.current = window.setTimeout(() => {
-      setVisibleSteps((previous) => Math.min(previous + 1, path.length));
-    }, reduceMotion ? 0 : stepIntervalMs);
+    timerRef.current = window.setTimeout(
+      () => {
+        setVisibleSteps((previous) => Math.min(previous + 1, path.length));
+      },
+      reduceMotion ? 0 : stepIntervalMs,
+    );
     return clearTimer;
   }, [playing, visibleSteps, path.length, reduceMotion, stepIntervalMs]);
 
@@ -112,8 +115,7 @@ export const LossLandscape = ({
     setVisibleSteps(1);
   };
 
-  const current =
-    path[Math.min(visibleSteps, path.length) - 1] ?? path[0] ?? ORIGIN_POINT;
+  const current = path[Math.min(visibleSteps, path.length) - 1] ?? path[0] ?? ORIGIN_POINT;
 
   return (
     <VizShell

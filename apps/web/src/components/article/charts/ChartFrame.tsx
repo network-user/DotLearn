@@ -22,7 +22,14 @@ interface ChartFrameProps {
   children: ReactNode;
 }
 
-export const ChartFrame = ({ title, yScale, xLabel, yLabel, legend, children }: ChartFrameProps) => (
+export const ChartFrame = ({
+  title,
+  yScale,
+  xLabel,
+  yLabel,
+  legend,
+  children,
+}: ChartFrameProps) => (
   <svg
     viewBox={`0 0 ${CHART_W} ${CHART_H + (legend ? 26 : 0)}`}
     role="img"

@@ -52,7 +52,9 @@ export const FlashcardReviewSession = ({
 
   const buildQueue = useCallback(async (entries: SessionCard[]): Promise<number[]> => {
     const records = await db.flashcardReviews.toArray();
-    const byKey = new Map(records.map((record) => [`${record.topicSlug}:${record.cardId}`, record]));
+    const byKey = new Map(
+      records.map((record) => [`${record.topicSlug}:${record.cardId}`, record]),
+    );
     const now = new Date();
     return entries
       .map((_, index) => index)
@@ -168,14 +170,24 @@ export const FlashcardReviewSession = ({
           body={emptyMessage ?? t('practice.noCards')}
           primaryAction={
             <Link to="/flashcards" className="block w-full sm:w-auto">
-              <Button variant="primary" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" leadingIcon={<Layers size={16} />}>
+              <Button
+                variant="primary"
+                size="md"
+                className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                leadingIcon={<Layers size={16} />}
+              >
                 {t('browseDecks')}
               </Button>
             </Link>
           }
           secondaryAction={
             onExit ? (
-              <Button variant="ghost" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" onClick={onExit}>
+              <Button
+                variant="ghost"
+                size="md"
+                className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                onClick={onExit}
+              >
                 {exitLabel ?? t('backToHub')}
               </Button>
             ) : undefined
@@ -201,7 +213,12 @@ export const FlashcardReviewSession = ({
           }
           secondaryAction={
             onExit ? (
-              <Button variant="ghost" size="md" className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto" onClick={onExit}>
+              <Button
+                variant="ghost"
+                size="md"
+                className="w-full min-h-[var(--tap)] sm:min-h-0 sm:w-auto"
+                onClick={onExit}
+              >
                 {exitLabel ?? t('backToHub')}
               </Button>
             ) : undefined

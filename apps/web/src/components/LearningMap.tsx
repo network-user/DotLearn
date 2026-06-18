@@ -126,9 +126,7 @@ export const computeRecommendedNext = (nodes: MapNode[]): string | undefined => 
   const coldStart = ranked(
     nodes.filter((node) => {
       if (masteredSlugs.has(node.manifest.slug)) return false;
-      const presentPrereqs = node.manifest.prerequisites.filter((slug) =>
-        existingSlugs.has(slug),
-      );
+      const presentPrereqs = node.manifest.prerequisites.filter((slug) => existingSlugs.has(slug));
       return presentPrereqs.length === 0;
     }),
   );
@@ -278,10 +276,7 @@ const GraphView = ({
   recommendedSlug: string | undefined;
 }) => {
   const levels = useMemo(() => computeLevels(nodes), [nodes]);
-  const existingSlugs = useMemo(
-    () => new Set(nodes.map((node) => node.manifest.slug)),
-    [nodes],
-  );
+  const existingSlugs = useMemo(() => new Set(nodes.map((node) => node.manifest.slug)), [nodes]);
   const masteredSlugs = useMemo(() => {
     const set = new Set<string>();
     for (const node of nodes) {
@@ -408,9 +403,7 @@ const GraphView = ({
               {t('levelLabel', { level: column.level + 1 })}
             </div>
             {column.items.map((node) => {
-              const presentPrereqs = node.prerequisites.filter((slug) =>
-                existingSlugs.has(slug),
-              );
+              const presentPrereqs = node.prerequisites.filter((slug) => existingSlugs.has(slug));
               const locked = presentPrereqs.some((slug) => !masteredSlugs.has(slug));
               const highlighted = connectedSlugs?.has(node.manifest.slug) ?? false;
               const dimmed = connectedSlugs !== null && !highlighted;
@@ -443,10 +436,7 @@ const ListView = ({
 }) => {
   const { t } = useTranslation('map');
   const levels = useMemo(() => computeLevels(nodes), [nodes]);
-  const existingSlugs = useMemo(
-    () => new Set(nodes.map((node) => node.manifest.slug)),
-    [nodes],
-  );
+  const existingSlugs = useMemo(() => new Set(nodes.map((node) => node.manifest.slug)), [nodes]);
   const titleOf = useMemo(() => {
     const map = new Map<string, string>();
     for (const node of nodes) map.set(node.manifest.slug, node.manifest.title);
@@ -486,9 +476,7 @@ const ListView = ({
           </div>
           <ul className="space-y-3">
             {section.items.map((node) => {
-              const presentPrereqs = node.prerequisites.filter((slug) =>
-                existingSlugs.has(slug),
-              );
+              const presentPrereqs = node.prerequisites.filter((slug) => existingSlugs.has(slug));
               const locked = presentPrereqs.some((slug) => !masteredSlugs.has(slug));
               return (
                 <li key={node.manifest.slug} className="space-y-1.5">

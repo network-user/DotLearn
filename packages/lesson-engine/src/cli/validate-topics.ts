@@ -16,11 +16,7 @@ import { createPythonNodeRuntime } from '../runtime/python-node';
 import type { SqlRuntime } from '../runtime/sql';
 import type { PythonRuntime } from '../runtime/python';
 
-import {
-  indexExerciseLocations,
-  locateExercise,
-  type ExerciseLocationIndex,
-} from './yaml-locator';
+import { indexExerciseLocations, locateExercise, type ExerciseLocationIndex } from './yaml-locator';
 import { formatGoldDetails } from './gold-diff';
 import { compileTheoryBody } from './mdx-compile';
 import {
@@ -125,7 +121,9 @@ interface Warning {
 const formatFailures = (failures: GateFailure[]): string =>
   failures
     .map((failure) => {
-      const head = failure.location ? `${failure.location}  ${failure.scope}` : `  • ${failure.scope}`;
+      const head = failure.location
+        ? `${failure.location}  ${failure.scope}`
+        : `  • ${failure.scope}`;
       const lines = [`${head}: ${failure.reason}`];
       if (failure.diff) {
         lines.push(failure.diff);
@@ -395,7 +393,10 @@ const countFlashcards = async (slug: string): Promise<number> => {
   return total;
 };
 
-const validateMdxCompilation = async (slug: string, bundle: TopicBundle): Promise<GateFailure[]> => {
+const validateMdxCompilation = async (
+  slug: string,
+  bundle: TopicBundle,
+): Promise<GateFailure[]> => {
   const failures: GateFailure[] = [];
   for (const concept of bundle.concepts) {
     for (const theory of concept.theory) {
@@ -419,7 +420,10 @@ interface StructuralResult {
   warnings: Warning[];
 }
 
-const validateStructural = (bundle: TopicBundle, knownSlugs: ReadonlySet<string>): StructuralResult => {
+const validateStructural = (
+  bundle: TopicBundle,
+  knownSlugs: ReadonlySet<string>,
+): StructuralResult => {
   const failures: GateFailure[] = [];
   for (const finding of checkPrerequisites(
     bundle.manifest.slug,
@@ -633,7 +637,9 @@ const runWatch = async (options: CliOptions): Promise<number> => {
     }
   }
 
-  console.log(`Watching ${targetSlugs.length} topic(s). Edit a file to re-validate. Ctrl+C to stop.`);
+  console.log(
+    `Watching ${targetSlugs.length} topic(s). Edit a file to re-validate. Ctrl+C to stop.`,
+  );
   for (const slug of targetSlugs) {
     await revalidate(slug);
   }

@@ -121,7 +121,9 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
   const [code, setCode] = useState(initialState.code);
   const [view, setView] = useState<PlaygroundView>(initialState.view);
   const [status, setStatus] = useState<RunStatus>('idle');
-  const [lines, setLines] = useState<ConsoleLine[]>(() => fromPersistedLines(initialState.lastLines));
+  const [lines, setLines] = useState<ConsoleLine[]>(() =>
+    fromPersistedLines(initialState.lastLines),
+  );
   const [history, setHistory] = useState<RunHistoryEntry[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [snippets, setSnippets] = useState<PlaygroundSnippet[]>([]);
@@ -265,158 +267,158 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
     terminatePythonRuntime();
   }, [status]);
 
-  const pushHistory = useCallback(
-    (entry: Omit<RunHistoryEntry, 'id' | 'at'>): void => {
-      setHistory((prev) =>
-        [
-          {
-            ...entry,
-            id: `run-${session.current}-${Date.now()}`,
-            at: Date.now(),
-          },
-          ...prev,
-        ].slice(0, HISTORY_LIMIT),
-      );
-    },
-    [],
-  );
-
-  const handleRun = useCallback(async (override?: string): Promise<void> => {
-    const codeSnapshot = override ?? code;
-    if (override !== undefined) {
-      setCode(override);
-      setActiveSnippetId(undefined);
-    }
-    const sid = (session.current += 1);
-    stopRequested.current = false;
-    setClearedBackup(null);
-    setStatus('loading');
-    setLines([{ id: `s${sid}-load`, tone: 'system', text: t('python.consoleLoad') }]);
-    const knownPkgs = importedModules(codeSnapshot).filter(isKnownPyodidePackage);
-    if (knownPkgs.length > 0) {
-      setLines((prev) => [
-        ...prev,
+  const pushHistory = useCallback((entry: Omit<RunHistoryEntry, 'id' | 'at'>): void => {
+    setHistory((prev) =>
+      [
         {
-          id: `s${sid}-pkg-hint`,
-          tone: 'system',
-          text: t('python.loadingPackages', { packages: knownPkgs.join(', ') }),
+          ...entry,
+          id: `run-${session.current}-${Date.now()}`,
+          at: Date.now(),
         },
-      ]);
-    }
-    const startedAt = performance.now();
-    const { body, echoExpression } = splitTrailingExpression(codeSnapshot);
-    try {
-      const runtime = getPythonRuntime();
-      await runtime.init();
-      setStatus('running');
-      const execution = await runtime.evaluate(body, echoExpression ?? 'None');
-      const durationMs = Math.round(performance.now() - startedAt);
-      const next: ConsoleLine[] = [];
-      const stdout = execution.stdout ?? '';
-      if (stdout) {
-        next.push(...splitStdout(stdout, `s${sid}-out`));
+        ...prev,
+      ].slice(0, HISTORY_LIMIT),
+    );
+  }, []);
+
+  const handleRun = useCallback(
+    async (override?: string): Promise<void> => {
+      const codeSnapshot = override ?? code;
+      if (override !== undefined) {
+        setCode(override);
+        setActiveSnippetId(undefined);
       }
-      if (execution.thrown) {
-        const moduleName = moduleNameFromError(execution.thrown.type, execution.thrown.message);
-        if (moduleName) {
+      const sid = (session.current += 1);
+      stopRequested.current = false;
+      setClearedBackup(null);
+      setStatus('loading');
+      setLines([{ id: `s${sid}-load`, tone: 'system', text: t('python.consoleLoad') }]);
+      const knownPkgs = importedModules(codeSnapshot).filter(isKnownPyodidePackage);
+      if (knownPkgs.length > 0) {
+        setLines((prev) => [
+          ...prev,
+          {
+            id: `s${sid}-pkg-hint`,
+            tone: 'system',
+            text: t('python.loadingPackages', { packages: knownPkgs.join(', ') }),
+          },
+        ]);
+      }
+      const startedAt = performance.now();
+      const { body, echoExpression } = splitTrailingExpression(codeSnapshot);
+      try {
+        const runtime = getPythonRuntime();
+        await runtime.init();
+        setStatus('running');
+        const execution = await runtime.evaluate(body, echoExpression ?? 'None');
+        const durationMs = Math.round(performance.now() - startedAt);
+        const next: ConsoleLine[] = [];
+        const stdout = execution.stdout ?? '';
+        if (stdout) {
+          next.push(...splitStdout(stdout, `s${sid}-out`));
+        }
+        if (execution.thrown) {
+          const moduleName = moduleNameFromError(execution.thrown.type, execution.thrown.message);
+          if (moduleName) {
+            next.push({
+              id: `s${sid}-err`,
+              tone: 'fail',
+              text: t('python.moduleNotFound', { module: moduleName }),
+            });
+          } else {
+            next.push({
+              id: `s${sid}-err`,
+              tone: 'fail',
+              text: `${execution.thrown.type}: ${execution.thrown.message}`,
+            });
+          }
           next.push({
-            id: `s${sid}-err`,
-            tone: 'fail',
-            text: t('python.moduleNotFound', { module: moduleName }),
+            id: `s${sid}-meta`,
+            tone: 'meta',
+            text: t('python.consoleFailed', { ms: durationMs }),
           });
-        } else {
+          setLines((prev) => {
+            const merged = [...prev, ...next];
+            pushHistory({
+              code: codeSnapshot,
+              status: 'fail',
+              durationMs,
+              outputPreview: previewOutput(merged),
+            });
+            return merged;
+          });
+          setStatus('fail');
+          return;
+        }
+        if (echoExpression && execution.result !== undefined && execution.result !== null) {
           next.push({
-            id: `s${sid}-err`,
-            tone: 'fail',
-            text: `${execution.thrown.type}: ${execution.thrown.message}`,
+            id: `s${sid}-val`,
+            tone: 'meta',
+            text: `→ ${formatReplValue(execution.result)}`,
           });
         }
+        if (next.length === 0) {
+          next.push({ id: `s${sid}-empty`, tone: 'system', text: t('python.consoleNoOutput') });
+        }
         next.push({
-          id: `s${sid}-meta`,
+          id: `s${sid}-done`,
           tone: 'meta',
-          text: t('python.consoleFailed', { ms: durationMs }),
+          text: t('python.consoleDone', { ms: durationMs }),
         });
         setLines((prev) => {
           const merged = [...prev, ...next];
           pushHistory({
             code: codeSnapshot,
-            status: 'fail',
+            status: 'pass',
             durationMs,
             outputPreview: previewOutput(merged),
           });
           return merged;
         });
-        setStatus('fail');
-        return;
-      }
-      if (echoExpression && execution.result !== undefined && execution.result !== null) {
-        next.push({
-          id: `s${sid}-val`,
-          tone: 'meta',
-          text: `→ ${formatReplValue(execution.result)}`,
-        });
-      }
-      if (next.length === 0) {
-        next.push({ id: `s${sid}-empty`, tone: 'system', text: t('python.consoleNoOutput') });
-      }
-      next.push({
-        id: `s${sid}-done`,
-        tone: 'meta',
-        text: t('python.consoleDone', { ms: durationMs }),
-      });
-      setLines((prev) => {
-        const merged = [...prev, ...next];
-        pushHistory({
-          code: codeSnapshot,
-          status: 'pass',
-          durationMs,
-          outputPreview: previewOutput(merged),
-        });
-        return merged;
-      });
-      setStatus('pass');
-    } catch (error) {
-      const durationMs = Math.round(performance.now() - startedAt);
-      const message = error instanceof Error ? error.message : String(error);
-      if (stopRequested.current) {
-        stopRequested.current = false;
+        setStatus('pass');
+      } catch (error) {
+        const durationMs = Math.round(performance.now() - startedAt);
+        const message = error instanceof Error ? error.message : String(error);
+        if (stopRequested.current) {
+          stopRequested.current = false;
+          setLines((prev) => {
+            const merged: ConsoleLine[] = [
+              ...prev,
+              { id: `s${sid}-stopped`, tone: 'fail', text: t('python.stopped') },
+            ];
+            pushHistory({
+              code: codeSnapshot,
+              status: 'stopped',
+              durationMs,
+              outputPreview: previewOutput(merged),
+            });
+            return merged;
+          });
+          setStatus('fail');
+          return;
+        }
+        const friendly = isTimeoutMessage(message) ? t('python.timeout') : `[runtime] ${message}`;
         setLines((prev) => {
           const merged: ConsoleLine[] = [
             ...prev,
-            { id: `s${sid}-stopped`, tone: 'fail', text: t('python.stopped') },
+            {
+              id: `s${sid}-runtime`,
+              tone: 'fail',
+              text: friendly,
+            },
           ];
           pushHistory({
             code: codeSnapshot,
-            status: 'stopped',
+            status: isTimeoutMessage(message) ? 'stopped' : 'fail',
             durationMs,
             outputPreview: previewOutput(merged),
           });
           return merged;
         });
         setStatus('fail');
-        return;
       }
-      const friendly = isTimeoutMessage(message) ? t('python.timeout') : `[runtime] ${message}`;
-      setLines((prev) => {
-        const merged: ConsoleLine[] = [
-          ...prev,
-          {
-            id: `s${sid}-runtime`,
-            tone: 'fail',
-            text: friendly,
-          },
-        ];
-        pushHistory({
-          code: codeSnapshot,
-          status: isTimeoutMessage(message) ? 'stopped' : 'fail',
-          durationMs,
-          outputPreview: previewOutput(merged),
-        });
-        return merged;
-      });
-      setStatus('fail');
-    }
-  }, [code, pushHistory, t]);
+    },
+    [code, pushHistory, t],
+  );
 
   useEffect(() => {
     handleRunRef.current = (override?: string) => {
@@ -582,18 +584,14 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
                     <Plus size={14} className="text-accent" />
                     {t('python.snippet.create')}
                   </button>
-                  {snippets.length > 0 && (
-                    <div className="my-1 border-t border-border-base/70" />
-                  )}
+                  {snippets.length > 0 && <div className="my-1 border-t border-border-base/70" />}
                   <div className="max-h-64 overflow-y-auto [scrollbar-width:thin]">
                     {snippets.map((snippet) => (
                       <div
                         key={snippet.id}
                         className={cx(
                           'group flex items-center gap-1 rounded-lg px-1 transition-colors',
-                          snippet.id === activeSnippetId
-                            ? 'bg-accent/10'
-                            : 'hover:bg-surface-2/70',
+                          snippet.id === activeSnippetId ? 'bg-accent/10' : 'hover:bg-surface-2/70',
                         )}
                       >
                         <button

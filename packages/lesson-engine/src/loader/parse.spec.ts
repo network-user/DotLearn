@@ -55,9 +55,9 @@ describe('parseManifest', () => {
   });
 
   it('throws a validation error for a malformed manifest', () => {
-    expect(() => parseManifest('demo', { ...validManifest('demo'), version: 'not-semver' })).toThrow(
-      /validation failed/,
-    );
+    expect(() =>
+      parseManifest('demo', { ...validManifest('demo'), version: 'not-semver' }),
+    ).toThrow(/validation failed/);
   });
 });
 

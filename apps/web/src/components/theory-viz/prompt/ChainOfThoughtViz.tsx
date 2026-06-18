@@ -146,9 +146,7 @@ export const ChainOfThoughtViz = ({
             <div
               className={cx(
                 'flex items-center gap-2 rounded-md border px-2.5 py-2',
-                directIsWrong
-                  ? 'border-err/40 bg-err/8'
-                  : 'border-ok/40 bg-ok/8',
+                directIsWrong ? 'border-err/40 bg-err/8' : 'border-ok/40 bg-ok/8',
               )}
             >
               <span
@@ -208,7 +206,10 @@ export const ChainOfThoughtViz = ({
                   transition={{ duration: 0.3 }}
                   className="mt-2.5 flex items-center gap-2 rounded-md border border-ok/40 bg-ok/10 px-2.5 py-2"
                 >
-                  <span className="grid size-5 place-items-center rounded-full bg-ok/15 text-ok shrink-0" aria-hidden>
+                  <span
+                    className="grid size-5 place-items-center rounded-full bg-ok/15 text-ok shrink-0"
+                    aria-hidden
+                  >
                     <Check size={12} />
                   </span>
                   <span className="font-mono text-[13px] font-semibold text-ok">{answer}</span>

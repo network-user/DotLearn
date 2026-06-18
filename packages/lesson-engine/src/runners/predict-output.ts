@@ -4,10 +4,7 @@ import { compareRows } from '../compare/rows';
 import { compareValues } from '../compare/value';
 import { fail, failCoded, pass, type RunResult } from './result';
 
-export const runPredictOutput = (
-  exercise: PredictOutputExercise,
-  answer: unknown,
-): RunResult => {
+export const runPredictOutput = (exercise: PredictOutputExercise, answer: unknown): RunResult => {
   const expected = exercise.expected;
   if (expected.kind === 'scalar') {
     const cmp = compareValues(answer, expected.value);

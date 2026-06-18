@@ -22,9 +22,7 @@ export const useExamResults = (scope: string, limit = 12): ExamResultRecord[] =>
   );
   return useMemo(
     () =>
-      [...(rows ?? [])]
-        .sort((a, b) => b.finishedAt.localeCompare(a.finishedAt))
-        .slice(0, limit),
+      [...(rows ?? [])].sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)).slice(0, limit),
     [rows, limit],
   );
 };

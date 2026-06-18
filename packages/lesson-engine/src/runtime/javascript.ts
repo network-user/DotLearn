@@ -8,7 +8,8 @@ export interface JavascriptRuntime {
 }
 
 const isBrowserMainThread = (): boolean =>
-  typeof window !== 'undefined' && typeof (window as { document?: unknown }).document !== 'undefined';
+  typeof window !== 'undefined' &&
+  typeof (window as { document?: unknown }).document !== 'undefined';
 
 export const inlineJavascriptRuntime: JavascriptRuntime = {
   async evaluate(source, call) {

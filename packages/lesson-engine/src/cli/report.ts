@@ -69,10 +69,7 @@ const distinctExercises = (bundle: TopicBundle): Exercise[] => {
   return [...seen.values()];
 };
 
-export const buildTopicReport = (
-  bundle: TopicBundle,
-  flashcardCount: number,
-): TopicReport => {
+export const buildTopicReport = (bundle: TopicBundle, flashcardCount: number): TopicReport => {
   const runtimeClass = classifyRuntimeForSandbox(bundle.manifest.runtime);
   const primaryLanguage = bundle.manifest.primaryLanguage;
 

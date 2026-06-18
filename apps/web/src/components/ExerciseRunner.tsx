@@ -55,9 +55,7 @@ export const ExerciseRunner = memo(function ExerciseRunner({
 }: ExerciseRunnerProps) {
   const { t } = useTranslation('runners');
   const variantTotal = exerciseVariantCount(exercise);
-  const [variantIndex, setVariantIndex] = useState(() =>
-    Math.floor(Math.random() * variantTotal),
-  );
+  const [variantIndex, setVariantIndex] = useState(() => Math.floor(Math.random() * variantTotal));
   const resolved = useMemo(
     () => resolveExerciseVariant(exercise, variantIndex),
     [exercise, variantIndex],

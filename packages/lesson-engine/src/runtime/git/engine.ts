@@ -156,7 +156,7 @@ export class GitRepo {
   private shellEcho(args: string[], redirect?: { target: string; append: boolean }): ExecResult {
     const text = args.join(' ');
     if (redirect) {
-      const existing = redirect.append ? this.workingTree[redirect.target] ?? '' : '';
+      const existing = redirect.append ? (this.workingTree[redirect.target] ?? '') : '';
       this.workingTree[redirect.target] = `${existing}${text}\n`;
       return this.ok('');
     }
@@ -591,7 +591,10 @@ export class GitRepo {
   }
 
   private gitBranch(args: string[]): ExecResult {
-    if (args.length === 0 || args.every((arg) => arg.startsWith('-') && arg !== '-d' && arg !== '-D' && arg !== '-m')) {
+    if (
+      args.length === 0 ||
+      args.every((arg) => arg.startsWith('-') && arg !== '-d' && arg !== '-D' && arg !== '-m')
+    ) {
       const names = [...this.branches.keys()].sort();
       const lines = names.map((name) =>
         !this.head.detached && name === this.head.branch ? `* ${name}` : `  ${name}`,
@@ -844,7 +847,7 @@ export class GitRepo {
       return this.ok(`Fast-forward to ${theirId.slice(0, 7)}\n`);
     }
     const baseId = this.findMergeBase(ourId, theirId);
-    const baseTree = baseId === undefined ? {} : this.commits.get(baseId)?.tree ?? {};
+    const baseTree = baseId === undefined ? {} : (this.commits.get(baseId)?.tree ?? {});
     const ourTree = this.commits.get(ourId)?.tree ?? {};
     const theirTree = this.commits.get(theirId)?.tree ?? {};
     const merged = this.threeWayMerge(baseTree, ourTree, theirTree);
@@ -900,7 +903,7 @@ export class GitRepo {
       return this.err('fatal: commit not found');
     }
     const parentId = target.parents[0];
-    const parentTree = parentId === undefined ? {} : this.commits.get(parentId)?.tree ?? {};
+    const parentTree = parentId === undefined ? {} : (this.commits.get(parentId)?.tree ?? {});
     const ourId = this.headCommitId();
     if (ourId === undefined) {
       return this.err('fatal: no commits to revert onto');
@@ -994,7 +997,7 @@ export class GitRepo {
       return this.err('fatal: commit not found');
     }
     const parentId = target.parents[0];
-    const parentTree = parentId === undefined ? {} : this.commits.get(parentId)?.tree ?? {};
+    const parentTree = parentId === undefined ? {} : (this.commits.get(parentId)?.tree ?? {});
     const ourId = this.headCommitId();
     if (ourId === undefined) {
       return this.err('fatal: no commits to cherry-pick onto');
@@ -1042,7 +1045,7 @@ export class GitRepo {
     let cursorTree = cloneTree(this.commits.get(upstreamId)?.tree ?? {});
     for (const commit of toReplay) {
       const parentId = commit.parents[0];
-      const parentTree = parentId === undefined ? {} : this.commits.get(parentId)?.tree ?? {};
+      const parentTree = parentId === undefined ? {} : (this.commits.get(parentId)?.tree ?? {});
       const merged = this.threeWayMerge(parentTree, cursorTree, commit.tree);
       if (merged.conflicts.length > 0) {
         return this.err(`error: could not apply ${commit.id.slice(0, 7)}... ${commit.message}`);
@@ -1064,7 +1067,7 @@ export class GitRepo {
     const annotated = args.includes('-a');
     const name = args.find((arg) => !arg.startsWith('-') && arg !== this.extractMessage(args));
     const positional = args.filter((arg) => !arg.startsWith('-'));
-    const tagName = annotated ? positional[0] : positional[0] ?? name;
+    const tagName = annotated ? positional[0] : (positional[0] ?? name);
     if (tagName === undefined) {
       return this.err('fatal: tag name required');
     }

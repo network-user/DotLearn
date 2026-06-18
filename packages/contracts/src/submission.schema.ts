@@ -58,7 +58,10 @@ export type ReviewSubmissionInput = z.infer<typeof ReviewSubmissionInput>;
 
 export const MarkMaterializedInput = z
   .object({
-    materializedSlug: z.string().regex(/^[a-z][a-z0-9-]*[a-z0-9]$/).optional(),
+    materializedSlug: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*[a-z0-9]$/)
+      .optional(),
     reviewerNote: z.string().max(2000).optional(),
   })
   .strict();

@@ -34,14 +34,7 @@ const LABEL_GAP = 18;
 
 const DEFAULT_LANE_COLOR = 'var(--accent)';
 
-const laneColors = [
-  DEFAULT_LANE_COLOR,
-  '#22c55e',
-  '#f59e0b',
-  '#ec4899',
-  '#8b5cf6',
-  '#14b8a6',
-];
+const laneColors = [DEFAULT_LANE_COLOR, '#22c55e', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6'];
 
 const laneColorFor = (lane: number): string =>
   laneColors[lane % laneColors.length] ?? DEFAULT_LANE_COLOR;
@@ -73,9 +66,7 @@ const assignLanes = (commits: RepoSnapshot['commits']): GraphNode[] => {
   return nodes;
 };
 
-const buildRefLabels = (
-  snapshot: RepoSnapshot,
-): Map<string, RefLabel[]> => {
+const buildRefLabels = (snapshot: RepoSnapshot): Map<string, RefLabel[]> => {
   const byCommit = new Map<string, RefLabel[]>();
   const push = (commit: string, label: RefLabel): void => {
     const existing = byCommit.get(commit);
@@ -226,18 +217,12 @@ export const GitGraph = ({ snapshot, className, emptyLabel }: GitGraphProps) => 
               >
                 {shortId(node.id)}
               </text>
-              <text
-                x={x + NODE_RADIUS + 8}
-                y={y + 9}
-                className="fill-fg"
-                fontSize={11}
-              >
+              <text x={x + NODE_RADIUS + 8} y={y + 9} className="fill-fg" fontSize={11}>
                 {node.message.length > 34 ? `${node.message.slice(0, 33)}…` : node.message}
               </text>
               <g>
                 {labels.map((label, index) => {
-                  const isCurrentBranch =
-                    label.kind === 'branch' && label.text === headBranch;
+                  const isCurrentBranch = label.kind === 'branch' && label.text === headBranch;
                   return (
                     <foreignObject
                       key={`${label.kind}-${label.text}`}

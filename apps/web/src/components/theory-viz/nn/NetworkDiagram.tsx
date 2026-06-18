@@ -38,7 +38,9 @@ export const NetworkDiagram = ({
     throw new NeuralVizConfigError('NetworkDiagram: нужно минимум два слоя.');
   }
   if (layers.some((count) => count < 1 || !Number.isInteger(count))) {
-    throw new NeuralVizConfigError('NetworkDiagram: в каждом слое должно быть целое число нейронов >= 1.');
+    throw new NeuralVizConfigError(
+      'NetworkDiagram: в каждом слое должно быть целое число нейронов >= 1.',
+    );
   }
 
   const reduceMotion = useReducedMotion();
@@ -58,9 +60,7 @@ export const NetworkDiagram = ({
       const innerHeight = height - verticalPadding * 2;
       return Array.from({ length: count }, (_, neuronIndex) => {
         const y =
-          count === 1
-            ? height / 2
-            : verticalPadding + (neuronIndex / (count - 1)) * innerHeight;
+          count === 1 ? height / 2 : verticalPadding + (neuronIndex / (count - 1)) * innerHeight;
         return { x, y };
       });
     });
@@ -81,9 +81,12 @@ export const NetworkDiagram = ({
       setPlaying(false);
       return;
     }
-    timerRef.current = window.setTimeout(() => {
-      setActiveLayer((previous) => Math.min(previous + 1, layers.length - 1));
-    }, reduceMotion ? 0 : stepIntervalMs);
+    timerRef.current = window.setTimeout(
+      () => {
+        setActiveLayer((previous) => Math.min(previous + 1, layers.length - 1));
+      },
+      reduceMotion ? 0 : stepIntervalMs,
+    );
     return clearTimer;
   }, [playing, activeLayer, layers.length, stepIntervalMs, reduceMotion]);
 
@@ -219,9 +222,7 @@ export const NetworkDiagram = ({
                       scale: layerIndex === activeLayer && !reduceMotion ? [1, 1.18, 1] : 1,
                     }}
                     transition={
-                      reduceMotion
-                        ? { duration: 0 }
-                        : { duration: 0.45, scale: { duration: 0.5 } }
+                      reduceMotion ? { duration: 0 } : { duration: 0.45, scale: { duration: 0.5 } }
                     }
                     style={{ transformOrigin: `${position.x}px ${position.y}px` }}
                   />

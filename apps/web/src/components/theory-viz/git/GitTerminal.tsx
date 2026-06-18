@@ -76,7 +76,11 @@ const buildRepo = (initial: GitTerminalInit | undefined): GitRepo => {
 
 const goalLabelKey = (kind: string): string => `git.goals.${kind}`;
 
-const statusToneRow = (label: string, items: string[], tone: 'staged' | 'modified' | 'untracked') => {
+const statusToneRow = (
+  label: string,
+  items: string[],
+  tone: 'staged' | 'modified' | 'untracked',
+) => {
   if (items.length === 0) {
     return null;
   }
@@ -227,7 +231,8 @@ export const GitTerminal = ({
         return;
       }
       event.preventDefault();
-      const nextCursor = historyCursor === null ? history.length - 1 : Math.max(0, historyCursor - 1);
+      const nextCursor =
+        historyCursor === null ? history.length - 1 : Math.max(0, historyCursor - 1);
       setHistoryCursor(nextCursor);
       setDraft(history[nextCursor] ?? '');
     } else if (event.key === 'ArrowDown') {
@@ -264,7 +269,10 @@ export const GitTerminal = ({
           className,
         )}
       >
-        {t('git.setupError', { message: setupError, defaultValue: 'Ошибка подготовки: {{message}}' })}
+        {t('git.setupError', {
+          message: setupError,
+          defaultValue: 'Ошибка подготовки: {{message}}',
+        })}
       </div>
     );
   }
@@ -295,7 +303,9 @@ export const GitTerminal = ({
             >
               {log.length === 0 ? (
                 <p className="text-fg-subtle">
-                  {t('git.emptyLog', { defaultValue: 'Запускайте команды git и наблюдайте за графом.' })}
+                  {t('git.emptyLog', {
+                    defaultValue: 'Запускайте команды git и наблюдайте за графом.',
+                  })}
                 </p>
               ) : (
                 log.map((line) => (
@@ -383,7 +393,9 @@ export const GitTerminal = ({
         <div className="min-w-0 space-y-3">
           <div className="flex items-center gap-1.5">
             <GitBranch size={13} className="text-fg-muted" />
-            <span className="eyebrow">{t('git.graph.title', { defaultValue: 'Граф коммитов' })}</span>
+            <span className="eyebrow">
+              {t('git.graph.title', { defaultValue: 'Граф коммитов' })}
+            </span>
           </div>
           {snapshot !== null && <GitGraph snapshot={snapshot} className="max-h-[360px]" />}
 

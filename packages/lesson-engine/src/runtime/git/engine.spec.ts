@@ -216,15 +216,10 @@ describe('git engine', () => {
 
   it('refuses branch -m when the new name already exists', () => {
     const repo = createGitRepo({ files: { 'a.txt': '1\n' }, commands: ['git init'] });
-    run(repo, [
-      'git add a.txt',
-      'git commit -m "first"',
-      'git branch feature',
-      'git branch other',
-    ]);
+    run(repo, ['git add a.txt', 'git commit -m "first"', 'git branch feature', 'git branch other']);
     const result = repo.exec('git branch -m feature other');
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("already exists");
+    expect(result.stderr).toContain('already exists');
   });
 
   it('blocks checkout when local changes would be overwritten', () => {

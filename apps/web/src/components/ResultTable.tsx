@@ -20,11 +20,7 @@ export const ResultTable = ({ columns, rows, emptyMessage }: ResultTableProps) =
   };
 
   if (rows.length === 0) {
-    return (
-      <p className="text-sm text-fg-subtle italic">
-        {emptyMessage ?? t('results.noRows')}
-      </p>
-    );
+    return <p className="text-sm text-fg-subtle italic">{emptyMessage ?? t('results.noRows')}</p>;
   }
   const headerColumns = columns.length > 0 ? columns : Object.keys(rows[0] ?? {});
   return (

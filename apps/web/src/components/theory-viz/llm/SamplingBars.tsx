@@ -174,9 +174,7 @@ export const SamplingBars = ({
                   )}
                   animate={{ width: `${(item.renormalized / maxBar) * 100}%` }}
                   transition={
-                    reduceMotion
-                      ? { duration: 0 }
-                      : { type: 'spring', stiffness: 260, damping: 30 }
+                    reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 260, damping: 30 }
                   }
                 />
               </div>

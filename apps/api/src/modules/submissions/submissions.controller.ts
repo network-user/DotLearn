@@ -68,7 +68,10 @@ export class SubmissionsController {
   @ApiOperation({ summary: 'Fuzzy search across submissions (title, outline, tags).' })
   @ApiQuery({ name: 'q', required: true })
   @ApiQuery({ name: 'limit', required: false })
-  async search_(@Query('q') q: string, @Query('limit') limit?: string): Promise<SubmissionPublic[]> {
+  async search_(
+    @Query('q') q: string,
+    @Query('limit') limit?: string,
+  ): Promise<SubmissionPublic[]> {
     if (!q || !q.trim()) {
       return [];
     }

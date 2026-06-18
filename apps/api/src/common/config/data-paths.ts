@@ -1,8 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-export const dataDir = (): string =>
-  resolve(process.cwd(), process.env.DATA_DIR ?? './data');
+export const dataDir = (): string => resolve(process.cwd(), process.env.DATA_DIR ?? './data');
 
 export const dataFile = (name: string): string => {
   if (name.length === 0 || /[/\\]|\.\.|\0/.test(name)) {

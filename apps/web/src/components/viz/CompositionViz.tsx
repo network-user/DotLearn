@@ -100,11 +100,7 @@ export const CompositionViz = ({
               <div key={name} className="flex flex-col items-center gap-1 w-full">
                 {index > 0 && <span className="text-fg-subtle text-[11px] leading-none">↑</span>}
                 <motion.div
-                  animate={
-                    rippleStep === index && !reduceMotion
-                      ? { scale: [1, 1.04, 1] }
-                      : {}
-                  }
+                  animate={rippleStep === index && !reduceMotion ? { scale: [1, 1.04, 1] } : {}}
                   transition={{ duration: RIPPLE_MS / 1000 }}
                   className={cx(
                     'w-full max-w-[200px] rounded-lg border px-3 py-2 text-center font-mono text-[12.5px] transition-colors',
@@ -137,10 +133,7 @@ export const CompositionViz = ({
                 const variant =
                   (partIndex === 0 ? part.variants[variantIndex] : part.variants[0]) ?? '?';
                 return (
-                  <li
-                    key={part.name}
-                    className="flex items-center gap-2 font-mono text-[12px]"
-                  >
+                  <li key={part.name} className="flex items-center gap-2 font-mono text-[12px]">
                     <span className="text-accent">self.{part.name}</span>
                     <span className="text-fg-subtle">=</span>
                     <span className="relative inline-flex overflow-hidden">

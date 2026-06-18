@@ -240,7 +240,9 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
 
         {state.kind === 'fail' && (
           <div className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-1">
-            <p className="font-medium">{t('predict.wrong', { reason: failureMessage(state.failure) })}</p>
+            <p className="font-medium">
+              {t('predict.wrong', { reason: failureMessage(state.failure) })}
+            </p>
             {state.expected !== undefined && (
               <p className="text-[12px] text-err/80 font-mono">
                 {t('predict.expected')}:{' '}
@@ -249,8 +251,7 @@ export const PredictOutputRunner = ({ topicSlug, exercise }: PredictOutputRunner
             )}
             {state.actual !== undefined && (
               <p className="text-[12px] text-err/80 font-mono">
-                {t('predict.got')}:{' '}
-                <code className="text-err">{JSON.stringify(state.actual)}</code>
+                {t('predict.got')}: <code className="text-err">{JSON.stringify(state.actual)}</code>
               </p>
             )}
           </div>

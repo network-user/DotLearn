@@ -52,7 +52,10 @@ export interface AiProvider {
   readonly id: ProviderId;
   readonly displayName: string;
   testConnection(credentials: ProviderCredentials): Promise<ConnectionStatus>;
-  generateTopic(input: GenerateTopicInput, credentials: ProviderCredentials): Promise<TopicSuggestion>;
+  generateTopic(
+    input: GenerateTopicInput,
+    credentials: ProviderCredentials,
+  ): Promise<TopicSuggestion>;
   generateExercises(
     input: GenerateExercisesInput,
     credentials: ProviderCredentials,

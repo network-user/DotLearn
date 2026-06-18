@@ -44,7 +44,11 @@ const defaultRoot: HierNode = {
   ],
 };
 
-const buildParents = (node: HierNode, parent: string | null, acc: Map<string, string | null>): void => {
+const buildParents = (
+  node: HierNode,
+  parent: string | null,
+  acc: Map<string, string | null>,
+): void => {
   acc.set(node.id, parent);
   for (const child of node.children ?? []) buildParents(child, node.id, acc);
 };

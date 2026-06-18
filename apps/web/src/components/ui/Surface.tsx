@@ -27,7 +27,15 @@ const ruleClass: Record<SurfaceRule, string> = {
 };
 
 export const Surface = forwardRef<HTMLDivElement, SurfaceProps>(function Surface(
-  { variant = 'paper', rule = 'none', interactive = false, bordered = true, className, children, ...rest },
+  {
+    variant = 'paper',
+    rule = 'none',
+    interactive = false,
+    bordered = true,
+    className,
+    children,
+    ...rest
+  },
   ref,
 ) {
   return (
