@@ -1,0 +1,216 @@
+---
+conceptId: fastapi-auth
+title: "Authentication: OAuth2, tokens, get_current_user"
+estimatedMinutes: 50
+---
+
+# How the server figures out who came to it
+
+HTTP does not remember you. Each request arrives on its own, with no memory of the previous one: the server does not know whether this is the same user who came a minute ago or someone else entirely. And yet the application must tell Anna from Boris, let one into her own profile and keep her out of someone else's. Since there is no state, each request must carry its own proof of who sent it. That proof is the token - a short string the client attaches to a request and the server verifies.
+
+Turning this into a working scheme means answering three questions. How does the user obtain a token without resending the password on every request? How does the server figure out, from a token, who is in front of it? And how does "I don't know who you are" differ from "I know who you are, but you're not allowed here"? By the end of this section you will see the whole path - from login to a protected endpoint - as one chain in which `Depends` and the token play the same roles as in the previous section.
+
+## Mental model: a badge, not a password at every step
+
+Picture an entrance checkpoint. Once, you show your passport (login and password) and receive a badge (token). After that, at every door you present not the passport but the badge - any turnstile checks it quickly, without querying HR. The password is used once; for the rest of the time the badge leads you around the building.
+
+On the web this is the OAuth2 flow with a Bearer token. The client sends login and password once to the `/token` endpoint, gets a token in response, and stores it. After that it adds the header `Authorization: Bearer <token>` to every protected request. For each such request the server pulls the token from the header, verifies it, and identifies the user from it - without touching the password.
+
+<Figure caption="The authentication path: a login with a password yields a token; the token rides in the Authorization header of every request; get_current_user turns the token into a user for the endpoint.">
+  <Sketch viewBox="0 0 480 220" title="Token flow from login to endpoint">
+    <SketchBox x={20} y={20} width={150} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={95} y={44} mono size={12}>POST /token</SketchLabel>
+    <SketchLabel x={95} y={75} muted size={10}>login + password</SketchLabel>
+
+    <SketchBox x={300} y={20} width={150} height={40} accent />
+    <SketchLabel x={375} y={44} mono accent size={12}>token</SketchLabel>
+    <SketchArrow from={[170, 40]} to={[300, 40]} />
+
+    <SketchBox x={20} y={110} width={200} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={120} y={134} mono size={11}>Authorization: Bearer ...</SketchLabel>
+    <SketchArrow from={[375, 60]} to={[120, 110]} dashed />
+
+    <SketchBox x={270} y={110} width={180} height={40} accent />
+    <SketchLabel x={360} y={134} mono accent size={11}>get_current_user</SketchLabel>
+    <SketchArrow from={[220, 130]} to={[270, 130]} />
+
+    <SketchBox x={270} y={170} width={180} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={360} y={192} mono size={11}>handler(user)</SketchLabel>
+    <SketchArrow from={[360, 150]} to={[360, 170]} />
+  </Sketch>
+</Figure>
+
+The main thing in this model: the password appears exactly once, at token issuance. After that all protection rests on the token - on verifying it and on what can be extracted from it. For each request the server walks the same path: pull the token, verify it, identify the user.
+
+## Where the token in the header comes from: OAuth2PasswordBearer
+
+FastAPI does not guess where the token sits - you declare it with a dependency. `OAuth2PasswordBearer` is a callable that does one thing: pull the token out of the `Authorization: Bearer ...` header. You put it in `Depends`, and the token string itself arrives in the endpoint parameter.
+
+```python
+from fastapi import Depends, FastAPI
+from fastapi.security import OAuth2PasswordBearer
+
+app = FastAPI()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+@app.get("/items/")
+def read_items(token: str = Depends(oauth2_scheme)):
+    return {"token": token}
+```
+
+The argument `tokenUrl="token"` is not magic but a pointer: where the login endpoint that issues the token lives. If the request has no `Authorization` header, `oauth2_scheme` raises `HTTPException(401)` itself, and the handler is not called. So extracting the token becomes a reusable dependency - exactly the trick from the previous section.
+
+## Hashing the password: why it cannot be stored as is
+
+Before issuing a token, the server must verify the password. But passwords cannot be stored in the clear: leak the database - leak all the passwords. So you store not the password but its hash - the result of a one-way transformation. The password cannot be recovered from the hash; at login the server hashes the supplied password and compares hashes.
+
+```python
+from passlib.context import CryptContext
+
+pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+stored_hash = pwd.hash("plaintext-password")
+
+def check(password: str) -> bool:
+    return pwd.verify(password, stored_hash)
+```
+
+`pwd.hash` takes a password and returns a hash to store; `pwd.verify` checks that the supplied password yields the same hash. An algorithm like `bcrypt` is deliberately slow and salts each hash so that brute force is expensive. You do not need to know the implementation details - what matters is the idea: the database holds a hash, the plaintext password is stored nowhere.
+
+<Callout type="warning">
+Never store or log passwords in the clear, and never invent your own hashing. A password is turned into a hash by a proven library and reaches storage only in that form.
+</Callout>
+
+## What is inside a token: issuing and verifying a JWT
+
+Most often the token is a JWT (JSON Web Token). Inside it carries "claims" - a set of fields: who the user is (`sub`), when the token expires (`exp`), sometimes permissions. All of it is signed with the server's secret key. The signature does not hide the contents (claims are readable) but guarantees they were not tampered with: change a single byte and the signature no longer matches.
+
+```python
+from jose import jwt
+
+SECRET = load_secret()
+
+def issue(username: str) -> str:
+    payload = {"sub": username, "exp": expiry()}
+    return jwt.encode(payload, SECRET, algorithm="HS256")
+
+def read(token: str) -> str:
+    data = jwt.decode(token, SECRET, algorithms=["HS256"])
+    return data["sub"]
+```
+
+At login the server puts `sub` and `exp` into the payload, signs it with the key, and returns the string. On a request it calls `jwt.decode` to verify the signature and expiry: if the signature is invalid or `exp` is in the past, `decode` raises an exception and the token is rejected. No server-side session is needed - all the required information sits in the token itself, protected by the signature.
+
+<Figure caption="A JWT consists of three parts: a header with the algorithm, a payload with claims (sub, exp), and a signature. The signature is computed from the first two parts and the secret - tampering with claims breaks it.">
+  <Sketch viewBox="0 0 480 150" title="JWT structure">
+    <SketchBox x={20} y={50} width={130} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={85} y={70} mono size={11}>header</SketchLabel>
+    <SketchLabel x={85} y={88} muted size={10}>alg: HS256</SketchLabel>
+
+    <SketchBox x={175} y={50} width={130} height={50} accent />
+    <SketchLabel x={240} y={70} mono accent size={11}>payload</SketchLabel>
+    <SketchLabel x={240} y={88} muted size={10}>sub, exp</SketchLabel>
+
+    <SketchBox x={330} y={50} width={130} height={50} hatched />
+    <SketchLabel x={395} y={70} mono size={11}>signature</SketchLabel>
+    <SketchLabel x={395} y={88} muted size={10}>= f(header, payload, secret)</SketchLabel>
+
+    <SketchArrow from={[85, 50]} to={[360, 50]} curve={-30} dashed />
+    <SketchArrow from={[240, 50]} to={[380, 50]} curve={-20} dashed />
+    <SketchLabel x={240} y={130} muted size={11}>the signature binds the first two parts to the secret</SketchLabel>
+  </Sketch>
+</Figure>
+
+## The get_current_user dependency: a token becomes a user
+
+Now let's assemble everything into one dependency. `get_current_user` relies on `oauth2_scheme` (pull the token), reads `sub` from the token, finds the user - and returns it. The endpoint gets a ready user object rather than fiddling with the token.
+
+```python
+from fastapi import Depends, HTTPException
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        username = read(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user = users.get(username)
+    if user is None:
+        raise HTTPException(status_code=401, detail="no such user")
+    return user
+
+@app.get("/me")
+def me(user: dict = Depends(get_current_user)):
+    return user
+```
+
+This is the same dependency hierarchy from the previous section: `get_current_user` depends on `oauth2_scheme`, the endpoint depends on `get_current_user`. Any protected endpoint now adds one parameter `= Depends(get_current_user)` and gets the current user without knowing how exactly it was identified. If the token is missing, invalid, or expired, the endpoint body is never reached: the response is `401`.
+
+## Scopes: permissions inside the token
+
+Authentication answers "who you are". Authorization answers "what you are allowed to do". OAuth2 provides scopes for the latter - tagged permissions, for example `items:read` and `items:write`. They are placed into the token at issuance, and a protected endpoint requires the needed scope. If the user does not have it, the endpoint responds `403` - the token is valid, but the permissions are insufficient.
+
+## 401 versus 403: two different "no"s
+
+The two statuses are easy to confuse, but the difference is fundamental.
+
+`401 Unauthorized` - "I don't know who you are". The token is missing, corrupt, or expired - the server could not identify the sender. In meaning, it is "identify yourself again".
+
+`403 Forbidden` - "I know who you are, but you're not allowed here". The token is valid, the user is identified, but they have no permission for this action. Logging in again does not help - it is permissions that are missing.
+
+The order of checks follows directly from this: first authentication (is there a valid token - otherwise `401`), then authorization (are the permissions sufficient - otherwise `403`). Checking permissions before establishing who is in front of us is pointless.
+
+<Figure caption="First you check who the sender is (no valid token - 401), and only then whether they have sufficient permissions (insufficient - 403). The order is strictly this.">
+  <RowFilterFigure
+    columns={["situation", "token valid", "enough rights", "status"]}
+    rows={[
+      { cells: ["missing/expired token", "no", "-", "401"], kept: false },
+      { cells: ["valid, no needed scope", "yes", "no", "403"], kept: false },
+      { cells: ["valid, rights sufficient", "yes", "yes", "200"], kept: true },
+    ]}
+    condition="token valid AND rights sufficient"
+    title="401 versus 403"
+  />
+</Figure>
+
+## Edge cases
+
+A few places where intuition fails.
+
+**A JWT signature does not encrypt the payload.** The claims inside the token are readable by anyone - they are merely encoded, not encrypted. The signature protects against tampering, not against reading. Do not put secrets like a password or a card number into a JWT - it carries an identifier and an expiry, no more.
+
+**An expired token is `401`, not `403`.** The server could not accept an expired token as proof of identity, so the sender is not identified - `401`. `403` is appropriate only when identity is established but permissions are insufficient. Confusing them misleads the client: it cannot tell whether to log in again or to request access.
+
+**Hiding a resource is sometimes returned as `404`, not `403`.** To avoid confirming the very existence of someone else's resource, it is sometimes hidden behind `404` instead of `403`. This is a deliberate privacy choice, not a contradiction of the rule: the default is `403`, but `404` is appropriate when the mere fact of a resource's existence must not leak.
+
+<Callout type="info">
+Self-check: "does the client need to log in again?" Yes - this is `401`. No, they are already identified, they simply are not allowed here - this is `403`.
+</Callout>
+
+## Common mistakes
+
+- **Returning `403` for a missing or expired token.** If the sender is not identified, `401` is correct. `403` says "you are identified, but not allowed" - for an anonymous caller that is the wrong signal.
+- **Putting sensitive data into a JWT payload.** The payload is readable without the key. A password, a card token, private notes would be exposed to anyone who intercepts the token. Inside go only an identifier and metadata like an expiry.
+- **Checking permissions before authentication.** First you must know who is in front of us (is the token valid), and only then whether they have sufficient permissions. The reverse order is both illogical and yields the wrong status.
+
+<Detail summary="Why 401 is often accompanied by a WWW-Authenticate header">
+
+By the HTTP specification a `401` response must include a `WWW-Authenticate` header telling the client which authentication scheme is expected - for example `Bearer`. This is part of the contract: the server does not just refuse but hints how to identify oneself correctly. When using `OAuth2PasswordBearer`, FastAPI sets this header automatically when the dependency rejects a request without a token. `403` has no such header, and that is logical: the problem is not with the authentication method (it passed) but with insufficient permissions - offering "identify yourself differently" makes no sense. This detail is one more sign by which `401` and `403` differ at the level of the protocol itself, not only by our convention.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "HTTP is stateless: each request carries proof of identity itself - a token in the Authorization: Bearer header.",
+    "OAuth2 flow: the password is sent once to /token and a token is received; afterward the token, not the password, leads you around the building.",
+    "Passwords are stored only as a hash (bcrypt via passlib); a JWT carries signed claims (sub, exp) - the signature protects against tampering but does not encrypt.",
+    "get_current_user is a dependency that pulls the token via oauth2_scheme, identifies the user, and puts it into the endpoint with one = Depends(...).",
+    "401 is 'I don't know who you are' (missing/expired token); 403 is 'I know, but you're not allowed' (insufficient rights); authentication is checked before authorization.",
+  ]}
+/>
+
+## References
+
+- [FastAPI - Security: First Steps](https://fastapi.tiangolo.com/tutorial/security/first-steps/)
+- [FastAPI - Get Current User](https://fastapi.tiangolo.com/tutorial/security/get-current-user/)
+- [FastAPI - OAuth2 with Password (and hashing), Bearer with JWT tokens](https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/)
+- [FastAPI - OAuth2 scopes](https://fastapi.tiangolo.com/advanced/security/oauth2-scopes/)

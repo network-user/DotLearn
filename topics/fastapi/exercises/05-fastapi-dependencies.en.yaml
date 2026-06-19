@@ -1,0 +1,347 @@
+exercises:
+  - id: dep-what-is-001
+    concept: fastapi-dependencies
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does the parameter `page: dict = Depends(pagination)` mean in a handler?"
+    choices:
+      - id: a
+        text: "Before calling the handler, FastAPI calls `pagination` and puts its result into `page`."
+      - id: b
+        text: "`pagination` is called only if the client passes a query parameter named `page`."
+      - id: c
+        text: "The function `pagination` itself ends up in `page`, and the handler calls it manually."
+      - id: d
+        text: "`Depends` creates a global variable `pagination` shared across all requests."
+    correct: [a]
+    explanation: "`Depends(pagination)` declares a dependency: the framework calls `pagination` before the handler and substitutes its result into `page`. The inversion - FastAPI calls it, not the handler."
+    variants:
+      - prompt: "Who calls the dependency function `get_current_user` when `user = Depends(get_current_user)`?"
+        choices:
+          - id: a
+            text: "FastAPI - itself, before the handler, and brings the ready result into the parameter."
+          - id: b
+            text: "The handler - on the first line of its body."
+          - id: c
+            text: "The client - by passing its name in a request header."
+          - id: d
+            text: "Nobody: `Depends` merely documents the parameter, no call happens."
+        correct: [a]
+        explanation: "The essence of the dependency system is call inversion: the dependency function is called by the framework before the handler, and the result is substituted into the parameter. The handler only declares the need."
+      - prompt: "Why extract shared logic (pagination, session) into a dependency function?"
+        choices:
+          - id: a
+            text: "To describe it once and reuse it across endpoints without copying."
+          - id: b
+            text: "To make the code run faster by compiling the dependencies."
+          - id: c
+            text: "So that FastAPI caches its result across different requests forever."
+          - id: d
+            text: "It is mandatory: without `Depends` the handler will not start."
+        correct: [a]
+        explanation: "Dependencies remove duplication: the repeated chunk is described once as a function and wired via `Depends` into any number of endpoints. Change the rule - fix one place."
+
+  - id: dep-resolution-order-001
+    concept: fastapi-dependencies
+    type: theory-quiz
+    difficulty: 2
+    prompt: "The dependency `get_user` itself depends on `get_token` via `Depends`. In what order does FastAPI compute them?"
+    choices:
+      - id: a
+        text: "First `get_token` (the sub-dependency), then `get_user` with its result, then the handler."
+      - id: b
+        text: "First `get_user`, and if it lacks data - then `get_token`."
+      - id: c
+        text: "Both at once, the order is undefined."
+      - id: d
+        text: "First the handler, then both dependencies for the next request."
+    correct: [a]
+    explanation: "The dependency graph is resolved bottom-up: leaves (sub-dependencies with no dependencies of their own) are computed first, their results rise to those that rely on them, and only then is the handler called."
+    hints:
+      - "To assemble `get_user`, the framework first needs its argument `token`. What has to happen earlier?"
+      - "Think of dependencies as a tree: the root is the handler, the leaves are sub-dependencies. The walk goes from leaves to root."
+    variants:
+      - prompt: "The sub-dependency `get_token` raised `HTTPException(401)`. What happens to the handler?"
+        choices:
+          - id: a
+            text: "The walk stops at `get_token`, the handler is not called, the client gets 401."
+          - id: b
+            text: "The handler is called anyway, and the error returns as a separate response."
+          - id: c
+            text: "FastAPI repeats the call to `get_token` once more before the handler."
+          - id: d
+            text: "The exception is ignored, and None is substituted into the parameter."
+        correct: [a]
+        explanation: "If a dependency at any level raises `HTTPException`, graph resolution stops and the handler is not called at all - as with a validation error. The client gets the status from the exception."
+
+  - id: dep-fill-depends-001
+    concept: fastapi-dependencies
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete the handler that receives shared pagination parameters via the `pagination` dependency."
+    template: |
+      from fastapi import Depends, FastAPI
+
+      app = FastAPI()
+
+      def pagination(skip: int = 0, limit: int = 10):
+          return {"skip": skip, "limit": limit}
+
+      @app.get("/items/")
+      def list_items(page: dict = {{call}}(pagination)):
+          return page
+    blanks:
+      call:
+        accept: ["Depends"]
+    variants:
+      - prompt: "Complete the sub-dependency: `get_current_user` depends on `get_token`."
+        template: |
+          from fastapi import Depends, FastAPI
+
+          app = FastAPI()
+
+          def get_token(authorization: str = ""):
+              return authorization.removeprefix("Bearer ")
+
+          def get_current_user(token: str = {{call}}(get_token)):
+              return {"user": token or "anonymous"}
+        blanks:
+          call:
+            accept: ["Depends"]
+      - prompt: "Complete the permission check as a guard dependency in the endpoint decorator."
+        template: |
+          from fastapi import Depends, FastAPI, HTTPException
+
+          app = FastAPI()
+
+          def verify_admin(role: str = "guest"):
+              if role != "admin":
+                  raise HTTPException(status_code=403, detail="no rights")
+
+          @app.delete("/items/{item_id}", dependencies=[{{call}}(verify_admin)])
+          def delete_item(item_id: int):
+              return {"deleted": item_id}
+        blanks:
+          call:
+            accept: ["Depends"]
+
+  - id: dep-fill-yield-001
+    concept: fastapi-dependencies
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Complete the session dependency: open before the handler, hand over the value, reliably close after the response."
+    template: |
+      def get_session():
+          session = open_session()
+          try:
+              {{keyword}} session
+          finally:
+              session.close()
+    blanks:
+      keyword:
+        accept: ["yield"]
+    hints:
+      - "For the code after this line to run after the response (for teardown), the dependency function must hand over the value in a special way, not via return."
+      - "It is the same keyword that turns a function into a generator: setup before it, teardown after."
+
+  - id: dep-predict-yield-001
+    concept: fastapi-dependencies
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? It models a yield dependency: code before yield is setup, after yield is teardown."
+    snippet: |
+      log = []
+
+      def get_session():
+          log.append("open")
+          yield "session"
+          log.append("close")
+
+      gen = get_session()
+      session = next(gen)
+      log.append("use:" + session)
+      next(gen, None)
+      print(log)
+    expected:
+      kind: stdout
+      value: "['open', 'use:session', 'close']"
+    hints:
+      - "Code before yield is setup and runs first. The value from yield goes to whoever pulled the generator. Code after yield waits for the next step. In what order does this fall out?"
+      - "`next(gen)` drives the generator to the yield (running setup). The second `next` resumes it - teardown after yield runs."
+    variants:
+      - snippet: |
+          log = []
+
+          def transaction():
+              log.append("begin")
+              yield
+              log.append("commit")
+
+          gen = transaction()
+          next(gen)
+          log.append("work")
+          next(gen, None)
+          print(log)
+        expected:
+          kind: stdout
+          value: "['begin', 'work', 'commit']"
+      - snippet: |
+          log = []
+
+          def dep(name):
+              log.append(name + "-setup")
+              yield name
+              log.append(name + "-teardown")
+
+          outer = dep("outer")
+          inner = dep("inner")
+          next(outer)
+          next(inner)
+          log.append("handler")
+          next(inner, None)
+          next(outer, None)
+          print(log)
+        expected:
+          kind: stdout
+          value: "['outer-setup', 'inner-setup', 'handler', 'inner-teardown', 'outer-teardown']"
+
+  - id: dep-predict-cache-001
+    concept: fastapi-dependencies
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models a per-request dependency cache: the same dependency is called once."
+    snippet: |
+      calls = []
+
+      def get_db():
+          calls.append("db")
+          return "conn"
+
+      cache = {}
+
+      def resolve(dep):
+          if dep not in cache:
+              cache[dep] = dep()
+          return cache[dep]
+
+      a = resolve(get_db)
+      b = resolve(get_db)
+      print(a == b, len(calls))
+    expected:
+      kind: stdout
+      value: "True 1"
+    hints:
+      - "Within one request FastAPI calls each dependency at most once and reuses the result. How many entries land in the call log?"
+      - "The first `resolve` puts the result in the cache and counts a call. The second finds the ready value and does not pull `get_db` again."
+    variants:
+      - snippet: |
+          calls = []
+
+          def get_db():
+              calls.append("x")
+              return len(calls)
+
+          cache = {}
+
+          def resolve(dep, use_cache):
+              if use_cache and dep in cache:
+                  return cache[dep]
+              value = dep()
+              cache[dep] = value
+              return value
+
+          print(resolve(get_db, False), resolve(get_db, False), len(calls))
+        expected:
+          kind: stdout
+          value: "1 2 2"
+      - snippet: |
+          log = []
+
+          def dep():
+              log.append("run")
+              return 7
+
+          cache = {}
+
+          def get(key):
+              if key in cache:
+                  return cache[key]
+              cache[key] = dep()
+              return cache[key]
+
+          get("db")
+          get("db")
+          get("db")
+          print(log, cache["db"])
+        expected:
+          kind: stdout
+          value: "['run'] 7"
+
+  - id: dep-predict-subdep-001
+    concept: fastapi-dependencies
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models a chain of sub-dependencies: the token is fetched before the user."
+    snippet: |
+      trace = []
+
+      def get_token():
+          trace.append("token")
+          return "abc"
+
+      def get_user(token):
+          trace.append("user")
+          return "user:" + token
+
+      token = get_token()
+      user = get_user(token)
+      print(trace, user)
+    expected:
+      kind: stdout
+      value: "['token', 'user'] user:abc"
+    hints:
+      - "`get_user` cannot run until it has the argument `token`. Which function runs earlier and lands in the log first?"
+      - "The graph walk goes bottom-up: first the sub-dependency `get_token`, then `get_user` with its result."
+    variants:
+      - snippet: |
+          def get_token(authorization):
+              return authorization.removeprefix("Bearer ")
+
+          def get_user(token):
+              return token or "anonymous"
+
+          print(get_user(get_token("Bearer xyz")))
+        expected:
+          kind: stdout
+          value: "xyz"
+      - snippet: |
+          def get_token(authorization):
+              return authorization.removeprefix("Bearer ")
+
+          def get_user(token):
+              return token or "anonymous"
+
+          print(get_user(get_token("")))
+        expected:
+          kind: stdout
+          value: "anonymous"
+
+  - id: dep-guard-order-001
+    concept: fastapi-dependencies
+    type: theory-quiz
+    difficulty: 4
+    prompt: "An endpoint needs two checks: `require_auth` (authentication) and `require_admin` (permissions). The handler does not need their results. How do you wire them correctly?"
+    choices:
+      - id: a
+        text: "Via `dependencies=[Depends(require_auth), Depends(require_admin)]` in exactly that order: the list runs left to right, and authentication is checked before permissions."
+      - id: b
+        text: "Via two `= Depends(...)` parameters in the signature - there is no other way to wire a dependency."
+      - id: c
+        text: "Via `dependencies=[Depends(require_admin), Depends(require_auth)]`: permissions matter more, so they go first."
+      - id: d
+        text: "Call both functions manually inside the handler - more reliable than `dependencies`."
+    correct: [a]
+    explanation: "Side-effect dependencies (checks) whose result is not needed in the body are hung in `dependencies=[...]`. The list runs in order, so authentication (`require_auth`) goes before the permission check (`require_admin`): it is pointless to check permissions before establishing who is in front of us. On failure the dependency raises `HTTPException` and the handler is not called."
+    hints:
+      - "There is a way to wire a dependency whose result the handler does not need. Where do you declare such checks so they do not end up in the parameters?"
+      - "Think about the logical order: what is pointless to check before it is established who sent the request?"

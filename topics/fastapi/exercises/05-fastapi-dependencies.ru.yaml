@@ -1,0 +1,347 @@
+exercises:
+  - id: dep-what-is-001
+    concept: fastapi-dependencies
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Что означает параметр `page: dict = Depends(pagination)` в обработчике?"
+    choices:
+      - id: a
+        text: "Перед вызовом обработчика FastAPI вызовет `pagination`, а её результат положит в `page`."
+      - id: b
+        text: "`pagination` вызовется только если клиент передаст query-параметр `page`."
+      - id: c
+        text: "В `page` попадёт сама функция `pagination`, и обработчик вызовет её вручную."
+      - id: d
+        text: "`Depends` создаёт глобальную переменную `pagination`, общую для всех запросов."
+    correct: [a]
+    explanation: "`Depends(pagination)` объявляет зависимость: фреймворк сам вызовет `pagination` до обработчика и подставит её результат в `page`. Инверсия - зовёт FastAPI, а не обработчик."
+    variants:
+      - prompt: "Кто вызывает функцию-зависимость `get_current_user` при `user = Depends(get_current_user)`?"
+        choices:
+          - id: a
+            text: "FastAPI - сам, до обработчика, и приносит готовый результат в параметр."
+          - id: b
+            text: "Обработчик - первой строкой своего тела."
+          - id: c
+            text: "Клиент - передавая её имя в заголовке запроса."
+          - id: d
+            text: "Никто: `Depends` лишь документирует параметр, вызова не происходит."
+        correct: [a]
+        explanation: "Суть системы зависимостей - инверсия вызова: функцию-зависимость вызывает фреймворк до обработчика, а результат подставляет в параметр. Обработчик только объявляет потребность."
+      - prompt: "Зачем выносить общую логику (пагинацию, сессию) в функцию-зависимость?"
+        choices:
+          - id: a
+            text: "Чтобы описать её один раз и переиспользовать в разных эндпоинтах без копирования."
+          - id: b
+            text: "Чтобы код выполнялся быстрее за счёт компиляции зависимостей."
+          - id: c
+            text: "Чтобы FastAPI кэшировал её результат между разными запросами навсегда."
+          - id: d
+            text: "Это обязательное требование: без `Depends` обработчик не запустится."
+        correct: [a]
+        explanation: "Зависимости устраняют дублирование: повторяющийся кусок описывают один раз как функцию и подключают через `Depends` к любому числу эндпоинтов. Меняется правило - правится одно место."
+
+  - id: dep-resolution-order-001
+    concept: fastapi-dependencies
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Зависимость `get_user` сама зависит от `get_token` через `Depends`. В каком порядке FastAPI их вычислит?"
+    choices:
+      - id: a
+        text: "Сначала `get_token` (под-зависимость), затем `get_user` с её результатом, затем обработчик."
+      - id: b
+        text: "Сначала `get_user`, и если ей не хватит данных - тогда `get_token`."
+      - id: c
+        text: "Обе одновременно, порядок не определён."
+      - id: d
+        text: "Сначала обработчик, потом обе зависимости для следующего запроса."
+    correct: [a]
+    explanation: "Граф зависимостей разрешается снизу вверх: листья (под-зависимости без своих зависимостей) вычисляются первыми, их результаты поднимаются к тем, кто на них опирается, и только потом вызывается обработчик."
+    hints:
+      - "Чтобы собрать `get_user`, фреймворку сначала нужен её аргумент `token`. Что должно произойти раньше?"
+      - "Думайте о зависимостях как о дереве: корень - обработчик, листья - под-зависимости. Обход идёт от листьев к корню."
+    variants:
+      - prompt: "Под-зависимость `get_token` бросила `HTTPException(401)`. Что произойдёт с обработчиком?"
+        choices:
+          - id: a
+            text: "Обход прервётся на `get_token`, обработчик не вызовется, клиент получит 401."
+          - id: b
+            text: "Обработчик всё равно вызовется, а ошибка вернётся отдельным ответом."
+          - id: c
+            text: "FastAPI повторит вызов `get_token` ещё раз перед обработчиком."
+          - id: d
+            text: "Исключение проигнорируется, в параметр подставится None."
+        correct: [a]
+        explanation: "Если зависимость на любом уровне бросает `HTTPException`, разрешение графа прерывается и обработчик не вызывается вовсе - как при ошибке валидации. Клиент получает статус из исключения."
+
+  - id: dep-fill-depends-001
+    concept: fastapi-dependencies
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Допишите обработчик, который получает общие параметры пагинации через зависимость `pagination`."
+    template: |
+      from fastapi import Depends, FastAPI
+
+      app = FastAPI()
+
+      def pagination(skip: int = 0, limit: int = 10):
+          return {"skip": skip, "limit": limit}
+
+      @app.get("/items/")
+      def list_items(page: dict = {{call}}(pagination)):
+          return page
+    blanks:
+      call:
+        accept: ["Depends"]
+    variants:
+      - prompt: "Допишите под-зависимость: `get_current_user` зависит от `get_token`."
+        template: |
+          from fastapi import Depends, FastAPI
+
+          app = FastAPI()
+
+          def get_token(authorization: str = ""):
+              return authorization.removeprefix("Bearer ")
+
+          def get_current_user(token: str = {{call}}(get_token)):
+              return {"user": token or "anonymous"}
+        blanks:
+          call:
+            accept: ["Depends"]
+      - prompt: "Допишите проверку прав как зависимость-страж в декораторе эндпоинта."
+        template: |
+          from fastapi import Depends, FastAPI, HTTPException
+
+          app = FastAPI()
+
+          def verify_admin(role: str = "guest"):
+              if role != "admin":
+                  raise HTTPException(status_code=403, detail="нет прав")
+
+          @app.delete("/items/{item_id}", dependencies=[{{call}}(verify_admin)])
+          def delete_item(item_id: int):
+              return {"deleted": item_id}
+        blanks:
+          call:
+            accept: ["Depends"]
+
+  - id: dep-fill-yield-001
+    concept: fastapi-dependencies
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Допишите зависимость-сессию: открыть до обработчика, отдать значение, гарантированно закрыть после ответа."
+    template: |
+      def get_session():
+          session = open_session()
+          try:
+              {{keyword}} session
+          finally:
+              session.close()
+    blanks:
+      keyword:
+        accept: ["yield"]
+    hints:
+      - "Чтобы код после строки выполнился уже после ответа (для teardown), функция-зависимость должна отдавать значение особым образом, а не через return."
+      - "Это то же ключевое слово, что превращает функцию в генератор: setup до него, teardown после."
+
+  - id: dep-predict-yield-001
+    concept: fastapi-dependencies
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она моделирует yield-зависимость: код до yield - setup, после yield - teardown."
+    snippet: |
+      log = []
+
+      def get_session():
+          log.append("open")
+          yield "session"
+          log.append("close")
+
+      gen = get_session()
+      session = next(gen)
+      log.append("use:" + session)
+      next(gen, None)
+      print(log)
+    expected:
+      kind: stdout
+      value: "['open', 'use:session', 'close']"
+    hints:
+      - "Код до yield - подготовка, она идёт первой. Значение из yield получает тот, кто дёрнул генератор. Код после yield ждёт следующего шага. В каком порядке это сложится?"
+      - "`next(gen)` доводит генератор до yield (выполняя setup). Второй `next` возобновляет его - выполняется teardown после yield."
+    variants:
+      - snippet: |
+          log = []
+
+          def transaction():
+              log.append("begin")
+              yield
+              log.append("commit")
+
+          gen = transaction()
+          next(gen)
+          log.append("work")
+          next(gen, None)
+          print(log)
+        expected:
+          kind: stdout
+          value: "['begin', 'work', 'commit']"
+      - snippet: |
+          log = []
+
+          def dep(name):
+              log.append(name + "-setup")
+              yield name
+              log.append(name + "-teardown")
+
+          outer = dep("outer")
+          inner = dep("inner")
+          next(outer)
+          next(inner)
+          log.append("handler")
+          next(inner, None)
+          next(outer, None)
+          print(log)
+        expected:
+          kind: stdout
+          value: "['outer-setup', 'inner-setup', 'handler', 'inner-teardown', 'outer-teardown']"
+
+  - id: dep-predict-cache-001
+    concept: fastapi-dependencies
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует кэш зависимости в пределах одного запроса: одна и та же зависимость вызывается один раз."
+    snippet: |
+      calls = []
+
+      def get_db():
+          calls.append("db")
+          return "conn"
+
+      cache = {}
+
+      def resolve(dep):
+          if dep not in cache:
+              cache[dep] = dep()
+          return cache[dep]
+
+      a = resolve(get_db)
+      b = resolve(get_db)
+      print(a == b, len(calls))
+    expected:
+      kind: stdout
+      value: "True 1"
+    hints:
+      - "В пределах одного запроса FastAPI вызывает каждую зависимость не более раза и переиспользует результат. Сколько записей окажется в журнале вызовов?"
+      - "Первый `resolve` положит результат в кэш и зачтёт вызов. Второй найдёт готовое значение и `get_db` уже не дёрнет."
+    variants:
+      - snippet: |
+          calls = []
+
+          def get_db():
+              calls.append("x")
+              return len(calls)
+
+          cache = {}
+
+          def resolve(dep, use_cache):
+              if use_cache and dep in cache:
+                  return cache[dep]
+              value = dep()
+              cache[dep] = value
+              return value
+
+          print(resolve(get_db, False), resolve(get_db, False), len(calls))
+        expected:
+          kind: stdout
+          value: "1 2 2"
+      - snippet: |
+          log = []
+
+          def dep():
+              log.append("run")
+              return 7
+
+          cache = {}
+
+          def get(key):
+              if key in cache:
+                  return cache[key]
+              cache[key] = dep()
+              return cache[key]
+
+          get("db")
+          get("db")
+          get("db")
+          print(log, cache["db"])
+        expected:
+          kind: stdout
+          value: "['run'] 7"
+
+  - id: dep-predict-subdep-001
+    concept: fastapi-dependencies
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует цепочку под-зависимостей: токен достаётся до пользователя."
+    snippet: |
+      trace = []
+
+      def get_token():
+          trace.append("token")
+          return "abc"
+
+      def get_user(token):
+          trace.append("user")
+          return "user:" + token
+
+      token = get_token()
+      user = get_user(token)
+      print(trace, user)
+    expected:
+      kind: stdout
+      value: "['token', 'user'] user:abc"
+    hints:
+      - "`get_user` не может выполниться, пока у неё нет аргумента `token`. Какая функция отработает раньше и попадёт в журнал первой?"
+      - "Обход графа идёт снизу вверх: сначала под-зависимость `get_token`, затем `get_user` с её результатом."
+    variants:
+      - snippet: |
+          def get_token(authorization):
+              return authorization.removeprefix("Bearer ")
+
+          def get_user(token):
+              return token or "anonymous"
+
+          print(get_user(get_token("Bearer xyz")))
+        expected:
+          kind: stdout
+          value: "xyz"
+      - snippet: |
+          def get_token(authorization):
+              return authorization.removeprefix("Bearer ")
+
+          def get_user(token):
+              return token or "anonymous"
+
+          print(get_user(get_token("")))
+        expected:
+          kind: stdout
+          value: "anonymous"
+
+  - id: dep-guard-order-001
+    concept: fastapi-dependencies
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Эндпоинту нужны две проверки: `require_auth` (аутентификация) и `require_admin` (права). Результат проверок обработчику не нужен. Как подключить их корректно?"
+    choices:
+      - id: a
+        text: "Через `dependencies=[Depends(require_auth), Depends(require_admin)]` именно в этом порядке: список выполняется слева направо, и аутентификацию проверяют раньше прав."
+      - id: b
+        text: "Через два параметра `= Depends(...)` в сигнатуре - другого способа подключить зависимость нет."
+      - id: c
+        text: "Через `dependencies=[Depends(require_admin), Depends(require_auth)]`: права важнее, поэтому идут первыми."
+      - id: d
+        text: "Внутри обработчика вызвать обе функции вручную - так надёжнее, чем `dependencies`."
+    correct: [a]
+    explanation: "Зависимости ради побочного эффекта (проверки), результат которых не нужен в теле, вешают в `dependencies=[...]`. Список выполняется по порядку, поэтому аутентификацию (`require_auth`) ставят раньше проверки прав (`require_admin`): бессмысленно проверять права, пока не выяснили, кто перед нами. При провале зависимость бросает `HTTPException`, и обработчик не вызывается."
+    hints:
+      - "Есть способ подключить зависимость, результат которой не нужен обработчику. Где объявить такие проверки, чтобы не тащить их в параметры?"
+      - "Подумайте о логическом порядке: что бессмысленно проверять раньше, чем установлено, кто отправил запрос?"
