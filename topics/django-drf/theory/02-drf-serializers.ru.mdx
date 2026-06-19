@@ -1,0 +1,204 @@
+---
+conceptId: drf-serializers
+title: "Сериализаторы: объект против JSON, валидация, save"
+estimatedMinutes: 50
+---
+
+# Граница, на которой объекты становятся текстом
+
+Внутри сервиса доставки СберМаркета заказ - это живой питоновский объект: у него есть `id`, связанный пользователь, дата, список позиций, методы. Снаружи, в проводах HTTP, заказа не существует - там только текст, плоский JSON, который не знает ни про ваши классы, ни про вашу базу. Между этими двумя мирами проходит граница, и кто-то должен переводить через неё в обе стороны: объект наружу превращать в словарь, входящий словарь превращать обратно в проверенный, готовый к сохранению набор данных. В DRF этот переводчик и таможенник в одном лице называется serializer.
+
+Соблазн новичка - переводить руками: `{"id": order.id, "name": order.name}` на выходе, `Order(name=request.data["name"])` на входе. Так можно жить ровно до первой связанной модели, первого необязательного поля и первой проверки «email должен быть валидным». Дальше ручной перевод превращается в россыпь `if`-ов, разъезжается между endpoint'ами и тихо забывает то одно поле, то другое. Serializer собирает перевод и проверку в один объявленный объект. К концу раздела Вы будете понимать, чем `Serializer` отличается от `ModelSerializer`, как один и тот же класс работает в обе стороны, где живёт валидация и почему `save()` сам выбирает между созданием и обновлением.
+
+## Ментальная модель: один класс, две дороги
+
+Serializer похож на форму Django, но служит API, а не HTML. У него есть поля, и каждое поле умеет ехать в обе стороны. Одна дорога - **сериализация**: берём объект (или queryset), читаем его атрибуты, отдаём словарь примитивов через свойство `.data`. Вторая дорога - **десериализация**: берём входной словарь, прогоняем через `.is_valid()`, получаем очищенный `validated_data` и сохраняем через `.save()`. Один и тот же набор полей обслуживает обе дороги, поэтому контракт API описан в одном месте.
+
+<Figure caption="Один serializer работает в обе стороны. Вниз - сериализация: объект через поля превращается в .data (словарь примитивов). Вверх - десериализация: входной словарь проходит is_valid(), даёт validated_data и сохраняется через save().">
+  <Sketch viewBox="0 0 470 220" title="Объект против JSON через serializer">
+    <SketchBox x={20} y={86} width={96} height={48} accent />
+    <SketchLabel x={68} y={106} mono accent size={11}>Order</SketchLabel>
+    <SketchLabel x={68} y={122} muted size={9}>объект</SketchLabel>
+
+    <SketchBox x={188} y={70} width={96} height={80} />
+    <SketchLabel x={236} y={96} mono size={11}>serializer</SketchLabel>
+    <SketchLabel x={236} y={114} muted size={9}>поля</SketchLabel>
+    <SketchLabel x={236} y={129} muted size={9}>validate</SketchLabel>
+
+    <SketchBox x={356} y={86} width={96} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={404} y={106} mono size={11}>JSON</SketchLabel>
+    <SketchLabel x={404} y={122} muted size={9}>словарь</SketchLabel>
+
+    <SketchArrow from={[116, 100]} to={[188, 100]} />
+    <SketchLabel x={150} y={92} muted size={9}>.data</SketchLabel>
+
+    <SketchArrow from={[284, 100]} to={[356, 100]} />
+
+    <SketchArrow from={[356, 124]} to={[284, 124]} accent />
+    <SketchArrow from={[188, 124]} to={[116, 124]} accent />
+    <SketchLabel x={150} y={142} accent size={9}>save()</SketchLabel>
+    <SketchLabel x={320} y={142} accent size={9}>is_valid()</SketchLabel>
+  </Sketch>
+</Figure>
+
+Запомните направление: на выходе Вы держите готовый объект и просите `.data`; на входе Вы держите сырой словарь, передаёте его в `data=...`, обязаны вызвать `.is_valid()` и только потом имеете право трогать `validated_data`. Пропустить `.is_valid()` и сразу прочитать `validated_data` - ошибка: до проверки очищенных данных просто нет.
+
+## Serializer против ModelSerializer
+
+`Serializer` Вы описываете полем за полем - он ничего не знает о вашей модели. `ModelSerializer` смотрит на модель и достраивает поля сам, как `ModelForm` относительно `Form`.
+
+<Compare
+  leftTitle="Serializer (вручную)"
+  rightTitle="ModelSerializer (по модели)"
+  left={
+    <>
+      <p>Каждое поле объявлено явно; <code>create</code> Вы пишете сами:</p>
+      <pre><code>{`class OrderSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    title = serializers.CharField(max_length=120)
+    amount = serializers.IntegerField()
+
+    def create(self, validated_data):
+        return Order.objects.create(**validated_data)`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Поля и <code>create</code>/<code>update</code> выводятся из модели:</p>
+      <pre><code>{`class OrderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = ["id", "title", "amount"]`}</code></pre>
+    </>
+  }
+  verdict="ModelSerializer убирает рутину для CRUD по модели; голый Serializer нужен, когда вход не совпадает один-в-один с таблицей."
+/>
+
+`ModelSerializer` сам сгенерирует поля, проставит `read_only` для `id`, подтянет ограничения модели (`max_length`, `unique`) и даст работающие `create()`/`update()`. Голый `Serializer` остаётся, когда форма данных не равна одной таблице: например, на вход приходят два числа, а сохраняется вычисленный третий объект.
+
+## Сериализация: объект в словарь
+
+```python
+order = Order.objects.get(pk=1)
+serializer = OrderSerializer(order)
+serializer.data
+```
+
+`serializer.data` вернёт `{"id": 1, "title": "Доставка", "amount": 540}` - словарь примитивов, готовый уехать в `Response`. Для списка добавьте `many=True`: `OrderSerializer(orders, many=True).data` отдаст список словарей. На этой дороге валидация не запускается: объект из базы считается уже корректным.
+
+## Десериализация: словарь в сохранённый объект
+
+Входная дорога длиннее и строго упорядочена.
+
+<Steps>
+  <li>Создаёте serializer с входными данными: <code>serializer = OrderSerializer(data=request.data)</code>.</li>
+  <li>Вызываете <code>serializer.is_valid(raise_exception=True)</code> - запускается проверка всех полей.</li>
+  <li>Читаете очищенный результат из <code>serializer.validated_data</code> (только после успешной проверки).</li>
+  <li>Сохраняете через <code>serializer.save()</code> - он вызовет <code>create()</code> или <code>update()</code>.</li>
+</Steps>
+
+```python
+serializer = OrderSerializer(data=request.data)
+serializer.is_valid(raise_exception=True)
+order = serializer.save()
+return Response(serializer.data, status=status.HTTP_201_CREATED)
+```
+
+`save()` сам выбирает дорогу: если serializer создан **без** объекта (`data=...`), он вызовет `create(validated_data)`; если создан **с** объектом (`OrderSerializer(order, data=request.data)`), он вызовет `update(order, validated_data)`. Наличие исходного `instance` - вот переключатель между «создать» и «обновить».
+
+## Валидация: три уровня
+
+Проверка входа живёт в трёх местах, и порядок между ними важен.
+
+- **На уровне поля - встроенные правила и валидаторы.** `CharField(max_length=120)`, `EmailField()`, `IntegerField(min_value=0)`, плюс список `validators=[...]`. Это первая линия: тип, длина, формат, уникальность.
+- **На уровне одного поля - метод `validate_<field>`.** Метод `validate_amount(self, value)` получает уже приведённое значение поля `amount`, может его проверить или поправить и обязан вернуть. Бросает `serializers.ValidationError`, если значение не годится.
+- **На уровне всего объекта - метод `validate(self, attrs)`.** Получает словарь всех полей сразу. Здесь живут проверки, которым нужно несколько полей одновременно: «дата конца не раньше даты начала», «либо телефон, либо email заполнен».
+
+```python
+class OrderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = ["id", "title", "amount", "discount"]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("сумма должна быть положительной")
+        return value
+
+    def validate(self, attrs):
+        if attrs["discount"] > attrs["amount"]:
+            raise serializers.ValidationError("скидка больше суммы")
+        return attrs
+```
+
+Поле-валидаторы отрабатывают первыми, по одному полю; затем единожды вызывается `validate(attrs)` для перекрёстных проверок. Если поле не прошло свою проверку, его не будет в `attrs`, поэтому `validate` нельзя писать так, будто все ключи на месте безусловно.
+
+## read_only, write_only и source
+
+Поле необязательно симметрично. `read_only=True` означает «только наружу»: попадёт в `.data`, но игнорируется на входе - типично для `id` и серверных дат. `write_only=True` - наоборот, «только внутрь»: примут на запись, но не вернут в ответе - так прячут `password`. А `source` отвязывает имя поля в JSON от имени атрибута объекта: `owner_name = serializers.CharField(source="owner.username")` отдаст `username` владельца под ключом `owner_name`.
+
+<Callout type="tip">
+`write_only=True` для пароля - это не про безопасность хранения, а про контракт: сервер примет пароль на регистрацию, но никогда не положит его обратно в JSON-ответ. Хешированием занимается модель/менеджер, а serializer лишь гарантирует, что поле не «протечёт» наружу.
+</Callout>
+
+## Вложенные сериализаторы
+
+Объект внутри объекта описывается serializer'ом внутри serializer'а.
+
+```python
+class ItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Item
+        fields = ["sku", "qty"]
+
+class OrderSerializer(serializers.ModelSerializer):
+    items = ItemSerializer(many=True, read_only=True)
+    class Meta:
+        model = Order
+        fields = ["id", "title", "items"]
+```
+
+На выходе `items` развернётся в список вложенных словарей. Обратите внимание на `read_only=True`: запись вложенных объектов «из коробки» не работает. DRF на входе не знает, как создать заказ вместе с позициями за один `save()` - это надо описать руками в `create()`. Поэтому вложенное на чтение - бесплатно, вложенное на запись - ваша явная работа.
+
+## Краевые случаи
+
+**`validated_data` не существует до `is_valid()`.** Обращение к нему раньше бросит `AssertionError`. Контракт жёсткий: сначала проверка, потом доступ к очищенным данным - иначе в коде окажутся непроверенные значения под видом проверенных.
+
+**`partial=True` меняет смысл обязательности.** При `PATCH` сериализатор создают с `partial=True`, и тогда отсутствующие поля не считаются ошибкой - обновляется лишь присланное. Без этого флага `PATCH` потребует все обязательные поля, как `PUT`, и частичное обновление сломается.
+
+**Лишние поля во входе молча отбрасываются.** Если клиент прислал `is_admin: true`, а в `fields` такого поля нет, DRF его просто проигнорирует - в `validated_data` оно не попадёт. Это и защита (нельзя записать то, чего нет в контракте), и ловушка: опечатка в имени поля не вызовет ошибку, значение просто исчезнет.
+
+<Callout type="warning">
+Surprise: `validate_<field>` **не вызывается**, если поле не прошло встроенную проверку или вовсе отсутствует во входе. Нельзя рассчитывать, что ваш `validate_email` отработает всегда - при пустом или кривом вводе DRF до него не дойдёт. Проверки, которые должны срабатывать безусловно, выносят в `validate(attrs)` с аккуратной проверкой наличия ключа.
+</Callout>
+
+## Типичные ошибки
+
+- **Чтение `validated_data` без `is_valid()`.** До проверки очищенных данных нет; сначала `.is_valid()`, потом доступ. Иначе - `AssertionError` или работа с сырьём вместо проверенных значений.
+- **Возврат `request.data` в ответе вместо `serializer.data`.** В ответ отдают сериализованный объект, а не входной словарь: только `serializer.data` отражает реальное сохранённое состояние, включая серверные поля вроде `id`.
+- **Забытый `return` в `validate_<field>` или `validate`.** Метод обязан вернуть значение (поле или `attrs`). Без `return` поле станет `None`, и проверка тихо испортит данные.
+- **Ожидание, что вложенный serializer запишется сам.** Вложенное на запись требует явного `create()`/`update()`. По умолчанию его помечают `read_only=True`, иначе `save()` упадёт или проигнорирует вложенные данные.
+
+<Detail summary="Почему save() сам угадывает между create и update">
+
+Никакой магии: `save()` смотрит на `self.instance`. Если сериализатор создан как `OrderSerializer(data=...)`, поле `instance` равно `None`, и `save()` вызывает `self.create(validated_data)`. Если создан как `OrderSerializer(order, data=...)`, в `instance` лежит объект, и `save()` вызывает `self.update(instance, validated_data)`. Тот же механизм объясняет, почему `PUT` и `PATCH` во view сначала достают объект и передают его в сериализатор - именно так `save()` понимает, что это обновление. `ModelSerializer` реализует оба метода за Вас поверх ORM: `create` делает `Model.objects.create(**validated_data)`, `update` присваивает атрибуты и зовёт `instance.save()`. Голый `Serializer` оставляет оба метода пустыми - не напишете сами, `save()` бросит `NotImplementedError`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Serializer - двунаправленный переводчик между объектом и JSON: вниз сериализация через .data, вверх десериализация через is_valid() → validated_data → save().",
+    "ModelSerializer выводит поля и create/update из модели; голый Serializer нужен, когда вход не совпадает с одной таблицей.",
+    "validated_data доступен только после is_valid(); save() вызывает create(), если instance нет, и update(), если объект передан.",
+    "Валидация идёт тремя уровнями: поля и валидаторы, затем validate_<field> по одному полю, затем validate(attrs) для перекрёстных проверок.",
+    "read_only - только наружу, write_only - только внутрь, source отвязывает имя в JSON от атрибута; вложенное на чтение бесплатно, на запись требует ручного create.",
+  ]}
+/>
+
+## Ссылки
+
+- [DRF - Serializers](https://www.django-rest-framework.org/api-guide/serializers/)
+- [DRF - Serializer fields](https://www.django-rest-framework.org/api-guide/fields/)
+- [DRF - Validators](https://www.django-rest-framework.org/api-guide/validators/)
+- [DRF - ModelSerializer](https://www.django-rest-framework.org/api-guide/serializers/#modelserializer)
+- [DRF - Nested relationships](https://www.django-rest-framework.org/api-guide/relations/#nested-relationships)

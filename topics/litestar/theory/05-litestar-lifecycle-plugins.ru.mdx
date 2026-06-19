@@ -1,0 +1,203 @@
+---
+conceptId: litestar-lifecycle-plugins
+title: "Жизненный цикл, guards и плагины"
+estimatedMinutes: 40
+---
+
+# Что происходит вокруг хендлера, пока он спит
+
+Хендлер кажется центром мира: пришёл запрос - функция отработала - ушёл ответ. Но между «пришёл» и «функция отработала» происходит много всего, и хендлер об этом не знает. Кто-то проверил, есть ли у клиента право вообще сюда заходить, и развернул его, если нет. Кто-то залогировал запрос и засёк время. Кто-то ещё на старте приложения, задолго до первого запроса, открыл пул соединений с базой, чтобы хендлеру было откуда брать данные. А когда приложение остановится, кто-то аккуратно этот пул закроет. Всё это - не дело хендлера: он отвечает за одну бизнес-операцию, а сквозные заботы вынесены в окружающие его слои жизненного цикла.
+
+Litestar даёт несколько разных точек, куда вешать такие сквозные заботы, и путать их - частая ошибка. К концу раздела Вы будете различать middleware (обёртка вокруг всего ASGI-вызова), guards (проверка прав до хендлера), хуки запроса (`before_request`/`after_request`/`after_response`), жизненный цикл приложения (открыть ресурсы на старте, закрыть на остановке), плагины (например, для SQLAlchemy) и exception handlers (превращение исключения в ответ) - и понимать, в каком порядке всё это срабатывает вокруг одного запроса.
+
+## Ментальная модель: запрос проходит сквозь слои-обёртки
+
+Запрос не попадает в хендлер напрямую. Он проходит сквозь концентрические слои, как через таможню: каждый слой может его осмотреть, развернуть или дополнить. На входе слои срабатывают в одном порядке, на выходе - в обратном.
+
+<Figure caption="Запрос идёт снаружи внутрь до хендлера и обратно. Middleware оборачивает всё; guard решает «пускать ли»; before_request - последняя правка перед хендлером; after_request - первая обработка ответа.">
+  <Sketch viewBox="0 0 480 210" title="Жизненный цикл запроса">
+    <SketchBox x={20} y={70} width={70} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={55} y={92} size={11}>запрос</SketchLabel>
+
+    <SketchBox x={104} y={64} width={86} height={52} />
+    <SketchLabel x={147} y={84} mono size={11}>middleware</SketchLabel>
+    <SketchLabel x={147} y={100} size={10} muted>обёртка ASGI</SketchLabel>
+
+    <SketchBox x={200} y={64} width={70} height={52} />
+    <SketchLabel x={235} y={84} mono size={11}>guard</SketchLabel>
+    <SketchLabel x={235} y={100} size={10} muted>права?</SketchLabel>
+
+    <SketchBox x={280} y={64} width={90} height={52} />
+    <SketchLabel x={325} y={82} mono size={10}>before_request</SketchLabel>
+    <SketchLabel x={325} y={100} size={10} muted>правка</SketchLabel>
+
+    <SketchBox x={380} y={66} width={80} height={48} accent />
+    <SketchLabel x={420} y={92} mono accent size={11}>handler</SketchLabel>
+
+    <SketchArrow from={[90, 90]} to={[104, 90]} />
+    <SketchArrow from={[190, 90]} to={[200, 90]} />
+    <SketchArrow from={[270, 90]} to={[280, 90]} />
+    <SketchArrow from={[370, 90]} to={[380, 90]} accent />
+
+    <SketchLabel x={240} y={150} size={11}>на выходе: handler → after_request → after_response → middleware → ответ</SketchLabel>
+    <SketchArrow from={[400, 130]} to={[120, 130]} dashed />
+  </Sketch>
+</Figure>
+
+Главное из этой картины: guard стоит **до** хендлера. Авторизация - не первая строчка внутри функции, а отдельный слой перед ней. Если guard отказал, хендлер вообще не вызывается. Это разделяет «можно ли сюда» (guard) и «что здесь делать» (хендлер).
+
+## Middleware: обёртка вокруг ASGI-вызова
+
+Middleware - самый внешний слой. Он оборачивает весь ASGI-вызов: видит запрос до того, как фреймворк начал его разбирать, и ответ после того, как он сформирован. Сюда кладут сквозную инфраструктуру: логирование каждого запроса, замер времени, CORS-заголовки, сжатие. Middleware ничего не знает про конкретный хендлер - он работает на уровне «сырого» прохода запрос-ответ.
+
+```python
+from litestar import Litestar, get
+from litestar.middleware import AbstractMiddleware
+
+class TimingMiddleware(AbstractMiddleware):
+    async def __call__(self, scope, receive, send):
+        await self.app(scope, receive, send)
+
+@get("/")
+async def index() -> dict:
+    return {"ok": True}
+
+app = Litestar(route_handlers=[index], middleware=[TimingMiddleware])
+```
+
+Middleware получает тройку ASGI (`scope`, `receive`, `send`) и обязан в какой-то момент позвать `self.app(...)` - вложенный слой. До этого вызова - логика «на входе», после - «на выходе». Это даёт максимальный охват, но и самый низкий уровень: middleware работает с ASGI-событиями, а не с разобранным объектом запроса.
+
+## Guards: авторизация до хендлера
+
+Guard - это callable, который получает соединение и описание хендлера и решает, пускать ли запрос. По контракту guard **ничего не возвращает при разрешении** и **бросает исключение при отказе** - `NotAuthorizedException` (нет валидной аутентификации) или `PermissionDeniedException` (аутентифицирован, но прав не хватает).
+
+```python
+from litestar import get
+from litestar.connection import ASGIConnection
+from litestar.handlers.base import BaseRouteHandler
+from litestar.exceptions import NotAuthorizedException
+
+def require_token(connection: ASGIConnection, handler: BaseRouteHandler) -> None:
+    if not connection.headers.get("authorization"):
+        raise NotAuthorizedException()
+
+@get("/secret", guards=[require_token])
+async def secret() -> dict:
+    return {"data": "секрет"}
+```
+
+`require_token` проверяет заголовок и бросает `NotAuthorizedException`, если его нет; иначе ничего не возвращает - и тогда запрос проходит к хендлеру. Ключевое: guard срабатывает **до** хендлера, поэтому при отказе тело хендлера не выполнится вовсе. Guards, как зависимости и пути, можно вешать на любой слой - на приложение (защитить всё), на контроллер (защитить группу), на хендлер (защитить один эндпоинт).
+
+<Callout type="warning">
+Контракт guard - «молчит при успехе, бросает при отказе», а не «возвращает True/False». Guard, который при отказе делает `return False` вместо `raise`, ничего не запретит: отсутствие исключения трактуется как разрешение, и хендлер выполнится. Отказ выражается только исключением.
+</Callout>
+
+## Хуки запроса: before_request, after_request, after_response
+
+Три хука дают точечный доступ к запросу и ответу на более высоком уровне, чем middleware. `before_request` вызывается после разбора запроса, но до хендлера - и если он что-то вернёт, это станет ответом, а хендлер не вызовется. `after_request` получает ответ хендлера и может его изменить до отправки. `after_response` срабатывает уже **после** того, как ответ ушёл клиенту, - сюда кладут то, что не должно задерживать ответ: фоновое логирование, метрики.
+
+```python
+from litestar import Litestar, Request, get
+
+async def log_before(request: Request) -> None:
+    print(f"вход: {request.method} {request.url.path}")
+
+@get("/")
+async def index() -> dict:
+    return {"ok": True}
+
+app = Litestar(route_handlers=[index], before_request=log_before)
+```
+
+Разница между `after_request` и `after_response` тонкая, но важная: `after_request` ещё может повлиять на ответ (он отправляется после хука), а `after_response` уже ни на что в ответе не влияет - клиент его получил. Тяжёлую необязательную работу (отправить событие в аналитику) делают в `after_response`, чтобы не растягивать время ответа.
+
+## Жизненный цикл приложения: старт и остановка
+
+Кроме жизни запроса есть жизнь самого приложения. Ресурсы вроде пула соединений с базой создают **один раз при старте**, а не на каждый запрос, и закрывают **при остановке**. Litestar предлагает для этого `lifespan` - асинхронный контекст-менеджер, где код до `yield` выполняется на старте, а после `yield` - на остановке.
+
+```python
+from contextlib import asynccontextmanager
+from litestar import Litestar
+
+@asynccontextmanager
+async def lifespan(app: Litestar):
+    app.state.pool = await open_db_pool()
+    yield
+    await app.state.pool.close()
+
+app = Litestar(route_handlers=[], lifespan=[lifespan])
+```
+
+Код до `yield` - открытие пула - выполняется единожды, когда приложение поднимается; затем `yield` отдаёт управление, и приложение обслуживает запросы; код после `yield` - закрытие пула - выполняется при остановке. Так пул живёт всё время работы приложения, а не пересоздаётся на запрос. Есть и более старый стиль через списки `on_startup`/`on_shutdown` - отдельные функции для старта и остановки; `lifespan` удобнее тем, что держит парную логику «открыл/закрыл» рядом.
+
+<Callout type="info">
+Жизненный цикл приложения и кэширование зависимости (`use_cache` из прошлого раздела) решают похожую задачу - «создать один раз», - но по-разному. `lifespan` - для ресурсов с явным открытием и закрытием (пул, соединение), которые надо корректно завершить. `use_cache` - для чистых значений без освобождения (разобранный конфиг). Ресурс, который нужно закрывать, живёт в `lifespan`, а не в кэше зависимости.
+</Callout>
+
+## Плагины и exception handlers
+
+**Плагины** интегрируют внешние библиотеки в жизненный цикл приложения. Самый частый пример - плагин для SQLAlchemy: он сам открывает движок и сессию на старте, отдаёт сессию через DI и закрывает всё на остановке, избавляя от ручного `lifespan` для базы. Плагин - это «готовый кусок жизненного цикла», который подключают одной строкой вместо того, чтобы вручную писать старт/остановку и зависимости для интеграции.
+
+**Exception handlers** замыкают цикл с другой стороны: они описывают, как превратить исключение в HTTP-ответ. Вы сопоставляете тип исключения (или код статуса) с функцией, которая строит ответ.
+
+```python
+from litestar import Litestar, Request, Response, get
+
+class OrderNotFound(Exception):
+    ...
+
+def handle_not_found(request: Request, exc: OrderNotFound) -> Response:
+    return Response(content={"error": "заказ не найден"}, status_code=404)
+
+@get("/orders/{order_id:int}")
+async def get_order(order_id: int) -> dict:
+    raise OrderNotFound()
+
+app = Litestar(
+    route_handlers=[get_order],
+    exception_handlers={OrderNotFound: handle_not_found},
+)
+```
+
+Когда хендлер бросает `OrderNotFound`, фреймворк не отдаёт generic-ошибку 500, а зовёт `handle_not_found` и возвращает её ответ - 404 с понятным телом. Это переносит маппинг «доменное исключение → HTTP-ответ» из каждого хендлера в одно центральное место: хендлер просто бросает осмысленное исключение, а как оно выглядит для клиента, решает обработчик.
+
+## Краевые случаи
+
+**Guard не возвращает ответ - только пропускает или бросает.** В отличие от `before_request`, который может *вернуть* готовый ответ и тем самым подменить хендлер, guard такого не делает: его исход - либо тишина (пускаем), либо исключение (отказ). Если нужна логика «вернуть особый ответ вместо хендлера», это `before_request`, а не guard.
+
+**`after_response` не может изменить уже отправленный ответ.** Соблазн поправить заголовок в `after_response` обречён: ответ к этому моменту у клиента. Для правки ответа есть `after_request` (он выполняется до отправки). Перепутать их - значит написать код, который «ничего не делает».
+
+**Порядок guard и зависимостей.** Guard проверяет права до выполнения хендлера, но если guard'у для проверки нужна зависимость (например, текущий пользователь), важно помнить: guard получает соединение и хендлер, а не разрешённые DI-параметры хендлера напрямую. Логику «достать пользователя» в guard обычно реализуют через тот же механизм, но не ждите, что параметры хендлера уже собраны к моменту guard.
+
+## Типичные ошибки
+
+- **Пишут авторизацию первой строкой хендлера.** `if not user.is_admin: raise ...` внутри каждого хендлера - дублирование и риск забыть. Авторизация - это guard на нужном слое; хендлер должен заниматься делом, а не охраной.
+- **Открывают пул БД внутри хендлера или зависимости на каждый запрос.** Создавать соединение на каждый запрос - дорого и неверно. Пул открывают один раз в `lifespan` на старте и закрывают на остановке.
+- **Делают guard, возвращающий `False`.** Отказ выражается исключением (`NotAuthorizedException`/`PermissionDeniedException`), а не `return False`. Возврат `False` фреймворк не сочтёт отказом - хендлер выполнится.
+- **Путают `after_request` и `after_response`.** Правка ответа - в `after_request` (до отправки); фоновая работа, не влияющая на ответ, - в `after_response` (после отправки). Перепутав, либо тормозят ответ лишней работой, либо тщетно правят уже ушедший ответ.
+
+<Detail summary="Зачем столько разных точек, если есть middleware">
+
+Middleware охватывает всё, так почему не делать в нём и авторизацию, и логирование, и обработку ошибок? Потому что уровень доступа у этих точек разный, и это сознательное разделение. Middleware работает с сырыми ASGI-событиями - на этом уровне нет ещё ни разобранного запроса, ни знания, какой хендлер выбран, ни его guards. Guard, наоборот, знает, к какому хендлеру идёт запрос (он получает его описание), и потому может судить о правах именно для этого эндпоинта. Хуки `before_request`/`after_request` работают с уже разобранным запросом и сформированным ответом - удобный уровень для правок, недоступный middleware без ручного разбора. Exception handlers ловят исключения из любого слоя и централизуют их перевод в ответы. Каждая точка - это свой уровень абстракции и свой момент в цикле; смешивать их в middleware значит писать на самом низком уровне то, для чего есть инструмент повыше. Цена этого богатства - надо помнить порядок (middleware → guard → before_request → handler → after_request → after_response) и не путать соседние точки; зато каждая забота живёт там, где у неё есть ровно нужный контекст.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Вокруг хендлера срабатывают слои: middleware (обёртка ASGI) → guard (права) → before_request (правка) → handler → after_request → after_response; на выходе порядок обратный.",
+    "Guard - callable(connection, handler), который молчит при разрешении и бросает NotAuthorizedException/PermissionDeniedException при отказе; он срабатывает ДО хендлера, поэтому отказ не выполняет тело.",
+    "Авторизацию выносят в guard, а не пишут первой строкой хендлера; guards, как зависимости и пути, вешают на любой слой.",
+    "before_request может вернуть ответ вместо хендлера; after_request правит ответ до отправки; after_response - уже после, для фоновой работы, не влияющей на ответ.",
+    "Ресурсы с открытием/закрытием (пул БД) поднимают один раз в lifespan: код до yield - на старте, после yield - на остановке; не на каждый запрос.",
+    "Плагины (например SQLAlchemy) подключают готовый кусок жизненного цикла одной строкой; exception handlers централизованно превращают доменное исключение в нужный HTTP-ответ.",
+  ]}
+/>
+
+## Ссылки
+
+- [Litestar - Middleware](https://docs.litestar.dev/latest/usage/middleware/index.html)
+- [Litestar - Guards](https://docs.litestar.dev/latest/usage/security/guards.html)
+- [Litestar - Lifecycle hooks](https://docs.litestar.dev/latest/usage/lifecycle-hooks.html)
+- [Litestar - Application lifespan](https://docs.litestar.dev/latest/usage/applications.html#lifespan-context-managers)
+- [Litestar - Plugins](https://docs.litestar.dev/latest/usage/plugins/index.html)
+- [Litestar - Exception handling](https://docs.litestar.dev/latest/usage/exceptions.html)

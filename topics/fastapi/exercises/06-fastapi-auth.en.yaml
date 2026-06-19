@@ -1,0 +1,312 @@
+exercises:
+  - id: auth-flow-001
+    concept: fastapi-auth
+    type: theory-quiz
+    difficulty: 1
+    prompt: "In the OAuth2 flow with a Bearer token: when does the client send the login and password?"
+    choices:
+      - id: a
+        text: "Once - to the `/token` endpoint; it gets a token in response and afterward sends the token, not the password."
+      - id: b
+        text: "On every request to a protected endpoint, together with the token."
+      - id: c
+        text: "Never: the token is generated on the client without the server."
+      - id: d
+        text: "Only at the first server startup, once for all users."
+    correct: [a]
+    explanation: "The password is used exactly once - at token issuance on `/token`. After that the client puts the header `Authorization: Bearer <token>` on every request and no longer sends the password. The token is the 'badge', the password is the 'passport' shown only once."
+    variants:
+      - prompt: "Where does the client pass the obtained token in protected requests?"
+        choices:
+          - id: a
+            text: "In the header `Authorization: Bearer <token>`."
+          - id: b
+            text: "In the query parameter `?password=...`."
+          - id: c
+            text: "In the body of every request, in a `secret` field."
+          - id: d
+            text: "Nowhere - the server remembers the session between requests itself."
+        correct: [a]
+        explanation: "The token rides in the `Authorization: Bearer <token>` header. For each request the server pulls it out of there and identifies the user from it. No server-side session is needed - HTTP is stateless."
+      - prompt: "Why have a token if the client already has a login and password?"
+        choices:
+          - id: a
+            text: "So as not to resend the password on every request: the token is presented instead, and it is easier to verify."
+          - id: b
+            text: "The token encrypts the request body, the password does not."
+          - id: c
+            text: "The token speeds up the connection by compressing headers."
+          - id: d
+            text: "It is a formality: the token and password are interchangeable on every request."
+        correct: [a]
+        explanation: "The token spares you from resending the password on every request. The password is shown once for the token; afterward the token is presented - the server verifies it quickly and does not keep the password all over the code."
+
+  - id: auth-401-vs-403-001
+    concept: fastapi-auth
+    type: theory-quiz
+    difficulty: 2
+    prompt: "A request arrived with no `Authorization` header at all. Which status is correct?"
+    choices:
+      - id: a
+        text: "401 Unauthorized: the server could not identify the sender - they did not identify themselves."
+      - id: b
+        text: "403 Forbidden: since there is no token, access is denied."
+      - id: c
+        text: "404 Not Found: without a token the endpoint as if does not exist."
+      - id: d
+        text: "200 OK: a missing token is just an anonymous but valid request."
+    correct: [a]
+    explanation: "No token - the sender is not identified, that is `401` ('identify yourself'). `403` is appropriate only when identity is established but permissions are insufficient. An anonymous request to a protected endpoint is exactly the `401` case."
+    hints:
+      - "Ask yourself: does the server know who is in front of it? If not, which of the two statuses is about 'identify yourself again'?"
+      - "Distinguish 'I don't know who you are' from 'I know, but you're not allowed here'. Without a token the server is in the first position."
+    variants:
+      - prompt: "The token is valid, the user is identified, but they have no `items:write` scope for deletion. Which status?"
+        choices:
+          - id: a
+            text: "403 Forbidden: identified, but no permission for this action."
+          - id: b
+            text: "401 Unauthorized: since the action is denied, let them log in again."
+          - id: c
+            text: "422 Unprocessable Entity: a missing permission is a validation error."
+          - id: d
+            text: "200 OK: the token is valid, the rest does not matter."
+        correct: [a]
+        explanation: "Identity is established (the token is valid), only permissions are missing - this is `403`. Logging in again does not help here: the problem is not authentication but authorization."
+      - prompt: "The client sent an expired token. Which status is most honest?"
+        choices:
+          - id: a
+            text: "401 Unauthorized: the server did not accept an expired token as proof of identity."
+          - id: b
+            text: "403 Forbidden: there was a token, so the identity is known, just no rights."
+          - id: c
+            text: "200 OK: the token is present in the header."
+          - id: d
+            text: "500 Internal Server Error: an expired token is a server failure."
+        correct: [a]
+        explanation: "An expired token is no good as proof of identity, the sender is again not identified - this is `401`. `403` would be wrong: it means 'I know who you are', and here we precisely do not."
+
+  - id: auth-fill-scheme-001
+    concept: fastapi-auth
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete the OAuth2 scheme and an endpoint that pulls the token from the header via a dependency."
+    template: |
+      from fastapi import Depends, FastAPI
+      from fastapi.security import OAuth2PasswordBearer
+
+      app = FastAPI()
+      oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+      @app.get("/items/")
+      def read_items(token: str = {{call}}(oauth2_scheme)):
+          return {"token": token}
+    blanks:
+      call:
+        accept: ["Depends"]
+    variants:
+      - prompt: "Complete endpoint protection: obtain the current user via the `get_current_user` dependency."
+        template: |
+          from fastapi import Depends, FastAPI
+
+          app = FastAPI()
+
+          @app.get("/me")
+          def me(user: dict = {{call}}(get_current_user)):
+              return user
+        blanks:
+          call:
+            accept: ["Depends"]
+      - prompt: "Complete the scheme creation: name the class that reads the token from the Authorization header."
+        template: |
+          from fastapi.security import OAuth2PasswordBearer
+
+          oauth2_scheme = {{cls}}(tokenUrl="token")
+        blanks:
+          cls:
+            accept: ["OAuth2PasswordBearer"]
+
+  - id: auth-fill-getuser-001
+    concept: fastapi-auth
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Complete the `get_current_user` dependency: on an invalid token - 401, otherwise return the user."
+    template: |
+      from fastapi import Depends, HTTPException
+
+      def get_current_user(token: str = Depends(oauth2_scheme)):
+          try:
+              username = read(token)
+          except Exception:
+              raise HTTPException(status_code={{code}}, detail="invalid token")
+          return users[username]
+    blanks:
+      code:
+        accept: ["401"]
+    hints:
+      - "The token could not be read - the server did not understand who the sender is. Which status says 'identify yourself again'?"
+      - "This is not 'no rights' (403) but 'not identified'. The needed code is in the authentication error family."
+
+  - id: auth-predict-status-001
+    concept: fastapi-auth
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? It models status selection: first authentication, then permissions."
+    snippet: |
+      def auth_status(has_token, token_valid, has_scope):
+          if not has_token or not token_valid:
+              return 401
+          if not has_scope:
+              return 403
+          return 200
+
+      print(auth_status(True, True, True), auth_status(True, False, True), auth_status(True, True, False))
+    expected:
+      kind: stdout
+      value: "200 401 403"
+    hints:
+      - "First you check whether the sender is identified (is there a valid token), and only then whether they have enough rights. In what order do the branches fire?"
+      - "First call: token present, valid, rights present. Second: token invalid. Third: token valid, but no rights."
+    variants:
+      - snippet: |
+          def status(token_present, expired, authorized):
+              if not token_present:
+                  return 401
+              if expired:
+                  return 401
+              if not authorized:
+                  return 403
+              return 200
+
+          print(status(False, False, True), status(True, True, True), status(True, False, False))
+        expected:
+          kind: stdout
+          value: "401 401 403"
+      - snippet: |
+          def needs_relogin(status):
+              return status == 401
+
+          print(needs_relogin(401), needs_relogin(403), needs_relogin(200))
+        expected:
+          kind: stdout
+          value: "True False False"
+
+  - id: auth-predict-jwt-001
+    concept: fastapi-auth
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models a token signature: verification passes only for the claims and secret the token was signed with."
+    snippet: |
+      def sign(payload, secret):
+          return sum(ord(c) for c in payload + secret)
+
+      def verify(payload, signature, secret):
+          return sign(payload, secret) == signature
+
+      secret = "k"
+      sig = sign("anna", secret)
+      print(verify("anna", sig, secret), verify("boris", sig, secret))
+    expected:
+      kind: stdout
+      value: "True False"
+    hints:
+      - "The signature is computed from the payload and the secret. If the claims are swapped, the recomputed signature no longer matches the attached one. For which claims does verification pass?"
+      - "`verify` recomputes the signature for the passed claims and compares it with `sig`. The same string gives the same sum, a different one gives a different sum."
+    variants:
+      - snippet: |
+          def sign(payload, secret):
+              return sum(ord(c) for c in payload + secret)
+
+          def verify(payload, signature, secret):
+              return sign(payload, secret) == signature
+
+          sig = sign("anna", "old")
+          print(verify("anna", sig, "new"))
+        expected:
+          kind: stdout
+          value: "False"
+      - snippet: |
+          def read_claims(token, now):
+              sub, exp = token
+              if exp < now:
+                  raise ValueError("expired")
+              return sub
+
+          def current_user(token, now):
+              try:
+                  return read_claims(token, now)
+              except ValueError:
+                  return "401"
+
+          print(current_user(("anna", 100), 50), current_user(("anna", 100), 200))
+        expected:
+          kind: stdout
+          value: "anna 401"
+
+  - id: auth-predict-hash-001
+    concept: fastapi-auth
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models password verification by hash: the store holds a hash, hashes are compared, not the password itself."
+    snippet: |
+      def hash_pw(password):
+          return "h:" + password[::-1]
+
+      stored = hash_pw("secret")
+
+      def verify(password):
+          return hash_pw(password) == stored
+
+      print(verify("secret"), verify("guess"))
+    expected:
+      kind: stdout
+      value: "True False"
+    hints:
+      - "The plaintext password is not stored - its hash is. On verification the supplied password is hashed and hashes are compared. For which input do the hashes match?"
+      - "`verify` hashes the argument and compares it with `stored`. The same password gives the same hash, a different one gives a different hash."
+    variants:
+      - snippet: |
+          def hash_pw(password):
+              return "h:" + password[::-1]
+
+          users = {"anna": hash_pw("pw1")}
+
+          def login(username, password):
+              stored = users.get(username)
+              if stored is None or hash_pw(password) != stored:
+                  return "401"
+              return "token-for-" + username
+
+          print(login("anna", "pw1"), login("anna", "wrong"))
+        expected:
+          kind: stdout
+          value: "token-for-anna 401"
+      - snippet: |
+          def hash_pw(password):
+              return "h:" + password[::-1]
+
+          stored = hash_pw("hunter2")
+          print(stored == "hunter2", stored == hash_pw("hunter2"))
+        expected:
+          kind: stdout
+          value: "False True"
+
+  - id: auth-order-001
+    concept: fastapi-auth
+    type: theory-quiz
+    difficulty: 4
+    prompt: "A protected delete endpoint requires a valid token AND the `items:write` scope. A request arrives with an expired token whose owner does have the `items:write` scope. What does a correctly implemented guard return, and why?"
+    choices:
+      - id: a
+        text: "401: the expired token is rejected at the authentication step - the scope check is never reached, since identity is not confirmed."
+      - id: b
+        text: "403: the user has the `items:write` scope, so rights are sufficient, and the expired token can be forgiven."
+      - id: c
+        text: "200: since the needed scope is present, the deletion runs despite the token's expiry."
+      - id: d
+        text: "First 403 (no current rights), then 401 - as two separate responses."
+    correct: [a]
+    explanation: "The order of checks is strict: first authentication (is the token valid), then authorization (is the scope sufficient). An expired token fails authentication, so the response is `401`, and control never reaches the scope check. Having the needed scope does not save it: until identity is confirmed, checking permissions is pointless. One response, not two."
+    hints:
+      - "Which of the two checks - 'who you are' or 'what you are allowed' - is performed first? What happens if the first has already failed?"
+      - "An expired token is an authentication failure, not a lack of rights. If authentication did not pass, the authorization turn does not come."

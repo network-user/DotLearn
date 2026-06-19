@@ -1,0 +1,268 @@
+exercises:
+  - id: litestar-lifecycle-plugins-guard-contract-001
+    concept: litestar-lifecycle-plugins
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Как guard в Litestar сообщает, что запрос НЕ должен пройти к хендлеру?"
+    choices:
+      - id: a
+        text: "Бросает исключение (`NotAuthorizedException` или `PermissionDeniedException`); при разрешении guard ничего не возвращает."
+      - id: b
+        text: "Возвращает `False`; возврат `True` пропускает запрос."
+      - id: c
+        text: "Возвращает HTTP-ответ с кодом 403, который и уходит клиенту."
+      - id: d
+        text: "Устанавливает `connection.allowed = False` и продолжает выполнение."
+    correct: [a]
+    explanation: "Контракт guard - «молчит при успехе, бросает при отказе». Отказ выражается исключением (`NotAuthorizedException` - нет аутентификации, `PermissionDeniedException` - не хватает прав). Отсутствие исключения трактуется как разрешение, поэтому `return False` ничего не запретит."
+    variants:
+      - prompt: "В какой момент относительно хендлера срабатывает guard?"
+        choices:
+          - id: a
+            text: "До хендлера: если guard отказал (бросил исключение), тело хендлера не выполнится вовсе."
+          - id: b
+            text: "После хендлера: guard проверяет, что хендлер вернул допустимый ответ."
+          - id: c
+            text: "Параллельно с хендлером, в отдельной задаче."
+          - id: d
+            text: "Только при старте приложения, один раз для всех запросов."
+        correct: [a]
+        explanation: "Guard стоит ДО хендлера в цепочке слоёв. Это разделяет «можно ли сюда» (guard) и «что здесь делать» (хендлер): при отказе guard бросает исключение, и хендлер не вызывается."
+      - prompt: "Где в Litestar открывают пул соединений с БД, чтобы он жил всё время работы приложения, а не пересоздавался на каждый запрос?"
+        choices:
+          - id: a
+            text: "В `lifespan` (или `on_startup`): код до `yield` выполняется один раз на старте, после `yield` - на остановке."
+          - id: b
+            text: "В каждом хендлере в первой строке - так надёжнее всего."
+          - id: c
+            text: "В guard, потому что он выполняется до хендлера."
+          - id: d
+            text: "В `after_response`, уже после отправки ответа клиенту."
+        correct: [a]
+        explanation: "Ресурсы с открытием и закрытием поднимают один раз при старте через `lifespan`: до `yield` - открытие пула, после `yield` - его закрытие при остановке. Создавать соединение на каждый запрос дорого и неверно."
+
+  - id: litestar-lifecycle-plugins-after-001
+    concept: litestar-lifecycle-plugins
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Чем `after_response` отличается от `after_request`, и куда положить отправку события в аналитику, не задерживая ответ клиенту?"
+    choices:
+      - id: a
+        text: "`after_request` выполняется до отправки ответа и может его изменить; `after_response` - уже после отправки. Фоновую отправку события кладут в `after_response`, чтобы не растягивать время ответа."
+      - id: b
+        text: "`after_response` выполняется до отправки и правит ответ; `after_request` - после. Событие кладут в `after_request`."
+      - id: c
+        text: "Разницы нет, оба выполняются после отправки; класть можно в любой."
+      - id: d
+        text: "`after_response` вызывается только при ошибке, а `after_request` - всегда; событие кладут в `after_request`."
+    correct: [a]
+    explanation: "`after_request` получает ответ до отправки и ещё может его изменить. `after_response` срабатывает уже после того, как ответ ушёл клиенту, и на ответ повлиять не может - зато идеален для работы, которая не должна задерживать ответ: фоновое логирование, метрики, отправка события."
+    hints:
+      - "Один хук успевает повлиять на ответ, другой - нет. Какой из них выполняется уже после того, как клиент получил ответ?"
+      - "Подумайте, что хуже: задержать ответ ради аналитики или сделать аналитику после того, как ответ уже ушёл."
+
+  - id: litestar-lifecycle-plugins-fill-guard-001
+    concept: litestar-lifecycle-plugins
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Допишите guard, который отклоняет запрос без заголовка авторизации, и его подключение к хендлеру."
+    template: |
+      from litestar import get
+      from litestar.connection import ASGIConnection
+      from litestar.handlers.base import BaseRouteHandler
+      from litestar.exceptions import NotAuthorizedException
+
+      def require_token(connection: ASGIConnection, handler: BaseRouteHandler) -> None:
+          if not connection.headers.get("authorization"):
+              {{action}} NotAuthorizedException()
+
+      @get("/secret", {{kwarg}}=[require_token])
+      async def secret() -> dict:
+          return {"data": "секрет"}
+    blanks:
+      action:
+        accept: ["raise"]
+      kwarg:
+        accept: ["guards"]
+    variants:
+      - prompt: "Допишите lifespan, открывающий пул на старте и закрывающий на остановке."
+        template: |
+          from contextlib import asynccontextmanager
+          from litestar import Litestar
+
+          @asynccontextmanager
+          async def lifespan(app: Litestar):
+              app.state.pool = await open_db_pool()
+              {{sep}}
+              await app.state.pool.close()
+
+          app = Litestar(route_handlers=[], {{kwarg}}=[lifespan])
+        blanks:
+          sep:
+            accept: ["yield"]
+          kwarg:
+            accept: ["lifespan"]
+      - prompt: "Допишите регистрацию обработчика доменного исключения, превращающего его в ответ."
+        template: |
+          from litestar import Litestar, Request, Response
+
+          class OrderNotFound(Exception):
+              ...
+
+          def handle_not_found(request: Request, exc: OrderNotFound) -> Response:
+              return Response(content={"error": "не найдено"}, status_code=404)
+
+          app = Litestar(
+              route_handlers=[],
+              {{kwarg}}={OrderNotFound: handle_not_found},
+          )
+        blanks:
+          kwarg:
+            accept: ["exception_handlers"]
+
+  - id: litestar-lifecycle-plugins-predict-order-001
+    concept: litestar-lifecycle-plugins
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует порядок слоёв вокруг запроса: на входе middleware → guard → before_request → handler, на выходе - в обратном порядке."
+    snippet: |
+      log = []
+
+      def run():
+          log.append("middleware:in")
+          log.append("guard")
+          log.append("before_request")
+          log.append("handler")
+          log.append("after_request")
+          log.append("after_response")
+          log.append("middleware:out")
+
+      run()
+      print(" -> ".join(log))
+    expected:
+      kind: stdout
+      value: "middleware:in -> guard -> before_request -> handler -> after_request -> after_response -> middleware:out"
+    hints:
+      - "Запрос идёт снаружи внутрь до хендлера и обратно. Что стоит самым внешним слоем, а что - прямо перед хендлером?"
+      - "Соберите порядок по диаграмме жизненного цикла: вход до handler, затем обработка ответа и выход через тот же внешний слой."
+    variants:
+      - snippet: |
+          stages = ["middleware:in", "guard", "handler", "middleware:out"]
+          print(len(stages))
+          print(stages[0])
+          print(stages[-1])
+        expected:
+          kind: stdout
+          value: "4\nmiddleware:in\nmiddleware:out"
+      - snippet: |
+          order = ["guard", "before_request", "handler"]
+          print(order.index("guard") < order.index("handler"))
+          print(order[1])
+        expected:
+          kind: stdout
+          value: "True\nbefore_request"
+
+  - id: litestar-lifecycle-plugins-predict-guard-001
+    concept: litestar-lifecycle-plugins
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует контракт guard: при отказе он бросает исключение и хендлер не выполняется; при разрешении молчит и хендлер срабатывает."
+    snippet: |
+      def guard(has_token):
+          if not has_token:
+              raise PermissionError("нет доступа")
+
+      def request(has_token):
+          try:
+              guard(has_token)
+              return "handler выполнен"
+          except PermissionError:
+              return "403, handler пропущен"
+
+      print(request(True))
+      print(request(False))
+    expected:
+      kind: stdout
+      value: "handler выполнен\n403, handler пропущен"
+    hints:
+      - "Guard молчит, когда пускает, и бросает исключение, когда отказывает. При каком значении токена хендлер вообще не дойдёт до выполнения?"
+      - "Проследите две ветки: с токеном guard не бросает - доходим до хендлера; без токена исключение перехватывается до хендлера."
+    variants:
+      - snippet: |
+          def guard(role):
+              if role != "admin":
+                  raise PermissionError
+
+          def request(role):
+              try:
+                  guard(role)
+                  return "ok"
+              except PermissionError:
+                  return "denied"
+
+          print(request("admin"))
+          print(request("user"))
+        expected:
+          kind: stdout
+          value: "ok\ndenied"
+      - snippet: |
+          def check(authenticated, is_owner):
+              if not authenticated:
+                  return "401"
+              if not is_owner:
+                  return "403"
+              return "200"
+
+          print(check(False, False))
+          print(check(True, False))
+          print(check(True, True))
+        expected:
+          kind: stdout
+          value: "401\n403\n200"
+
+  - id: litestar-lifecycle-plugins-predict-lifespan-001
+    concept: litestar-lifecycle-plugins
+    type: predict-output
+    difficulty: 4
+    prompt: "Что выведет программа? Она моделирует lifespan вокруг обработки запросов: код до yield - один раз на старте, обработка запросов между, код после yield - один раз на остановке. Ресурс открыт ровно один раз, а не на каждый запрос."
+    snippet: |
+      log = []
+
+      def lifespan(requests):
+          log.append("open pool")
+          for r in requests:
+              log.append(f"handle {r}")
+          log.append("close pool")
+
+      lifespan(["a", "b", "c"])
+      print(log[0])
+      print(log[-1])
+      print(log.count("open pool"))
+      print(sum(1 for x in log if x.startswith("handle")))
+    expected:
+      kind: stdout
+      value: "open pool\nclose pool\n1\n3"
+    hints:
+      - "Открытие пула стоит ДО обработки запросов и выполняется единожды; закрытие - ПОСЛЕ всех запросов. Сколько раз тогда открывается пул на три запроса?"
+      - "Разложите лог по порядку: первым идёт открытие, потом обработка каждого запроса, последним - закрытие. Посчитайте, сколько раз встречается каждое событие."
+      - "Ключевая мысль: пул открывается один раз на всё приложение (значит count('open pool') == 1), а обрабатывается столько запросов, сколько их в списке."
+
+  - id: litestar-lifecycle-plugins-points-001
+    concept: litestar-lifecycle-plugins
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Команде нужно: (1) централизованно превращать доменное исключение `OrderNotFound` в ответ 404 и (2) возвращать особый ответ ВМЕСТО хендлера, если включён режим обслуживания. Какие точки жизненного цикла подходят?"
+    choices:
+      - id: a
+        text: "(1) - exception handler (маппинг исключение → ответ); (2) - `before_request`, который может вернуть готовый ответ вместо хендлера."
+      - id: b
+        text: "(1) - guard, бросающий 404; (2) - exception handler для режима обслуживания."
+      - id: c
+        text: "(1) - `after_response`, правящий ответ; (2) - middleware, единственный способ вернуть свой ответ."
+      - id: d
+        text: "Обе задачи решает только guard: он и маппит исключения, и подменяет ответ."
+    correct: [a]
+    explanation: "Маппинг «доменное исключение → HTTP-ответ» - это работа exception handler: хендлер бросает `OrderNotFound`, обработчик строит 404. А вернуть готовый ответ ВМЕСТО хендлера умеет `before_request`: если он что-то вернёт, это станет ответом, а хендлер не вызовется. Guard для (2) не годится - он только пропускает или бросает, но не возвращает ответ; а для (1) бросать 404 из guard семантически неверно (это не вопрос прав)."
+    hints:
+      - "Разведите две разные способности: «перевести брошенное исключение в ответ» и «вернуть ответ вместо хендлера». Какая точка умеет каждую?"
+      - "Вспомните, чем before_request отличается от guard по части возврата: кто из них может ВЕРНУТЬ готовый ответ, а кто только пропускает или бросает?"

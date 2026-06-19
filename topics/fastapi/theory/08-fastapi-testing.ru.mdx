@@ -1,0 +1,165 @@
+---
+conceptId: fastapi-testing
+title: "Тестирование: TestClient и dependency_overrides"
+estimatedMinutes: 40
+---
+
+# Как проверить эндпоинт, не поднимая сервер и не трогая боевую базу
+
+Вы написали эндпоинт `/items/{id}` и хотите убедиться, что он отдаёт `200` на существующий товар и `404` на несуществующий. Поднимать ради этого настоящий сервер, открывать порт, дёргать его `curl`-ом и парсить вывод - долго, хрупко и плохо повторяемо. А ещё этот эндпоинт ходит в базу и требует авторизованного пользователя: гонять тесты по живой базе опасно, а вручную добывать токен на каждый запуск - мучение. Хочется вызвать эндпоинт прямо из кода теста, получить статус и JSON, и при этом подсунуть ему безопасную тестовую базу и фейкового пользователя.
+
+FastAPI закрывает это двумя механизмами. `TestClient` вызывает приложение прямо в процессе теста, без реального сервера и сети. `dependency_overrides` позволяет на время теста подменить любую зависимость - боевую сессию базы на тестовую, реального пользователя на фейкового. К концу раздела Вы будете понимать, что `TestClient` синхронен и работает с приложением in-process, как подменять зависимости через `app.dependency_overrides`, и как на pytest-фикстурах собрать клиент с уже подменёнными зависимостями для проверки в том числе защищённых эндпоинтов.
+
+## Ментальная модель: тест зовёт приложение напрямую
+
+Обычно клиент шлёт HTTP-запрос по сети на работающий сервер. `TestClient` убирает из этой цепочки и сеть, и сервер: он оборачивает само ASGI-приложение и прогоняет запрос через тот же конвейер обработки прямо в процессе теста. Вы пишете `client.get("/items/1")`, как будто это сетевой вызов, но никакого сокета и порта нет - приложение вызывается как объект в памяти.
+
+<Figure caption="TestClient не идёт по сети: он оборачивает приложение и вызывает его конвейер прямо в процессе теста, сразу возвращая объект ответа со статусом и JSON.">
+  <Sketch viewBox="0 0 470 170" title="TestClient вызывает приложение in-process">
+    <SketchBox x={20} y={60} width={120} height={48} accent />
+    <SketchLabel x={80} y={80} mono size={11}>тест</SketchLabel>
+    <SketchLabel x={80} y={97} mono size={10}>client.get(...)</SketchLabel>
+
+    <SketchBox x={185} y={60} width={120} height={48} />
+    <SketchLabel x={245} y={80} mono size={11}>TestClient</SketchLabel>
+    <SketchLabel x={245} y={97} mono size={10}>обёртка app</SketchLabel>
+
+    <SketchBox x={350} y={60} width={100} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={400} y={87} mono size={11}>app</SketchLabel>
+
+    <SketchArrow from={[140, 84]} to={[185, 84]} />
+    <SketchArrow from={[305, 84]} to={[350, 84]} />
+    <SketchArrow from={[400, 108]} to={[400, 135]} />
+    <SketchArrow from={[400, 135]} to={[80, 135]} dashed />
+    <SketchLabel x={230} y={150} muted size={10}>ответ: .status_code, .json()</SketchLabel>
+    <SketchLabel x={140} y={45} muted size={10}>без сети и порта</SketchLabel>
+  </Sketch>
+</Figure>
+
+Из этой модели следует удобное свойство: `TestClient` **синхронный**, даже если ваши обработчики асинхронные. Он построен на Starlette и сам запускает event loop под капотом, так что в тесте Вы пишете обычный синхронный `client.get(...)` без `await`. Для случаев, когда нужен именно асинхронный клиент, существует `httpx.AsyncClient`, но базовый инструмент - синхронный `TestClient`.
+
+## TestClient: вызов эндпоинта из теста
+
+Создайте `TestClient`, передав ему приложение, и вызывайте методы `get`, `post` и другие. Ответ - объект с привычными `status_code` и `json()`.
+
+```python
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int):
+    return {"item_id": item_id}
+
+client = TestClient(app)
+
+def test_read_item():
+    response = client.get("/items/42")
+    assert response.status_code == 200
+    assert response.json() == {"item_id": 42}
+```
+
+`TestClient(app)` оборачивает приложение; `client.get("/items/42")` прогоняет запрос через тот же роутинг и валидацию, что и в проде. `response.status_code` даёт числовой статус, `response.json()` - распарсенное тело. Тест - это обычная pytest-функция с `assert`: проверяете статус и содержимое ответа. Для `POST` тело передают как `client.post("/items", json={"name": "шапка"})`.
+
+<Callout type="info">
+`TestClient` работает синхронно: пишите `response = client.get(...)` без `await`, даже если обработчик объявлен `async def`. Запуск event loop спрятан внутри клиента.
+</Callout>
+
+## dependency_overrides: подмена зависимости в тесте
+
+Реальный эндпоинт почти всегда зависит от внешнего: сессии базы, текущего пользователя, клиента к стороннему сервису. В тесте дёргать настоящие неудобно и опасно. FastAPI хранит словарь `app.dependency_overrides`, где ключ - исходная функция-зависимость, а значение - её подмена. На время теста запрос пойдёт через подмену.
+
+```python
+def get_db():
+    return RealDatabase()
+
+def fake_db():
+    return InMemoryDatabase()
+
+@app.get("/items")
+def list_items(db=Depends(get_db)):
+    return db.all_items()
+
+app.dependency_overrides[get_db] = fake_db
+```
+
+Строка `app.dependency_overrides[get_db] = fake_db` говорит: «везде, где обработчик просит `Depends(get_db)`, подставь вместо `get_db` функцию `fake_db`». Эндпоинт не меняется - он по-прежнему просит `Depends(get_db)`, - но в тесте получает тестовую in-memory базу вместо боевой. Тот же приём подменяет `get_current_user` на функцию, возвращающую фейкового пользователя, - и защищённый эндпоинт можно проверить без настоящего токена.
+
+<Figure caption="Запись в dependency_overrides перенаправляет Depends(get_db) на fake_db. Сам обработчик не меняется - подмена живёт снаружи, в словаре приложения.">
+  <Sketch viewBox="0 0 470 180" title="Подмена зависимости через dependency_overrides">
+    <SketchBox x={20} y={70} width={150} height={42} accent />
+    <SketchLabel x={95} y={88} mono size={10}>Depends(get_db)</SketchLabel>
+    <SketchLabel x={95} y={103} mono size={10}>в обработчике</SketchLabel>
+
+    <SketchBox x={300} y={20} width={150} height={42} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={46} mono size={10}>get_db → RealDatabase</SketchLabel>
+
+    <SketchBox x={300} y={118} width={150} height={42} />
+    <SketchLabel x={375} y={144} mono size={10}>fake_db → InMemory</SketchLabel>
+
+    <SketchArrow from={[170, 80]} to={[300, 45]} dashed />
+    <SketchLabel x={195} y={64} muted size={10}>обычно</SketchLabel>
+    <SketchArrow from={[170, 100]} to={[300, 138]} accent />
+    <SketchLabel x={185} y={130} accent size={10}>в тесте: override</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Pytest-фикстуры: собрать клиент с подменами
+
+Чтобы не повторять создание клиента и подмену зависимостей в каждом тесте, их выносят в pytest-фикстуры. Фикстура готовит окружение, отдаёт его тесту через `yield`, а после теста прибирает за собой.
+
+```python
+import pytest
+from fastapi.testclient import TestClient
+
+@pytest.fixture
+def client():
+    app.dependency_overrides[get_db] = fake_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+def test_list_items(client):
+    response = client.get("/items")
+    assert response.status_code == 200
+```
+
+Фикстура `client` ставит подмену, отдаёт готовый `TestClient` через `yield`, а после теста вызывает `dependency_overrides.clear()`, чтобы подмена не протекла в другие тесты. Тест просто принимает `client` как аргумент - pytest сам подставит результат фикстуры. Так каждый тест получает чистый клиент с тестовыми зависимостями, и проверка защищённого эндпоинта сводится к тому же `client.get(...)`, ведь `get_current_user` подменён на фейкового пользователя.
+
+## Краевые случаи
+
+**Забытый `clear()` протекает между тестами.** Если поставить подмену и не убрать её, она останется в `app.dependency_overrides` и для следующих тестов - и неожиданно изменит их поведение. Снимайте подмену после теста (через `clear()` или присваивание пустого словаря), особенно когда `app` общий для всего модуля.
+
+**`TestClient` синхронен, но обработчики могут быть async.** Не нужно `await` перед `client.get` - клиент сам крутит event loop. `await` появляется, только если Вы намеренно берёте `httpx.AsyncClient` ради асинхронного теста; тогда уже сам тест объявляют `async def`.
+
+**Подменяют ключом саму функцию, а не её результат.** В `dependency_overrides[get_db]` ключ - это объект функции `get_db`, а не вызов `get_db()`. Перепутать легко: тогда подмена не привяжется ни к одной зависимости и эндпоинт пойдёт в боевую.
+
+## Типичные ошибки
+
+- **Тестируют по живой базе или по сети.** Запросы `curl`-ом к запущенному серверу или обращения к боевой базе делают тесты медленными, хрупкими и опасными. Вызывайте приложение через `TestClient` и подменяйте базу на тестовую через `dependency_overrides`.
+- **Добывают настоящий токен в каждом тесте защищённого эндпоинта.** Незачем проходить реальную аутентификацию - подмените `get_current_user` на функцию, возвращающую фейкового пользователя, и тестируйте логику эндпоинта, а не процедуру логина.
+- **Не очищают `dependency_overrides`.** Оставленная подмена протекает в соседние тесты и даёт «летающие» падения, зависящие от порядка запуска. Прибирайте окружение в фикстуре после `yield`.
+
+<Detail summary="Почему TestClient синхронный, а AsyncClient нужен лишь иногда">
+
+`TestClient` построен на основе Starlette и под капотом сам поднимает event loop на время каждого запроса: Вы вызываете синхронный метод, а клиент внутри прогоняет асинхронный конвейер приложения и возвращает уже готовый ответ. Это покрывает подавляющее большинство тестов: проверить статус, тело, заголовки эндпоинта - неважно, синхронный он или асинхронный. `httpx.AsyncClient` нужен в более узких случаях: когда сам тест должен быть `async def` - например, чтобы внутри теста параллельно дождаться нескольких асинхронных операций, разделить с приложением один event loop или проверить поведение, завязанное на асинхронный жизненный цикл. Для обычной проверки эндпоинта это лишнее усложнение - синхронный `TestClient` короче и понятнее.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "TestClient вызывает приложение прямо в процессе теста, без реального сервера и сети, возвращая ответ со status_code и json().",
+    "TestClient синхронный (он на базе Starlette и сам крутит event loop), поэтому пишут client.get(...) без await даже для async-обработчиков; httpx.AsyncClient берут только для async-тестов.",
+    "Тесты пишут на pytest: вызвали client.get/post и проверили response.status_code и response.json() через assert.",
+    "dependency_overrides подменяет зависимость в тесте: ключ - сама функция (get_db, get_current_user), значение - её фейк; так подставляют тестовую базу и фейкового пользователя для защищённых эндпоинтов.",
+    "Подмену выносят в pytest-фикстуру (клиент через yield) и обязательно очищают dependency_overrides после теста, иначе она протечёт в другие тесты.",
+  ]}
+/>
+
+## Ссылки
+
+- [FastAPI - Testing](https://fastapi.tiangolo.com/tutorial/testing/)
+- [FastAPI - Testing Dependencies with Overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)
+- [FastAPI - Async Tests](https://fastapi.tiangolo.com/advanced/async-tests/)
+- [Starlette - TestClient](https://www.starlette.io/testclient/)

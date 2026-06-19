@@ -1,0 +1,152 @@
+---
+conceptId: drf-overview
+title: "Зачем DRF поверх Django: APIView, Request, Response"
+estimatedMinutes: 40
+---
+
+# Почему голый Django устаёт раздавать JSON
+
+Сервису каталога Ozon нужно отдавать товары не браузеру, а мобильному приложению - значит, не HTML, а JSON. На голом Django Вы пишете view, которая руками достаёт данные, руками сериализует их в `JsonResponse`, руками читает тело запроса через `json.loads(request.body)`, руками проверяет, что пришло, и руками решает, какой код вернуть при ошибке. Одна view - терпимо. Двадцать endpoint'ов, и половина файла - это повторяющийся разбор тела, одинаковые `try/except` вокруг `json.loads` и развесистые проверки полей, скопированные из соседней view.
+
+Проблема не в том, что Django чего-то не умеет. Проблема в том, что JSON-API - это один и тот же набор шагов на каждом endpoint: распарсить вход независимо от формата, проверить данные, превратить объекты в примитивы, выбрать формат ответа, проставить статус. Django REST Framework вытаскивает эти шаги в переиспользуемые слои. К концу раздела Вы будете понимать, что даёт `APIView` поверх обычной view, почему `request.data` единообразен для JSON и форм, и как `Response` сам выбирает формат ответа, не заставляя Вас вызывать `json.dumps`.
+
+## Ментальная модель: DRF - это слой между HTTP и вашей логикой
+
+Обычная Django-view получает «сырой» `HttpRequest` и обязана вернуть `HttpResponse` с уже готовой строкой-телом. Всё, что между ними - разбор, валидация, сериализация - ваша забота. DRF вставляет между HTTP и вашим кодом тонкий слой: запрос приходит уже разобранным в `request.data`, а ответ Вы отдаёте питоновским словарём, который рендерер сам превратит в нужный формат.
+
+<Figure caption="DRF добавляет к Django три переиспользуемых слоя: parser разбирает тело в request.data, serializer проверяет и преобразует данные, renderer выбирает формат ответа. Ваш код работает с питоновскими объектами, а не с байтами.">
+  <Sketch viewBox="0 0 460 150" title="Конвейер запроса в APIView">
+    <SketchBox x={10} y={56} width={66} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={43} y={80} mono size={11}>HTTP</SketchLabel>
+
+    <SketchBox x={96} y={56} width={70} height={40} />
+    <SketchLabel x={131} y={74} mono size={11}>parser</SketchLabel>
+    <SketchLabel x={131} y={89} muted size={9}>.data</SketchLabel>
+
+    <SketchBox x={186} y={56} width={84} height={40} accent />
+    <SketchLabel x={228} y={74} mono accent size={11}>serializer</SketchLabel>
+    <SketchLabel x={228} y={89} muted size={9}>проверка</SketchLabel>
+
+    <SketchBox x={290} y={56} width={70} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={325} y={80} mono size={11}>view</SketchLabel>
+
+    <SketchBox x={380} y={56} width={70} height={40} />
+    <SketchLabel x={415} y={74} mono size={11}>renderer</SketchLabel>
+    <SketchLabel x={415} y={89} muted size={9}>формат</SketchLabel>
+
+    <SketchArrow from={[76, 76]} to={[96, 76]} />
+    <SketchArrow from={[166, 76]} to={[186, 76]} accent />
+    <SketchArrow from={[270, 76]} to={[290, 76]} accent />
+    <SketchArrow from={[360, 76]} to={[380, 76]} />
+  </Sketch>
+</Figure>
+
+Главное в этой модели: Вы перестаёте трогать байты. Вход - это `request.data`, словарь, собранный из тела независимо от того, прислал клиент JSON или форму. Выход - это `Response(data)`, где `data` - обычная питоновская структура, а уже формат (JSON, browsable HTML) выбирается фреймворком по заголовку `Accept`. Между ними ваша логика говорит на языке объектов, а не строк.
+
+## Обычная view против APIView
+
+Сравните две версии одного endpoint'а - вернуть список товаров. Слева голый Django, справа DRF.
+
+<Compare
+  leftTitle="Голый Django"
+  rightTitle="DRF APIView"
+  left={
+    <>
+      <p>Сериализация вручную, тело читается из <code>request.body</code>, формат и статус прибиты гвоздями:</p>
+      <pre><code>{`def items(request):
+    data = [{"id": i.id, "name": i.name}
+            for i in Item.objects.all()]
+    return JsonResponse(data, safe=False)`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Данные отдаются словарём, <code>Response</code> сам выберет формат и проставит статус:</p>
+      <pre><code>{`class ItemList(APIView):
+    def get(self, request):
+        items = Item.objects.all()
+        data = ItemSerializer(items, many=True).data
+        return Response(data)`}</code></pre>
+    </>
+  }
+  verdict="APIView убирает ручной json-рендеринг и даёт единый request.data; формат ответа решает renderer, а не вы."
+/>
+
+`APIView` - это класс-наследник джанговской `View`, который оборачивает входящий запрос в `Request` DRF, а на выходе ждёт `Response`. Метод называется по HTTP-глаголу: `get`, `post`, `put`, `patch`, `delete`. Внутри Вы уже не думаете о парсинге и рендеринге - только о логике.
+
+## request.data: один вход для JSON и форм
+
+В голом Django, чтобы прочитать JSON-тело, Вы пишете `json.loads(request.body)`, а чтобы прочитать данные формы - лезете в `request.POST`. Это два разных места для двух форматов. DRF прячет это за `request.data`.
+
+```python
+class CreateItem(APIView):
+    def post(self, request):
+        name = request.data["name"]
+        return Response({"created": name})
+```
+
+Если клиент прислал `{"name": "шапка"}` с заголовком `Content-Type: application/json`, `request.data` будет `{"name": "шапка"}`. Если тот же клиент прислал HTML-форму с полем `name=шапка`, `request.data` будет ровно таким же словарём. Какой parser разобрал тело, ваш код не волнует - вход единообразен. Рядом живёт `request.query_params` - это аккуратное имя для query string (в Django это был `request.GET`, что путало: query string приходит и в POST-запросах).
+
+## Response и content negotiation
+
+`Response` принимает питоновские данные и откладывает выбор формата до последнего момента. Какой именно рендерер сработает, решает content negotiation - переговоры по заголовку `Accept`.
+
+```python
+from rest_framework.response import Response
+from rest_framework import status
+
+class Ping(APIView):
+    def get(self, request):
+        return Response({"pong": True}, status=status.HTTP_200_OK)
+```
+
+Если клиент прислал `Accept: application/json`, тот же `Response` отрендерится в JSON. Если запрос пришёл из браузера с `Accept: text/html`, сработает browsable-рендерер и вернёт человекочитаемую HTML-страницу с этим же ответом, формой для отправки запроса и кликабельными ссылками. Один и тот же код обслуживает и машину, и человека - это и есть browsable API, фирменная фича DRF для отладки руками.
+
+<Callout type="tip">
+Модуль `rest_framework.status` хранит именованные константы статусов: `status.HTTP_201_CREATED`, `status.HTTP_404_NOT_FOUND`. Они читаются лучше голых чисел: `201` легко перепутать с `200`, а `HTTP_201_CREATED` - нет.
+</Callout>
+
+## Краевые случаи
+
+Несколько мест, где DRF ведёт себя не так, как ожидает новичок из голого Django.
+
+**`request.data` нельзя читать как поток дважды теми же глазами.** DRF разбирает тело один раз и кэширует результат, поэтому многократное обращение к `request.data` безопасно - но обращаться к `request.body` после этого уже поздно, поток прочитан. Выберите один уровень: либо `request.data`, либо сырой `body`, не оба.
+
+**`Response` без явного статуса - это всегда 200.** Если Вы создаёте ресурс через `POST` и забыли `status=status.HTTP_201_CREATED`, клиент получит `200 OK` вместо `201 Created`. Семантически это враньё: ресурс создан, а код говорит «просто ок». Статус - часть контракта, его задают осознанно.
+
+**Browsable API виден только в DEBUG-режиме мышления.** Он включён по умолчанию и удобен в разработке, но на проде его обычно отключают или закрывают - это лишняя поверхность и лишний рендеринг. Удобство отладки не должно протекать в боевой ответ.
+
+<Callout type="warning">
+`APIView` не делает за Вас валидацию входа. `request.data["name"]` бросит `KeyError`, если поля нет. Проверка данных - работа сериализатора из следующего раздела, а не самой view. `APIView` лишь даёт удобный вход и выход.
+</Callout>
+
+## Типичные ошибки
+
+- **Возврат `JsonResponse` из `APIView`.** Внутри DRF-view нужно возвращать `Response`, а не джанговский `JsonResponse`. С `JsonResponse` content negotiation и browsable API не сработают - Вы вернётесь к ручному рендерингу, ради ухода от которого и взяли DRF.
+- **Чтение тела через `json.loads(request.body)` внутри `APIView`.** Это игнорирует parser и ломается на формах. `request.data` уже сделал разбор - используйте его.
+- **Голые числа статусов.** `return Response(data, status=204)` работает, но `status.HTTP_204_NO_CONTENT` самодокументируется и страхует от опечатки в числе.
+- **Ожидание, что `APIView` сам проверит данные.** Он не проверит. Без сериализатора `request.data` - это просто словарь, каким его прислал клиент, со всеми возможными пропусками и лишними полями.
+
+<Detail summary="Откуда у DRF свой Request, если у Django уже есть HttpRequest">
+
+DRF не подменяет джанговский `HttpRequest`, а оборачивает его. Класс `rest_framework.request.Request` хранит исходный `HttpRequest` внутри и добавляет поверх него ленивые свойства: `request.data` запускает подходящий parser при первом обращении и кэширует результат, `request.query_params` - это просто более честное имя для `request.GET`. Выбор parser'а зависит от заголовка `Content-Type` и списка `parser_classes` у view (по умолчанию JSON, форма и multipart). Симметрично на выходе `Response` хранит несериализованные `data` до самого конца обработки: рендерер выбирается по заголовку `Accept` уже в финальном middleware-слое, поэтому одна и та же view может отдать и JSON, и HTML, ничего не меняя в коде. Этот отложенный рендеринг - причина, по которой Вы возвращаете объекты, а не строки.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "DRF добавляет к Django переиспользуемые слои parser, serializer и renderer, чтобы view работала с объектами, а не с байтами.",
+    "APIView оборачивает запрос в Request DRF и ждёт Response; методы называются по HTTP-глаголу: get, post, put, patch, delete.",
+    "request.data единообразно отдаёт разобранное тело для JSON и для форм, а request.query_params - это query string.",
+    "Response принимает питоновские данные и откладывает выбор формата: content negotiation по заголовку Accept выбирает JSON или browsable HTML.",
+    "Модуль status даёт именованные константы кодов; APIView не валидирует вход сам - это работа сериализатора.",
+  ]}
+/>
+
+## Ссылки
+
+- [DRF - Requests](https://www.django-rest-framework.org/api-guide/requests/)
+- [DRF - Responses](https://www.django-rest-framework.org/api-guide/responses/)
+- [DRF - Views (APIView)](https://www.django-rest-framework.org/api-guide/views/)
+- [DRF - Content negotiation](https://www.django-rest-framework.org/api-guide/content-negotiation/)
+- [DRF - Status codes](https://www.django-rest-framework.org/api-guide/status-codes/)
