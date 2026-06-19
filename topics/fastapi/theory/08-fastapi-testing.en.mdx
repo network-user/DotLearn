@@ -1,0 +1,165 @@
+---
+conceptId: fastapi-testing
+title: "Testing: TestClient and dependency_overrides"
+estimatedMinutes: 40
+---
+
+# How to check an endpoint without starting a server or touching the production database
+
+You wrote the endpoint `/items/{id}` and want to make sure it returns `200` for an existing item and `404` for a missing one. Spinning up a real server for that, opening a port, poking it with `curl`, and parsing the output is slow, fragile, and hard to repeat. On top of that, this endpoint goes to a database and requires an authorized user: running tests against a live database is dangerous, and manually obtaining a token on every run is painful. You want to call the endpoint right from the test code, get the status and JSON, and at the same time hand it a safe test database and a fake user.
+
+FastAPI covers this with two mechanisms. `TestClient` calls the application directly in the test process, with no real server and no network. `dependency_overrides` lets you swap any dependency for the duration of a test - a production database session for a test one, a real user for a fake one. By the end of this section you will understand that `TestClient` is synchronous and works with the application in-process, how to swap dependencies through `app.dependency_overrides`, and how to assemble a client with already-swapped dependencies on pytest fixtures to check protected endpoints as well.
+
+## Mental model: the test calls the application directly
+
+Normally a client sends an HTTP request over the network to a running server. `TestClient` removes both the network and the server from that chain: it wraps the ASGI application itself and runs the request through the same processing pipeline directly in the test process. You write `client.get("/items/1")` as if it were a network call, but there is no socket and no port - the application is called as an object in memory.
+
+<Figure caption="TestClient does not go over the network: it wraps the application and calls its pipeline directly in the test process, returning a response object with status and JSON right away.">
+  <Sketch viewBox="0 0 470 170" title="TestClient calls the app in-process">
+    <SketchBox x={20} y={60} width={120} height={48} accent />
+    <SketchLabel x={80} y={80} mono size={11}>test</SketchLabel>
+    <SketchLabel x={80} y={97} mono size={10}>client.get(...)</SketchLabel>
+
+    <SketchBox x={185} y={60} width={120} height={48} />
+    <SketchLabel x={245} y={80} mono size={11}>TestClient</SketchLabel>
+    <SketchLabel x={245} y={97} mono size={10}>wraps app</SketchLabel>
+
+    <SketchBox x={350} y={60} width={100} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={400} y={87} mono size={11}>app</SketchLabel>
+
+    <SketchArrow from={[140, 84]} to={[185, 84]} />
+    <SketchArrow from={[305, 84]} to={[350, 84]} />
+    <SketchArrow from={[400, 108]} to={[400, 135]} />
+    <SketchArrow from={[400, 135]} to={[80, 135]} dashed />
+    <SketchLabel x={230} y={150} muted size={10}>response: .status_code, .json()</SketchLabel>
+    <SketchLabel x={140} y={45} muted size={10}>no network, no port</SketchLabel>
+  </Sketch>
+</Figure>
+
+A handy property follows from this model: `TestClient` is **synchronous**, even if your handlers are async. It is built on Starlette and runs an event loop under the hood itself, so in a test you write an ordinary synchronous `client.get(...)` with no `await`. For cases where you specifically need an async client, there is `httpx.AsyncClient`, but the baseline tool is the synchronous `TestClient`.
+
+## TestClient: calling an endpoint from a test
+
+Create a `TestClient` by passing it the application, and call the methods `get`, `post`, and others. The response is an object with the familiar `status_code` and `json()`.
+
+```python
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int):
+    return {"item_id": item_id}
+
+client = TestClient(app)
+
+def test_read_item():
+    response = client.get("/items/42")
+    assert response.status_code == 200
+    assert response.json() == {"item_id": 42}
+```
+
+`TestClient(app)` wraps the application; `client.get("/items/42")` runs the request through the same routing and validation as in production. `response.status_code` gives the numeric status, `response.json()` the parsed body. A test is an ordinary pytest function with `assert`: you check the status and the contents of the response. For `POST`, the body is passed as `client.post("/items", json={"name": "cap"})`.
+
+<Callout type="info">
+`TestClient` works synchronously: write `response = client.get(...)` with no `await`, even if the handler is declared `async def`. Running the event loop is hidden inside the client.
+</Callout>
+
+## dependency_overrides: swapping a dependency in a test
+
+A real endpoint almost always depends on something external: a database session, the current user, a client to a third-party service. In a test, poking the real ones is awkward and dangerous. FastAPI keeps a dictionary `app.dependency_overrides` where the key is the original dependency function and the value is its replacement. For the duration of a test, the request goes through the replacement.
+
+```python
+def get_db():
+    return RealDatabase()
+
+def fake_db():
+    return InMemoryDatabase()
+
+@app.get("/items")
+def list_items(db=Depends(get_db)):
+    return db.all_items()
+
+app.dependency_overrides[get_db] = fake_db
+```
+
+The line `app.dependency_overrides[get_db] = fake_db` says: "wherever a handler asks for `Depends(get_db)`, substitute `fake_db` for `get_db`". The endpoint does not change - it still asks for `Depends(get_db)` - but in the test it gets a test in-memory database instead of the production one. The same trick swaps `get_current_user` for a function that returns a fake user, so a protected endpoint can be checked without a real token.
+
+<Figure caption="An entry in dependency_overrides redirects Depends(get_db) to fake_db. The handler itself does not change - the swap lives outside, in the application's dictionary.">
+  <Sketch viewBox="0 0 470 180" title="Swapping a dependency via dependency_overrides">
+    <SketchBox x={20} y={70} width={150} height={42} accent />
+    <SketchLabel x={95} y={88} mono size={10}>Depends(get_db)</SketchLabel>
+    <SketchLabel x={95} y={103} mono size={10}>in the handler</SketchLabel>
+
+    <SketchBox x={300} y={20} width={150} height={42} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={375} y={46} mono size={10}>get_db → RealDatabase</SketchLabel>
+
+    <SketchBox x={300} y={118} width={150} height={42} />
+    <SketchLabel x={375} y={144} mono size={10}>fake_db → InMemory</SketchLabel>
+
+    <SketchArrow from={[170, 80]} to={[300, 45]} dashed />
+    <SketchLabel x={200} y={64} muted size={10}>normally</SketchLabel>
+    <SketchArrow from={[170, 100]} to={[300, 138]} accent />
+    <SketchLabel x={185} y={130} accent size={10}>in the test: override</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Pytest fixtures: assembling a client with overrides
+
+To avoid repeating client creation and dependency swapping in every test, you extract them into pytest fixtures. A fixture prepares the environment, hands it to the test through `yield`, and cleans up after the test.
+
+```python
+import pytest
+from fastapi.testclient import TestClient
+
+@pytest.fixture
+def client():
+    app.dependency_overrides[get_db] = fake_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+def test_list_items(client):
+    response = client.get("/items")
+    assert response.status_code == 200
+```
+
+The `client` fixture sets the override, hands a ready `TestClient` through `yield`, and after the test calls `dependency_overrides.clear()` so the override does not leak into other tests. The test simply takes `client` as an argument - pytest substitutes the fixture's result itself. This way each test gets a clean client with test dependencies, and checking a protected endpoint comes down to the same `client.get(...)`, since `get_current_user` is swapped for a fake user.
+
+## Edge cases
+
+**A forgotten `clear()` leaks between tests.** If you set an override and do not remove it, it stays in `app.dependency_overrides` for the following tests too - and unexpectedly changes their behavior. Remove the override after the test (via `clear()` or by assigning an empty dictionary), especially when `app` is shared across the whole module.
+
+**`TestClient` is synchronous, but handlers can be async.** You do not need `await` before `client.get` - the client spins the event loop itself. `await` appears only if you deliberately reach for `httpx.AsyncClient` for an async test; then the test itself is declared `async def`.
+
+**Swap by the function itself as the key, not by its result.** In `dependency_overrides[get_db]` the key is the `get_db` function object, not a call `get_db()`. It is easy to mix up: then the override binds to no dependency, and the endpoint goes to production.
+
+## Common mistakes
+
+- **Testing against a live database or over the network.** `curl` requests to a running server or calls to a production database make tests slow, fragile, and dangerous. Call the application through `TestClient` and swap the database for a test one via `dependency_overrides`.
+- **Obtaining a real token in every test of a protected endpoint.** There is no need to go through real authentication - swap `get_current_user` for a function that returns a fake user, and test the endpoint's logic, not the login procedure.
+- **Not clearing `dependency_overrides`.** A leftover override leaks into neighboring tests and produces flaky failures that depend on run order. Clean up the environment in the fixture after `yield`.
+
+<Detail summary="Why TestClient is synchronous and AsyncClient is needed only sometimes">
+
+`TestClient` is built on Starlette and under the hood spins up an event loop for the duration of each request itself: you call a synchronous method, and the client internally runs the application's async pipeline and returns a ready response. This covers the overwhelming majority of tests: checking an endpoint's status, body, headers - regardless of whether it is synchronous or asynchronous. `httpx.AsyncClient` is needed in narrower cases: when the test itself must be `async def` - for example, to await several async operations in parallel inside the test, to share a single event loop with the application, or to check behavior tied to the async lifecycle. For an ordinary endpoint check this is needless complication - the synchronous `TestClient` is shorter and clearer.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "TestClient calls the application directly in the test process, with no real server and no network, returning a response with status_code and json().",
+    "TestClient is synchronous (it is built on Starlette and spins the event loop itself), so you write client.get(...) with no await even for async handlers; reach for httpx.AsyncClient only for async tests.",
+    "Tests are written with pytest: call client.get/post and check response.status_code and response.json() with assert.",
+    "dependency_overrides swaps a dependency in a test: the key is the function itself (get_db, get_current_user), the value is its fake; this is how you supply a test database and a fake user for protected endpoints.",
+    "Extract the override into a pytest fixture (the client via yield) and always clear dependency_overrides after the test, or it leaks into other tests.",
+  ]}
+/>
+
+## References
+
+- [FastAPI - Testing](https://fastapi.tiangolo.com/tutorial/testing/)
+- [FastAPI - Testing Dependencies with Overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)
+- [FastAPI - Async Tests](https://fastapi.tiangolo.com/advanced/async-tests/)
+- [Starlette - TestClient](https://www.starlette.io/testclient/)

@@ -1,0 +1,272 @@
+exercises:
+  - id: fastapi-background-when-001
+    concept: fastapi-background
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Which kind of work is best suited for `BackgroundTasks` in FastAPI?"
+    choices:
+      - id: a
+        text: "Short and not critical to delivery: writing a line to a log after the client already has the response."
+      - id: b
+        text: "Charging money from an account, which must not be lost under any failure."
+      - id: c
+        text: "An hour-long analytics recompute with mandatory retries on failure."
+      - id: d
+        text: "Any work at all: BackgroundTasks gives the same guarantees as a separate queue."
+    correct: [a]
+    explanation: "`BackgroundTasks` is good for short, non-critical work that runs after the response: logging, a notification, cache invalidation. Critical or long work with retries goes to a real queue."
+    variants:
+      - prompt: "When should work in `BackgroundTasks` be moved to a real task queue?"
+        choices:
+          - id: a
+            text: "When you need retries on failure, a schedule, or distribution across several workers."
+          - id: b
+            text: "When the task takes under a second and losing it does not matter."
+          - id: c
+            text: "When you just need to write a line to a log after the response."
+          - id: d
+            text: "Never: BackgroundTasks handles any load."
+        correct: [a]
+        explanation: "As soon as work needs retries, a schedule, distribution across machines, or a guarantee it will not be lost, a FastAPI background task is not a fit, and its place is taken by a queue like Celery."
+      - prompt: "What is true about when a FastAPI background task runs?"
+        choices:
+          - id: a
+            text: "It runs after the response has already been sent to the client."
+          - id: b
+            text: "It runs before the response is built, and the client waits for it to finish."
+          - id: c
+            text: "It runs in a separate process before the request even arrives."
+          - id: d
+            text: "It runs instead of the response, replacing it."
+        correct: [a]
+        explanation: "A background task is a tail after the response: the client gets the response immediately, while the task runs after the response is sent, in the same process."
+      - prompt: "Why is sending a welcome email a good fit for a background task?"
+        choices:
+          - id: a
+            text: "The client should not wait for the slow send: the \"done\" response goes out immediately, the email is sent afterward."
+          - id: b
+            text: "The email absolutely must arrive, and a background task guarantees that."
+          - id: c
+            text: "A background task automatically parallelizes the send across several cores."
+          - id: d
+            text: "Only a background task can reach an external SMTP service."
+        correct: [a]
+        explanation: "Registration already went through, and the email need not be shown to the client immediately. The response goes out at once, and the slow send is deferred to after the response so as not to hold the client up."
+
+  - id: fastapi-background-add-task-001
+    concept: fastapi-background
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete the handler that registers a background log write after the response."
+    template: |
+      from fastapi import FastAPI, BackgroundTasks
+
+      app = FastAPI()
+
+      def write_log(message: str):
+          with open("log.txt", "a") as f:
+              f.write(message + "\n")
+
+      @app.post("/register")
+      def register(email: str, background_tasks: {{type}}):
+          background_tasks.{{method}}(write_log, f"registered {email}")
+          return {"status": "ok"}
+    blanks:
+      type:
+        accept: ["BackgroundTasks"]
+      method:
+        accept: ["add_task"]
+    variants:
+      - prompt: "Complete the call: register the function `send_email` with the argument `email`. Pass the function itself, without parentheses."
+        template: |
+          from fastapi import BackgroundTasks
+
+          def send_email(to: str):
+              ...
+
+          def notify(email: str, background_tasks: BackgroundTasks):
+              background_tasks.add_task({{fn}}, email)
+              return {"queued": True}
+        blanks:
+          fn:
+            accept: ["send_email"]
+      - prompt: "Complete the parameter type that FastAPI uses to inject the object for registering background tasks."
+        template: |
+          from fastapi import FastAPI, BackgroundTasks
+
+          app = FastAPI()
+
+          @app.post("/items")
+          def create(name: str, tasks: {{type}}):
+              tasks.add_task(print, name)
+              return {"name": name}
+        blanks:
+          type:
+            accept: ["BackgroundTasks"]
+
+  - id: fastapi-background-lifespan-001
+    concept: fastapi-background
+    type: theory-quiz
+    difficulty: 2
+    prompt: "What does the code written BEFORE `yield` in a lifespan context manager run as?"
+    choices:
+      - id: a
+        text: "Startup: once before requests are accepted - for example, open a connection pool or load a model."
+      - id: b
+        text: "Shutdown: releasing resources when the service stops."
+      - id: c
+        text: "Code on every incoming request, like a normal handler."
+      - id: d
+        text: "Nothing: code before yield in lifespan does not run."
+    correct: [a]
+    explanation: "Code before `yield` is startup: it runs once before the service starts accepting requests. This is where you open a pool, load a model, warm a cache. Code after `yield` is shutdown."
+    variants:
+      - prompt: "What does the code written AFTER `yield` in lifespan run as?"
+        choices:
+          - id: a
+            text: "Shutdown: once when the service stops - cleanly close the pool, release resources."
+          - id: b
+            text: "Startup: opening resources before the first request."
+          - id: c
+            text: "Processing of every outgoing response, like middleware."
+          - id: d
+            text: "Re-initialization of the application on every request."
+        correct: [a]
+        explanation: "Code after `yield` is shutdown: it runs once when the service stops. This is where clean release goes: close the pool, say goodbye to external services."
+      - prompt: "Why did lifespan replace the deprecated `@app.on_event(\"startup\")` and `@app.on_event(\"shutdown\")`?"
+        choices:
+          - id: a
+            text: "A single context manager keeps the paired \"open - close\" logic together, in one function."
+          - id: b
+            text: "Lifespan runs faster because it does not use yield."
+          - id: c
+            text: "@app.on_event never invoked the shutdown logic."
+          - id: d
+            text: "Lifespan lets you open resources right inside request handlers."
+        correct: [a]
+        explanation: "Lifespan keeps the \"open\" before `yield` and the paired \"close\" after it in one function, rather than scattering the logic across two separate event handlers."
+      - prompt: "Where is it best to open a database connection pool?"
+        choices:
+          - id: a
+            text: "In lifespan at startup - once before requests, not in the first request."
+          - id: b
+            text: "In every handler anew, so the connection is fresh."
+          - id: c
+            text: "In a background task after the first response."
+          - id: d
+            text: "In middleware on every incoming request."
+        correct: [a]
+        explanation: "Startup resources are opened in lifespan once before requests. Opening in the first request would make it pay for initialization, and with several workers the logic would be smeared."
+
+  - id: fastapi-background-predict-order-001
+    concept: fastapi-background
+    type: predict-output
+    difficulty: 2
+    prompt: "What does this program print? It models the order: the response is sent, then the background task runs."
+    snippet: |
+      events = []
+
+      def send_response():
+          events.append("response")
+
+      def background():
+          events.append("task")
+
+      send_response()
+      background()
+      print(events)
+    expected:
+      kind: stdout
+      value: "['response', 'task']"
+    hints:
+      - "A background task is a tail after the response. Which happens first: sending the response or running the task?"
+      - "First the response send runs and appends \"response\", then the background task appends \"task\"."
+    variants:
+      - snippet: |
+          events = []
+          tasks = []
+
+          def schedule(fn):
+              tasks.append(fn)
+
+          def log_a():
+              events.append("a")
+
+          def log_b():
+              events.append("b")
+
+          schedule(log_a)
+          schedule(log_b)
+          events.append("response")
+          for task in tasks:
+              task()
+          print(events)
+        expected:
+          kind: stdout
+          value: "['response', 'a', 'b']"
+      - snippet: |
+          log = []
+
+          def add_task(fn):
+              log.append("queued")
+
+          def task():
+              log.append("ran")
+
+          add_task(task)
+          log.append("response sent")
+          task()
+          print(log)
+        expected:
+          kind: stdout
+          value: "['queued', 'response sent', 'ran']"
+
+  - id: fastapi-background-vs-queue-001
+    concept: fastapi-background
+    type: theory-quiz
+    difficulty: 3
+    prompt: "You need to generate a large PDF report (several minutes) and guarantee that generation is retried on failure. Where should this work go?"
+    choices:
+      - id: a
+        text: "Into a real task queue (Celery and the like): long work with retries needs a broker and separate workers."
+      - id: b
+        text: "Into `BackgroundTasks`: they handle a task of any duration."
+      - id: c
+        text: "Into lifespan at startup, so the report is generated once on launch."
+      - id: d
+        text: "Right in the handler: the client will wait several minutes for the response."
+    correct: [a]
+    explanation: "The work is long and needs guarantees and retries - that is beyond `BackgroundTasks`, which live in the process without durability. That belongs in a task queue with a broker and separate workers, like Celery."
+    hints:
+      - "Compare two axes: the duration of the task and how important it is that it not be lost. Where on those axes does a minutes-long report with mandatory retries land?"
+      - "`BackgroundTasks` live in the web server process and guarantee nothing. What do you need when a task is long and losing it is unacceptable?"
+
+  - id: fastapi-background-durability-001
+    concept: fastapi-background
+    type: predict-output
+    difficulty: 4
+    prompt: "What does this program print? It models a FastAPI background task: the task is queued in the process, but the process crashes between sending the response and running it."
+    snippet: |
+      pending = []
+
+      def add_task(name):
+          pending.append(name)
+
+      def send_response():
+          return "200 OK"
+
+      def crash_before_running_tasks():
+          pending.clear()
+
+      add_task("send_email")
+      send_response()
+      crash_before_running_tasks()
+      executed = list(pending)
+      print(executed)
+    expected:
+      kind: stdout
+      value: "[]"
+    hints:
+      - "A background task lives in the same process and is stored nowhere. What happens to its list if the process crashes before the task runs?"
+      - "Follow `pending`: the task was added, the response was sent, then the process \"crashed\" and cleared the list before execution. How many tasks actually ran?"
+      - "`pending.clear()` empties the list before anything is launched from it. `executed` copies an already-empty `pending`."

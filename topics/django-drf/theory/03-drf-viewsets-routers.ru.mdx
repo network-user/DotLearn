@@ -1,0 +1,174 @@
+---
+conceptId: drf-viewsets-routers
+title: "Generic views, ViewSet и роутеры"
+estimatedMinutes: 45
+---
+
+# Пять endpoint'ов, которые Вы пишете снова и снова
+
+Откройте любой REST-API каталога - хоть товаров Ozon, хоть статей на Хабре - и Вы увидите один и тот же скелет. Список: `GET /items/`. Создание: `POST /items/`. Одна штука: `GET /items/42/`. Замена: `PUT /items/42/`. Удаление: `DELETE /items/42/`. Меняются имена и поля, но форма повторяется в каждом ресурсе. На голом `APIView` каждый из этих пяти обработчиков Вы пишете руками: достать queryset, прогнать через serializer, вернуть `Response`, проставить статус. Для одного ресурса - страница кода. Для пятнадцати - пятнадцать почти одинаковых страниц, и в каждой по строчке, где легко ошибиться.
+
+DRF давно заметил это повторение и убрал его слоями. Сначала `GenericAPIView` плюс миксины выносят пять типовых действий в готовые куски. Затем concrete generics собирают популярные сочетания в один класс. Затем `ViewSet` собирает все действия по ресурсу в один объект. А `Router` дописывает за Вас URL-карту, которую Вы иначе перечисляли бы руками. К концу раздела Вы будете читать связку «ViewSet + router» и точно знать, какой HTTP-метод по какому URL во что превратится.
+
+## Ментальная модель: лестница абстракций
+
+Не воспринимайте эти инструменты как конкурентов - это ступени одной лестницы. Внизу `APIView`: полный контроль, всё руками. Выше `GenericAPIView` + миксины: queryset и serializer объявлены атрибутами, а каждое действие - готовый метод миксина. Ещё выше concrete generics: частые наборы миксинов уже соединены в один класс. На вершине `ModelViewSet`: все пять действий в одном объекте, а URL'ы выдаёт router. Чем выше ступень, тем меньше кода и тем меньше свободы в деталях.
+
+<Figure caption="Лестница DRF-классов: снизу вверх кода всё меньше, типового поведения всё больше. APIView - всё руками; GenericAPIView+миксины собирают действия из кусков; concrete generics соединяют частые наборы; ModelViewSet даёт все пять действий, а router строит URL.">
+  <Sketch viewBox="0 0 440 230" title="Лестница абстракций DRF">
+    <SketchBox x={20} y={176} width={400} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={36} y={198} mono size={11} anchor="start">APIView</SketchLabel>
+    <SketchLabel x={404} y={198} muted size={9} anchor="end">всё руками</SketchLabel>
+
+    <SketchBox x={20} y={132} width={336} height={36} />
+    <SketchLabel x={36} y={154} mono size={11} anchor="start">GenericAPIView + mixins</SketchLabel>
+
+    <SketchBox x={20} y={88} width={272} height={36} />
+    <SketchLabel x={36} y={110} mono size={11} anchor="start">concrete generics</SketchLabel>
+
+    <SketchBox x={20} y={44} width={208} height={36} accent />
+    <SketchLabel x={36} y={66} mono accent size={11} anchor="start">ModelViewSet + router</SketchLabel>
+    <SketchLabel x={404} y={66} accent size={9} anchor="end">меньше кода</SketchLabel>
+
+    <SketchArrow from={[400, 176]} to={[400, 80]} />
+  </Sketch>
+</Figure>
+
+Главная мысль: выбирайте ступень под задачу. Стандартный CRUD по модели - берите `ModelViewSet`, и пусть router строит URL. Нужен только список и создание, без удаления - возьмите `ListCreateAPIView`. Поведение нетипичное - спуститесь к `GenericAPIView` с нужными миксинами или к голому `APIView`. Подниматься по лестнице стоит ради меньшего кода, спускаться - ради контроля.
+
+## GenericAPIView и миксины
+
+`GenericAPIView` сам по себе почти пуст, но он добавляет два ключевых атрибута - `queryset` и `serializer_class` - и два метода, которые на них опираются: `get_queryset()` и `get_serializer()`. Миксины приносят по одному действию, которые этими методами пользуются.
+
+```python
+from rest_framework import generics, mixins
+
+class ItemList(mixins.ListModelMixin,
+               mixins.CreateModelMixin,
+               generics.GenericAPIView):
+    queryset = Item.objects.all()
+    serializer_class = ItemSerializer
+
+    def get(self, request):
+        return self.list(request)
+
+    def post(self, request):
+        return self.create(request)
+```
+
+Пять миксинов покрывают пять действий: `ListModelMixin` даёт `.list()`, `CreateModelMixin` - `.create()`, `RetrieveModelMixin` - `.retrieve()`, `UpdateModelMixin` - `.update()`, `DestroyModelMixin` - `.destroy()`. Вы вручную связываете HTTP-метод с методом миксина. Это уже сильно короче `APIView`, но связывание всё ещё на Вас.
+
+## Concrete generics
+
+Частые сочетания миксинов DRF уже собрал в готовые классы - их называют concrete generic views. Тогда не нужно ни перечислять миксины, ни писать `get`/`post`.
+
+```python
+from rest_framework import generics
+
+class ItemList(generics.ListCreateAPIView):
+    queryset = Item.objects.all()
+    serializer_class = ItemSerializer
+
+class ItemDetail(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Item.objects.all()
+    serializer_class = ItemSerializer
+```
+
+`ListCreateAPIView` - это `GET` (список) и `POST` (создание) на коллекции. `RetrieveUpdateDestroyAPIView` - это `GET`, `PUT`/`PATCH` и `DELETE` на одном объекте. Есть и более узкие: `ListAPIView` (только список), `RetrieveAPIView` (только один объект), `CreateAPIView`, и так далее. Имя класса прямо называет, какие действия он умеет.
+
+<Callout type="info">
+Двух классов - `ListCreateAPIView` для `/items/` и `RetrieveUpdateDestroyAPIView` для `/items/{id}/` - хватает на полный CRUD одного ресурса. Это уже почти ViewSet, только URL'ы пока придётся прописывать руками в `urlpatterns`.
+</Callout>
+
+## ViewSet: один класс на ресурс
+
+`ViewSet` идёт дальше: он не привязан к HTTP-методам напрямую. Вместо `get`/`post` у него действия с говорящими именами - `list`, `retrieve`, `create`, `update`, `destroy`. Кто свяжет действие с методом и URL, решит router. `ModelViewSet` - это ViewSet, у которого все пять действий уже реализованы поверх queryset и serializer.
+
+```python
+from rest_framework import viewsets
+
+class ItemViewSet(viewsets.ModelViewSet):
+    queryset = Item.objects.all()
+    serializer_class = ItemSerializer
+```
+
+Три строки тела дают весь CRUD: список, один объект, создание, замену, частичное обновление, удаление. Если нужно лишь чтение - есть `ReadOnlyModelViewSet` (только `list` и `retrieve`). А переопределить отдельное действие можно, просто объявив метод `def list(self, request): ...` - остальные останутся стандартными.
+
+## Router: URL'ы из коробки
+
+ViewSet не объявляет URL'ы - это делает router. Вы регистрируете ViewSet под префиксом, и `DefaultRouter` генерирует обе маршрутные строки сразу.
+
+```python
+from rest_framework.routers import DefaultRouter
+
+router = DefaultRouter()
+router.register("items", ItemViewSet, basename="item")
+
+urlpatterns = router.urls
+```
+
+Эта регистрация порождает два URL-шаблона: `items/` (коллекция) и `items/{pk}/` (объект). Дальше router сам сопоставляет HTTP-метод с действием ViewSet'а. Никакого ручного перечисления `path(...)` для каждого действия - одна строка `register` заменяет пять.
+
+## Маппинг: метод + URL в action
+
+Сердце связки - таблица соответствий. Router читает HTTP-метод и форму URL (с `pk` или без) и зовёт нужное действие ViewSet'а.
+
+<Figure caption="Как router сопоставляет HTTP-метод и URL с действием ViewSet'а. На коллекции (без pk) живут list и create; на объекте (с pk) - retrieve, update, partial_update и destroy.">
+  <RowFilterFigure
+    columns={['HTTP-метод', 'URL', 'action']}
+    rows={[
+      { cells: ['GET', '/items/', 'list'], kept: true },
+      { cells: ['POST', '/items/', 'create'], kept: true },
+      { cells: ['GET', '/items/42/', 'retrieve'], kept: true },
+      { cells: ['PUT', '/items/42/', 'update'], kept: true },
+      { cells: ['PATCH', '/items/42/', 'partial_update'], kept: true },
+      { cells: ['DELETE', '/items/42/', 'destroy'], kept: true },
+    ]}
+    title="Маппинг метод+URL → action"
+  />
+</Figure>
+
+Запомните разбиение по URL: на коллекции `/items/` живут только `list` (GET) и `create` (POST) - тут нет конкретного объекта. На элементе `/items/{pk}/` живут `retrieve` (GET), `update` (PUT), `partial_update` (PATCH) и `destroy` (DELETE). `PUT` и `PATCH` - разные действия: `PUT` заменяет объект целиком, `PATCH` правит часть полей (внутри сериализатор создаётся с `partial=True`).
+
+## Краевые случаи
+
+**`basename` обязателен, когда у ViewSet нет `queryset` как атрибута.** Router выводит имена URL-маршрутов из queryset'а модели. Если queryset задан только через `get_queryset()`, router не сможет угадать имя и потребует явный `basename` в `register(...)` - иначе будет ошибка при старте.
+
+**Действие без `pk` на коллекции не получает объект.** `list` и `create` работают с коллекцией целиком; у них нет «текущего объекта». Попытка обратиться к одному объекту в `list` - логическая ошибка: для этого есть `retrieve` с его `pk`.
+
+**`PUT` против `PATCH` - не синонимы.** `PUT` ожидает полное представление объекта и заменяет его; пропущенное обязательное поле - ошибка валидации. `PATCH` принимает частичное и трогает только присланное. Отдать на `PATCH` объект целиком можно, на `PUT` кусок - нет.
+
+<Callout type="warning">
+Surprise: `DefaultRouter` добавляет к вашим URL ещё и корневой API-root (`GET /`) со списком всех зарегистрированных ресурсов, и поддержку суффикса формата (`/items.json`). Это удобно для просмотра, но это лишние маршруты. `SimpleRouter` делает то же без API-root - его берут, когда корневая страница не нужна.
+</Callout>
+
+## Типичные ошибки
+
+- **Голый `ViewSet` там, где нужен `ModelViewSet`.** `viewsets.ViewSet` не реализует действия - только даёт каркас. Для стандартного CRUD нужен `ModelViewSet`, иначе `list`/`create` придётся писать руками, и смысл подъёма по лестнице теряется.
+- **Регистрация ViewSet'а с ведущим слешем.** `router.register("/items", ...)` сломает URL: префикс пишут без ведущего слеша - `router.register("items", ...)`.
+- **Ручные `path()` рядом с router'ом для тех же действий.** Если ресурс отдан router'у, не дублируйте его маршруты руками - получите конфликт и неочевидное поведение. Router'у - его ресурсы, ручным `path` - всё остальное.
+- **Ожидание, что `ModelViewSet` сам узнает, какие поля отдавать.** Поля задаёт `serializer_class`. Без него ViewSet не знает форму данных и упадёт - queryset отвечает за «какие объекты», serializer за «какие поля».
+
+<Detail summary="Что именно происходит при router.register под капотом">
+
+`register("items", ItemViewSet)` не создаёт волшебства - он строит две записи `path()`, в которых ViewSet превращается в обычную view через `.as_view({...})`. Для коллекции router зовёт `ItemViewSet.as_view({"get": "list", "post": "create"})`, для элемента - `ItemViewSet.as_view({"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"})`. То есть словарь `{HTTP-метод: имя действия}` - это и есть тот самый маппинг, только router заполняет его за Вас. Поэтому ViewSet можно подключить и без router'а, вызвав `as_view` руками с нужным словарём - именно так добавляют нестандартные действия через декоратор `@action`, который дописывает в этот словарь дополнительную пару «метод → метод-обработчик» по отдельному URL.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "GenericAPIView даёт queryset и serializer_class, а миксины (List/Create/Retrieve/Update/Destroy) приносят по одному типовому действию.",
+    "Concrete generics соединяют частые наборы миксинов в один класс: ListCreateAPIView - GET/POST коллекции, RetrieveUpdateDestroyAPIView - GET/PUT/PATCH/DELETE объекта.",
+    "ViewSet собирает действия ресурса под именами list/retrieve/create/update/destroy; ModelViewSet реализует все пять, ReadOnlyModelViewSet - только чтение.",
+    "DefaultRouter из одной register-строки строит URL коллекции (/items/) и объекта (/items/{pk}/) и сам сопоставляет HTTP-метод с действием.",
+    "На коллекции живут list и create; на объекте - retrieve, update, partial_update, destroy; PUT заменяет целиком, PATCH правит часть.",
+  ]}
+/>
+
+## Ссылки
+
+- [DRF - Generic views](https://www.django-rest-framework.org/api-guide/generic-views/)
+- [DRF - Mixins](https://www.django-rest-framework.org/api-guide/generic-views/#mixins)
+- [DRF - ViewSets](https://www.django-rest-framework.org/api-guide/viewsets/)
+- [DRF - Routers](https://www.django-rest-framework.org/api-guide/routers/)
+- [DRF - Tutorial: ViewSets & Routers](https://www.django-rest-framework.org/tutorial/6-viewsets-and-routers/)

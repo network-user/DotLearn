@@ -1,0 +1,209 @@
+---
+conceptId: django-models-orm
+title: "Модели и ORM: QuerySet, связи, N+1"
+estimatedMinutes: 50
+---
+
+# Откуда берётся SQL, который Вы не писали
+
+Вы объявляете класс `Order`, пишете `Order.objects.filter(status="paid")` - и через секунду у Вас в руках набор объектов с заполненными полями, хотя Вы ни разу не упомянули слова `SELECT`, не открывали соединение и не разбирали строки результата. ORM Django переводит обращения к Python-объектам в SQL и обратно: класс становится таблицей, экземпляр - строкой, атрибут - столбцом. Удобно настолько, что легко забыть: за каждым невинным обращением к атрибуту может прятаться запрос в базу.
+
+Эта забывчивость - не безобидная. Самые частые проблемы производительности в Django-проектах рождаются не из «медленного SQL», а из непонимания двух вещей: **когда** ORM на самом деле идёт в базу и **сколько раз**. К концу раздела Вы будете уверенно отвечать на оба вопроса: поймёте, как модель отражается в таблицу, почему `QuerySet` ленив и в какой момент он «просыпается», чем `select_related` отличается от `prefetch_related` и как одна строка кода в шаблоне превращается в сотню запросов.
+
+## Модель - это класс, таблица - его отражение
+
+Модель - обычный класс Python, унаследованный от `models.Model`. Каждый атрибут-поле описывает столбец: его тип, ограничения, значение по умолчанию. Django по этому описанию умеет создать таблицу, а потом - превращать строки в экземпляры и обратно.
+
+```python
+class Order(models.Model):
+    customer = models.CharField(max_length=100)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, default="new")
+    created = models.DateTimeField(auto_now_add=True)
+```
+
+Отдельный объект `models.Manager`, доступный как `Order.objects`, - это «дверь» к таблице: через него начинаются все запросы. Вложенный `class Meta` задаёт свойства таблицы целиком, а не отдельного поля: порядок сортировки по умолчанию, человекочитаемое имя, индексы, ограничения уникальности.
+
+```python
+class Order(models.Model):
+    customer = models.CharField(max_length=100)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        ordering = ["-created"]
+        verbose_name = "заказ"
+```
+
+<Figure caption="Класс модели становится таблицей: имя класса - имя таблицы, поля - столбцы, экземпляр - строка. ORM переводит в обе стороны.">
+  <Sketch viewBox="0 0 480 220" title="Модель отражается в таблицу">
+    <SketchBox x={20} y={40} width={150} height={140} />
+    <SketchLabel x={95} y={32} mono size={11}>class Order</SketchLabel>
+    <SketchLabel x={34} y={70} mono muted size={10} anchor="start">customer</SketchLabel>
+    <SketchLabel x={34} y={96} mono muted size={10} anchor="start">amount</SketchLabel>
+    <SketchLabel x={34} y={122} mono muted size={10} anchor="start">status</SketchLabel>
+    <SketchLabel x={34} y={148} mono muted size={10} anchor="start">created</SketchLabel>
+
+    <SketchArrow from={[170, 110]} to={[300, 110]} accent />
+    <SketchLabel x={235} y={98} muted size={10}>ORM</SketchLabel>
+
+    <SketchBox x={300} y={40} width={160} height={140} accent />
+    <SketchLabel x={380} y={32} mono accent size={11}>таблица order</SketchLabel>
+    <SketchLabel x={314} y={70} mono muted size={10} anchor="start">customer | amount</SketchLabel>
+    <SketchLabel x={314} y={96} mono muted size={9} anchor="start">Анна | 1200.00</SketchLabel>
+    <SketchLabel x={314} y={118} mono muted size={9} anchor="start">Борис | 540.00</SketchLabel>
+    <SketchLabel x={314} y={140} mono muted size={9} anchor="start">Вера | 999.00</SketchLabel>
+  </Sketch>
+</Figure>
+
+Чтобы это отражение появилось в реальной базе, Django использует **миграции**. Команда `python manage.py makemigrations` сравнивает текущие модели с прошлым состоянием и пишет файл-миграцию - пошаговый рецепт изменений («создать таблицу», «добавить столбец»). Команда `python manage.py migrate` применяет накопленные миграции к базе. Важно разделять: `makemigrations` ничего не делает с базой, он только сочиняет рецепт; меняет базу `migrate`. Миграции - это код, их коммитят в репозиторий, чтобы у всех была одинаковая схема.
+
+## Ментальная модель: QuerySet - это отложенный рецепт, а не данные
+
+Главная идея ORM, которую нужно усвоить накрепко: `QuerySet` **ленив**. Когда Вы пишете `Order.objects.filter(status="paid")`, в базу никто не идёт. Вы получаете объект-описание будущего запроса - рецепт. Его можно уточнять дальше: `.exclude(...)`, `.order_by(...)`, ещё один `.filter(...)` - каждый такой вызов возвращает новый `QuerySet` с дополненным рецептом, и по-прежнему ни одного обращения к базе.
+
+SQL выполняется только тогда, когда у `QuerySet` действительно требуют данные. Это происходит при итерации в цикле `for`, при срезе через индекс или диапазон, при оборачивании в `list()`, при вызове `len()`, `bool()` или агрегатов вроде `.count()`. До этого момента рецепт можно сколько угодно передавать, копировать и достраивать - база спит.
+
+<Figure caption="Цепочка filter/exclude/order_by только достраивает рецепт; реальный поход в базу случается на итерации, срезе или list().">
+  <PipelineFigure
+    title="Когда QuerySet просыпается"
+    stages={[
+      { label: ".filter(status='paid')", note: "строит рецепт" },
+      { label: ".exclude(amount=0)", note: "достраивает рецепт" },
+      { label: ".order_by('-created')", note: "всё ещё ленив" },
+      { label: "for o in qs / list(qs)", note: "SQL выполняется", active: true },
+    ]}
+  />
+</Figure>
+
+Зачем такая сложность? Лень - это оптимизация. Django откладывает запрос, чтобы собрать из всех Ваших уточнений **один** SQL и сходить в базу ровно раз, а не выполнять промежуточные `filter` по отдельности. Кроме того, ленивый `QuerySet` можно передать в шаблон или в другую функцию, и тот сам решит, нужны ли ему данные.
+
+```python
+qs = Order.objects.filter(status="paid")
+qs = qs.exclude(amount=0)
+qs = qs.order_by("-created")
+total = qs.count()
+```
+
+Здесь первые три строки не трогают базу - они лишь наращивают рецепт. Запрос уходит в базу один раз, на `.count()`. Если бы дальше Вы написали ещё и `for o in qs:`, это был бы **второй** поход (если результат не закэширован итерацией) - повод задуматься, не делаете ли Вы лишней работы.
+
+## Выборка одного объекта: filter, exclude, get
+
+`filter(...)` оставляет строки, удовлетворяющие условию, и возвращает `QuerySet` (возможно, пустой). `exclude(...)` - его зеркало: оставляет всё, **кроме** подходящего под условие. Оба ленивы и возвращают набор.
+
+`get(...)` стоит особняком: он сразу выполняет запрос и возвращает **ровно один** объект, а не набор. Поэтому у `get` особое поведение на краях. Если ни одна строка не подошла, он выбрасывает `DoesNotExist`. Если подошло больше одной - `MultipleObjectsReturned`. Это и есть его контракт: «верни мне единственный объект или признай, что так нельзя».
+
+```python
+order = Order.objects.get(id=42)
+paid = Order.objects.filter(status="paid")
+not_new = Order.objects.exclude(status="new")
+```
+
+<Callout type="warning">
+`get()` без точного совпадения - источник необработанных исключений. `Order.objects.get(status="paid")`, когда оплаченных заказов десятки, упадёт с `MultipleObjectsReturned`. Используйте `get` только по уникальному признаку (первичный ключ, поле с `unique=True`); для «может быть, а может и нет» берите `filter(...).first()`.
+</Callout>
+
+## Связи: ForeignKey, OneToOne, ManyToMany
+
+Реальные данные связаны. Django выражает связи через специальные поля.
+
+**`ForeignKey`** - связь «многие к одному»: у many заказов один customer. В таблице это столбец с идентификатором, ссылающимся на строку другой таблицы.
+
+```python
+class Customer(models.Model):
+    name = models.CharField(max_length=100)
+
+class Order(models.Model):
+    customer = models.ForeignKey(
+        Customer, on_delete=models.CASCADE, related_name="orders"
+    )
+```
+
+`related_name="orders"` задаёт **обратное** обращение: от клиента к его заказам. Имея объект `c` типа `Customer`, Вы пишете `c.orders.all()` и получаете все его заказы. Без `related_name` Django сам придумает имя (`order_set`), но явное имя читается лучше. Параметр `on_delete` обязателен: он говорит, что делать с заказами, если удалить клиента (`CASCADE` - удалить вместе, `PROTECT` - запретить удаление, `SET_NULL` - обнулить ссылку).
+
+**`OneToOneField`** - «один к одному», частный случай: профиль у пользователя, паспорт у человека. Технически это `ForeignKey` с ограничением уникальности.
+
+**`ManyToManyField`** - «многие ко многим»: у заказа много товаров, товар в many заказах. Django заводит под это скрытую промежуточную таблицу с парами идентификаторов.
+
+```python
+class Product(models.Model):
+    title = models.CharField(max_length=200)
+
+class Order(models.Model):
+    products = models.ManyToManyField(Product, related_name="orders")
+```
+
+## Проблема N+1 и как её лечить
+
+Теперь соберём ленивость и связи вместе - и наткнёмся на самую известную ловушку ORM. Допустим, Вы выводите список заказов и для каждого - имя клиента.
+
+```python
+for order in Order.objects.all():
+    print(order.customer.name)
+```
+
+Выглядит безобидно. Но `Order.objects.all()` - это **один** запрос за заказами, а каждое обращение `order.customer` для нового заказа - это **ещё один** запрос за клиентом (ведь клиента в первой выборке не было, ORM подгружает его лениво). Сто заказов - сто один запрос. Это и есть **N+1**: один запрос за списком плюс по одному на каждый элемент.
+
+Лечится это тем, что Вы заранее говорите ORM подтянуть связанные данные.
+
+<Compare
+  leftTitle="select_related"
+  rightTitle="prefetch_related"
+  left={<>
+    <p>Для <strong>ForeignKey</strong> и <strong>OneToOne</strong>.</p>
+    <p>Делает <strong>JOIN</strong> и тянет связанные строки <strong>одним</strong> запросом.</p>
+    <p><code>Order.objects.select_related("customer")</code></p>
+  </>}
+  right={<>
+    <p>Для <strong>ManyToMany</strong> и обратных <strong>ForeignKey</strong>.</p>
+    <p>Делает <strong>отдельный</strong> запрос и сшивает данные в Python.</p>
+    <p><code>Customer.objects.prefetch_related("orders")</code></p>
+  </>}
+  verdict="JOIN хорош для «один связанный объект» (select_related). Для «много связанных» JOIN раздул бы результат, поэтому prefetch_related берёт их вторым запросом и склеивает в памяти. Оба превращают N+1 в фиксированное число запросов."
+/>
+
+С `select_related` тот же цикл выполнит ровно один запрос: JOIN притянет клиента к каждому заказу сразу.
+
+```python
+for order in Order.objects.select_related("customer"):
+    print(order.customer.name)
+```
+
+## Краевые случаи
+
+**`QuerySet` кэширует результат после первой итерации.** Когда Вы первый раз прошли по `qs` циклом или вызвали `list(qs)`, результат сохраняется внутри объекта. Повторный `for` по **тому же** `qs` уже не идёт в базу - читает кэш. Но `qs.filter(...)` или `qs.count()` создаёт/выполняет новый запрос. Отсюда правило: переиспользуйте один и тот же вычисленный `QuerySet`, а не создавайте похожий заново.
+
+**Срез выполняет запрос, но `qs[:5]` ленивее, чем кажется.** Срез без шага транслируется в `LIMIT`/`OFFSET` и обычно сам по себе ленив (возвращает `QuerySet`), но как только Вы его итерируете или индексируете конкретный элемент (`qs[0]`) - запрос выполняется. А вот `qs[0]` с отрицательным индексом запрещён: ORM не умеет «последний» через SQL без явного `order_by`.
+
+**`select_related` по полю, которого нет среди ForeignKey, - ошибка.** Его нельзя применять к `ManyToManyField` или обратному `ForeignKey`: там нет одной строки для JOIN. Для них существует `prefetch_related`.
+
+## Типичные ошибки
+
+- **Обращение к связи в цикле без предзагрузки.** Классический N+1. Если в цикле по объектам Вы трогаете `obj.related.something`, добавьте `select_related`/`prefetch_related` в исходный запрос. Заметить помогает счётчик SQL-запросов (Django Debug Toolbar).
+- **`get()` там, где данных может не быть.** Падает с `DoesNotExist`. Берите `filter(...).first()` (вернёт объект или `None`) или ловите исключение явно.
+- **Вызов запроса в цикле шаблона.** Шаблон, дёргающий `order.customer.name` в цикле, рождает тот же N+1, просто незаметнее - SQL прячется за рендером. Готовьте данные во view, а не в шаблоне.
+- **Думать, что `filter` уже сходил в базу.** `qs = Model.objects.filter(...)` не выполняет SQL. Если Вы измеряете «время запроса» вокруг этой строки, Вы измеряете построение рецепта, а не запрос.
+
+<Detail summary="Почему amount стоит хранить в DecimalField, а не во float">
+
+Деньги нельзя хранить в `FloatField`: двоичный float не представляет точно даже `0.1`, и при сложении сумм накапливается ошибка - `1200.00 + 540.00` может дать `1740.0000000002`. `DecimalField(max_digits, decimal_places)` хранит число как точную десятичную дробь фиксированной точности, ровно как в бухгалтерии. Поэтому для рублей и копеек в примерах выше использован именно `DecimalField`: ORM-поле выбирают не только по «типу данных», но и по требованиям к точности и диапазону.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Модель - класс, наследник models.Model: поля становятся столбцами, экземпляр - строкой; class Meta описывает таблицу целиком (ordering, индексы).",
+    "Миграции: makemigrations пишет рецепт изменений, migrate применяет его к базе; миграции коммитят в репозиторий.",
+    "QuerySet ленив: filter/exclude/order_by только достраивают рецепт. SQL выполняется на итерации, срезе с индексом, list(), len(), count().",
+    "get() сразу идёт в базу и требует ровно один объект: DoesNotExist при отсутствии, MultipleObjectsReturned при множестве; для необязательной выборки - filter().first().",
+    "Связи: ForeignKey (многие-к-одному, есть related_name и on_delete), OneToOne, ManyToMany; обратное обращение идёт через related_name.",
+    "N+1 - запрос за списком плюс по одному на элемент; лечится select_related (JOIN, для FK/OneToOne) и prefetch_related (отдельный запрос, для M2M и обратных FK).",
+  ]}
+/>
+
+## Ссылки
+
+- [Django - Models](https://docs.djangoproject.com/en/stable/topics/db/models/)
+- [Django - Making queries](https://docs.djangoproject.com/en/stable/topics/db/queries/)
+- [Django - QuerySet API: when querysets are evaluated](https://docs.djangoproject.com/en/stable/ref/models/querysets/#when-querysets-are-evaluated)
+- [Django - select_related and prefetch_related](https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related)
+- [Django - Migrations](https://docs.djangoproject.com/en/stable/topics/migrations/)

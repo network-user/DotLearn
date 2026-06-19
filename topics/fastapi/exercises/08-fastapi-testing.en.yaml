@@ -1,0 +1,273 @@
+exercises:
+  - id: fastapi-testing-testclient-001
+    concept: fastapi-testing
+    type: theory-quiz
+    difficulty: 1
+    prompt: "How does `TestClient` call a FastAPI application in a test?"
+    choices:
+      - id: a
+        text: "Directly in the test process, with no real server and no network - it wraps the application and runs the request through its pipeline."
+      - id: b
+        text: "It starts a real HTTP server on a free port and reaches it over the network."
+      - id: c
+        text: "It sends the request to the production server at its public address."
+      - id: d
+        text: "It runs the application in a separate process and talks to it through files."
+    correct: [a]
+    explanation: "`TestClient` wraps the ASGI application itself and runs the request through the same processing pipeline directly in the test process - with no socket, port, or network."
+    variants:
+      - prompt: "Why is `TestClient` synchronous, even though handlers can be `async def`?"
+        choices:
+          - id: a
+            text: "It is built on Starlette and spins the event loop under the hood itself, so you write client.get(...) with no await."
+          - id: b
+            text: "Because FastAPI forbids asynchronous handlers in tests."
+          - id: c
+            text: "Because synchronous code is always faster than asynchronous."
+          - id: d
+            text: "Because TestClient ignores the body of async handlers."
+        correct: [a]
+        explanation: "`TestClient` is built on Starlette and spins up an event loop for the duration of a request itself, so in a test you write an ordinary synchronous call with no await even for async handlers."
+      - prompt: "What does `client.get(\"/items/42\")` return in a test?"
+        choices:
+          - id: a
+            text: "A response object with a status_code attribute and a json() method."
+          - id: b
+            text: "The already-parsed body dictionary, without a status."
+          - id: c
+            text: "A coroutine you must await to get the response."
+          - id: d
+            text: "A string with the raw HTTP response that you parse by hand."
+        correct: [a]
+        explanation: "The response is an object with the familiar `status_code` (numeric status) and `json()` (parsed body). These are what you check with assert in a pytest function."
+      - prompt: "When do you reach for `httpx.AsyncClient` instead of the synchronous `TestClient`?"
+        choices:
+          - id: a
+            text: "When the test itself must be declared async def - for async tests."
+          - id: b
+            text: "Always: AsyncClient has fully replaced the deprecated TestClient."
+          - id: c
+            text: "When the application has no async handlers at all."
+          - id: d
+            text: "When you only need to check the status, not the response body."
+        correct: [a]
+        explanation: "The baseline tool is the synchronous `TestClient`. `httpx.AsyncClient` is needed in narrow cases when the test itself must be `async def` (async tests)."
+
+  - id: fastapi-testing-fill-client-001
+    concept: fastapi-testing
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete the test: create a client from the application and check the response status."
+    template: |
+      from fastapi.testclient import TestClient
+
+      client = TestClient(app)
+
+      def test_read_item():
+          response = client.{{method}}("/items/42")
+          assert response.{{attr}} == 200
+    blanks:
+      method:
+        accept: ["get"]
+      attr:
+        accept: ["status_code"]
+    variants:
+      - prompt: "Complete the body check: call the method that gives the parsed JSON."
+        template: |
+          def test_read_item():
+              response = client.get("/items/42")
+              assert response.{{method}}() == {"item_id": 42}
+        blanks:
+          method:
+            accept: ["json"]
+      - prompt: "Complete the creation of a client from the application `app`."
+        template: |
+          from fastapi.testclient import TestClient
+
+          client = {{cls}}(app)
+
+          def test_root():
+              assert client.get("/").status_code == 200
+        blanks:
+          cls:
+            accept: ["TestClient"]
+
+  - id: fastapi-testing-overrides-purpose-001
+    concept: fastapi-testing
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Why is `app.dependency_overrides` used in tests?"
+    choices:
+      - id: a
+        text: "To swap a dependency for the duration of a test - for example, a production database session for a test in-memory one."
+      - id: b
+        text: "To speed up handlers by turning off validation in them."
+      - id: c
+        text: "To change route addresses to test ones."
+      - id: d
+        text: "To automatically generate tests from the application's schema."
+    correct: [a]
+    explanation: "`dependency_overrides` is a dictionary of dependency swaps: for the duration of a test the request goes through the replacement instead of the real dependency. This is how you supply a test database or a fake user."
+    variants:
+      - prompt: "What serves as the key in the `app.dependency_overrides` dictionary?"
+        choices:
+          - id: a
+            text: "The original dependency function itself (e.g. get_db), not its call."
+          - id: b
+            text: "A string with the name of the route the override is for."
+          - id: c
+            text: "The result of calling the dependency get_db()."
+          - id: d
+            text: "The name of the HTTP method: get, post, and so on."
+        correct: [a]
+        explanation: "The key is the dependency function object (`get_db`, `get_current_user`), not its call. The value is the replacement function. Confusing the key with a call is a common mistake."
+      - prompt: "How do you check a protected endpoint without obtaining a real token?"
+        choices:
+          - id: a
+            text: "Swap `get_current_user` via dependency_overrides for a function that returns a fake user."
+          - id: b
+            text: "Disable authentication across the whole application for the duration of tests."
+          - id: c
+            text: "Hardcode a real token right in the test code."
+          - id: d
+            text: "Such endpoints cannot be tested without a real login."
+        correct: [a]
+        explanation: "Swapping `get_current_user` for a function with a fake user lets you test the endpoint's logic, not the login procedure, and requires no real token."
+
+  - id: fastapi-testing-predict-override-001
+    concept: fastapi-testing
+    type: predict-output
+    difficulty: 2
+    prompt: "What does this program print? It models dependency_overrides as a dictionary of swaps: an entry redirects a dependency to a fake."
+    snippet: |
+      def get_db():
+          return "real-db"
+
+      def fake_db():
+          return "test-db"
+
+      overrides = {}
+
+      def resolve(dep):
+          return overrides.get(dep, dep)()
+
+      overrides[get_db] = fake_db
+      print(resolve(get_db))
+    expected:
+      kind: stdout
+      value: "test-db"
+    hints:
+      - "The swap lives in a dictionary: the key is the dependency function itself, the value is its fake. What does looking up get_db in the dictionary return after the swap is recorded?"
+      - "`resolve` takes the swap for `get_db` from the dictionary (it is `fake_db`) and calls it. What does `fake_db()` return?"
+    variants:
+      - snippet: |
+          def get_current_user():
+              return "real-user"
+
+          def fake_user():
+              return "test-user"
+
+          overrides = {get_current_user: fake_user}
+
+          def resolve(dep):
+              return overrides.get(dep, dep)()
+
+          print(resolve(get_current_user))
+        expected:
+          kind: stdout
+          value: "test-user"
+      - snippet: |
+          def get_db():
+              return "real-db"
+
+          overrides = {}
+
+          def resolve(dep):
+              return overrides.get(dep, dep)()
+
+          print(resolve(get_db))
+        expected:
+          kind: stdout
+          value: "real-db"
+
+  - id: fastapi-testing-fixture-leak-001
+    concept: fastapi-testing
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Why is it important to call `app.dependency_overrides.clear()` after a test (for example, in a pytest fixture after yield)?"
+    choices:
+      - id: a
+        text: "Otherwise the override stays in the dictionary and unexpectedly changes the behavior of the following tests - flaky failures appear."
+      - id: b
+        text: "Otherwise TestClient cannot call the application again in the same process."
+      - id: c
+        text: "Otherwise FastAPI recreates the application before each next test."
+      - id: d
+        text: "It does not matter: overrides reset themselves after each test anyway."
+    correct: [a]
+    explanation: "`dependency_overrides` is shared mutable application state. A leftover override leaks into neighboring tests and produces failures that depend on run order. The fixture removes the override after `yield` via `clear()`."
+    hints:
+      - "`dependency_overrides` is a dictionary at the application level, not at the level of a single test. What happens to an entry set in one test if it is not removed?"
+      - "Think about how the next test's behavior changes if it expects no override but inherits one from the previous test."
+
+  - id: fastapi-testing-predict-protected-001
+    concept: fastapi-testing
+    type: predict-output
+    difficulty: 3
+    prompt: "What does this program print? It models a test of a protected endpoint: get_current_user is swapped for a fake admin."
+    snippet: |
+      def get_current_user():
+          return {"name": "real", "is_admin": False}
+
+      def fake_admin():
+          return {"name": "fake", "is_admin": True}
+
+      overrides = {get_current_user: fake_admin}
+
+      def current(dep):
+          return overrides.get(dep, dep)()
+
+      user = current(get_current_user)
+      print(user["name"], user["is_admin"])
+    expected:
+      kind: stdout
+      value: "fake True"
+    hints:
+      - "The swap redirects `get_current_user` to a fake user. Whose data ends up in `user` - the real user's or the fake one's?"
+      - "`current` takes the swap for `get_current_user` from the dictionary (it is `fake_admin`) and calls it. What name and is_admin does `fake_admin` return?"
+    variants:
+      - snippet: |
+          overrides = {}
+
+          def get_current_user():
+              return None
+
+          def fake_user():
+              return {"name": "tester"}
+
+          overrides[get_current_user] = fake_user
+
+          def current(dep):
+              return overrides.get(dep, dep)()
+
+          user = current(get_current_user)
+          print(200 if user else 401)
+        expected:
+          kind: stdout
+          value: "200"
+      - snippet: |
+          overrides = {}
+
+          def get_db():
+              return "real"
+
+          def fake_db():
+              return "test"
+
+          overrides[get_db] = fake_db
+          test_one_db = overrides.get(get_db, get_db)()
+          test_two_db = overrides.get(get_db, get_db)()
+          print(test_one_db, test_two_db)
+        expected:
+          kind: stdout
+          value: "test test"

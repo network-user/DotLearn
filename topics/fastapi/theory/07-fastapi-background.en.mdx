@@ -1,0 +1,173 @@
+---
+conceptId: fastapi-background
+title: "Background tasks and lifespan"
+estimatedMinutes: 40
+---
+
+# What to do after the client already has the response
+
+A user clicks "Sign up", and you want to send them a welcome email. The email goes through an external SMTP service, and that takes a second or two. If you send it right inside the handler, the client stares at a spinner the whole time - for an email they do not need to see right now. The registration already went through. You want to answer "done" immediately and send the email a little later, without holding anyone up.
+
+FastAPI gives you two different tools for this, and they are easy to confuse. `BackgroundTasks` defers short work to the moment **after** the response is sent. Lifespan, on the contrary, runs code **before** the service starts accepting requests, and again when it stops. By the end of this section you will understand that a background task runs after the client already has the response and in the same process, when such a task is appropriate and when you need a real queue, and why startup logic that opens resources belongs in lifespan rather than in the first request.
+
+## Mental model: the response left, the work continued
+
+A normal handler ends by returning a value - and the client gets the response. A background task adds a tail to that: code FastAPI runs after the response has already gone out over the network. The client is free by then, their spinner is gone, while the server is still finishing the deferred work.
+
+<Figure caption="The handler registers a task and returns a response. The client gets the response immediately, while the registered task runs afterward - the client does not wait for it.">
+  <Sketch viewBox="0 0 470 200" title="Background task runs after the response">
+    <SketchLabel x={30} y={28} anchor="start" size={12} weight="bold">handler</SketchLabel>
+    <SketchBox x={30} y={40} width={150} height={36} accent />
+    <SketchLabel x={105} y={62} mono size={10}>add_task(send_email)</SketchLabel>
+
+    <SketchBox x={200} y={40} width={90} height={36} />
+    <SketchLabel x={245} y={62} mono size={10}>return 200</SketchLabel>
+    <SketchArrow from={[180, 58]} to={[200, 58]} />
+
+    <SketchArrow from={[290, 58]} to={[370, 58]} />
+    <SketchLabel x={375} y={54} anchor="start" muted size={10}>response to client</SketchLabel>
+
+    <SketchBox x={200} y={120} width={150} height={36} hatched />
+    <SketchLabel x={275} y={142} mono size={10}>send_email() runs</SketchLabel>
+    <SketchArrow from={[245, 76]} to={[275, 120]} dashed />
+    <SketchLabel x={150} y={170} anchor="start" muted size={10}>after the response, client does not wait</SketchLabel>
+    <SketchArrow from={[30, 185]} to={[420, 185]} />
+    <SketchLabel x={30} y={178} anchor="start" muted size={10}>time →</SketchLabel>
+  </Sketch>
+</Figure>
+
+The key point follows from this picture: a FastAPI background task is good for short work that is not critical to guaranteed delivery and that should not make the client wait. Writing a line to a log, sending a notification, invalidating a cache - perfect candidates. Lifespan is about something else entirely: code that runs once at process startup and once at shutdown, before and after all requests.
+
+## BackgroundTasks: defer work to after the response
+
+To add a background task, declare a parameter of type `BackgroundTasks` in the handler signature. FastAPI supplies the object itself, and you register functions on it by calling `add_task`.
+
+```python
+from fastapi import FastAPI, BackgroundTasks
+
+app = FastAPI()
+
+def write_log(message: str):
+    with open("log.txt", "a") as f:
+        f.write(message + "\n")
+
+@app.post("/register")
+def register(email: str, background_tasks: BackgroundTasks):
+    background_tasks.add_task(write_log, f"registered {email}")
+    return {"status": "ok"}
+```
+
+FastAPI recognizes the `background_tasks: BackgroundTasks` parameter by its type and injects it automatically - you do not request it in the URL. The call `add_task(write_log, f"registered {email}")` does not run `write_log` right away: it only queues it for "after the response". The client gets `{"status": "ok"}` first, and only then does `write_log` run. You pass arguments to `add_task` exactly as you would in a normal call - the function and its parameters.
+
+<Callout type="info">
+The first argument to `add_task` is the function itself without parentheses (`write_log`, not `write_log(...)`); the rest are its arguments. You can add several tasks; they run in the order they were added, all after the response is sent.
+</Callout>
+
+## When a background task is enough and when you need a queue
+
+Here is the boundary people get wrong most often. `BackgroundTasks` lives **in the same process** as the server itself. That gives you simplicity - no infrastructure needed - but imposes hard limits.
+
+<Compare
+  leftTitle="BackgroundTasks (in-process)"
+  rightTitle="Task queue (Celery and the like)"
+  left={
+    <ul>
+      <li>Short work, a few seconds</li>
+      <li>Losing the task is acceptable (a log, an optional email)</li>
+      <li>No retries, no schedule</li>
+      <li>Zero infrastructure: nothing to install</li>
+      <li>Lives in the web server process</li>
+    </ul>
+  }
+  right={
+    <ul>
+      <li>Long work: video, reports, mailing thousands</li>
+      <li>Guarantees needed: retry on failure, acknowledgement</li>
+      <li>Schedules and periodic jobs</li>
+      <li>Distribution across several workers and machines</li>
+      <li>Separate worker processes + a broker (Redis/RabbitMQ)</li>
+    </ul>
+  }
+  verdict="BackgroundTasks is for a short tail after the response; for long, reliable, or distributed work use a task queue like Celery."
+/>
+
+Conceptually this is the same boundary that separates the topic of task queues and Celery: as soon as work needs retries, a schedule, distribution across machines, or a guarantee that it will not be lost, a FastAPI background task stops being a fit, and its place is taken by a real queue with a broker and separate workers.
+
+## An honest surprise: a background task can be lost
+
+Because `BackgroundTasks` lives in the web server process, it has no durability whatsoever. If the process crashes or is restarted between sending the response and running the task, **the task simply vanishes** - it was stored nowhere, and there is no one to re-run it. The client, meanwhile, already received `200` and is sure everything went fine.
+
+<Callout type="warning">
+Never put work whose loss is unacceptable into `BackgroundTasks`: charging money, a mandatory confirmation email, a write that data consistency depends on. That needs a queue that stores the task until it is acknowledged and re-runs it on failure. `BackgroundTasks` guarantees nothing.
+</Callout>
+
+## Lifespan: code at startup and shutdown
+
+The second half of this section is about code that runs not on every request, but once over the life of the process. A database connection pool, loading an ML model into memory, opening a client to an external service - it makes sense to do this at startup and to close it cleanly at shutdown. `lifespan` serves this purpose - an async context manager you pass to the application.
+
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+resources = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    resources["pool"] = await open_db_pool()
+    yield
+    await resources["pool"].close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+The code **before** `yield` is startup: it runs once before the service starts accepting requests. This is where you open a connection pool, load a model, warm a cache. The code **after** `yield` is shutdown: it runs once when the service stops, and this is where clean release goes - close the pool, say goodbye to external services. The `yield` itself is "the service is up and serving requests".
+
+<Figure caption="Lifespan splits the life of the process into three phases: code before yield (startup) runs once before requests, yield is the serving window, code after yield (shutdown) runs once at stop.">
+  <PipelineFigure
+    title="Lifecycle via lifespan"
+    stages={[
+      { label: "startup", note: "code before yield: open pool, load model" },
+      { label: "yield", note: "service serves requests", active: true },
+      { label: "shutdown", note: "code after yield: close pool, release resources" },
+    ]}
+  />
+</Figure>
+
+This used to be done with the `@app.on_event("startup")` and `@app.on_event("shutdown")` decorators. They are deprecated: lifespan replaced them because a single context manager keeps the paired "open - close" logic together, in one function, rather than scattering it across two event handlers. A resource opened before `yield` is closed after it - and that is visible in one place.
+
+## Edge cases
+
+**A request inside a handler will not wait for the background task.** Since the task runs after the response, the handler cannot "wait for its result and return it" - the response is already gone. If the client needs the work's result in the response, it is not a background task but part of normal processing.
+
+**Lifespan startup must complete, or the service will not come up.** If the code before `yield` raises (say, the database is unavailable), the application will not start accepting requests. This is usually the desired behavior: better not to come up at all than to come up without a working connection pool.
+
+**A heavy background task still loads the same process.** "After the response" does not mean "free": the task runs in the same process and consumes its resources. A long task in `BackgroundTasks` will compete for CPU and memory with the handling of fresh requests - one more reason to move long work to separate workers.
+
+## Common mistakes
+
+- **Putting critical work into `BackgroundTasks`.** A charge, a mandatory email, a write needed for consistency - none of these may be lost, and a background task is lost when the process crashes. That belongs in a queue with guarantees.
+- **Opening a connection pool in the first request instead of lifespan.** Then the first request pays for initialization, and with several workers the init logic is smeared and duplicated. Startup resources are opened in lifespan - once, before requests.
+- **Calling the function when registering the task.** `add_task(send_email())` with parentheses runs `send_email` immediately and passes its result into the task. You must pass the function itself: `add_task(send_email, address)`.
+
+<Detail summary="What exactly happens between the response and the background task">
+
+When a handler with a `BackgroundTasks` parameter returns a value, FastAPI builds the response and sends it to the client through the ASGI server. The `BackgroundTasks` object is attached to that response: right after the response body is sent, the server walks the list of registered tasks and runs them one by one in the same event loop and process. That is exactly why the task is both "after the response" (the body is already with the client) and "in the same process" (there is no separate executor). If the process dies in that narrow window, the task list disappears with it - hence the lack of guarantees. A task queue solves this by storing the task in a broker until a separate worker acknowledges that it ran.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "BackgroundTasks runs work after the response is sent to the client: the client gets the response immediately, without waiting for the task.",
+    "You add a task with the parameter background_tasks: BackgroundTasks and a call to add_task(function, arguments) - the function is passed without parentheses.",
+    "A background task fits short, non-critical work (a log, a notification); for long work with retries or distribution you need a task queue like Celery.",
+    "A FastAPI background task lives in the same process and has no guarantees: if the process crashes it is lost - do not put critical work there.",
+    "Lifespan is a context manager: code before yield runs at startup (open pool, load model), code after yield runs at shutdown (close resources); it replaced the deprecated @app.on_event.",
+  ]}
+/>
+
+## References
+
+- [FastAPI - Background Tasks](https://fastapi.tiangolo.com/tutorial/background-tasks/)
+- [FastAPI - Lifespan Events](https://fastapi.tiangolo.com/advanced/events/)
+- [Starlette - Background Tasks](https://www.starlette.io/background/)
+- [Python - contextlib.asynccontextmanager](https://docs.python.org/3/library/contextlib.html#contextlib.asynccontextmanager)
