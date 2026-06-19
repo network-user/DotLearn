@@ -98,13 +98,15 @@ Code with placeholders the learner fills in. Per-blank validation.
   difficulty: 1
   prompt: 'Complete the query.'
   template: |
-    SELECT ${col} FROM users WHERE ${cond};
+    SELECT {{col}} FROM users WHERE {{cond}};
   blanks:
     col:
       accept: ['*', 'id, name, age']
     cond:
       accept_regex: '^age\s*>\s*18$'
 ```
+
+Placeholders are **double-curly** `{{name}}` (not `${...}`). The player parses them with `/\{\{([a-zA-Z0-9_-]+)\}\}/g` and renders one input per placeholder, so every `{{name}}` in `template` must have a matching key under `blanks`.
 
 ## `predict-output`
 
