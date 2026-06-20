@@ -2,15 +2,18 @@
 
 Эталонный вывод скилла для **README.md** (часть 1 из 2). Скилл v2 также генерирует `AGENTS.md`, `.cursor/rules/dotcore-project.mdc`, `CLAUDE.md` - см. [project-rules.md](project-rules.md).
 
-Обложка здесь - **inline `<svg>`** (IDE). Для github.com та же SVG в `docs/cover.svg` + `<img width="720">` - [logo-cover.md](logo-cover.md). LoC - между `<!-- loc:start -->`/`<!-- loc:end -->`, **под cover**.
+Дефолт (GitHub-first) - обложка в `docs/cover.svg` + `<img width="720">`, [logo-cover.md](logo-cover.md). Здесь для наглядности показан inline `<svg>` (его текст и идёт в `docs/cover.svg`) - на github.com inline вырезается. Бейджи - в одном `<p>` (один ряд на GitHub). LoC - **4-м бейджем в header**, в маркерах, не под cover. Лицензия - футер после архитектуры, [license.md](license.md).
 
 ---
 
 # .learn
 
-![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)
-![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Docker-555)
-![Category](https://img.shields.io/badge/Category-Learning-orange)
+<p>
+  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat" alt="Node.js" />
+  <img src="https://img.shields.io/badge/Platform-Web%20%7C%20Docker-555?style=flat" alt="Platform" />
+  <img src="https://img.shields.io/badge/Category-Learning-orange?style=flat" alt="Category" />
+  <!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-211k%2B-lightgrey?style=flat" alt="211k+ lines of code" /><!-- loc:end -->
+</p>
 
 <!-- cover: DotBioSite, inline -->
 <svg xmlns="http://www.w3.org/2000/svg" width="720" viewBox="0 0 1600 900" role="img" aria-label="DotLearn">
@@ -49,8 +52,6 @@
   <text x="146" y="470" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700" fill="#f3f3f1">DotLearn</text>
   <text x="146" y="516" font-family="Inter, Arial, sans-serif" font-size="26" fill="#a6a7ab">Local-first: SQL и Python в браузере, темы расширяет AI</text>
 </svg>
-
-<!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-211875-lightgrey?style=flat" alt="211875 lines of code" /><!-- loc:end -->
 
 Local-first монорепо для обучения программированию, где урок - не статический текст, а интерактивный модуль. Каждая тема - типобезопасный пакет (теория в MDX, упражнения в YAML, всё под Zod): теорию сопровождают встроенные визуализации, а задачи проверяются прямо в браузере через sql.js и Pyodide в Web Workers. Контент генерируется офлайн скиллом `lesson-forge`; рантайм работает на чистой логике, без AI, `apps/api` опционален.
 
@@ -92,34 +93,36 @@ docker compose up --build -d
 
 ## Команды
 
-| Команда | Назначение |
-|---------|------------|
-| `pnpm dev:web` | Vite SPA, offline-first плеер |
-| `pnpm dev:api` | NestJS API (submissions, admin, поиск) |
-| `pnpm dev` | web + api параллельно (Turborepo) |
-| `pnpm build` | production-сборка всех пакетов |
-| `pnpm typecheck` | TypeScript по монорепо |
-| `pnpm test` | unit-тесты пакетов (vitest) |
-| `pnpm validate` | Zod-контракт тем + прогон gold-решений |
-| `pnpm lint` | ESLint по репозиторию |
-| `pnpm sync:skills` | `.cursor/skills/` → `.claude/skills/` |
-| `pnpm check:skills` | CI: зеркала скиллов идентичны |
+| Команда             | Назначение                             |
+| ------------------- | -------------------------------------- |
+| `pnpm dev:web`      | Vite SPA, offline-first плеер          |
+| `pnpm dev:api`      | NestJS API (submissions, admin, поиск) |
+| `pnpm dev`          | web + api параллельно (Turborepo)      |
+| `pnpm build`        | production-сборка всех пакетов         |
+| `pnpm typecheck`    | TypeScript по монорепо                 |
+| `pnpm test`         | unit-тесты пакетов (vitest)            |
+| `pnpm validate`     | Zod-контракт тем + прогон gold-решений |
+| `pnpm lint`         | ESLint по репозиторию                  |
+| `pnpm sync:skills`  | `.cursor/skills/` → `.claude/skills/`  |
+| `pnpm check:skills` | CI: зеркала скиллов идентичны          |
 
 ## Стек
 
-<img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
-<img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
-<img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
-<img src="https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white" alt="NestJS" />
-<img src="https://img.shields.io/badge/pnpm-F69220?style=for-the-badge&logo=pnpm&logoColor=white" alt="pnpm" />
-<img src="https://img.shields.io/badge/Turborepo-EF4444?style=for-the-badge&logo=turborepo&logoColor=white" alt="Turborepo" />
-<img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
-<img src="https://img.shields.io/badge/Elasticsearch-005571?style=for-the-badge&logo=elasticsearch&logoColor=white" alt="Elasticsearch" />
-<img src="https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge" alt="Zod" />
-<img src="https://img.shields.io/badge/sql.js-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="sql.js" />
-<img src="https://img.shields.io/badge/Pyodide-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Pyodide" />
-<img src="https://img.shields.io/badge/Monaco-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Monaco" />
-<img src="https://img.shields.io/badge/Dexie-555555?style=for-the-badge" alt="Dexie" />
+<p>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
+  <img src="https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white" alt="NestJS" />
+  <img src="https://img.shields.io/badge/pnpm-F69220?style=for-the-badge&logo=pnpm&logoColor=white" alt="pnpm" />
+  <img src="https://img.shields.io/badge/Turborepo-EF4444?style=for-the-badge&logo=turborepo&logoColor=white" alt="Turborepo" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/Elasticsearch-005571?style=for-the-badge&logo=elasticsearch&logoColor=white" alt="Elasticsearch" />
+  <img src="https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge" alt="Zod" />
+  <img src="https://img.shields.io/badge/sql.js-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="sql.js" />
+  <img src="https://img.shields.io/badge/Pyodide-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Pyodide" />
+  <img src="https://img.shields.io/badge/Monaco-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Monaco" />
+  <img src="https://img.shields.io/badge/Dexie-555555?style=for-the-badge" alt="Dexie" />
+</p>
 
 ## Тесты
 
@@ -155,3 +158,7 @@ Modular monolith в pnpm workspaces. Frontend и backend разделены па
 - **contracts**: единственный общий слой web ↔ api
 - **topics**: не импортируют из `apps/*`
 - **lesson-forge**: владеет контрактом темы; CI `pnpm check:skills` ловит drift зеркал
+
+## Лицензия
+
+© 2026 DotCore. Все права защищены. Использование, копирование, изменение и распространение запрещены без письменного разрешения автора. Исходный код открыт только для ознакомления. См. [LICENSE](LICENSE).

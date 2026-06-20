@@ -8,8 +8,9 @@
 
 - [ ] Каждая команда в README и AGENTS.md есть в scripts/Makefile/pyproject
 - [ ] Пути, env-имена, версии, числа сверены с репо
-- [ ] LoC из `code-counter` или явно указан способ подсчёта
+- [ ] LoC из `code-counter` или явно указан способ подсчёта; при `N >= 1000` сокращён до `k+`
 - [ ] Стек-бейджи = реальные зависимости
+- [ ] Лицензия: есть файл `LICENSE` и футер `## Лицензия`; формулировка совпадает с [license.md](license.md)
 
 **0** - выдуманные факты · **1** - мелкие несоответствия · **2** - всё проверено
 
@@ -17,19 +18,21 @@
 
 - [ ] Тон internal doc, русский (или EN-only проект)
 - [ ] Нет `<details>`, centered hero, emoji, LLM-маркеров, длинного тире
-- [ ] Header flat (3), LoC под cover, стек for-the-badge
-- [ ] Архитектура - последняя секция README
+- [ ] Header: 4 бейджа `<img style=flat>` внутри `<p>` (не `![]()`) - один ряд на GitHub - Runtime · Platform · Category · **LoC (4-й, в маркерах)**; стек - `<img>` for-the-badge тоже в `<p>`
+- [ ] Архитектура - последняя содержательная секция; `## Лицензия` - футер после неё
 
 ### 3. Обложка и визуал (0-2)
 
-- [ ] Cover mode корректен (GitHub → file, IDE → inline)
-- [ ] `docs/cover.svg` создан если `<img>` ссылается на него
+- [ ] Cover mode = `file` по умолчанию (GitHub-first); `docs/cover.svg` + `<img>`. inline `<svg>` - только IDE-only по запросу
+- [ ] `docs/cover.svg` создан, `<img src="docs/cover.svg">` ссылается на него; нет inline `<svg>` для GitHub-репозитория
 - [ ] SVG: monochrome DotBioSite, tagline на русском, префикс id
 - [ ] Нет битых `<img>`
 
 ### 4. Правила агента (0-2)
 
 - [ ] `AGENTS.md` перегенерирован, 80-150 строк, без marketing
+- [ ] Rule-файл агента запуска создан (папка создана, если отсутствовала)
+- [ ] `AGENTS.md`/`CLAUDE.md`/`.mdc` содержат правило README-sync (обновлять README при глобальных изменениях)
 - [ ] `.cursor/rules/dotcore-project.mdc` обновлён
 - [ ] `CLAUDE.md` - обёртка на AGENTS.md
 - [ ] Нет дублирования README целиком в AGENTS.md
@@ -54,23 +57,28 @@ DotCore-формат:   X/2
 ИТОГО:            X/10
 
 Исправлено: {список или «ничего»}
-Файлы: README.md, AGENTS.md, .cursor/rules/dotcore-project.mdc, CLAUDE.md{, docs/portfolio-draft.md}
+Файлы: README.md, LICENSE, AGENTS.md, .cursor/rules/dotcore-project.mdc, CLAUDE.md{, <rule-файл агента запуска>}{, docs/portfolio-draft.md}
 LoC: {N}
 Cover: {file|inline|preview}
 ```
 
 ## Типичные замечания (исправить сразу)
 
-| Проблема | Исправление |
-|----------|-------------|
-| LoC в header | Перенести под cover |
-| Команда не в package.json | Удалить или найти реальный script |
-| AGENTS.md копирует README | Оставить в AGENTS только operational |
-| CLAUDE.md дублирует AGENTS | Сократить до обёртки |
-| for-the-badge в header | Только flat в header |
-| Plain-text в ## Стек | Заменить на `<img>` бейджи |
-| Tagline EN в SVG | Перевести на русский |
-| Нет dotcore-project.mdc | Создать по шаблону |
+| Проблема                                      | Исправление                                                                  |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| LoC под cover                                 | Перенести в header, 4-м бейджем (в маркерах)                                 |
+| Бейджи/стек разъезжаются по строкам на GitHub | Обернуть группу в один `<p>`                                                 |
+| Обложки нет на GitHub                         | inline `<svg>` → `docs/cover.svg` + `<img src="docs/cover.svg" width="720">` |
+| LoC на отдельной строке от header             | Все 4 header-бейджа `<img style=flat>` в одном `<p>`                         |
+| Нет `LICENSE` / футера лицензии               | Создать по [license.md](license.md) (строгий All Rights Reserved)            |
+| Rule-файл агента запуска не создан            | Создать файл и папку по таблице в project-rules.md                           |
+| Команда не в package.json                     | Удалить или найти реальный script                                            |
+| AGENTS.md копирует README                     | Оставить в AGENTS только operational                                         |
+| CLAUDE.md дублирует AGENTS                    | Сократить до обёртки                                                         |
+| for-the-badge в header                        | Только flat в header                                                         |
+| Plain-text в ## Стек                          | Заменить на `<img>` бейджи                                                   |
+| Tagline EN в SVG                              | Перевести на русский                                                         |
+| Нет dotcore-project.mdc                       | Создать по шаблону                                                           |
 
 ## Промпт аудита (standalone)
 

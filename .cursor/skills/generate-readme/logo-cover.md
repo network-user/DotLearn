@@ -4,12 +4,12 @@
 
 ## Режим по среде просмотра
 
-| Где смотрят README | Обложка |
-|--------------------|---------|
+| Где смотрят README                                                  | Обложка                                                                                                                                     |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **github.com / GitLab** (режут inline `<svg>` при рендере markdown) | агент пишет ту же SVG в `docs/cover.svg` и ставит `<img src="docs/cover.svg" width="720">`; файл создаётся и коммитится в этом же изменении |
-| **IDE-превью, Obsidian, npm, портфолио** (рендерят inline) | inline `<svg>` в теле README, сразу после badges |
-| **В репо уже есть** `docs/preview.png` / скриншот | `<img src="docs/preview.png" width="720">`, новую обложку не делать |
-| **Есть image generation** и пользователь просит скрин/фото | raster PNG → `docs/preview.png` + `<img>`; иначе SVG |
+| **IDE-превью, Obsidian, npm, портфолио** (рендерят inline)          | inline `<svg>` в теле README, сразу после badges                                                                                            |
+| **В репо уже есть** `docs/preview.png` / скриншот                   | `<img src="docs/preview.png" width="720">`, новую обложку не делать                                                                         |
+| **Есть image generation** и пользователь просит скрин/фото          | raster PNG → `docs/preview.png` + `<img>`; иначе SVG                                                                                        |
 
 Default для проектов на GitHub - `docs/cover.svg` + `<img>` (рендерится и в IDE, и на github.com). Чисто-IDE/портфолио репозиторий - inline `<svg>`.
 
@@ -26,30 +26,30 @@ Default для проектов на GitHub - `docs/cover.svg` + `<img>` (рен
 
 ## Design tokens
 
-| Элемент | Значение |
-|---------|----------|
-| Фон | linear `#0a0b0d` → `#14161a` (полный: → `#0b0c0e`) |
-| Glow | radial white, opacity 0 → 0.12-0.14, центр сверху-справа |
-| Сетка | stroke white, opacity 0.045-0.05 |
-| Halo (полный вариант) | radial white circle r≈330 справа |
-| Глиф | stroke `#f3f3f1`, width 2.6, viewBox 48×48 |
-| Watermark-глиф | крупная копия глифа справа, opacity 0.1, stroke `#ffffff` |
-| Brand | 132px, weight 800, `#f3f3f1` |
-| Name | 34px, weight 700, `#f3f3f1` |
-| Tagline | 26px, `#a6a7ab` |
+| Элемент               | Значение                                                  |
+| --------------------- | --------------------------------------------------------- |
+| Фон                   | linear `#0a0b0d` → `#14161a` (полный: → `#0b0c0e`)        |
+| Glow                  | radial white, opacity 0 → 0.12-0.14, центр сверху-справа  |
+| Сетка                 | stroke white, opacity 0.045-0.05                          |
+| Halo (полный вариант) | radial white circle r≈330 справа                          |
+| Глиф                  | stroke `#f3f3f1`, width 2.6, viewBox 48×48                |
+| Watermark-глиф        | крупная копия глифа справа, opacity 0.1, stroke `#ffffff` |
+| Brand                 | 132px, weight 800, `#f3f3f1`                              |
+| Name                  | 34px, weight 700, `#f3f3f1`                               |
+| Tagline               | 26px, `#a6a7ab`                                           |
 
 Только monochrome. Без UI-мокапов, macOS-точек, accent-цветов.
 
 ## Библиотека глифов (48×48)
 
-| Проект / тип | Motif |
-|--------------|-------|
-| Learning | graduation cap |
-| Bot / math | + − × ÷ |
-| Work bot | briefcase |
-| CLI / agents | terminal prompt |
-| Network / trace | nodes + edges |
-| Audio | equalizer bars |
+| Проект / тип    | Motif           |
+| --------------- | --------------- |
+| Learning        | graduation cap  |
+| Bot / math      | + − × ÷         |
+| Work bot        | briefcase       |
+| CLI / agents    | terminal prompt |
+| Network / trace | nodes + edges   |
+| Audio           | equalizer bars  |
 
 Graduation cap (для DotLearn):
 

@@ -6,28 +6,31 @@
 
 ## Что создаётся в целевом проекте
 
-| Файл | Назначение |
-|------|------------|
-| `README.md` | Документация для разработчика (DotCore) |
-| `AGENTS.md` | Канон для Codex, Cursor, Claude, Copilot |
-| `.cursor/rules/dotcore-project.mdc` | Правило Cursor, `alwaysApply: true` |
-| `CLAUDE.md` | Обёртка → AGENTS.md |
-| `docs/cover.svg` | Обложка для GitHub (если cover_mode=file) |
-| `docs/portfolio-draft.md` | Черновик DotBioSite (если audience=portfolio) |
+| Файл                                | Назначение                                           |
+| ----------------------------------- | ---------------------------------------------------- |
+| `README.md`                         | Документация для разработчика (DotCore)              |
+| `AGENTS.md`                         | Канон для Codex, Cursor, Claude, Copilot             |
+| `.cursor/rules/dotcore-project.mdc` | Правило Cursor, `alwaysApply: true`                  |
+| `CLAUDE.md`                         | Обёртка → AGENTS.md                                  |
+| `LICENSE`                           | Строгий All Rights Reserved (всегда)                 |
+| Файл агента запуска                 | Нативный rule-файл агента, из которого запущен скилл |
+| `docs/cover.svg`                    | Обложка для GitHub (если cover_mode=file)            |
+| `docs/portfolio-draft.md`           | Черновик DotBioSite (если audience=portfolio)        |
 
 ## Файлы скилла
 
-| Файл | Назначение |
-|------|------------|
-| [SKILL.md](SKILL.md) | Workflow (точка входа) |
-| [project-classify.md](project-classify.md) | Тип, аудитория, cover mode |
-| [project-rules.md](project-rules.md) | Шаблоны AGENTS.md, .mdc, CLAUDE.md |
-| [logo-cover.md](logo-cover.md) | SVG DotBioSite |
-| [stack-badges.md](stack-badges.md) | Shields, LoC |
-| [audit.md](audit.md) | Оценка 1-10 |
-| [reference.md](reference.md) | Пример README (DotLearn) |
-| [PROMPT.md](PROMPT.md) | Standalone для чатов без skills |
-| [codex-prompt.md](codex-prompt.md) | Промпт `/generate-readme` для Codex |
+| Файл                                       | Назначение                                                     |
+| ------------------------------------------ | -------------------------------------------------------------- |
+| [SKILL.md](SKILL.md)                       | Workflow (точка входа)                                         |
+| [project-classify.md](project-classify.md) | Тип, аудитория, cover mode                                     |
+| [project-rules.md](project-rules.md)       | Шаблоны AGENTS.md, .mdc, CLAUDE.md, агент запуска, README-sync |
+| [license.md](license.md)                   | Лицензия (строгий All Rights Reserved)                         |
+| [logo-cover.md](logo-cover.md)             | SVG DotBioSite                                                 |
+| [stack-badges.md](stack-badges.md)         | Shields, LoC в header                                          |
+| [audit.md](audit.md)                       | Оценка 1-10                                                    |
+| [reference.md](reference.md)               | Пример README (DotLearn)                                       |
+| [PROMPT.md](PROMPT.md)                     | Standalone для чатов без skills                                |
+| [codex-prompt.md](codex-prompt.md)         | Промпт `/generate-readme` для Codex                            |
 
 ## Установка
 
@@ -35,22 +38,30 @@
 
 ```powershell
 cd path\to\dotcore-skills
-.\scripts\install.ps1 -Skill generate-readme
+.\scripts\install.ps1 -Skill generate-readme          # все агенты
+.\scripts\install.ps1 -Agent cursor,claude,agents    # выборочно
+.\scripts\install.ps1 -ListAgents
 ```
 
 ```bash
 ./scripts/install.sh generate-readme
+AGENTS=cursor,claude,agents ./scripts/install.sh
 ```
 
-При разработке скилла: `.\scripts\install.ps1 -Link`.
+При разработке: `.\scripts\install.ps1 -Link`.
+
+Поддерживаемые агенты: Cursor, Claude Code, Codex, Gemini CLI, OpenCode, Goose, Roo Code, Junie, Amp, universal `.agents/` - см. [docs/AGENTS_PATHS.md](../../docs/AGENTS_PATHS.md).
 
 ### Вручную
 
-| Агент | Путь |
-|-------|------|
-| Cursor | `~/.cursor/skills/generate-readme/` |
-| Claude Code | `~/.claude/skills/generate-readme/` |
-| Codex | `~/.codex/skills/generate-readme/` + `~/.codex/prompts/generate-readme.md` |
+| ID       | Агент       | Путь                                                       |
+| -------- | ----------- | ---------------------------------------------------------- |
+| `cursor` | Cursor      | `~/.cursor/skills/generate-readme/`                        |
+| `claude` | Claude Code | `~/.claude/skills/generate-readme/`                        |
+| `codex`  | Codex       | `~/.codex/skills/` + `~/.codex/prompts/generate-readme.md` |
+| `agents` | Universal   | `~/.agents/skills/generate-readme/`                        |
+| `gemini` | Gemini CLI  | `~/.gemini/skills/generate-readme/`                        |
+| …        |             | [полная таблица](../../docs/AGENTS_PATHS.md)               |
 
 Источник файлов - папка `skills/generate-readme/` в этом репозитории.
 
@@ -84,4 +95,4 @@ pip install code-counter-ntwusr
 code-counter .
 ```
 
-LoC-бейдж под cover - [stack-badges.md](stack-badges.md). GitHub cover - [logo-cover.md](logo-cover.md).
+LoC-бейдж - 4-й в строке header, см. [stack-badges.md](stack-badges.md). GitHub cover - [logo-cover.md](logo-cover.md). Лицензия - [license.md](license.md).
