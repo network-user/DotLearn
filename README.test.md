@@ -3,16 +3,16 @@
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)
 ![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Docker-555)
 ![Category](https://img.shields.io/badge/Category-Learning-orange)
+<!-- loc:start -->![Lines of code](https://img.shields.io/badge/lines%20of%20code-211%2C875-555)<!-- loc:end -->
 
+<!-- cover: DotBioSite, docs/cover.svg -->
 <img src="docs/cover.svg" width="720" alt="DotLearn" />
-
-<!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-211879-lightgrey?style=flat" alt="211879 lines of code" /><!-- loc:end -->
 
 Local-first монорепо для обучения программированию, где урок - не статический текст, а интерактивный модуль. Каждая тема - типобезопасный пакет (теория в MDX, упражнения в YAML, всё под Zod): теорию сопровождают встроенные визуализации, а задачи проверяются прямо в браузере через sql.js и Pyodide в Web Workers. Контент генерируется офлайн скиллом `lesson-forge`; рантайм работает на чистой логике, без AI, `apps/api` опционален.
 
 ## Что внутри
 
-- **Интерактивная теория, не стена текста.** Более 40 визуализаций и схем встроены в уроки: JOIN-ы и GROUP BY, хеш-таблицы и консистентное кольцо, attention и токенизация, градиентный спуск и перцептрон, IoU и NMS. Плюс графики, иллюстрации, сноски, чекпойнты и глоссарий по ходу чтения (MDX + Shiki).
+- **Интерактивная теория, не стена текста.** Более 50 визуализаций и схем встроены в уроки: JOIN-ы и GROUP BY, хеш-таблицы и консистентное кольцо, attention и токенизация, градиентный спуск и перцептрон, IoU и NMS. Плюс графики, иллюстрации, сноски, чекпойнты и глоссарий по ходу чтения (MDX + Shiki).
 - **Проверочные вопросы почти в каждой теме.** theory-quiz с мгновенной проверкой и разбором - закрепить теорию, не уходя со страницы.
 - **Задачи с живым рантаймом.** 7 типов упражнений (theory-quiz, sql-query, python-function, javascript-function, fill-in-blanks, predict-output, git-challenge) исполняются в браузере: Monaco-редактор, sql.js и Pyodide в Web Workers, пошаговый разбор Python и визуализатор SQL.
 - **Анимации и обратная связь.** Переходы между страницами, анимированные счётчики и микро-взаимодействия (framer-motion), конфетти при решении задач и достижении целей.
@@ -44,7 +44,7 @@ http://localhost:5173 - в репозитории 34 темы (`sql-fundamentals
 docker compose up --build -d
 ```
 
-`web` на :8080, `api` на :3000 (Swagger `/docs`), `elasticsearch` на :9200. `api` читает секреты из `.env` (admin-логин, JWT, TOTP); fuzzy-поиск заявок in-memory по умолчанию, `ES_ENABLED=true` включает Elasticsearch. Полный гайд по self-hosting (генерация и ротация секретов, бэкап тома) - в [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
+`web` на :8080, `api` на :3000 (Swagger `/docs`), `elasticsearch` на :9200. `api` читает секреты из `.env` (admin-логин, JWT). Fuzzy-поиск заявок - in-memory по умолчанию, `ES_ENABLED=true` включает Elasticsearch.
 
 ## Команды
 
@@ -71,11 +71,8 @@ docker compose up --build -d
 <img src="https://img.shields.io/badge/Turborepo-EF4444?style=for-the-badge&logo=turborepo&logoColor=white" alt="Turborepo" />
 <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
 <img src="https://img.shields.io/badge/Elasticsearch-005571?style=for-the-badge&logo=elasticsearch&logoColor=white" alt="Elasticsearch" />
-<img src="https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge" alt="Zod" />
-<img src="https://img.shields.io/badge/sql.js-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="sql.js" />
-<img src="https://img.shields.io/badge/Pyodide-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Pyodide" />
-<img src="https://img.shields.io/badge/Monaco-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Monaco" />
-<img src="https://img.shields.io/badge/Dexie-555555?style=for-the-badge" alt="Dexie" />
+
+Zod · TanStack Router · sql.js · Pyodide · Monaco · Dexie · framer-motion · ts-fsrs
 
 ## Тесты
 

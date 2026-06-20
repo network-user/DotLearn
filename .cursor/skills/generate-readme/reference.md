@@ -1,18 +1,62 @@
+# Полный пример README (DotLearn)
+
+Эталонный вывод скилла для **README.md** (часть 1 из 2). Скилл v2 также генерирует `AGENTS.md`, `.cursor/rules/dotcore-project.mdc`, `CLAUDE.md` - см. [project-rules.md](project-rules.md).
+
+Обложка здесь - **inline `<svg>`** (IDE). Для github.com та же SVG в `docs/cover.svg` + `<img width="720">` - [logo-cover.md](logo-cover.md). LoC - между `<!-- loc:start -->`/`<!-- loc:end -->`, **под cover**.
+
+---
+
 # .learn
 
 ![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)
 ![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Docker-555)
 ![Category](https://img.shields.io/badge/Category-Learning-orange)
 
-<img src="docs/cover.svg" width="720" alt="DotLearn" />
+<!-- cover: DotBioSite, inline -->
+<svg xmlns="http://www.w3.org/2000/svg" width="720" viewBox="0 0 1600 900" role="img" aria-label="DotLearn">
+  <defs>
+    <linearGradient id="dl-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0b0d"/>
+      <stop offset="1" stop-color="#14161a"/>
+    </linearGradient>
+    <radialGradient id="dl-glow" cx="72%" cy="22%" r="60%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#dl-bg)"/>
+  <rect width="1600" height="900" fill="url(#dl-glow)"/>
+  <g opacity="0.05" stroke="#ffffff" stroke-width="1">
+    <path d="M0 300H1600M0 600H1600M533 0V900M1067 0V900"/>
+  </g>
+  <svg x="980" y="250" width="400" height="400" viewBox="0 0 48 48">
+    <g opacity="0.1" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 19 L24 10 L43 19 L24 28 Z"/>
+      <path d="M13 22.5 V31 q11 6 22 0 V22.5"/>
+      <path d="M43 19 V29"/>
+      <circle cx="43" cy="31.5" r="1.6" fill="#ffffff" stroke="none"/>
+    </g>
+  </svg>
+  <svg x="140" y="120" width="86" height="86" viewBox="0 0 48 48">
+    <g fill="none" stroke="#f3f3f1" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 19 L24 10 L43 19 L24 28 Z"/>
+      <path d="M13 22.5 V31 q11 6 22 0 V22.5"/>
+      <path d="M43 19 V29"/>
+      <circle cx="43" cy="31.5" r="1.6" fill="#f3f3f1" stroke="none"/>
+    </g>
+  </svg>
+  <text x="138" y="408" font-family="Inter, Arial, sans-serif" font-size="132" font-weight="800" fill="#f3f3f1" letter-spacing="-3">.learn</text>
+  <text x="146" y="470" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700" fill="#f3f3f1">DotLearn</text>
+  <text x="146" y="516" font-family="Inter, Arial, sans-serif" font-size="26" fill="#a6a7ab">Local-first: SQL и Python в браузере, темы расширяет AI</text>
+</svg>
 
-<!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-211879-lightgrey?style=flat" alt="211879 lines of code" /><!-- loc:end -->
+<!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-211875-lightgrey?style=flat" alt="211875 lines of code" /><!-- loc:end -->
 
 Local-first монорепо для обучения программированию, где урок - не статический текст, а интерактивный модуль. Каждая тема - типобезопасный пакет (теория в MDX, упражнения в YAML, всё под Zod): теорию сопровождают встроенные визуализации, а задачи проверяются прямо в браузере через sql.js и Pyodide в Web Workers. Контент генерируется офлайн скиллом `lesson-forge`; рантайм работает на чистой логике, без AI, `apps/api` опционален.
 
 ## Что внутри
 
-- **Интерактивная теория, не стена текста.** Более 40 визуализаций и схем встроены в уроки: JOIN-ы и GROUP BY, хеш-таблицы и консистентное кольцо, attention и токенизация, градиентный спуск и перцептрон, IoU и NMS. Плюс графики, иллюстрации, сноски, чекпойнты и глоссарий по ходу чтения (MDX + Shiki).
+- **Интерактивная теория, не стена текста.** Более 50 визуализаций и схем встроены в уроки: JOIN-ы и GROUP BY, хеш-таблицы и консистентное кольцо, attention и токенизация, градиентный спуск и перцептрон, IoU и NMS. Плюс графики, иллюстрации, сноски, чекпойнты и глоссарий по ходу чтения (MDX + Shiki).
 - **Проверочные вопросы почти в каждой теме.** theory-quiz с мгновенной проверкой и разбором - закрепить теорию, не уходя со страницы.
 - **Задачи с живым рантаймом.** 7 типов упражнений (theory-quiz, sql-query, python-function, javascript-function, fill-in-blanks, predict-output, git-challenge) исполняются в браузере: Monaco-редактор, sql.js и Pyodide в Web Workers, пошаговый разбор Python и визуализатор SQL.
 - **Анимации и обратная связь.** Переходы между страницами, анимированные счётчики и микро-взаимодействия (framer-motion), конфетти при решении задач и достижении целей.
@@ -44,7 +88,7 @@ http://localhost:5173 - в репозитории 34 темы (`sql-fundamentals
 docker compose up --build -d
 ```
 
-`web` на :8080, `api` на :3000 (Swagger `/docs`), `elasticsearch` на :9200. `api` читает секреты из `.env` (admin-логин, JWT, TOTP); fuzzy-поиск заявок in-memory по умолчанию, `ES_ENABLED=true` включает Elasticsearch. Полный гайд по self-hosting (генерация и ротация секретов, бэкап тома) - в [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
+`web` на :8080, `api` на :3000 (Swagger `/docs`), `elasticsearch` на :9200. `api` читает секреты из `.env` (admin-логин, JWT). Fuzzy-поиск заявок - in-memory по умолчанию, `ES_ENABLED=true` включает Elasticsearch.
 
 ## Команды
 
