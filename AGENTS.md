@@ -12,6 +12,7 @@ The repository ships skills under two parallel directories, kept in sync:
 Currently available:
 
 - **`lesson-forge`** — generate a new learning topic. Activate when the user asks to add a topic, create lessons, generate exercises, or build a course. Full instructions in either skill directory.
+- **`generate-readme`** — regenerate `README.md` (DotCore internal doc) and project agent rules (`AGENTS.md` in other repos; here keep this file as monorepo canon, update via skill merge). README ends at `## Архитектура`. DotBioSite card copy goes to `docs/portfolio-draft.md`, not README. Full workflow in either skill directory.
 
 If you cannot natively load skills (e.g. you are a CLI agent), read `.claude/skills/lesson-forge/SKILL.md` manually and follow the workflow inside it.
 

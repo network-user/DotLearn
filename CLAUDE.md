@@ -135,6 +135,11 @@ Both routes converge on the same approval step. After approval, the maintainer (
 - One topic per commit when adding content
 - Squash agent-generated noise
 
+## README and lines-of-code counter
+
+- The repo README follows the `generate-readme` skill (`.cursor/skills/generate-readme/`, mirrored to `.claude/` via `pnpm sync:skills`; personal copy in `~/.codex/skills/`). Regenerate through the skill - do not hand-write README. README ends at `## Архитектура`. DotBioSite card copy goes to `docs/portfolio-draft.md`, not README.
+- At the end of every session, refresh the lines-of-code count in `README.md` between the `<!-- loc:start -->` and `<!-- loc:end -->` markers: run `pip install code-counter-ntwusr` (Python 3.12+, git) once, then `code-counter .` from the repo root, take the `TOTAL` value and write it into the badge. Never invent the number; if `code-counter` is unavailable, count git-tracked sources and note the method.
+
 ## When in doubt
 
 Refer to:
