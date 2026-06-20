@@ -26,15 +26,15 @@ docker compose up --build -d
 
 ## Ключевые переменные `.env`
 
-| Переменная | Зачем |
-| --- | --- |
-| `VITE_API_BASE` | Откуда фронт ходит в API. Должно совпадать с публичным адресом контейнера `api`. |
-| `VITE_ADMIN_PATH` | Путь админки на фронте. Сделай его трудноугадываемым (`/secret-admin-7f2c`). |
-| `WEB_ORIGIN` | CORS allowlist API. Должно совпадать с публичным origin фронта. |
-| `ADMIN_LOGIN` / `ADMIN_PASSWORD_HASH` / `ADMIN_TOTP_SECRET` | Учётка единственного админа. |
-| `ADMIN_BACKUP_CODES_HASHED` | JSON-массив SHA256-хэшей backup-кодов на случай потери authenticator'а. |
-| `ADMIN_JWT_SECRET` / `ADMIN_REFRESH_SECRET` | Подпись access и refresh JWT. |
-| `ES_ENABLED` | `true` → fuzzy-поиск через elasticsearch. `false` → in-memory Левенштейн (хватает на десятки заявок). |
+| Переменная                                                  | Зачем                                                                                                 |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `VITE_API_BASE`                                             | Откуда фронт ходит в API. Должно совпадать с публичным адресом контейнера `api`.                      |
+| `VITE_ADMIN_PATH`                                           | Путь админки на фронте. Сделай его трудноугадываемым (`/secret-admin-7f2c`).                          |
+| `WEB_ORIGIN`                                                | CORS allowlist API. Должно совпадать с публичным origin фронта.                                       |
+| `ADMIN_LOGIN` / `ADMIN_PASSWORD_HASH` / `ADMIN_TOTP_SECRET` | Учётка единственного админа.                                                                          |
+| `ADMIN_BACKUP_CODES_HASHED`                                 | JSON-массив SHA256-хэшей backup-кодов на случай потери authenticator'а.                               |
+| `ADMIN_JWT_SECRET` / `ADMIN_REFRESH_SECRET`                 | Подпись access и refresh JWT.                                                                         |
+| `ES_ENABLED`                                                | `true` → fuzzy-поиск через elasticsearch. `false` → in-memory Левенштейн (хватает на десятки заявок). |
 
 Все остальные тайминги (`ADMIN_ACCESS_TTL`, `ADMIN_LOCKOUT_TTL`, `ADMIN_STEPUP_TTL` и т.д.) - необязательные, разумные дефолты в `auth.config.ts`.
 
