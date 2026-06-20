@@ -12,7 +12,9 @@
 2. **AGENTS.md** - инструкции для coding-агентов (build, test, conventions)
 3. **.cursor/rules/dotcore-project.mdc** - правило Cursor
 4. **CLAUDE.md** - обёртка со ссылкой на AGENTS.md
-5. **docs/portfolio-draft.md** - только если проект для портфолио DotBioSite
+5. **Файл правил агента запуска** - создай нативный файл/папку агента, из которого работаешь, если его нет
+6. **LICENSE** - строгий All Rights Reserved (см. блок «Лицензия» ниже)
+7. **docs/portfolio-draft.md** - только если проект для портфолио DotBioSite
 
 ## Правила
 
@@ -27,16 +29,15 @@
 3. **Cover** - GitHub → `docs/cover.svg` + `<img width="720">`; IDE → inline `<svg>`; есть preview.png → используй
 4. **Write README** - структура ниже
 5. **Write rules** - AGENTS.md (80-150 строк), dotcore-project.mdc, CLAUDE.md (обёртка)
-6. **LoC** - `code-counter .` → TOTAL в бейдж между `<!-- loc:start -->` / `<!-- loc:end -->`
+6. **LoC** - `code-counter .` → TOTAL в бейдж между `<!-- loc:start -->` / `<!-- loc:end -->`; при `N >= 1000` сократи до `k+` (`211332` → `211k+`, в URL `%2B`)
 7. **Audit** - оценка 1-10, минимум 8
 
 ## Структура README
 
 ```
 # {brand}
-[3 flat badges: Runtime, Platform, Category]
+[4 flat badges: Runtime, Platform, Category, LoC]   LoC = 4-й, в маркерах, без пустой строки перед ним
 [cover]
-<!-- loc:start --> LoC badge <!-- loc:end -->
 {intro - до 3 предложений}
 
 ## Что внутри     ОПЦ. для UX-богатых проектов, факты и числа
@@ -44,8 +45,11 @@
 ## Команды        | Команда | Назначение |
 ## Стек            только <img for-the-badge>
 ## Тесты / …       если есть
-## Архитектура     ПОСЛЕДНЯЯ: абзац + ASCII-дерево + 3-6 инвариантов
+## Архитектура     последняя содержательная: абзац + ASCII-дерево + 3-6 инвариантов
+## Лицензия        футер: © {year} {author}, все права защищены + ссылка на LICENSE
 ```
+
+LoC-бейдж стоит 4-м в группе header (с Runtime · Platform · Category), не под cover. GitHub-first: все четыре - `<img style=flat>` внутри одного `<p>` (иначе на GitHub бейджи разъезжаются по строкам). Стек - тоже `<img>` в `<p>`. Обложка - `docs/cover.svg` + `<img src="docs/cover.svg" width="720">` (inline `<svg>` GitHub вырезает).
 
 ## AGENTS.md (кратко)
 
@@ -90,18 +94,52 @@ Skeleton (замени {p}, {brand}, {name}, {tagline}, {glyph}):
 </svg>
 ```
 
-## LoC badge
+## LoC badge (4-й в строке header)
 
 ```markdown
 <!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-{N}-lightgrey?style=flat" alt="{N} lines of code" /><!-- loc:end -->
 ```
 
+Ставится сразу после трёх flat-бейджей, без пустой строки между ними.
+
+## Лицензия (строгий All Rights Reserved)
+
+Файл `LICENSE` (замени `{year}`, `{author}` - год сессии и автор/бренд из репо; по умолчанию для DotCore - `DotCore`):
+
+```text
+Copyright (c) {year} {author}. All Rights Reserved.
+
+This software and its source code are proprietary and confidential.
+No permission is granted to any person to use, copy, modify, merge,
+publish, distribute, sublicense, or sell any part of the Software.
+
+The source is provided for viewing and reference only. Any other use
+requires the prior written permission of the copyright holder.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+```
+
+Футер README:
+
+```markdown
+## Лицензия
+
+© {year} {author}. Все права защищены. Использование, копирование, изменение и распространение запрещены без письменного разрешения автора. Исходный код открыт только для ознакомления. См. [LICENSE](LICENSE).
+```
+
+Не предлагай open-source лицензию по умолчанию. Прежнюю лицензию (MIT и т.п.) заменяй.
+
+## README-sync
+
+В AGENTS.md/CLAUDE.md/.mdc впиши: при глобальных изменениях (новые/удалённые команды, модули, зависимости, смена архитектуры или runtime) агент обновляет README через этот промпт/скилл, включая пересчёт LoC. Мелкие правки README не трогают.
+
 ## Self-check
 
-- [ ] README + AGENTS.md + mdc + CLAUDE.md созданы/обновлены
-- [ ] Команды и пути существуют; LoC обновлён
-- [ ] Cover по среде; нет битых img; архитектура последняя в README
-- [ ] AGENTS.md не дублирует README; CLAUDE.md - обёртка
+- [ ] README + AGENTS.md + mdc + CLAUDE.md + файл агента запуска созданы/обновлены
+- [ ] Команды и пути существуют; LoC обновлён, стоит 4-м бейджем в header
+- [ ] Cover по среде; нет битых img; архитектура - последняя содержательная, лицензия - футер
+- [ ] `LICENSE` создан (строгий All Rights Reserved); прежняя лицензия заменена
+- [ ] AGENTS.md не дублирует README; CLAUDE.md - обёртка; есть правило README-sync
 - [ ] Аудит ≥ 8/10
 
 Выведи краткий отчёт аудита и список изменённых файлов.
