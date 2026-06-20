@@ -13,7 +13,7 @@ You are continuing work on **DotLearn**, a local-first, AI-extensible learning w
 1. `README.md` — vision and quickstart
 2. `ARCHITECTURE.md` — invariants and structure
 3. `ROADMAP.md` — phase definitions (you are starting Phase 1)
-4. `CLAUDE.md` if you are Claude Code, or `.cursor/rules/dotlearn.mdc` if you are Cursor
+4. `CLAUDE.md` if you are Claude Code, or `.cursor/rules/dotcore-project.mdc` if you are Cursor
 5. `AGENTS.md` — universal conventions
 6. `.cursor/skills/lesson-forge/SKILL.md` (or `.claude/skills/lesson-forge/SKILL.md`) — the topic-generation skill, your main tool for content work
 7. `packages/contracts/src/*.schema.ts` — the source-of-truth Zod schemas
@@ -35,7 +35,6 @@ Not yet in place:
 
 - `packages/lesson-engine` (topic loader + exercise runner)
 - `packages/sandbox` (real sql.js + Pyodide adapters in Web Workers)
-- `packages/ai-providers` (BYOK abstraction)
 - MDX rendering on the topic page (currently shows curriculum only)
 - Per-exercise progress in IndexedDB
 - `pnpm validate` actually executing gold solutions (currently only checks schema and file references)
@@ -95,7 +94,7 @@ Execute the items in `ROADMAP.md` under "Phase 1 — Minimum Viable Player". Spe
 
 - Ask if you would be making an architectural choice that materially changes `ARCHITECTURE.md` (e.g. swapping NestJS for Fastify, dropping Turborepo).
 - Ask if you are about to introduce a new exercise type or runtime.
-- Otherwise proceed. The conventions in `CLAUDE.md` / `.cursor/rules/dotlearn.mdc` / `AGENTS.md` cover the day-to-day decisions.
+- Otherwise proceed. The conventions in `CLAUDE.md` / `.cursor/rules/dotcore-project.mdc` / `AGENTS.md` cover the day-to-day decisions.
 
 ### Style of working
 

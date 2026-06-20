@@ -80,8 +80,7 @@ When financial operations are introduced (future marketplace, sponsorships), the
 - Tailwind for styling
 - TanStack Router for routing
 - Topic discovery via `import.meta.glob('/topics/*/manifest.json', { eager: true })`
-- All AI calls go through `packages/ai-providers` (BYOK)
-- All secrets (API keys) live in IndexedDB, never on a server
+- No runtime AI: the app performs no LLM calls and stores no provider keys; LLMs are used only offline for content generation
 
 ## Sandbox isolation
 
