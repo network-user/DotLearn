@@ -41,12 +41,14 @@ pnpm dev:api      # NestJS API (опционально)
 | Установка       | `pnpm install`                                       |
 | Dev (web)       | `pnpm dev:web`                                       |
 | Dev (web + api) | `pnpm dev`                                           |
-| Тесты           | `pnpm test` (vitest через Turborepo)                 |
+| Тесты           | `pnpm test` (vitest; coverage-порог в lesson-engine) |
 | Typecheck       | `pnpm typecheck`                                     |
 | Lint            | `pnpm lint` / `pnpm lint:fix`                        |
 | Формат          | `pnpm format` / `pnpm format:check`                  |
 | Валидация тем   | `pnpm validate` (Zod-контракт + прогон gold-решений) |
 | Build           | `pnpm build`                                         |
+| i18n-паритет    | `pnpm check:i18n` (ключи ru/en в синхроне)           |
+| Бюджет бандла   | `pnpm check:bundle` (eager-JS ≤ лимит, после build)  |
 | Синк скиллов    | `pnpm sync:skills` / `pnpm check:skills`             |
 
 Команды - только из `package.json` / `Makefile` / CI. После правок гоняй релевантное из таблицы; после правок в `topics/**` - `pnpm validate`.
@@ -122,7 +124,7 @@ NestJS, Layered DDD:
 
 ## Тесты
 
-Vitest. `pnpm test` (Turborepo), per-package `pnpm --filter @dotlearn/<pkg> test`. Тесты рядом как `src/**/*.spec.ts`, globals выключены (`import { describe, it, expect } from 'vitest'`).
+Vitest. `pnpm test` (Turborepo), per-package `pnpm --filter @dotlearn/<pkg> test`. Тесты рядом как `src/**/*.spec.ts`, globals выключены (`import { describe, it, expect } from 'vitest'`). Node-env в пакетах и api; `apps/web` - jsdom + `fake-indexeddb` (отдельный `vitest.config.ts`, без app-плагинов). `lesson-engine` гоняет с порогом coverage.
 
 - **Поддерживай suite вместе с изменением, не после.** Правишь схемы `packages/contracts` или grading/loader `packages/lesson-engine` - правь и спеки, держи `pnpm test` зелёным.
 - **Тестируй там, где это окупается:** grading/сравнение ответов, валидация схем, лоадеры/резолверы, доменные сервисы api, нетривиальные алгоритмы. Тривиальный glue и presentational-разметку - нет.
