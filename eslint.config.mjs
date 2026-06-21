@@ -1,8 +1,18 @@
 import js from '@eslint/js';
+import jsxA11yPlugin from 'eslint-plugin-jsx-a11y';
 import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+
+// Surface accessibility issues without blocking CI: every jsx-a11y rule runs as a
+// warning, so the ARIA / tap-target conventions in AGENTS.md get machine-checked
+// while the existing backlog is worked down.
+const a11yRecommended =
+  jsxA11yPlugin.flatConfigs?.recommended?.rules ?? jsxA11yPlugin.configs.recommended.rules;
+const a11yAsWarnings = Object.fromEntries(
+  Object.keys(a11yRecommended).map((rule) => [rule, 'warn']),
+);
 
 export default [
   {
@@ -43,12 +53,14 @@ export default [
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
+      'jsx-a11y': jsxA11yPlugin,
     },
     languageOptions: {
       globals: { ...globals.browser },
     },
     rules: {
       ...reactPlugin.configs.recommended.rules,
+      ...a11yAsWarnings,
       'react/jsx-uses-react': 'off',
       'react/react-in-jsx-scope': 'off',
       'react/prop-types': 'off',
