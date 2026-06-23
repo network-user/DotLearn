@@ -135,6 +135,11 @@ export const PredictOutputRunner = ({
   const status: ExerciseCardStatus =
     state.kind === 'pass' ? 'pass' : state.kind === 'fail' ? 'fail' : 'idle';
 
+  // stdout values are already plain text — show them raw. JSON.stringify would
+  // re-quote and escape the string, turning (2, 'b') into "\"('2', b)\"".
+  const formatValue = (value: unknown): string =>
+    expected.kind === 'stdout' && typeof value === 'string' ? value : JSON.stringify(value);
+
   return (
     <ExerciseCard
       type={exercise.type}
@@ -257,12 +262,12 @@ export const PredictOutputRunner = ({
             {state.expected !== undefined && (
               <p className="text-[12px] text-err/80 font-mono">
                 {t('predict.expected')}:{' '}
-                <code className="text-ok">{JSON.stringify(state.expected)}</code>
+                <code className="text-ok">{formatValue(state.expected)}</code>
               </p>
             )}
             {state.actual !== undefined && (
               <p className="text-[12px] text-err/80 font-mono">
-                {t('predict.got')}: <code className="text-err">{JSON.stringify(state.actual)}</code>
+                {t('predict.got')}: <code className="text-err">{formatValue(state.actual)}</code>
               </p>
             )}
           </div>

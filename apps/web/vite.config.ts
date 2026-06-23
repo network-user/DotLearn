@@ -41,6 +41,35 @@ const PYODIDE_RUNTIME_FILES = [
   'pyodide-lock.json',
 ] as const;
 
+// Extra Pyodide packages shipped to the browser beyond the core runtime.
+// sqlite3 is an unvendored stdlib module used by the python-orm topic: the
+// worker calls loadPackagesFromImports, but it can only fetch the package if
+// its .zip is actually served. The core 4 files alone leave `import sqlite3`
+// failing with ModuleNotFoundError in the browser (Node validator is fine
+// because it loads the full distribution straight from node_modules).
+const PYODIDE_EXTRA_PACKAGES = ['sqlite3'] as const;
+
+// Resolve curated packages to their on-disk file names, pulling transitive
+// `depends` from pyodide-lock.json so a package's dependencies ship too.
+const resolvePyodidePackageFiles = (pyodideDir: string): string[] => {
+  const lock = JSON.parse(readFileSync(join(pyodideDir, 'pyodide-lock.json'), 'utf8')) as {
+    packages?: Record<string, { file_name: string; depends?: string[] }>;
+  };
+  const packages = lock.packages ?? {};
+  const seen = new Set<string>();
+  const files = new Set<string>();
+  const visit = (name: string): void => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    const entry = packages[name];
+    if (!entry) return;
+    files.add(entry.file_name);
+    for (const dep of entry.depends ?? []) visit(dep);
+  };
+  for (const name of PYODIDE_EXTRA_PACKAGES) visit(name);
+  return [...files];
+};
+
 const pyodideContentType = (name: string): string => {
   if (name.endsWith('.wasm')) return 'application/wasm';
   if (name.endsWith('.js')) return 'text/javascript';
@@ -53,6 +82,10 @@ const pyodideAssetsPlugin = (): Plugin => {
   const require = createRequire(import.meta.url);
   const pyodideDir = dirname(require.resolve('pyodide/package.json'));
   const filePath = (name: string): string => join(pyodideDir, name);
+  const servedFiles = new Set<string>([
+    ...PYODIDE_RUNTIME_FILES,
+    ...resolvePyodidePackageFiles(pyodideDir),
+  ]);
   return {
     name: 'dotlearn-pyodide-assets',
     configureServer(server) {
@@ -60,10 +93,7 @@ const pyodideAssetsPlugin = (): Plugin => {
         const path = (req.url ?? '').split('?')[0];
         const match = /\/pyodide\/([^/]+)$/.exec(path);
         const name = match?.[1];
-        if (
-          !name ||
-          !PYODIDE_RUNTIME_FILES.includes(name as (typeof PYODIDE_RUNTIME_FILES)[number])
-        ) {
+        if (!name || !servedFiles.has(name)) {
           next();
           return;
         }
@@ -78,7 +108,7 @@ const pyodideAssetsPlugin = (): Plugin => {
       });
     },
     generateBundle() {
-      for (const name of PYODIDE_RUNTIME_FILES) {
+      for (const name of servedFiles) {
         this.emitFile({
           type: 'asset',
           fileName: `pyodide/${name}`,

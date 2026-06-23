@@ -65,6 +65,8 @@ pnpm dev:api      # NestJS API (опционально)
 │   ├── lesson-engine/  # загрузчик тем, раннеры упражнений, CLI-валидатор
 │   └── sandbox/        # sql.js + Pyodide в Web Workers
 ├── topics/         # 34 темы (manifest + MDX + YAML)
+├── deploy/         # шаблоны Caddyfile + systemd-юнит (bare-metal деплой)
+├── scripts/        # deploy.sh, sync/checks, контент-тулинг
 ├── .cursor/skills/ # lesson-forge, generate-readme (канон)
 └── .claude/skills/ # зеркало (pnpm sync:skills)
 ```
@@ -153,15 +155,35 @@ Vitest. `pnpm test` (Turborepo), per-package `pnpm --filter @dotlearn/<pkg> test
 
 ## Переменные окружения
 
-| Переменная               | Назначение                                        |
-| ------------------------ | ------------------------------------------------- |
-| `DATA_DIR`               | путь тома данных api (json-file-store)            |
-| `ES_NODE` / `ES_ENABLED` | адрес Elasticsearch и флаг включения fuzzy-поиска |
-| `VITE_API_BASE`          | базовый URL api для фронта                        |
-| `VITE_ADMIN_PATH`        | путь admin-роута                                  |
-| `WEB_ORIGIN`             | разрешённый origin для CORS api                   |
+| Переменная               | Назначение                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `DOMAIN` / `ACME_EMAIL`  | домен и email для авто-HTTPS (Caddy/Let's Encrypt) при деплое                         |
+| `DATA_DIR`               | путь тома данных api (json-file-store)                                                |
+| `ES_NODE` / `ES_ENABLED` | адрес Elasticsearch и флаг fuzzy-поиска (`ES_ENABLED=false` по умолчанию → in-memory) |
+| `VITE_API_BASE`          | базовый URL api для фронта (в проде `https://$DOMAIN`, same-origin)                   |
+| `VITE_ADMIN_PATH`        | путь admin-роута                                                                      |
+| `WEB_ORIGIN`             | разрешённый origin для CORS api                                                       |
+| `HOST` / `PORT`          | адрес/порт прослушивания api (`127.0.0.1` за прокси)                                  |
+| `TRUSTED_PROXY_HOPS`     | число reverse-прокси перед api (Caddy = `1`)                                          |
 
 Admin-секреты api (логин, JWT, TOTP) читаются из `.env`; имена и ротация - в [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). **Не читай `.env`, не коммить секреты.**
+
+## Деплой
+
+Основной путь - bare-metal на Debian/Ubuntu, без Docker (минимум RAM/диска): Caddy отдаёт статику с авто-HTTPS и проксирует `/api`, api крутится под systemd.
+
+| Действие               | Команда                                                                  |
+| ---------------------- | ------------------------------------------------------------------------ |
+| Полный деплой          | `sudo bash scripts/deploy.sh` (спросит домен/email/пароль, идемпотентен) |
+| Обновление             | `make update` (git pull + redeploy)                                      |
+| Статус / логи          | `make status` / `make logs` / `make logs-web`                            |
+| Рестарт                | `make restart`                                                           |
+| Бэкап / восстановление | `make backup` / `make restore FILE=...`                                  |
+
+- Прод-артефакты: api-бандл `pnpm deploy --prod` → `/opt/dotlearn/api`, статика → `/var/www/dotlearn`, данные → `/var/lib/dotlearn/data`.
+- `scripts/deploy.sh` сам ставит Node/pnpm/Caddy, генерит admin-секреты (`apps/api/scripts/gen-admin-secrets.mjs`), чистит build-зависимости и pnpm-store ради диска.
+- Caddyfile и systemd-юнит - шаблоны в `deploy/`. Elasticsearch опционален (`ES_ENABLED=false` по умолчанию).
+- Docker - альтернатива (`docker compose up`); ES под профилем `search`. Детали - в [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
 ## Поток заявок (submissions)
 
