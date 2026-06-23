@@ -79,6 +79,16 @@ export default [
     },
   },
   {
+    files: ['**/*.{mjs,cjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
+      parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
     files: ['topics/**'],
     rules: {},
   },
