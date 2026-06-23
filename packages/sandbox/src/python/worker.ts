@@ -13,6 +13,15 @@ let pyodidePromise: Promise<PyodideInterface> | undefined;
 
 const WASM_FILE = 'pyodide.asm.wasm';
 
+// Pyodide packages that are NOT vendored in python_stdlib.zip and ship as separate
+// .zip files (e.g. sqlite3, used by the python-orm topic). They MUST be loaded here
+// during init, while fetch still works: hardenWorkerScope() neuters fetch/importScripts
+// immediately after, so a runtime loadPackagesFromImports() can never download them and
+// `import sqlite3` would fall back to the "unvendored" stub (ModuleNotFoundError).
+// Mirror of PYODIDE_EXTRA_PACKAGES in apps/web/vite.config.ts, which makes sure the .zip
+// is actually served to the browser.
+const PRELOAD_PACKAGES = ['sqlite3'] as const;
+
 const prefetchRuntimeBinary = async (
   indexUrl: string,
   onProgress: (progress: PyodideInitProgress) => void,
@@ -49,6 +58,14 @@ const ensurePyodide = (
     pyodidePromise = (async () => {
       await prefetchRuntimeBinary(indexUrl, onProgress).catch(() => undefined);
       const py = await loadPyodide({ indexURL: indexUrl });
+      // Load curated packages while the network is still reachable. Best-effort: a failed
+      // preload (e.g. offline) must not take down the whole Python sandbox — only the
+      // topics that need that package break, and they would anyway.
+      if (PRELOAD_PACKAGES.length > 0) {
+        await py
+          .loadPackage([...PRELOAD_PACKAGES], { messageCallback: () => undefined })
+          .catch(() => undefined);
+      }
       hardenWorkerScope(workerScope);
       return py;
     })();
