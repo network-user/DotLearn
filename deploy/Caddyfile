@@ -1,0 +1,45 @@
+# DotLearn — Caddy site config.
+# Installed to /etc/caddy/Caddyfile by scripts/deploy.sh, which feeds
+# DOMAIN / ACME_EMAIL / WEB_ROOT / API_UPSTREAM via a systemd drop-in.
+# Caddy serves the static SPA, reverse-proxies /api to the local NestJS
+# process, and obtains/renews a Let's Encrypt certificate automatically.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Transport-level security headers. The Content-Security-Policy ships
+	# in index.html via <meta> (kept in sync by scripts/check-csp-sync.mjs),
+	# so it is intentionally not duplicated here.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), usb=(), payment=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+	}
+
+	# API → local NestJS process (loopback).
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:127.0.0.1:3000}
+	}
+
+	# Static single-page app with history-API fallback.
+	handle {
+		root * {$WEB_ROOT}
+
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
+		@index path / /index.html
+		header @index Cache-Control "no-store"
+
+		try_files {path} /index.html
+		file_server
+	}
+}
