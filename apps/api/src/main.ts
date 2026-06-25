@@ -34,11 +34,21 @@ const parseAllowedOrigins = (): string[] => {
 
 const bootstrap = async (): Promise<void> => {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
-  app.useLogger(app.get(Logger));
+  const logger = app.get(Logger);
+  app.useLogger(logger);
 
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.disable('x-powered-by');
-  expressApp.set('trust proxy', Number(process.env.TRUSTED_PROXY_HOPS ?? 0));
+  const parsedProxyHops = Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? '', 10);
+  const trustProxyHops =
+    Number.isInteger(parsedProxyHops) && parsedProxyHops >= 0 ? parsedProxyHops : 0;
+  expressApp.set('trust proxy', trustProxyHops);
+  if (isProduction && trustProxyHops === 0) {
+    logger.warn(
+      'TRUSTED_PROXY_HOPS=0 in production: the rate limiter will bucket every request under the ' +
+        'proxy IP. Set it to the number of reverse proxies in front of the API (Caddy = 1).',
+    );
+  }
 
   app.setGlobalPrefix('api');
   app.use(cookieParser());

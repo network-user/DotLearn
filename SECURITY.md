@@ -64,16 +64,20 @@ Consequences:
 
 ## Web app controls (`apps/web`)
 
-- **Content Security Policy + security headers.** The production nginx image
-  serves the full header set (`Content-Security-Policy`, `Strict-Transport-Security`,
-  `X-Frame-Options: DENY`, `X-Content-Type-Options`, `Referrer-Policy`,
-  `Permissions-Policy`, `Cross-Origin-Opener-Policy`) from
+- **Content Security Policy + security headers.** The full header set
+  (`Content-Security-Policy`, `Strict-Transport-Security`, `X-Frame-Options: DENY`,
+  `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`,
+  `Cross-Origin-Opener-Policy`) is served as real response headers by the edge in
+  both deployment paths: the recommended bare-metal path serves them from
+  `deploy/Caddyfile`, and the Docker/nginx path from
   `apps/web/security-headers.conf`, re-`include`d in every `location` so a
-  per-location `add_header` cannot drop them. A `<meta>` CSP (`cspPlugin`,
-  `apply: 'build'`) is kept as a belt-and-suspenders for non-nginx hosts, but
-  `frame-ancestors`/HSTS are spec-ignored in `<meta>` and rely on the real
-  headers. `public/_headers` mirrors the policy for Netlify/Cloudflare hosts.
-  Keep all three in sync. Key directives: `script-src 'self' 'wasm-unsafe-eval'`
+  per-location `add_header` cannot drop them. The CSP is a real header on both,
+  so `frame-ancestors 'none'` is enforced (not only the `X-Frame-Options: DENY`
+  fallback). A `<meta>` CSP (`cspPlugin`, `apply: 'build'`) is kept as
+  belt-and-suspenders for static hosts, but `frame-ancestors`/HSTS are
+  spec-ignored in `<meta>` and rely on the real headers. `public/_headers`
+  mirrors the policy for Netlify/Cloudflare hosts. Keep the Caddyfile, nginx
+  conf, and `_headers` in sync. Key directives: `script-src 'self' 'wasm-unsafe-eval'`
   (no `unsafe-eval`), `object-src 'none'`, `frame-ancestors 'none'`,
   `worker-src 'self' blob:`.
   - `connect-src` is a tight allowlist: `'self'` plus `localhost` / websocket

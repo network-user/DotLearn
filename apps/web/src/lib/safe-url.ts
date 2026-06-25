@@ -9,6 +9,7 @@ export const isSafeHref = (href: string | null | undefined): boolean => {
   if (!href) return false;
   const trimmed = href.trim();
   if (trimmed.length === 0) return false;
+  if (trimmed.startsWith('//')) return false;
   if (trimmed.startsWith('#') || trimmed.startsWith('/')) return true;
   try {
     const base = typeof document !== 'undefined' ? document.baseURI : 'https://localhost/';
