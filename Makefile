@@ -1,6 +1,7 @@
 # DotLearn ops shortcuts (server-side). See docs/SELF_HOSTING.md.
 SHELL := /bin/bash
-DATA_DIR := $(shell sed -n 's/^DATA_DIR=//p' .env 2>/dev/null | head -n1)
+DATA_DIR := $(shell sed -n 's/^DATA_DIR=//p' /etc/dotlearn/dotlearn.env 2>/dev/null | head -n1)
+DATA_DIR := $(if $(DATA_DIR),$(DATA_DIR),$(shell sed -n 's/^DATA_DIR=//p' .env 2>/dev/null | head -n1))
 DATA_DIR := $(if $(DATA_DIR),$(DATA_DIR),/var/lib/dotlearn/data)
 STAMP := $(shell date +%F-%H%M%S)
 
@@ -20,7 +21,10 @@ deploy:
 	sudo bash scripts/deploy.sh
 
 update:
-	git pull --ff-only
+	git fetch --tags --prune
+	@echo "Incoming commits:"; git --no-pager log --oneline HEAD..@{u} || true
+	@read -r -p "Pull and redeploy the above? [y/N] " a; [ "$$a" = y ] || [ "$$a" = Y ] || { echo "aborted"; exit 1; }
+	git merge --ff-only @{u}
 	sudo bash scripts/deploy.sh
 
 restart:
@@ -38,13 +42,16 @@ logs-web:
 
 backup:
 	mkdir -p backups
-	sudo tar czf backups/dotlearn-data-$(STAMP).tar.gz -C "$(DATA_DIR)" .
-	@echo "→ backups/dotlearn-data-$(STAMP).tar.gz"
+	umask 077; sudo tar czf backups/dotlearn-data-$(STAMP).tar.gz -C "$(DATA_DIR)" .
+	sudo chmod 600 backups/dotlearn-data-$(STAMP).tar.gz
+	@echo "→ backups/dotlearn-data-$(STAMP).tar.gz (contains operational data; keep private)"
 
 restore:
 	@test -n "$(FILE)" || { echo "Usage: make restore FILE=backups/....tar.gz"; exit 1; }
+	@if sudo tar tzf "$(FILE)" | grep -qE '^/|\.\.'; then echo "refusing: archive has absolute or .. paths"; exit 1; fi
+	@if sudo tar tvzf "$(FILE)" | grep -qE '^[lh]'; then echo "refusing: archive contains links"; exit 1; fi
 	sudo systemctl stop dotlearn-api
-	sudo tar xzf "$(FILE)" -C "$(DATA_DIR)"
+	sudo tar --no-same-owner --no-overwrite-dir -xzf "$(FILE)" -C "$(DATA_DIR)"
 	sudo chown -R dotlearn:dotlearn "$(DATA_DIR)"
 	sudo systemctl start dotlearn-api
 	@echo "restored from $(FILE)"
