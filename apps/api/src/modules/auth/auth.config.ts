@@ -55,6 +55,17 @@ export const loadAuthConfig = (): AuthConfig => {
         'Use pnpm admin:hash / admin:totp / admin:jwt-secret to generate them.',
     );
   }
+  const minSecretLength = 32;
+  const weak: string[] = [];
+  if (accessSecret.length < minSecretLength) weak.push('ADMIN_JWT_SECRET');
+  if (refreshSecret.length < minSecretLength) weak.push('ADMIN_REFRESH_SECRET');
+  if (totpSecret.length < 16) weak.push('ADMIN_TOTP_SECRET');
+  if (weak.length > 0) {
+    throw new Error(
+      `Weak admin secret(s): ${weak.join(', ')}. JWT secrets must be >= ${minSecretLength} chars ` +
+        'and the TOTP secret >= 16. Regenerate with pnpm admin:jwt-secret / admin:totp.',
+    );
+  }
   if (refreshSecret === accessSecret) {
     throw new Error(
       'ADMIN_REFRESH_SECRET must differ from ADMIN_JWT_SECRET so a leaked access ' +

@@ -15,7 +15,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
-ENV_FILE="$REPO_DIR/.env"
+CONF_DIR="/etc/dotlearn"
+ENV_FILE="$CONF_DIR/dotlearn.env"
 SERVICE_USER="dotlearn"
 API_RUNTIME="/opt/dotlearn/api"
 WEB_ROOT="/var/www/dotlearn"
@@ -52,8 +53,12 @@ if command -v node >/dev/null 2>&1; then
   if [ "$cur" -ge "$NODE_MAJOR" ]; then node_ok=1; fi
 fi
 if [ "$node_ok" = 0 ]; then
-  log "Installing Node.js ${NODE_MAJOR}.x (NodeSource)"
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
+  log "Installing Node.js ${NODE_MAJOR}.x (NodeSource, signed apt repo)"
+  apt-get install -y ca-certificates curl gnupg
+  install -d -m 755 /usr/share/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+  echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  apt-get update
   apt-get install -y nodejs
 fi
 ok "node $(node -v)"
@@ -80,11 +85,17 @@ ok "user '$SERVICE_USER'"
 
 # ───────────────────────────────────────────────────────────────
 log "3/9  Configuration (.env)"
+install -d -m 700 "$CONF_DIR"
+if [ ! -f "$ENV_FILE" ] && [ -f "$REPO_DIR/.env" ]; then
+  mv "$REPO_DIR/.env" "$ENV_FILE"
+  ok "migrated existing .env to $ENV_FILE"
+fi
 if [ ! -f "$ENV_FILE" ]; then
   cp "$REPO_DIR/.env.example" "$ENV_FILE"
-  ok "created .env from template"
+  ok "created $ENV_FILE from template"
 fi
 chmod 600 "$ENV_FILE"
+chown root:root "$ENV_FILE"
 
 ask() {
   local key="$1" prompt="$2" def="$3" ans=""
@@ -180,6 +191,7 @@ NODE_BIN="$(command -v node)"
 sed -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
     -e "s|__API_RUNTIME__|$API_RUNTIME|g" \
     -e "s|__REPO_DIR__|$REPO_DIR|g" \
+    -e "s|__ENV_FILE__|$ENV_FILE|g" \
     -e "s|__NODE_BIN__|$NODE_BIN|g" \
     -e "s|__DATA_DIR__|$DATA_DIR|g" \
     "$REPO_DIR/deploy/dotlearn-api.service" > /etc/systemd/system/dotlearn-api.service

@@ -12,6 +12,11 @@ const ESCAPE_GLOBALS = [
   'SharedWorker',
   'BroadcastChannel',
   'postMessage',
+  // WebRTC and WebTransport open network channels that bypass a neutered fetch and are not
+  // governed by the CSP connect-src directive, so they must be removed explicitly.
+  'RTCPeerConnection',
+  'webkitRTCPeerConnection',
+  'WebTransport',
 ] as const;
 
 // navigator.sendBeacon is a self-contained cross-origin POST that does not depend on the
