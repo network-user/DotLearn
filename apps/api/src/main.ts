@@ -18,6 +18,8 @@ const securityHeaders = (_request: Request, response: Response, next: NextFuncti
   response.setHeader('X-Frame-Options', 'DENY');
   response.setHeader('Referrer-Policy', 'no-referrer');
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // JSON-only API: lock the document context down entirely (it never renders HTML/scripts).
+  response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
   if (isProduction) {
     response.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   }

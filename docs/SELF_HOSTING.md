@@ -69,7 +69,7 @@ changes, or `make update` to `git pull` first.
 | `/opt/dotlearn/api`                        | Production API bundle (run by systemd)   |
 | `/var/www/dotlearn`                        | Static site (served by Caddy)            |
 | `/var/lib/dotlearn/data`                   | API data (submissions, hidden-topics)    |
-| `<repo>/.env`                              | Single config + secrets file (chmod 600) |
+| `/etc/dotlearn/dotlearn.env`               | Single config + secrets file (chmod 600) |
 | `/etc/systemd/system/dotlearn-api.service` | API service unit                         |
 | `/etc/caddy/Caddyfile`                     | Caddy site config                        |
 

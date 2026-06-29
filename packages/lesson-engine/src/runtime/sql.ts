@@ -1,6 +1,7 @@
 export interface SqlExecution {
   columns: string[];
   rows: Record<string, unknown>[];
+  truncated?: boolean;
 }
 
 export interface SqlRuntime {

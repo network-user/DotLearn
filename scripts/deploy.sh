@@ -10,6 +10,9 @@
 # static site with automatic HTTPS.
 #
 set -euo pipefail
+# Secret-bearing files (.env, its .tmp siblings) must never be world-readable,
+# not even between creation and the explicit chmod 600 below.
+umask 077
 
 # ── Paths and constants ────────────────────────────────────────
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -91,7 +94,7 @@ if [ ! -f "$ENV_FILE" ] && [ -f "$REPO_DIR/.env" ]; then
   ok "migrated existing .env to $ENV_FILE"
 fi
 if [ ! -f "$ENV_FILE" ]; then
-  cp "$REPO_DIR/.env.example" "$ENV_FILE"
+  install -m 600 "$REPO_DIR/.env.example" "$ENV_FILE"
   ok "created $ENV_FILE from template"
 fi
 chmod 600 "$ENV_FILE"

@@ -27,6 +27,11 @@ const post = (response: SqlWorkerResponse): void => {
   rawPostMessage(response);
 };
 
+// Cap the materialized result so a runaway query (e.g. an unbounded recursive CTE or a wide
+// CROSS JOIN) cannot balloon the structured-clone payload sent back to the main thread before
+// the runtime watchdog terminates the worker. Mirrors the Python worker's MAX_STDOUT_CHARS bound.
+const MAX_RESULT_ROWS = 50_000;
+
 const toRow = (columns: string[], values: ReadonlyArray<unknown>): Record<string, unknown> => {
   const row: Record<string, unknown> = {};
   for (let index = 0; index < columns.length; index += 1) {
@@ -53,8 +58,10 @@ const runExecute = async (id: string, sql: string, fixture: string | undefined):
         return;
       }
       const columns = [...last.columns];
-      const rows = last.values.map((row) => toRow(columns, row));
-      post({ id, type: 'result', columns, rows });
+      const truncated = last.values.length > MAX_RESULT_ROWS;
+      const values = truncated ? last.values.slice(0, MAX_RESULT_ROWS) : last.values;
+      const rows = values.map((row) => toRow(columns, row));
+      post({ id, type: 'result', columns, rows, truncated });
     } finally {
       db.close();
     }

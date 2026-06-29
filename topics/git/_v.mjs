@@ -1,4 +1,4 @@
-import { createGitRepo, evaluateGitGoals } from 'file:///C:/Users/User/PycharmProjects/DotLearn/packages/lesson-engine/src/runtime/git/index.ts';
+import { createGitRepo, evaluateGitGoals } from '../../packages/lesson-engine/src/runtime/git/index.ts';
 function run(label, init, solution, goals) {
   let repo;
   try { repo = createGitRepo(init); } catch (e) { console.log(`[${label}] SETUP FAILED: ${e.message}`); return; }

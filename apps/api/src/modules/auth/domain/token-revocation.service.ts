@@ -28,7 +28,6 @@ export class TokenRevocationService implements OnModuleInit {
 
   private gc(): void {
     const now = Date.now();
-    if (this.revoked.size < 256) return;
     for (const [jti, expiresAtMs] of this.revoked.entries()) {
       if (expiresAtMs < now) {
         this.revoked.delete(jti);

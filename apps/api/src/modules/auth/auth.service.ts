@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/consistent-type-imports -- these are Nest DI dependencies: they must be value imports so emitDecoratorMetadata records the real classes in design:paramtypes (type-only imports erase to Function and break DI at bootstrap). */
 import { createHash, randomUUID } from 'node:crypto';
 
 import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
@@ -103,12 +104,11 @@ export class AuthService {
     // Username/password failures are NOT counted toward account lockout: that would let
     // an unauthenticated attacker lock out the admin by spamming wrong passwords (DoS).
     // The per-route throttle bounds password guessing; lockout only escalates on TOTP failure.
-    if (login !== this.config.login) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
+    // bcrypt.compare runs regardless of whether the login matches, so a wrong username and a
+    // wrong password take the same time: no response-timing oracle for the admin username.
+    const loginMatches = login === this.config.login;
     const passwordOk = await bcrypt.compare(password, this.config.passwordHash);
-    if (!passwordOk) {
+    if (!loginMatches || !passwordOk) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
