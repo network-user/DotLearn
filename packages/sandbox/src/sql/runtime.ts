@@ -165,7 +165,9 @@ export const createSqlJsRuntime = (options: SqlJsRuntimeOptions): SqlJsRuntime =
     if (response.type !== 'result') {
       throw new SqlExecutionError(`unexpected worker response: ${response.type}`, sql);
     }
-    return { columns: response.columns, rows: response.rows };
+    return response.truncated
+      ? { columns: response.columns, rows: response.rows, truncated: true }
+      : { columns: response.columns, rows: response.rows };
   };
 
   const terminate = (): void => {

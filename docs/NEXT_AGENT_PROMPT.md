@@ -1,12 +1,12 @@
 # Handoff prompt — DotLearn
 
-Copy the block below into a fresh chat with Cursor or Claude Code at the repository root (`C:\Users\User\PycharmProjects\DotLearn`). It briefs the next agent on context, conventions, and the first concrete tasks.
+Copy the block below into a fresh chat with Cursor or Claude Code at the repository root (`<repo-root>`). It briefs the next agent on context, conventions, and the first concrete tasks.
 
 ---
 
 ## Prompt
 
-You are continuing work on **DotLearn**, a local-first, AI-extensible learning workbench. The repository is at `C:\Users\User\PycharmProjects\DotLearn`. A previous agent laid the foundation (architecture, contracts, scaffold, skill, one demo topic). Your job is to take it from "scaffold" to "Phase 1 MVP" as defined in `ROADMAP.md`.
+You are continuing work on **DotLearn**, a local-first, AI-extensible learning workbench. The repository is at `<repo-root>`. A previous agent laid the foundation (architecture, contracts, scaffold, skill, one demo topic). Your job is to take it from "scaffold" to "Phase 1 MVP" as defined in `ROADMAP.md`.
 
 ### Read first (in this order)
 

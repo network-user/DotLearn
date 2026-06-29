@@ -31,7 +31,7 @@ const CONTENT_SECURITY_POLICY = [
   "font-src 'self' data:",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
-  "connect-src 'self' http://localhost:* ws://localhost:* wss://localhost:*",
+  "connect-src 'self'",
 ].join('; ');
 
 const PYODIDE_RUNTIME_FILES = [
@@ -190,7 +190,7 @@ export default defineConfig({
         globIgnores: ['**/pyodide/**'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/pyodide\//],
+        navigateFallbackDenylist: [/^\/pyodide\//, /^\/api\//],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith('/pyodide/'),
@@ -202,7 +202,7 @@ export default defineConfig({
                 maxAgeSeconds: 60 * 60 * 24 * 90,
               },
               cacheableResponse: {
-                statuses: [0, 200],
+                statuses: [200],
               },
             },
           },
@@ -217,7 +217,7 @@ export default defineConfig({
                 maxAgeSeconds: 60 * 60 * 24 * 30,
               },
               cacheableResponse: {
-                statuses: [0, 200],
+                statuses: [200],
               },
             },
           },
@@ -232,7 +232,7 @@ export default defineConfig({
                 maxAgeSeconds: 60 * 60 * 24 * 90,
               },
               cacheableResponse: {
-                statuses: [0, 200],
+                statuses: [200],
               },
             },
           },

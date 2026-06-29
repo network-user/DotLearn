@@ -80,14 +80,18 @@ Consequences:
   conf, and `_headers` in sync. Key directives: `script-src 'self' 'wasm-unsafe-eval'`
   (no `unsafe-eval`), `object-src 'none'`, `frame-ancestors 'none'`,
   `worker-src 'self' blob:`.
-  - `connect-src` is a tight allowlist: `'self'` plus `localhost` / websocket
-    origins for local dev and `pnpm preview`. The site is **pure-logic with no
-    runtime AI** (see below), so the former provider hosts (`api.anthropic.com`,
-    `api.openai.com`, `openrouter.ai`) were removed: with no runtime path to
-    them they were pure data-exfiltration surface for any future XSS foothold. A
-    cross-origin backend must be added to the policy by the deployer. Keep the
-    three copies (`vite.config.ts`, `security-headers.conf`, `public/_headers`)
-    in sync; `_headers` also carries HSTS to match the nginx image.
+  - `connect-src` is `'self'` only. The SPA and API are same-origin in every
+    deployment path: the bare-metal path proxies `/api` through Caddy, and the
+    Docker image proxies `/api` through nginx (`apps/web/nginx.conf`) to the
+    `api` service - so no cross-origin host is needed. The site is **pure-logic
+    with no runtime AI** (see below), so the former provider hosts
+    (`api.anthropic.com`, `api.openai.com`, `openrouter.ai`) were removed: with
+    no runtime path to them they were pure data-exfiltration surface for any
+    future XSS foothold. A genuinely cross-origin backend would have to be added
+    to the policy by the deployer. Keep the three copies (`vite.config.ts`,
+    `security-headers.conf`, `public/_headers`) in sync - `scripts/check-csp-sync.mjs`
+    enforces it, and they match `deploy/Caddyfile`; `_headers` also carries HSTS
+    to match the nginx image.
 - **No runtime AI / BYOK.** The running app performs no LLM calls and stores no
   provider keys. The former BYOK scaffolding (`lib/provider-credentials.ts`,
   `lib/crypto-store.ts`, the `providerCredentials` / `cryptoKeys` IndexedDB
@@ -159,6 +163,24 @@ Consequences:
   sessions. Durable-write failures are logged, not swallowed.
 - No `child_process` / shell execution; submissions are not written to disk by
   user-controlled paths.
+
+## Build & deploy trust boundary
+
+- **The build runs as root; the runtime does not.** `scripts/deploy.sh` runs
+  `pnpm install --frozen-lockfile` and the per-package builds as root, so a
+  dependency's lifecycle (`postinstall`) script executes as uid 0 at build time.
+  This is a deliberate trade-off for the one-command bare-metal deploy. The
+  runtime is fully de-privileged (systemd `User=dotlearn`, `NoNewPrivileges`,
+  empty `CapabilityBoundingSet`, `ProtectSystem=strict`), but the build is not.
+  Trust rests on the pinned `pnpm-lock.yaml`: **review lock-file diffs before
+  deploying**, and on shared hosts consider running the install/build as a
+  dedicated unprivileged user.
+- **Secret files are never world-readable.** `deploy.sh` sets `umask 077` up
+  front and writes the env file at `/etc/dotlearn/dotlearn.env` (mode 600, owned
+  by root), so admin secrets (password hash, TOTP secret, JWT/refresh secrets,
+  backup-code hashes) are not exposed even transiently during creation. The
+  static site (`/var/www/dotlearn`) and API data (`/var/lib/dotlearn/data`) carry
+  no secrets.
 
 ## Still needs manual (in-browser) verification
 

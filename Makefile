@@ -51,7 +51,7 @@ restore:
 	@if sudo tar tzf "$(FILE)" | grep -qE '^/|\.\.'; then echo "refusing: archive has absolute or .. paths"; exit 1; fi
 	@if sudo tar tvzf "$(FILE)" | grep -qE '^[lh]'; then echo "refusing: archive contains links"; exit 1; fi
 	sudo systemctl stop dotlearn-api
-	sudo tar --no-same-owner --no-overwrite-dir -xzf "$(FILE)" -C "$(DATA_DIR)"
+	sudo tar --no-same-owner --no-overwrite-dir --no-absolute-names -xzf "$(FILE)" -C "$(DATA_DIR)"
 	sudo chown -R dotlearn:dotlearn "$(DATA_DIR)"
 	sudo systemctl start dotlearn-api
 	@echo "restored from $(FILE)"

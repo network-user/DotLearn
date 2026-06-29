@@ -9,6 +9,16 @@
 
 <img src="docs/cover.svg" width="720" alt=".learn" />
 
+<!-- audit:start -->
+<p>
+  <img src="https://img.shields.io/badge/security_audit-passed-3fb950?style=flat" alt="security audit passed" />
+  <img src="https://img.shields.io/badge/level-full-8957e5?style=flat" alt="level full" />
+  <img src="https://img.shields.io/badge/scope-leaks_%2B_code-bf3989?style=flat" alt="scope leaks and code" />
+  <img src="https://img.shields.io/badge/model-Claude_Opus_4.8-555?style=flat" alt="model" />
+  <img src="https://img.shields.io/badge/date-2026--06--29-555?style=flat" alt="date" />
+</p>
+<!-- audit:end -->
+
 Local-first монорепо для обучения программированию, где урок - не статический текст, а интерактивный модуль. Каждая тема - типобезопасный пакет (теория в MDX, упражнения в YAML, всё под Zod): теорию сопровождают встроенные визуализации, а задачи проверяются прямо в браузере через sql.js и Pyodide в Web Workers. Контент генерируется офлайн скиллом `lesson-forge`; рантайм работает на чистой логике, без AI, `apps/api` опционален.
 
 ## Что внутри

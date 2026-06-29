@@ -262,9 +262,15 @@ const isCheckpointResultRecord = (value: unknown): value is CheckpointResultReco
   (value.status === 'pass' || value.status === 'fail') &&
   isString(value.at);
 
+// Real exam breakdowns carry a handful of keys (one per type/difficulty); cap the entry count
+// so a crafted backup cannot smuggle thousands of buckets into one examResults row.
+const MAX_BUCKET_ENTRIES = 1_000;
+
 const isExamScoreBuckets = (value: unknown): value is Record<string, ExamScoreBucket> => {
   if (!isRecord(value)) return false;
-  return Object.values(value).every(
+  const buckets = Object.values(value);
+  if (buckets.length > MAX_BUCKET_ENTRIES) return false;
+  return buckets.every(
     (bucket) => isRecord(bucket) && isNumber(bucket.total) && isNumber(bucket.correct),
   );
 };

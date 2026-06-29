@@ -3,11 +3,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WEB = resolve(HERE, '..', 'apps', 'web');
+const ROOT = resolve(HERE, '..');
+const WEB = resolve(ROOT, 'apps', 'web');
 
 const norm = (value) => value.trim().replace(/\s+/g, ' ');
 
 const read = (relative) => readFile(resolve(WEB, relative), 'utf8');
+const readRoot = (relative) => readFile(resolve(ROOT, relative), 'utf8');
 
 // apps/web/vite.config.ts -> the CONTENT_SECURITY_POLICY array, joined like the runtime does.
 const cspFromViteConfig = (source) => {
@@ -15,6 +17,12 @@ const cspFromViteConfig = (source) => {
   if (!block) return null;
   const parts = [...block[1].matchAll(/"([^"]*)"/g)].map((m) => m[1]);
   return parts.length > 0 ? norm(parts.join('; ')) : null;
+};
+
+// deploy/Caddyfile -> the Content-Security-Policy served as a real response header on bare-metal.
+const cspFromCaddyfile = (source) => {
+  const m = source.match(/Content-Security-Policy\s+"([^"]*)"/);
+  return m ? norm(m[1]) : null;
 };
 
 // apps/web/security-headers.conf -> map of nginx add_header name -> value.
@@ -53,10 +61,11 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const [viteSource, nginxSource, netlifySource] = await Promise.all([
+const [viteSource, nginxSource, netlifySource, caddySource] = await Promise.all([
   read('vite.config.ts'),
   read('security-headers.conf'),
   read('public/_headers'),
+  readRoot('deploy/Caddyfile'),
 ]);
 
 const viteCsp = cspFromViteConfig(viteSource);
@@ -64,27 +73,30 @@ const nginxHeaders = headersFromNginxConf(nginxSource);
 const netlifyHeaders = headersFromNetlifyFile(netlifySource);
 const nginxCsp = nginxHeaders.get('Content-Security-Policy') ?? null;
 const netlifyCsp = netlifyHeaders.get('Content-Security-Policy') ?? null;
+const caddyCsp = cspFromCaddyfile(caddySource);
 
 if (!viteCsp) fail('could not extract CSP from vite.config.ts');
 if (!nginxCsp) fail('could not extract CSP from security-headers.conf');
 if (!netlifyCsp) fail('could not extract CSP from public/_headers');
+if (!caddyCsp) fail('could not extract CSP from deploy/Caddyfile');
 
-// The full CSP must be identical across all three copies.
-if (viteCsp && nginxCsp && netlifyCsp) {
+// The full CSP must be identical across all four copies (SPA build + the three served targets).
+if (viteCsp && nginxCsp && netlifyCsp && caddyCsp) {
   const csps = {
     'vite.config.ts': viteCsp,
     'security-headers.conf': nginxCsp,
     _headers: netlifyCsp,
+    'deploy/Caddyfile': caddyCsp,
   };
   const unique = new Set(Object.values(csps));
   if (unique.size !== 1) {
-    fail('Content-Security-Policy is out of sync across the three copies:');
+    fail('Content-Security-Policy is out of sync across the four copies:');
     for (const [file, csp] of Object.entries(csps)) console.error(`  ${file}: ${csp}`);
   }
 }
 
 // connect-src specifically must never silently widen in one file only.
-const connects = [viteCsp, nginxCsp, netlifyCsp].map(connectSrc);
+const connects = [viteCsp, nginxCsp, netlifyCsp, caddyCsp].map(connectSrc);
 if (new Set(connects).size !== 1) {
   fail(`connect-src differs across copies: ${connects.join(' | ')}`);
 }
@@ -108,10 +120,10 @@ if (missingFromNginx.length > 0) {
 
 if (process.exitCode) {
   console.error(
-    'Security header copies are out of sync. Keep vite.config.ts, security-headers.conf and public/_headers aligned.',
+    'Security header copies are out of sync. Keep vite.config.ts, security-headers.conf, public/_headers and deploy/Caddyfile aligned.',
   );
 } else {
   console.log(
-    'Security headers are in sync across vite.config.ts, security-headers.conf and public/_headers.',
+    'Security headers are in sync across vite.config.ts, security-headers.conf, public/_headers and deploy/Caddyfile.',
   );
 }

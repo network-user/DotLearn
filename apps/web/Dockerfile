@@ -24,7 +24,8 @@ RUN pnpm --filter @dotlearn/lesson-engine build
 RUN pnpm --filter @dotlearn/web build
 
 # Unprivileged nginx: runs as the non-root `nginx` user and listens on 8080.
-FROM nginxinc/nginx-unprivileged:alpine AS runtime
+# Pin the minor line (like node:20-alpine / elasticsearch:8.13.4) for reproducible builds.
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
