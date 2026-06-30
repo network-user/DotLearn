@@ -23,10 +23,21 @@ const generateBackupCodes = (count) => {
   return { plain, hashed };
 };
 
+const readStdin = () =>
+  new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on('end', () => resolve(data));
+  });
+
 const main = async () => {
-  const password = process.argv[2];
+  const piped = process.stdin.isTTY ? '' : (await readStdin()).replace(/\r?\n$/, '');
+  const password = piped || process.argv[2] || '';
   if (!password || password.length < 8) {
-    note('Usage: node scripts/gen-admin-secrets.mjs <password>');
+    note('Usage: printf %s <password> | node scripts/gen-admin-secrets.mjs');
     note('Password must be at least 8 characters.');
     process.exit(1);
   }

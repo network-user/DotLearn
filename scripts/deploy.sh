@@ -145,7 +145,7 @@ if [ -z "$(env_get ADMIN_PASSWORD_HASH)" ] || [ -z "$(env_get ADMIN_JWT_SECRET)"
     [ "${#pw}" -ge 8 ] || warn "too short, try again"
   done
   login="$(env_get ADMIN_LOGIN)"
-  secrets="$(cd "$REPO_DIR/apps/api" && ADMIN_LOGIN="$login" node scripts/gen-admin-secrets.mjs "$pw")"
+  secrets="$(cd "$REPO_DIR/apps/api" && printf '%s' "$pw" | ADMIN_LOGIN="$login" node scripts/gen-admin-secrets.mjs)"
   for k in ADMIN_PASSWORD_HASH ADMIN_TOTP_SECRET ADMIN_BACKUP_CODES_HASHED ADMIN_JWT_SECRET ADMIN_REFRESH_SECRET; do
     grep -v "^${k}=" "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
   done
