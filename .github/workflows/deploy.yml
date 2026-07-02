@@ -1,17 +1,77 @@
-name: Deploy DotLearn to VPS
+name: Build & Deploy DotLearn
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-# Не даём двум деплоям идти параллельно (сборка тяжёлая, сервер 3.8GB).
 concurrency:
   group: deploy-dotlearn
   cancel-in-progress: false
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Сборка образов на раннере GitHub (там 7+ GB RAM - vite build проходит
+  # быстро) и публикация в ghcr.io. Сервер (3.8GB) ничего не собирает.
+  # ---------------------------------------------------------------------------
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Owner in lowercase (ghcr требует нижний регистр)
+        id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # web несёт зашитые при сборке значения (домен и путь админки) - берём из
+      # secrets, чтобы не светить их в репозитории.
+      - name: Build & push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ steps.owner.outputs.lc }}/dotlearn-web:latest
+          build-args: |
+            VITE_API_BASE=${{ secrets.VITE_API_BASE }}
+            VITE_ADMIN_PATH=${{ secrets.VITE_ADMIN_PATH }}
+          cache-from: type=gha,scope=dotlearn-web
+          cache-to: type=gha,scope=dotlearn-web,mode=max
+
+      # api секретов в образе не несёт - ADMIN_* читаются из .env на сервере.
+      - name: Build & push api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ steps.owner.outputs.lc }}/dotlearn-api:latest
+          cache-from: type=gha,scope=dotlearn-api
+          cache-to: type=gha,scope=dotlearn-api,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Триггерим на сервере deploy/update.sh: git pull (конфиги) + docker compose
+  # pull + up --no-build. Сборки на сервере нет - только скачивание образов.
+  # ---------------------------------------------------------------------------
   deploy:
+    needs: build-push
     runs-on: ubuntu-latest
     steps:
       - name: Check deploy secrets
@@ -24,17 +84,14 @@ jobs:
           test -n "$DEPLOY_USER" || { echo "::error::Missing secret DEPLOY_USER"; exit 1; }
           test -n "$DEPLOY_SSH_KEY" || { echo "::error::Missing secret DEPLOY_SSH_KEY"; exit 1; }
 
-      # Пересборка идёт НА СЕРВЕРЕ в deploy/update.sh (git pull + docker compose
-      # up --build). Код проверяется отдельным ci.yml; сюда деплой доходит только
-      # для push в main / ручного запуска.
-      - name: Deploy via SSH
+      - name: Deploy via SSH (pull only, без сборки)
         uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
-          command_timeout: 30m
+          command_timeout: 10m
           script: |
             set -e
             sudo /bin/bash ${{ secrets.DEPLOY_REPO_PATH }}/deploy/update.sh
