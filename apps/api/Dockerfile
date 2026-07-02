@@ -4,7 +4,9 @@ WORKDIR /workspace
 
 RUN corepack enable
 
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# .npmrc обязателен для корректной раскладки pnpm (public-hoist-pattern),
+# как и в apps/web/Dockerfile - иначе install в контейнере отличается от локального.
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/api ./apps/api

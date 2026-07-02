@@ -10,7 +10,10 @@ ARG VITE_ADMIN_PATH
 ENV VITE_API_BASE=$VITE_API_BASE
 ENV VITE_ADMIN_PATH=$VITE_ADMIN_PATH
 
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# .npmrc обязателен: public-hoist-pattern[]=@mdx-js/* поднимает @mdx-js/react в
+# корневой node_modules, иначе MDX-файлы из /interview и /topics (вне apps/web)
+# не резолвят его при сборке и vite build падает.
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY topics ./topics
