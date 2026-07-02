@@ -14,28 +14,30 @@ COPY apps/api ./apps/api
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @dotlearn/contracts build
 RUN pnpm --filter @dotlearn/api build
-RUN pnpm prune --prod
+
+# pnpm deploy собирает изолированный prod-деплой с ПЛОСКИМ node_modules. Прежний
+# способ (COPY apps/api/node_modules + cp) переносил pnpm-симлинки на workspace
+# store в другую глубину пути, относительные ссылки ломались -> рантайм падал с
+# "Cannot find module @nestjs/common". deploy инжектит и workspace-зависимость
+# @dotlearn/contracts как реальные файлы.
+RUN pnpm --filter=@dotlearn/api deploy --prod /output
 
 FROM node:20-alpine AS runtime
 
 WORKDIR /app
 
-RUN corepack enable && addgroup -S dotlearn && adduser -S dotlearn -G dotlearn
+RUN addgroup -S dotlearn && adduser -S dotlearn -G dotlearn
 
-COPY --from=build /workspace/apps/api/dist ./dist
-COPY --from=build /workspace/apps/api/package.json ./package.json
-COPY --from=build /workspace/apps/api/node_modules ./node_modules
-COPY --from=build /workspace/packages ./packages
-COPY --from=build /workspace/node_modules ./root_node_modules
-RUN cp -r /app/root_node_modules/. /app/node_modules/ && rm -rf /app/root_node_modules
+# /output от pnpm deploy уже содержит dist/, package.json и плоский node_modules.
+COPY --from=build /output ./
 
 RUN mkdir -p /app/data && chown -R dotlearn:dotlearn /app
 
 USER dotlearn
 
-ENV NODE_ENV=production
-ENV PORT=3000
-ENV DATA_DIR=/app/data
+ENV NODE_ENV=production \
+    PORT=3000 \
+    DATA_DIR=/app/data
 
 EXPOSE 3000
 
