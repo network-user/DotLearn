@@ -45,7 +45,7 @@ The script asks for three things on the first run:
 - installs Node 20, pnpm (corepack) and Caddy if missing;
 - creates an unprivileged `dotlearn` service user;
 - writes `.env` and generates the admin secrets (password hash, TOTP secret,
-  backup codes, JWT secrets) — **the QR code and backup codes are printed
+  backup codes, JWT secrets); **the QR code and backup codes are printed
   once, save them**;
 - builds the frontend and API;
 - assembles a production-only API bundle and copies the static site out;
@@ -55,7 +55,7 @@ The script asks for three things on the first run:
 When it finishes:
 
 - Site: `https://<domain>`
-- Admin: `https://<domain>/<VITE_ADMIN_PATH>` (default `/admin` — change it,
+- Admin: `https://<domain>/<VITE_ADMIN_PATH>` (default `/admin`; change it,
   see below)
 
 Re-running `sudo bash scripts/deploy.sh` rebuilds and restarts without
@@ -139,7 +139,7 @@ sensible defaults live in `apps/api/src/modules/auth/auth.config.ts`.
 ## Optional: Elasticsearch
 
 Only needed for fuzzy submission search at larger scale. It costs ~1 GB of
-RAM (JVM) — skip it on a small server. To enable:
+RAM (JVM), so skip it on a small server. To enable:
 
 1. Run an Elasticsearch reachable from the server.
 2. Set in `.env`: `ES_ENABLED=true` and `ES_NODE=http://127.0.0.1:9200`.

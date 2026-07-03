@@ -172,12 +172,12 @@ export const HashTableViz = ({
   const footer = (() => {
     switch (phase.kind) {
       case 'idle':
-        return 'Insert a key. It is hashed, then placed at its home slot — or the next free one.';
+        return 'Insert a key. It is hashed, then placed at its home slot, or the next free one.';
       case 'probing':
         return phase.collided ? (
           <span>
             <span className="font-mono text-accent">{phase.key}</span> wants slot{' '}
-            <span className="font-mono">{phase.index}</span> — taken, linear-probing onward.
+            <span className="font-mono">{phase.index}</span>: taken, linear-probing onward.
           </span>
         ) : (
           <span>
@@ -197,12 +197,12 @@ export const HashTableViz = ({
       case 'resizing':
         return (
           <span className="text-warn">
-            Load factor crossed {(loadFactorThreshold * 100).toFixed(0)}% — resizing {phase.from} →{' '}
+            Load factor crossed {(loadFactorThreshold * 100).toFixed(0)}%, resizing {phase.from} →{' '}
             {phase.to} and rehashing every key.
           </span>
         );
       case 'full':
-        return <span className="text-err">Table is full — no free slot for this key.</span>;
+        return <span className="text-err">Table is full: no free slot for this key.</span>;
     }
   })();
 

@@ -13,13 +13,13 @@ const resolvedSystemTheme = (): Theme => (prefersDark() ? 'dark' : 'light');
 
 export const readThemePreference = (): ThemePreference => {
   if (typeof window === 'undefined') {
-    return 'system';
+    return 'light';
   }
   const stored = window.localStorage.getItem(STORAGE_KEY);
   if (stored === 'light' || stored === 'dark' || stored === 'system') {
     return stored;
   }
-  return 'system';
+  return 'light';
 };
 
 export const readStoredTheme = (): Theme => {

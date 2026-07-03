@@ -2,16 +2,16 @@
 
 Two ways to contribute a topic:
 
-## Option A — Pull Request (recommended for technical users)
+## Option A: Pull Request (recommended for technical users)
 
 1. Fork the repo.
 2. Run `pnpm install`.
 3. Ask Cursor (or any tool-using LLM): "Использовать `lesson-forge`, добавь тему по <subject>". The skill scaffolds `topics/<slug>/` and walks through the contract.
-4. Run `pnpm validate` — every exercise's gold solution will be executed in sandbox to verify it matches `expected`.
+4. Run `pnpm validate`: every exercise's gold solution will be executed in sandbox to verify it matches `expected`.
 5. Run `pnpm dev:web` and click through the topic to spot-check the UX.
 6. Open a PR. CI runs the same `pnpm validate`.
 
-## Option B — In-app submission
+## Option B: In-app submission
 
 1. Open the deployed site.
 2. Click "+ Add topic" (top-right).
@@ -19,7 +19,7 @@ Two ways to contribute a topic:
 4. Submit. Your proposal lands in the maintainer's `/admin` queue.
 5. If accepted, the maintainer (or an LLM agent acting on their behalf) materializes it via `lesson-forge` and merges.
 
-## Topic contract — short version
+## Topic contract (short version)
 
 Every topic lives under `topics/<slug>/` and must contain:
 

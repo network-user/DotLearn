@@ -19,4 +19,4 @@ About 3 hours.
 
 ## Runtime
 
-`pyodide` — runs entirely in your browser. No setup.
+`pyodide`, runs entirely in your browser. No setup.

@@ -1,7 +1,7 @@
 # Interview preparation content
 
 Self-contained content for the **«Подготовка к собеседованиям»** section of the app
-(route `/interview`). This directory is content, not code — it is loaded by
+(route `/interview`). This directory is content, not code: it is loaded by
 `apps/web/src/lib/interview.ts` and never imports from `apps/*`.
 
 ## Provenance

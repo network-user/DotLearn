@@ -330,11 +330,11 @@ export const SettingsPage = () => {
             <p className="mt-1.5">
               {storage.persisted === true
                 ? t('storagePersistent', {
-                    defaultValue: 'Хранилище постоянное — браузер не вытеснит ваш прогресс.',
+                    defaultValue: 'Хранилище постоянное: браузер не вытеснит ваш прогресс.',
                   })
                 : t('storageAtRisk', {
                     defaultValue:
-                      'Хранилище не закреплено — при нехватке места браузер может удалить прогресс. Сделайте экспорт на всякий случай.',
+                      'Хранилище не закреплено: при нехватке места браузер может удалить прогресс. Сделайте экспорт на всякий случай.',
                   })}
             </p>
             {storage.usageBytes !== null && storage.quotaBytes !== null ? (

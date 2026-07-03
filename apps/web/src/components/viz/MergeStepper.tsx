@@ -97,7 +97,7 @@ const computeSteps = (input: string[][]): MergeStep[] => {
       candidate: null,
       rejected: [],
       picked: null,
-      caption: `Every sequence is empty — the linearization is [${result.join(', ')}].`,
+      caption: `Every sequence is empty, so the linearization is [${result.join(', ')}].`,
       done: true,
       stuck: false,
     });

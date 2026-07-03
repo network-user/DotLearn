@@ -4,9 +4,9 @@ A tour of one of the most recognizable lines in Python for beginners: what a mod
 
 ## Concepts
 
-- Modules and the `__name__` variable — what Python puts in `__name__` on launch vs import.
-- Why `if __name__ == "__main__"` is needed — the idiom that separates the entry point from importable code.
-- Import side effects and multiprocessing — why unguarded top-level code bites back.
+- Modules and the `__name__` variable: what Python puts in `__name__` on launch vs import.
+- Why `if __name__ == "__main__"` is needed (the idiom that separates the entry point from importable code).
+- Import side effects and multiprocessing - why unguarded top-level code bites back.
 
 ## Prerequisites
 
@@ -18,4 +18,4 @@ About 2 hours.
 
 ## Runtime
 
-`pyodide` — runs entirely in your browser. No setup.
+`pyodide`: runs entirely in your browser. No setup.

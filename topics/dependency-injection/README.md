@@ -4,10 +4,10 @@ For developers who already know Python OOP and want code that is easy to change 
 
 ## Concepts
 
-1. **Abstractions: ABC and Protocol** — describe the shape of a dependency as a contract without implementation.
-2. **The DI pattern and inversion of control** — pass dependencies in from outside instead of creating them inside.
-3. **`Depends` in FastAPI** — let the framework assemble the dependency graph for you.
-4. **Testing through dependency substitution** — replace real dependencies with test doubles.
+1. **Abstractions: ABC and Protocol**: describe the shape of a dependency as a contract without implementation.
+2. **The DI pattern and inversion of control** means passing dependencies in from outside instead of creating them inside.
+3. **`Depends` in FastAPI** - the framework assembles the dependency graph for you.
+4. **Testing through dependency substitution**. Replace real dependencies with test doubles.
 
 ## Prerequisites
 
@@ -19,4 +19,4 @@ About 3 hours.
 
 ## Runtime
 
-`pyodide` — runs entirely in your browser. No setup.
+`pyodide` (runs entirely in your browser). No setup.

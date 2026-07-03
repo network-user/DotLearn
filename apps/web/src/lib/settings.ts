@@ -116,7 +116,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   readingSpacing: 'normal',
   readingWidth: 'default',
   motion: 'system',
-  themePreference: 'system',
+  themePreference: 'light',
   contentLanguage: 'follow-ui',
   density: 'comfortable',
   contrast: 'system',

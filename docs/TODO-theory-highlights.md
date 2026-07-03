@@ -17,11 +17,11 @@ Backend code is unchanged: `TheoryHighlighter.tsx`, `progress-db` highlight APIs
 
 The feature works but UX is unclear without these improvements:
 
-- [ ] **In-article markup** — re-show saved highlights in theory text (`useConceptHighlights` exists but is unused).
-- [ ] **Clearer save feedback** — toast should mention Library or link to `/library`, not only "Saved to library".
-- [ ] **Notes on highlights** — `HighlightRecord.note` and `setHighlightNote` exist; add UI to attach/edit a note.
-- [ ] **Onboarding** — short hint on first selection or in reading settings.
-- [ ] **Color meaning** — optional legend or labels so colors are not arbitrary dots.
+- [ ] **In-article markup**: re-show saved highlights in theory text (`useConceptHighlights` exists but is unused).
+- [ ] **Clearer save feedback.** Toast should mention Library or link to `/library`, not only "Saved to library".
+- [ ] **Notes on highlights**: `HighlightRecord.note` and `setHighlightNote` exist; add UI to attach/edit a note.
+- [ ] **Onboarding** - short hint on first selection or in reading settings.
+- [ ] **Color meaning** (optional legend or labels so colors are not arbitrary dots).
 
 ## Key files
 

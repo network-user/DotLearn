@@ -4,13 +4,13 @@ title: Grid and Anchors
 estimatedMinutes: 40
 ---
 
-A YOLO network outputs a fixed number of predictions — it does not depend on how many objects are in the frame. Where does that number come from, and how is each prediction "tied" to a specific place in the image? The answer is a grid of cells and anchor boxes. These two ideas turn "one convolutional network pass" into "a structured list of candidate boxes with meaningful coordinates."
+A YOLO network outputs a fixed number of predictions; it does not depend on how many objects are in the frame. Where does that number come from, and how is each prediction "tied" to a specific place in the image? The answer is a grid of cells and anchor boxes. These two ideas turn "one convolutional network pass" into "a structured list of candidate boxes with meaningful coordinates."
 
-By the end of this section you will understand what an `SxS` grid is and how an object is assigned to one responsible cell, why each cell gets several anchors of different shapes, and how to pick the anchor that best fits an object — using the same IoU you implemented in the previous section.
+By the end of this section you will understand what an `SxS` grid is and how an object is assigned to one responsible cell, why each cell gets several anchors of different shapes, and how to pick the anchor that best fits an object, using the same IoU you implemented in the previous section.
 
 ## SxS grid and the responsible cell
 
-YOLO mentally overlays an `S` by `S` grid on the image. At a coarse level `S` might be 13, 26, or 52 — a finer grid means more precise localization and more predictions. Each cell is responsible for objects whose **center** falls inside it. Not "intersects the object" but "contains its center" — that is the key detail: a large object covers many cells, but exactly one is responsible for it.
+YOLO mentally overlays an `S` by `S` grid on the image. At a coarse level `S` might be 13, 26, or 52. A finer grid means more precise localization and more predictions. Each cell is responsible for objects whose **center** falls inside it. Not "intersects the object" but "contains its center" (that is the key detail): a large object covers many cells, but exactly one is responsible for it.
 
 <Figure caption="A 5x5 grid. The highlighted cell contains the object's center: it is responsible for predicting the box. Anchors show typical box shapes attached to the cell.">
   <AnchorGridViz
@@ -37,7 +37,7 @@ This prints `(3, 2)`: `0.62 * 5 = 3.1`, integer part `3`; `0.46 * 5 = 2.3`, inte
 
 ## Why anchors
 
-One cell — one object? That is not enough for two reasons. First, two object centers can land in the same cell. Second, objects come in different shapes: a lying person is wide, a pole is narrow and tall. Making the network guess arbitrary aspect ratios from scratch is hard. The solution is **anchor boxes**: each cell gets several template rectangles of different proportions attached in advance. The network does not invent sizes from zero; it predicts a correction to the nearest anchor.
+One cell, one object? That is not enough for two reasons. First, two object centers can land in the same cell. Second, objects come in different shapes: a lying person is wide, a pole is narrow and tall. Making the network guess arbitrary aspect ratios from scratch is hard. The solution is **anchor boxes**: each cell gets several template rectangles of different proportions attached in advance. The network does not invent sizes from zero; it predicts a correction to the nearest anchor.
 
 Anchors are a set of shapes `(w, h)` shared across all cells. They are chosen for the dataset (often by clustering real boxes), but the idea is the same: give the network convenient "reference" proportions. Each "cell plus anchor" pair maps to one slot in the network output.
 
@@ -45,7 +45,7 @@ Anchors are a set of shapes `(w, h)` shared across all cells. They are chosen fo
 
 ## Which anchor owns the object
 
-When an object's center lands in a cell, the anchor responsible for the object inside that cell is **the one whose shape is closest to the object's shape**. Shape closeness is measured with the same IoU — but boxes are compared by shape with aligned centers. Then IoU depends only on width and height: intersection of centered boxes equals `min(wa, wb) * min(ha, hb)`.
+When an object's center lands in a cell, the anchor responsible for the object inside that cell is **the one whose shape is closest to the object's shape**. Shape closeness is measured with the same IoU, but boxes are compared by shape with aligned centers. Then IoU depends only on width and height: intersection of centered boxes equals `min(wa, wb) * min(ha, hb)`.
 
 ```python
 def shape_iou(a, b):
@@ -62,7 +62,7 @@ This prints `0.4 0.375`: shape `(3, 1)` is closer to square `(2, 2)` than to wid
 
 ## Try it yourself
 
-Run anchor selection. Object shape `(3, 1)` picks anchor `0` — square `(2, 2)`. Change the object shape to `(1, 4)` (narrow and tall) — anchor `2`, `(2, 4)`, wins. Try `(4, 2)`: the object matches one anchor's shape exactly and its IoU becomes `1.0`. This shows clearly that the "responsible anchor" is the one with the most similar shape, not the most similar area.
+Run anchor selection. Object shape `(3, 1)` picks anchor `0` (square `(2, 2)`). Change the object shape to `(1, 4)` (narrow and tall) - anchor `2`, `(2, 4)`, wins. Try `(4, 2)`: the object matches one anchor's shape exactly and its IoU becomes `1.0`. This shows clearly that the "responsible anchor" is the one with the most similar shape, not the most similar area.
 
 <PyDemo
   title="Anchor selection by shape"
@@ -84,17 +84,17 @@ print(best, [round(v, 3) for v in ious])`}
 
 An object in one cell with its box partly outside is normal. Responsibility is determined only by the center: if the center is in cell `(3, 2)`, that cell owns the object even if the box extends into neighbors. So a large object is one prediction from one cell, not a mosaic of pieces.
 
-A second surprise is two objects with centers in the same cell. If a cell has, say, three anchors, it can physically handle at most three objects — one per anchor. A third object whose center lands in the same cell either "takes" a free anchor or is lost. That is why a fine grid with multiple anchors is not a luxury but a way to resolve object clusters.
+A second surprise is two objects with centers in the same cell. If a cell has, say, three anchors, it can physically handle at most three objects (one per anchor). A third object whose center lands in the same cell either "takes" a free anchor or is lost. That is why a fine grid with multiple anchors is not a luxury but a way to resolve object clusters.
 
 ## Common mistakes
 
-- **Treating any cell the box intersects as responsible.** Responsibility is by center, not intersection. A large object intersects many cells, but exactly one is responsible — where its center lies.
+- **Treating any cell the box intersects as responsible.** Responsibility is by center, not intersection. A large object intersects many cells, but only the cell containing its center is responsible.
 - **Choosing an anchor by area instead of shape IoU.** Similar area does not mean similar shape: a square and a strongly elongated rectangle can have the same area and low IoU. Compare shapes via IoU with aligned centers.
 - **Forgetting to clamp the grid edge.** A center exactly on the boundary `cx = 1.0` gives index `S`, out of range. Clamp with `min(int(cx * S), S - 1)`.
 
-<Detail summary="Anchor-free detectors — can you skip anchors entirely?">
+<Detail summary="Anchor-free detectors: can you skip anchors entirely?">
 
-Anchors solve the shape problem but add hyperparameters: how many anchors, what proportions, how to cluster them for the dataset. So a whole line of anchor-free detectors appeared (FCOS, CenterNet, and others) that predict a box directly from a point — for example, distances to four sides from the object center — without predefined templates. Modern YOLO versions have moved this way too: from YOLOX onward many detection heads became anchor-free. The grid and responsible-point idea remains — only the way sizes are predicted changes.
+Anchors solve the shape problem but add hyperparameters: how many anchors, what proportions, how to cluster them for the dataset. So a whole line of anchor-free detectors appeared (FCOS, CenterNet, and others) that predict a box directly from a point (for example, distances to four sides from the object center) without predefined templates. Modern YOLO versions have moved this way too: from YOLOX onward many detection heads became anchor-free. The grid and responsible-point idea remains: only the way sizes are predicted changes.
 
 </Detail>
 
@@ -103,7 +103,7 @@ Anchors solve the shape problem but add hyperparameters: how many anchors, what 
     "YOLO overlays an SxS grid; the cell that contains an object's center owns it, not the cells its box intersects.",
     "Responsible cell from normalized center: col = floor(cx * S), row = floor(cy * S), with edge clamped to S - 1.",
     "Anchors are a set of template shapes (w, h) shared by all cells; the network predicts a correction to an anchor, not sizes from scratch.",
-    "The anchor for an object is the closest shape; closeness is measured by IoU with aligned centers — only w and h matter.",
+    "The anchor for an object is the closest shape; closeness is measured by IoU with aligned centers, and only w and h matter.",
     "An anchor defines shape, a cell defines position; the number of anchors limits how many objects one cell can serve.",
   ]}
 />

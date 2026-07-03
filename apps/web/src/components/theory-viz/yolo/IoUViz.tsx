@@ -61,7 +61,7 @@ const computeIntersection = (a: BoxRect, b: BoxRect): IntersectRect => {
 };
 
 export const IoUViz = ({
-  label = 'IoU — пересечение над объединением',
+  label = 'IoU: пересечение над объединением',
   boxA = defaultBoxA,
   boxB = defaultBoxB,
   boxALabel = 'Предсказание',

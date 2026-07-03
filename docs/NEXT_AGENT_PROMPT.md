@@ -1,4 +1,4 @@
-# Handoff prompt — DotLearn
+# Handoff prompt for DotLearn
 
 Copy the block below into a fresh chat with Cursor or Claude Code at the repository root (`<repo-root>`). It briefs the next agent on context, conventions, and the first concrete tasks.
 
@@ -10,14 +10,14 @@ You are continuing work on **DotLearn**, a local-first, AI-extensible learning w
 
 ### Read first (in this order)
 
-1. `README.md` — vision and quickstart
-2. `ARCHITECTURE.md` — invariants and structure
-3. `ROADMAP.md` — phase definitions (you are starting Phase 1)
+1. `README.md`: vision and quickstart
+2. `ARCHITECTURE.md`: invariants and structure
+3. `ROADMAP.md`: phase definitions (you are starting Phase 1)
 4. `CLAUDE.md` if you are Claude Code, or `.cursor/rules/dotcore-project.mdc` if you are Cursor
-5. `AGENTS.md` — universal conventions
-6. `.cursor/skills/lesson-forge/SKILL.md` (or `.claude/skills/lesson-forge/SKILL.md`) — the topic-generation skill, your main tool for content work
-7. `packages/contracts/src/*.schema.ts` — the source-of-truth Zod schemas
-8. `topics/sql-fundamentals/` — the reference implementation of the topic contract
+5. `AGENTS.md`: universal conventions
+6. `.cursor/skills/lesson-forge/SKILL.md` (or `.claude/skills/lesson-forge/SKILL.md`): the topic-generation skill, your main tool for content work
+7. `packages/contracts/src/*.schema.ts`: the source-of-truth Zod schemas
+8. `topics/sql-fundamentals/`: the reference implementation of the topic contract
 
 ### Project status (as of handoff)
 
@@ -41,9 +41,9 @@ Not yet in place:
 - Persistent repository for `apps/api` (currently in-memory)
 - GitHub Action that runs `pnpm validate` on PRs touching `topics/**`
 
-### Your goals — Phase 1
+### Your goals for Phase 1
 
-Execute the items in `ROADMAP.md` under "Phase 1 — Minimum Viable Player". Specifically, in order:
+Execute the items in `ROADMAP.md` under "Phase 1: Minimum Viable Player". Specifically, in order:
 
 1. **`packages/lesson-engine`**
    - Topic loader that reads any topic directory from disk (Node) or from `import.meta.glob` (browser) and returns a `TopicManifest` plus resolved `theory` and `exercises` contents.
@@ -77,7 +77,7 @@ Execute the items in `ROADMAP.md` under "Phase 1 — Minimum Viable Player". Spe
 - **Backend is NestJS Layered DDD.** When adding a new module, follow the `submissions` module's structure: `domain/`, `infrastructure/`, `dto/`, controller, service, module. Persistence behind injected interfaces.
 - **Zod is the single source of truth.** TypeScript types are derived via `z.infer<>`. No duplicate definitions on the API side.
 - **Generated content always via the `lesson-forge` skill.** Never invent ad-hoc topic structures.
-- **Skill changes go to both `.cursor/skills/lesson-forge/` and `.claude/skills/lesson-forge/`** — or just edit `.cursor/skills/...` and run `pnpm sync:skills`.
+- **Skill changes go to both `.cursor/skills/lesson-forge/` and `.claude/skills/lesson-forge/`**, or just edit `.cursor/skills/...` and run `pnpm sync:skills`.
 - **A new exercise type or runtime is a breaking change.** It requires updating: Zod schema (contracts), runner (lesson-engine), JSON schema in both skill directories, and `reference/exercise-types.md` in both skill directories. One PR, or nothing.
 - **Conventional commits.**
 
@@ -99,7 +99,7 @@ Execute the items in `ROADMAP.md` under "Phase 1 — Minimum Viable Player". Spe
 ### Style of working
 
 - Small commits, each compiling and runnable.
-- Test the seam between `apps/web` and `packages/lesson-engine` early — the worker boundary is where most bugs hide.
+- Test the seam between `apps/web` and `packages/lesson-engine` early; the worker boundary is where most bugs hide.
 - Prefer extending the existing `submissions` module pattern when adding new API endpoints; don't invent new structural conventions.
 
 When ready, start by reading the files listed above and produce a 5–10 line plan for Phase 1 broken into commits. After I confirm the plan, begin.

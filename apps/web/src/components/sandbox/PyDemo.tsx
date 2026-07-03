@@ -141,7 +141,7 @@ export const PyDemo = ({ code, title, call, autoRun = false, chart }: PyDemoProp
           <span className="truncate">{title ?? 'Python'}</span>
           {modified && (
             <span className="normal-case tracking-normal font-medium text-[10px] text-warn">
-              {t('sandbox.modified', { defaultValue: 'изменено — запусти снова' })}
+              {t('sandbox.modified', { defaultValue: 'изменено, запусти снова' })}
             </span>
           )}
         </span>

@@ -61,7 +61,7 @@ The modular monolith captures the local-first philosophy (frontend independent) 
 
 Per project conventions, the backend follows Layered DDD:
 
-- `apps/api/src/modules/<domain>/` — one folder per bounded context (submissions, admin, ai-proxy, topics)
+- `apps/api/src/modules/<domain>/`: one folder per bounded context (submissions, admin, ai-proxy, topics)
 - Each module has `domain/`, `infrastructure/`, `dto/`, controller, service, module
 - Controllers do only request/response mapping
 - Services hold business logic
@@ -71,7 +71,7 @@ Per project conventions, the backend follows Layered DDD:
 - Swagger decorators on every endpoint
 - Structured logger (pino), never `console.log`
 
-When financial operations are introduced (future marketplace, sponsorships), the ledger pattern and idempotency service kick in — but this is post-MVP.
+When financial operations are introduced (future marketplace, sponsorships), the ledger pattern and idempotency service kick in. That said, this is post-MVP.
 
 ## Frontend conventions
 

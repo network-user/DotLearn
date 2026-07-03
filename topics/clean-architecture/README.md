@@ -4,10 +4,10 @@ For developers who already know how to write classes but want to learn how to sp
 
 ## Concepts
 
-1. **Why layers: coupling and testability** — why mixed "everything in one pile" code is hard to change and how separation by responsibility level restores control.
-2. **The dependency rule (Clean Architecture)** — one sentence from which all of Clean Architecture follows: every arrow points inward, toward business rules.
-3. **Onion and hexagonal architecture** — three names for one idea and the differences in emphasis that easily confuse people in interviews.
-4. **Applying it in Python** — how to lay out layers in packages, wire everything at the composition root, and avoid drowning in abstractions for their own sake.
+1. **Why layers: coupling and testability** - why mixed "everything in one pile" code is hard to change and how separation by responsibility level restores control.
+2. **The dependency rule (Clean Architecture)**, one sentence from which all of Clean Architecture follows: every arrow points inward, toward business rules.
+3. **Onion and hexagonal architecture**: three names for one idea and the differences in emphasis that easily confuse people in interviews.
+4. **Applying it in Python**: how to lay out layers in packages, wire everything at the composition root, and avoid drowning in abstractions for their own sake.
 
 ## Prerequisites
 
@@ -19,4 +19,4 @@ About 3 hours.
 
 ## Runtime
 
-None — examples use diagrams and code fragments.
+None: examples use diagrams and code fragments.

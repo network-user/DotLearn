@@ -156,7 +156,7 @@ export const GradientDescentViz = ({
       footer={
         diverging ? (
           <span className="text-warn">
-            Слишком большая скорость обучения — шаги перелетают минимум и расходятся.
+            Слишком большая скорость обучения, шаги перелетают минимум и расходятся.
           </span>
         ) : (
           <span>

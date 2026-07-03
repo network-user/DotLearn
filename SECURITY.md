@@ -43,7 +43,7 @@ Consequences:
   dict (`runPython(source, { globals })`), so definitions, imports, and
   `__builtins__` monkeypatching from one run cannot poison a later grading run.
 - **Output cap.** Python stdout is truncated at 100k characters.
-- **Known limit — no memory cap.** The timeout kills runaway CPU/loops, but not
+- **Known limit: no memory cap.** The timeout kills runaway CPU/loops, but not
   allocation: `x = [0] * 10**9` or a `WITH RECURSIVE` blow-up can OOM the worker
   (and tab) before `terminate()` fires. The `terminate`+recreate path restores
   the feature on the next call.

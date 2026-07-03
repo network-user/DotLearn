@@ -165,7 +165,7 @@ export const GitChallengeRunner = ({ topicSlug, exercise, conceptId }: GitChalle
           <div className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err">
             {t('git.failed', {
               reason: failureMessage(state.failure),
-              defaultValue: 'Ещё нет — {{reason}}.',
+              defaultValue: 'Ещё нет: {{reason}}.',
             })}
           </div>
         )}
