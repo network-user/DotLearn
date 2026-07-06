@@ -153,14 +153,14 @@ export const TodayPage = () => {
     (ids: AchievementId[]) => {
       setUnlockedThisVisit((prev) => [...new Set([...prev, ...ids])]);
       celebrate('streak-milestone');
-      const first = ids[0];
-      if (first) {
-        toast.success(
-          t('achievements.unlocked', {
-            title: tProgress(`achievements.items.${first}.title`),
-          }),
-        );
-      }
+      const [first, ...rest] = ids;
+      if (!first) return;
+      const title = tProgress(`achievements.items.${first}.title`);
+      toast.success(
+        rest.length > 0
+          ? t('achievements.unlockedMultiple', { title, count: rest.length })
+          : t('achievements.unlocked', { title }),
+      );
     },
     [t, tProgress],
   );
