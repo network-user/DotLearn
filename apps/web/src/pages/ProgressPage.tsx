@@ -101,6 +101,9 @@ export const ProgressPage = () => {
   const recallByTopic = useRecallByTopic();
   const attemptEvents = useLiveQuery(() => db.attemptEvents.toArray(), [], []);
   const checkpointResults = useLiveQuery(() => db.checkpointResults.toArray(), [], []);
+  const noteCount = useLiveQuery(() => db.conceptNotes.count(), [], 0);
+  const highlightCount = useLiveQuery(() => db.highlights.count(), [], 0);
+  const userCardCount = useLiveQuery(() => db.userCards.count(), [], 0);
 
   const language = useContentLanguage();
 
@@ -262,7 +265,23 @@ export const ProgressPage = () => {
       })),
     [rows],
   );
-  const achievements = useAchievements(achievementTopics, streak);
+  const achievements = useAchievements(achievementTopics, streak, interviewTotal);
+
+  const overallAccuracy = useMemo(() => {
+    const events = attemptEvents ?? [];
+    if (events.length === 0) return 0;
+    return events.filter((event) => event.status === 'pass').length / events.length;
+  }, [attemptEvents]);
+  const exerciseMinutes = useMemo(
+    () =>
+      Math.round((attemptEvents ?? []).reduce((sum, e) => sum + (e.durationMs ?? 0), 0) / 60_000),
+    [attemptEvents],
+  );
+  const focusBlocksTotal = useMemo(
+    () => activity.reduce((sum, entry) => sum + (entry.focusBlocks ?? 0), 0),
+    [activity],
+  );
+  const libraryItemsCount = noteCount + bookmarks.length + highlightCount + userCardCount;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleExport = async (): Promise<void> => {
@@ -324,6 +343,35 @@ export const ProgressPage = () => {
           hint={t('stats.bestStreak', { count: bestStreak })}
           emphasis
         />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('metrics.heading')}</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatTile
+            label={t('stats.accuracy')}
+            value={Math.round(overallAccuracy * 100)}
+            hint={t('stats.accuracyHint', { count: attemptEvents?.length ?? 0 })}
+          />
+          <StatTile
+            label={t('stats.exerciseTime')}
+            value={exerciseMinutes}
+            hint={t('stats.exerciseTimeHint', {
+              hours: Math.floor(exerciseMinutes / 60),
+              minutes: exerciseMinutes % 60,
+            })}
+          />
+          <StatTile
+            label={t('stats.focusBlocks')}
+            value={focusBlocksTotal}
+            hint={t('stats.focusBlocksHint')}
+          />
+          <StatTile
+            label={t('stats.libraryItems')}
+            value={libraryItemsCount}
+            hint={t('stats.libraryItemsHint')}
+          />
+        </div>
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">

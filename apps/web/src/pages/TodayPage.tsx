@@ -35,6 +35,7 @@ import {
   type TopicReadInput,
 } from '@/lib/achievements';
 import { reviewFlashcard, type FlashcardRating } from '@/lib/flashcards';
+import { interviewQuestions } from '@/lib/interview';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db, localDayKey } from '@/lib/progress-db';
 import {
@@ -163,7 +164,7 @@ export const TodayPage = () => {
     },
     [t, tProgress],
   );
-  useAchievements(achievementTopics, streak, handleUnlock);
+  useAchievements(achievementTopics, streak, interviewQuestions.length, handleUnlock);
 
   const [due, setDue] = useState<DueCard[] | null | undefined>(undefined);
   const [failed, setFailed] = useState<FailedExercise[] | null | undefined>(undefined);
