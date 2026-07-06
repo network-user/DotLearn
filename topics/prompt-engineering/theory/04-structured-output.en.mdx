@@ -4,13 +4,13 @@ title: Structured output
 estimatedMinutes: 28
 ---
 
-Your service calls the model to extract a name, amount, and date from an email, then write them to a database. In testing everything works. In production every twentieth email breaks the pipeline: the model adds a polite "Sure, here is the data:" before JSON, wraps the object in ` ```json `, or returns the amount as the string "1,480 RUB" instead of a number. Code that calls `JSON.parse` fails and the email is lost. The problem is not extraction — the model understood correctly. The problem is that the answer cannot be parsed reliably by a machine.
+Your service calls the model to extract a name, amount, and date from an email, then write them to a database. In testing everything works. In production every twentieth email breaks the pipeline: the model adds a polite "Sure, here is the data:" before JSON, wraps the object in ` ```json `, or returns the amount as the string "1,480 RUB" instead of a number. Code that calls `JSON.parse` fails and the email is lost. The problem is not extraction: the model understood correctly. The problem is that the answer cannot be parsed reliably by a machine.
 
 By the end of this section you will know how to get output that parses on the first try: declare an answer schema, choose delimiters the model will not confuse with data, and use modern API structured output instead of fishing JSON out with regex.
 
 ## Why structured output at all
 
-Free text is good for humans and bad for programs. As soon as the model's answer becomes input to other code — a database, frontend, next pipeline step — its shape must be predictable down to the character. Structured output is a contract: you declare fields and types up front, and the model must return exactly that structure and nothing on top.
+Free text is good for humans and bad for programs. As soon as the model's answer becomes input to other code (a database, frontend, next pipeline step), its shape must be predictable down to the character. Structured output is a contract: you declare fields and types up front, and the model must return exactly that structure and nothing on top.
 
 <Figure caption="Free text must be guessed apart; a declared schema turns the answer into a predictable object that parses on the first try.">
   <Sketch viewBox="0 0 420 200" title="From free text to schema">
@@ -33,7 +33,7 @@ Notice the right side has no preamble, no units inside the number, no wrapper. A
 
 Minimum reliability needs no special API: say clearly what to return and where it starts and ends. Two techniques work together.
 
-First — **delimiters**. Wrap both input data and desired output in tags so the model does not confuse what to process with what to return. XML-like tags work well with Claude.
+First: **delimiters**. Wrap both input data and desired output in tags so the model does not confuse what to process with what to return. XML-like tags work well with Claude.
 
 ```text
 Extract fields from the email inside <email>...</email>.
@@ -44,7 +44,7 @@ Hello! Please pay 1,480 RUB by May 5.
 </email>
 ```
 
-Second — **no wrapper**. Models like to be polite and prefix JSON with a phrase or wrap it in a markdown block. Ask explicitly: "return only JSON, no markdown, no explanation." That removes the most common parsing failure.
+Second: **no wrapper**. Models like to be polite and prefix JSON with a phrase or wrap it in a markdown block. Ask explicitly: "return only JSON, no markdown, no explanation." That removes the most common parsing failure.
 
 <Callout type="tip">
 A cheap trick is prefilling the start of the answer. If the API lets you set the model's first characters, start with `{`. The model must continue from an open brace, making introductory chatter impossible. With Claude this is done by prefilling the assistant role.
@@ -52,7 +52,7 @@ A cheap trick is prefilling the start of the answer. If the API lets you set the
 
 ## Schema beats pleading
 
-The instruction "return JSON with fields amount and currency" works but rests on the model's goodwill: it *may* add a field, rename a key, or return the amount as a string. Modern APIs remove that uncertainty with structured output mode: you pass JSON Schema and the provider guarantees the response matches — valid JSON, required keys, correct types.
+The instruction "return JSON with fields amount and currency" works but rests on the model's goodwill: it *may* add a field, rename a key, or return the amount as a string. Modern APIs remove that uncertainty with structured output mode: you pass JSON Schema and the provider guarantees the response matches: valid JSON, required keys, correct types.
 
 ```json
 {
@@ -66,7 +66,7 @@ The instruction "return JSON with fields amount and currency" works but rests on
 }
 ```
 
-With this schema `amount` is guaranteed a number, both fields present, no extra keys thanks to `additionalProperties: false`. OpenAI has Structured Outputs with `strict: true`; Anthropic gets the same by declaring a tool with `input_schema` and forcing the model to call it — call arguments are your typed object. In both cases the guarantee comes from the provider, not the model's politeness.
+With this schema `amount` is guaranteed a number, both fields present, no extra keys thanks to `additionalProperties: false`. OpenAI has Structured Outputs with `strict: true`; Anthropic gets the same by declaring a tool with `input_schema` and forcing the model to call it: call arguments are your typed object. In both cases the guarantee comes from the provider, not the model's politeness.
 
 <Compare
   leftTitle="Instruction only"
@@ -78,24 +78,24 @@ With this schema `amount` is guaranteed a number, both fields present, no extra 
 
 ## Edge cases
 
-Schema guarantees shape, not meaning. The field `amount` will be a number — but if the email has no amount, the model must still return a number and may invent one or use zero. To distinguish "no data" from "zero," add explicit emptiness: make the field optional or allow `null`, and ask for `null` when the value is missing.
+Schema guarantees shape, not meaning. The field `amount` will be a number, but if the email has no amount, the model must still return a number and may invent one or use zero. To distinguish "no data" from "zero," add explicit emptiness: make the field optional or allow `null`, and ask for `null` when the value is missing.
 
 Nesting and units are another trap. "Amount 1,480 RUB" maps easily to `{"amount": 1480, "currency": "RUB"}`, but if the schema requires one string field, the model returns `"1480 RUB"` and you parse units by hand again. Design the schema so number and unit live in separate fields.
 
 Very large or deeply nested schemas are followed worse and slower. If the object swells, split extraction into several requests with simple schemas rather than one giant object.
 
-Streaming is a separate trap. If you show the answer as it generates, at any moment you may hold only the start of the object — e.g. `{"amount": 1480, "curr` — and plain `JSON.parse` fails. That is not a model error but a normal intermediate state: full valid JSON appears only on the last token. With streaming either wait for completion before parsing or use an incremental parser that reads incomplete JSON. The schema guarantee applies to the final result, not every intermediate frame.
+Streaming is a separate trap. If you show the answer as it generates, at any moment you may hold only the start of the object, for example `{"amount": 1480, "curr`, and plain `JSON.parse` fails. That is not a model error but a normal intermediate state: full valid JSON appears only on the last token. With streaming either wait for completion before parsing or use an incremental parser that reads incomplete JSON. The schema guarantee applies to the final result, not every intermediate frame.
 
 ## Common mistakes
 
 - **Parsing the whole response as JSON without forbidding wrappers.** Polite preambles or ` ```json ` break `JSON.parse`. Forbid markdown and explanations or prefill with `{`.
-- **Relying on instruction where schema mode exists.** If the API supports structured outputs, schema beats pleading — use it.
+- **Relying on instruction where schema mode exists.** If the API supports structured outputs, schema beats pleading: use it.
 - **Not planning for "no data."** Without `null`/optional field the model invents a value. Build explicit emptiness into the schema.
 - **Putting number and unit in one field.** `"1480 RUB"` must be parsed manually. Split magnitude and unit across fields.
 
 <Detail summary="How structured outputs differs from tool calling">
 
-Technically two sides of one coin. Tool (function) calling forces the model to return arguments per `input_schema` — a strictly typed object; that is how Anthropic gets guaranteed structure. OpenAI's structured outputs binds `response_format` with JSON Schema and `strict: true` directly to the answer. Under the hood generation is constrained: at each step only tokens leading to a schema-valid result are allowed (constrained decoding). So the shape guarantee is not "the model tried hard" but "other tokens could not be generated." Content of fields is not verified — schema covers form, not truth in values.
+Technically two sides of one coin. Tool (function) calling forces the model to return arguments per `input_schema`: a strictly typed object; that is how Anthropic gets guaranteed structure. OpenAI's structured outputs binds `response_format` with JSON Schema and `strict: true` directly to the answer. Under the hood generation is constrained: at each step only tokens leading to a schema-valid result are allowed (constrained decoding). So the shape guarantee is not "the model tried hard" but "other tokens could not be generated." Content of fields is not verified: schema covers form, not truth in values.
 
 </Detail>
 

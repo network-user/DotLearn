@@ -1,35 +1,33 @@
-# TODO: Theory text highlights (parked)
+# Theory text highlights
 
-**Status:** UI disabled (`THEORY_HIGHLIGHTS_ENABLED = false` in `apps/web/src/lib/feature-flags.ts`).
+**Status:** enabled (`THEORY_HIGHLIGHTS_ENABLED = true` in `apps/web/src/lib/feature-flags.ts`).
 
 ## What it does
 
-Learners select text in theory MDX on TopicPage; a floating color toolbar saves the quote to IndexedDB (`highlights` table). Saved items appear on `/library` under the Highlights tab, with search, open-source, and delete.
+Learners select text in theory MDX on TopicPage; a floating color toolbar saves the quote to IndexedDB (`highlights` table). Saved items appear on `/library` under the Highlights tab, with search, open-source, note editing, and delete.
 
-## How to re-enable
+## Implemented follow-ups (previously parked)
 
-1. Set `THEORY_HIGHLIGHTS_ENABLED = true` in `apps/web/src/lib/feature-flags.ts`.
-2. Verify: select text in a concept theory → color dots appear → save → entry shows on `/library` → Highlights tab.
-
-Backend code is unchanged: `TheoryHighlighter.tsx`, `progress-db` highlight APIs, `progress-io` export/import, and locale strings stay in the repo.
-
-## Follow-up work (why it was parked)
-
-The feature works but UX is unclear without these improvements:
-
-- [ ] **In-article markup**: re-show saved highlights in theory text (`useConceptHighlights` exists but is unused).
-- [ ] **Clearer save feedback.** Toast should mention Library or link to `/library`, not only "Saved to library".
-- [ ] **Notes on highlights**: `HighlightRecord.note` and `setHighlightNote` exist; add UI to attach/edit a note.
-- [ ] **Onboarding** - short hint on first selection or in reading settings.
-- [ ] **Color meaning** (optional legend or labels so colors are not arbitrary dots).
+- [x] **In-article markup.** Saved highlights re-render inside the article as `<mark data-highlight-id>` elements. Anchoring is whitespace-tolerant (stored text matched with a `\s+`-tolerant pattern) and disambiguates duplicates via stored before/after context (`HighlightRecord.prefix` / `suffix`, captured at save time). If the text has shifted too far, the highlight is skipped silently; nothing breaks. A MutationObserver re-applies marks when lazy MDX chunks finish rendering.
+- [x] **Clearer save feedback.** The save toast now carries an action button that opens `/library`.
+- [x] **Notes on highlights.** `HighlightRecord.note` is editable from two places: clicking a mark in the article opens a popover (note textarea + color picker + delete), and the Library highlight card has an edit mode (pencil button).
+- [x] **Color meaning.** Colors have shared meaning labels (yellow = key point, green = remember, blue = definition, pink = question; `topic:highlight.colors.*`). The Library Highlights tab shows a legend; the in-article picker, the mark popover, and the Library edit mode all use the same `HighlightColorPicker` component and `highlight-colors` definitions.
+- [x] **Onboarding.** A one-time dismissible hint above the theory (`dotlearn:highlight-hint-seen` in localStorage, same pattern as `Onboarding.tsx`) tells users they can highlight text. Saving a first highlight also marks the hint as seen.
 
 ## Key files
 
-| Area              | Path                                                                            |
-| ----------------- | ------------------------------------------------------------------------------- |
-| Feature flag      | `apps/web/src/lib/feature-flags.ts`                                             |
-| Selection toolbar | `apps/web/src/components/TheoryHighlighter.tsx`                                 |
-| Topic page mount  | `apps/web/src/pages/TopicPage.tsx`                                              |
-| Library tab       | `apps/web/src/pages/LibraryPage.tsx`                                            |
-| Storage           | `apps/web/src/lib/progress-db.ts` (`HighlightRecord`, `addHighlight`, …)        |
-| Hooks             | `apps/web/src/lib/use-learning.ts` (`useConceptHighlights`, `useAllHighlights`) |
+| Area                                    | Path                                                                            |
+| --------------------------------------- | ------------------------------------------------------------------------------- |
+| Feature flag                            | `apps/web/src/lib/feature-flags.ts`                                             |
+| Selection toolbar, marks, popover, hint | `apps/web/src/components/TheoryHighlighter.tsx`                                 |
+| DOM anchoring                           | `apps/web/src/lib/highlight-anchor.ts` (+ `highlight-anchor.spec.ts`)           |
+| Color definitions                       | `apps/web/src/lib/highlight-colors.ts`                                          |
+| Shared picker                           | `apps/web/src/components/HighlightColorPicker.tsx`                              |
+| Topic page mount                        | `apps/web/src/pages/TopicPage.tsx`                                              |
+| Library tab                             | `apps/web/src/pages/LibraryPage.tsx` (legend, note editing, color change)       |
+| Storage                                 | `apps/web/src/lib/progress-db.ts` (`HighlightRecord`, `addHighlight`, …)        |
+| Hooks                                   | `apps/web/src/lib/use-learning.ts` (`useConceptHighlights`, `useAllHighlights`) |
+
+## How to disable again
+
+Set `THEORY_HIGHLIGHTS_ENABLED = false`. Storage, export/import (`progress-io`), and locale strings stay in place; only the UI (toolbar, marks, hint, Library tab) is gated.

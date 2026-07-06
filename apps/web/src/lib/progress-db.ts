@@ -106,6 +106,8 @@ export interface HighlightRecord {
   text: string;
   color: HighlightColor;
   note?: string;
+  prefix?: string;
+  suffix?: string;
   createdAt: string;
 }
 
@@ -671,6 +673,8 @@ export interface HighlightInput {
   text: string;
   color: HighlightColor;
   note?: string;
+  prefix?: string;
+  suffix?: string;
 }
 
 export const addHighlight = async (input: HighlightInput): Promise<HighlightRecord> => {
@@ -682,6 +686,8 @@ export const addHighlight = async (input: HighlightInput): Promise<HighlightReco
     color: input.color,
     createdAt: new Date().toISOString(),
     ...(input.note && input.note.trim().length > 0 ? { note: input.note.trim() } : {}),
+    ...(input.prefix && input.prefix.length > 0 ? { prefix: input.prefix } : {}),
+    ...(input.suffix && input.suffix.length > 0 ? { suffix: input.suffix } : {}),
   };
   await db.highlights.put(record);
   return record;

@@ -1,1 +1,1 @@
-export const THEORY_HIGHLIGHTS_ENABLED = false;
+export const THEORY_HIGHLIGHTS_ENABLED = true;

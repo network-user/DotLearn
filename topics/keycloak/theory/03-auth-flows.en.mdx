@@ -6,15 +6,15 @@ estimatedMinutes: 50
 
 # Token acquisition flows: redirects for people, secrets for machines
 
-You have a client and a realm — now the client needs to actually get a token. The way to obtain a token is called a **flow** (grant type), and there are several not out of excess imagination: different clients live in different security conditions. A browser SPA cannot store a secret but can drive the user through redirects. A background service, conversely, can store a secret but has no human behind it to type a password.
+You have a client and a realm. Now the client needs to actually get a token. The way to obtain a token is called a **flow** (grant type), and there are several not out of excess imagination: different clients live in different security conditions. A browser SPA cannot store a secret but can drive the user through redirects. A background service, conversely, can store a secret but has no human behind it to type a password.
 
-From that come two main flows. **Authorization code flow with PKCE** — for a person signing in through a browser; today this is the default for web and mobile. **Client credentials flow** — for machine access when a service calls an API in its own name. By the end of this section you will understand why an intermediate `code` is needed, how PKCE protects against intercepting it, and why one flow requires a human present and the other does not.
+From that come two main flows. **Authorization code flow with PKCE**: for a person signing in through a browser; today this is the default for web and mobile. **Client credentials flow**: for machine access when a service calls an API in its own name. By the end of this section you will understand why an intermediate `code` is needed, how PKCE protects against intercepting it, and why one flow requires a human present and the other does not.
 
 ## Mental model: why not hand out the token immediately
 
 The most direct path is for the authorization server to return the token in the redirect right after login. That is how implicit flow worked once, and exactly why it was abandoned: the token flew through the browser address bar, landed in history, proxy logs, and Referer. Intercepting it was too easy.
 
-Authorization code flow introduces a workaround. First the browser returns not a token but a one-time **authorization code** — a short-lived code useless by itself. Then the client exchanges that code for a token in a direct backend-to-backend request (or a direct POST from the SPA) that does not go through the address bar. The token never appears in browser navigation.
+Authorization code flow introduces a workaround. First the browser returns not a token but a one-time **authorization code**: a short-lived code useless by itself. Then the client exchanges that code for a token in a direct backend-to-backend request (or a direct POST from the SPA) that does not go through the address bar. The token never appears in browser navigation.
 
 <Figure caption="Only a one-time code travels through the browser; it is exchanged for a token in a separate direct request to the token endpoint, not via the address bar.">
   <Sketch viewBox="0 0 460 200" title="Authorization code flow">
@@ -35,13 +35,13 @@ Authorization code flow introduces a workaround. First the browser returns not a
   </Sketch>
 </Figure>
 
-The two-step design is not bureaucracy — it is protection. The code is visible in the browser but useless without the second step (exchange). The second step happens where an attacker has no access. One hole remains: what if an attacker intercepts the code and performs the exchange themselves? PKCE closes that.
+The two-step design is not bureaucracy: it is protection. The code is visible in the browser but useless without the second step (exchange). The second step happens where an attacker has no access. One hole remains: what if an attacker intercepts the code and performs the exchange themselves? PKCE closes that.
 
 ## PKCE: binding the code to whoever requested it
 
 **PKCE** (Proof Key for Code Exchange) protects against intercepting the authorization code. The idea is to prove that whoever exchanges the code for a token is the same client that requested the code, without a secret (which a public client does not have).
 
-Before starting, the client generates a random string — **code_verifier** — and keeps it locally. From it it computes **code_challenge** as a `SHA-256` hash and sends the challenge, not the verifier, in `/authorize`.
+Before starting, the client generates a random string (**code_verifier**) and keeps it locally. From it it computes **code_challenge** as a `SHA-256` hash and sends the challenge, not the verifier, in `/authorize`.
 
 ```text
 code_verifier  = "dBjftJeZ4CVP...random"
@@ -49,17 +49,17 @@ code_challenge = BASE64URL(SHA256(code_verifier))
 GET /authorize?...&code_challenge=...&code_challenge_method=S256
 ```
 
-When it is time to exchange the code for a token, the client sends the verifier itself in `/token`. Keycloak hashes the supplied verifier and compares it to the challenge stored on the first step. Match — the same client is exchanging.
+When it is time to exchange the code for a token, the client sends the verifier itself in `/token`. Keycloak hashes the supplied verifier and compares it to the challenge stored on the first step. Match: the same client is exchanging.
 
 ```text
 POST /token  code=<code>&code_verifier=dBjftJeZ4CVP...
 Keycloak: SHA256(verifier) == stored challenge ?  yes → token
 ```
 
-An intercepted code is now useless: the attacker has no verifier, and you cannot recover it from the challenge — it is a one-way hash. PKCE was designed for mobile apps but is now recommended for all authorization code flows, including confidential clients.
+An intercepted code is now useless: the attacker has no verifier, and you cannot recover it from the challenge: it is a one-way hash. PKCE was designed for mobile apps but is now recommended for all authorization code flows, including confidential clients.
 
 <Callout type="tip">
-Always use `code_challenge_method=S256` (SHA-256 hashing). Method `plain`, where challenge equals verifier, is only allowed as a fallback for platforms without SHA-256 — it does not protect against interception.
+Always use `code_challenge_method=S256` (SHA-256 hashing). Method `plain`, where challenge equals verifier, is only allowed as a fallback for platforms without SHA-256: it does not protect against interception.
 </Callout>
 
 ## Client credentials: a token without a human
@@ -73,7 +73,7 @@ POST /realms/corp/protocol/openid-connect/token
   client_secret=●●●●
 ```
 
-The response is an access_token issued to the client itself (its service account), not a person. No `id_token` here — there is no identity to attest. The flow applies only to confidential clients: a public client cannot present a secret, so client credentials is unavailable to it.
+The response is an access_token issued to the client itself (its service account), not a person. No `id_token` here: there is no identity to attest. The flow applies only to confidential clients: a public client cannot present a secret, so client credentials is unavailable to it.
 
 <Figure caption="Client credentials: one direct request with a secret, no browser and no user; the token is issued to the service itself.">
   <Sketch viewBox="0 0 440 130" title="Client credentials flow">
@@ -89,24 +89,24 @@ The response is an access_token issued to the client itself (its service account
   </Sketch>
 </Figure>
 
-The difference between flows comes down to one question: is there a human behind the request. Yes — authorization code with PKCE, and you get an id_token about that person. No — client credentials, and the token represents the service itself.
+The difference between flows comes down to one question: is there a human behind the request. Yes: authorization code with PKCE, and you get an id_token about that person. No: client credentials, and the token represents the service itself.
 
 ## Edge case: redirect_uri must match exactly
 
-What catches many at the start: Keycloak accepts a code and exchanges it for a token only if `redirect_uri` in the request matches one of the values registered for the client. Not "starts with", not "similar" — match by the rules set in client settings.
+What catches many at the start: Keycloak accepts a code and exchanges it for a token only if `redirect_uri` in the request matches one of the values registered for the client. Not "starts with", not "similar": match by the rules set in client settings.
 
 ```text
 registered: https://app.example/callback
 received:   https://app.example/callback/   ← trailing slash → rejected
 ```
 
-This is not nitpicking — it is open-redirect protection: without strict checking an attacker would substitute their `redirect_uri` and steal the code. So on `Invalid redirect_uri`, first compare the string character by character with what is configured on the client.
+This is not nitpicking. It is open-redirect protection: without strict checking an attacker would substitute their `redirect_uri` and steal the code. So on `Invalid redirect_uri`, first compare the string character by character with what is configured on the client.
 
 ## Common mistakes
 
 - **Using implicit flow in new projects.** It returns the token directly in the redirect where it is easy to intercept. The modern browser default is authorization code with PKCE; implicit is considered legacy.
 - **Skipping PKCE for a public client.** Without PKCE an intercepted authorization code can be exchanged for a token. For SPAs and mobile apps PKCE is mandatory, method `S256`.
-- **Trying to use client credentials for user login.** This flow does not authenticate a person and does not issue id_token — it is about the service itself. Human login needs authorization code.
+- **Trying to use client credentials for user login.** This flow does not authenticate a person and does not issue id_token: it is about the service itself. Human login needs authorization code.
 - **Sending `client_secret` from the browser.** A secret in frontend code is compromised. If a flow needs a secret, it belongs on the backend (confidential client).
 
 <Detail summary="state and nonce: two more protective strings">
@@ -115,18 +115,18 @@ Besides PKCE, authorization code flow usually carries two additional one-time va
 
 **state** is a random string the client puts in the `/authorize` request and checks on return. It protects against CSRF at login: if the returned `state` does not match what was sent, the response is not from your request and must be dropped.
 
-**nonce** is an OIDC value the client puts in the request and then expects to see as the same `nonce` claim inside id_token. It ties a specific id_token to a specific request and prevents reusing an old intercepted id_token. PKCE protects the code exchange; nonce ties id_token — they solve different jobs and work together.
+**nonce** is an OIDC value the client puts in the request and then expects to see as the same `nonce` claim inside id_token. It ties a specific id_token to a specific request and prevents reusing an old intercepted id_token. PKCE protects the code exchange; nonce ties id_token: they solve different jobs and work together.
 
 </Detail>
 
 <KeyTakeaways
   items={[
-    "Authorization code flow returns a one-time code through the browser; the token is obtained in a separate direct request — the token never hits the address bar.",
+    "Authorization code flow returns a one-time code through the browser; the token is obtained in a separate direct request: the token never hits the address bar.",
     "PKCE binds code exchange to whoever requested it: the client sends challenge, then verifier; intercepted code without verifier is useless.",
     "For public clients (SPA, mobile) authorization code + PKCE with method S256 is the mandatory modern default.",
     "Client credentials flow gives a token for machine access: confidential client presents a secret; no human and no id_token.",
     "Flow choice is one question: is there a human behind the request.",
-    "redirect_uri must exactly match the registered value — open-redirect and code theft protection.",
+    "redirect_uri must exactly match the registered value: open-redirect and code theft protection.",
   ]}
 />
 

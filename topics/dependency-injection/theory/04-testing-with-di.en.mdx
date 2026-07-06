@@ -6,13 +6,13 @@ estimatedMinutes: 45
 
 # Tests become simple when the dependency can be swapped
 
-You wrote `OrderService`, which sends an email when placing an order. How do you test it? If the mail client is created inside the service, you have two bad options: either the test really sends mail (slow, unreliable, depends on network and someone else's server), or you patch the service's internals. Both signal code not designed for testing. But if the mailer *comes from outside* through the constructor, the test becomes trivial: pass a fake mailer that remembers what it was asked to send instead of sending — and verify it was asked correctly.
+You wrote `OrderService`, which sends an email when placing an order. How do you test it? If the mail client is created inside the service, you have two bad options: either the test really sends mail (slow, unreliable, depends on network and someone else's server), or you patch the service's internals. Both signal code not designed for testing. But if the mailer *comes from outside* through the constructor, the test becomes trivial: pass a fake mailer that remembers what it was asked to send instead of sending, and verify it was asked correctly.
 
 That is the payoff DI returns. In previous concepts you learned to pass dependencies from outside; now you see why. In this section we cover kinds of test doubles (stub, fake, mock, spy), how to replace a dependency in a plain class and in a FastAPI handler via `dependency_overrides`, and why a test on well-designed code checks behavior, not implementation details.
 
 ## Mental model: the test plugs in its own implementation
 
-Under test, code works with the same contracts as in production — only a different implementation stands behind the contract. In production `Mailer` is a real SMTP client; in a test it is an object that sends nothing but records calls in a list. The service notices no difference: it calls `mailer.send(...)` as always. What is swapped is not the service but what was injected into it.
+Under test, code works with the same contracts as in production, but only a different implementation stands behind the contract. In production `Mailer` is a real SMTP client; in a test it is an object that sends nothing but records calls in a list. The service notices no difference: it calls `mailer.send(...)` as always. What is swapped is not the service but what was injected into it.
 
 <Figure caption="In production and in tests the service is the same; only the implementation behind the contract changes. The test injects a double and then verifies what the service did with it.">
   <Sketch viewBox="0 0 470 200" title="Dependency substitution in a test">
@@ -30,7 +30,7 @@ Under test, code works with the same contracts as in production — only a diffe
   </Sketch>
 </Figure>
 
-On the left is what is injected in production, on the right in tests. Arrows converge on one `OrderService`. The test does not modify the service or know its internals: it only passes `FakeMailer` through the constructor and then inspects what accumulated. That is testing through DI — control of the implementation is handed to the test.
+On the left is what is injected in production, on the right in tests. Arrows converge on one `OrderService`. The test does not modify the service or know its internals: it only passes `FakeMailer` through the constructor and then inspects what accumulated. That is testing through DI: control of the implementation is handed to the test.
 
 ## Kinds of doubles: short and practical
 
@@ -70,7 +70,7 @@ OrderService(spy).place("ana@example.com")
 print(spy.sent)
 ```
 
-Prints `[('ana@example.com', 'Order accepted')]`. The test sent nothing for real, ran instantly, and verified exactly what matters: the service called mailer with the right address and text. Without DI that would need patching; with DI — three lines. Testability was not added separately — it came with injection.
+Prints `[('ana@example.com', 'Order accepted')]`. The test sent nothing for real, ran instantly, and verified exactly what matters: the service called mailer with the right address and text. Without DI that would need patching; with DI, three lines. Testability was not added separately: it came with injection.
 
 <Callout type="tip">
 A good test checks *observable behavior*, not internals. "The service called send with this address" is behavior at the contract boundary. "The service set self._flag = True inside" is an internal detail that breaks the test on harmless refactoring. Verify what is visible from outside through the contract.
@@ -78,7 +78,7 @@ A good test checks *observable behavior*, not internals. "The service called sen
 
 ## Substitution in FastAPI via dependency_overrides
 
-In FastAPI handlers dependencies arrive through `Depends`, and there is no constructor to replace them by hand. But there is a built-in mechanism — dict `app.dependency_overrides`: put "original dependency → test dependency" in it and the framework substitutes the test one everywhere.
+In FastAPI handlers dependencies arrive through `Depends`, and there is no constructor to replace them by hand. But there is a built-in mechanism, dict `app.dependency_overrides`: put "original dependency → test dependency" in it and the framework substitutes the test one everywhere.
 
 ```python
 def get_db():
@@ -90,11 +90,11 @@ def fake_db():
 app.dependency_overrides[get_db] = fake_db
 ```
 
-After that line every handler with `Depends(get_db)` gets the result of `fake_db` — without editing handlers. The test starts the app with a replaced database, hits the endpoint through `TestClient`, checks the response, and clears the dict at the end (`app.dependency_overrides.clear()`) so the override does not leak into other tests. Same substitution of implementation behind a contract — only the injector is FastAPI.
+After that line every handler with `Depends(get_db)` gets the result of `fake_db`, without editing handlers. The test starts the app with a replaced database, hits the endpoint through `TestClient`, checks the response, and clears the dict at the end (`app.dependency_overrides.clear()`) so the override does not leak into other tests. Same substitution of implementation behind a contract: only the injector is FastAPI.
 
 ## Try substitution yourself
 
-Run the code: the same `OrderService` first gets a spy, then a silent stub. The spy accumulates calls; the stub ignores them. Try adding another `place` call for a second customer in the second scenario and confirm `spy.sent` now holds two tuples — the test sees *all* calls to the dependency, not just the first. That is exactly what "the service notified everyone it should" is built on.
+Run the code: the same `OrderService` first gets a spy, then a silent stub. The spy accumulates calls; the stub ignores them. Try adding another `place` call for a second customer in the second scenario and confirm `spy.sent` now holds two tuples: the test sees *all* calls to the dependency, not just the first. That is exactly what "the service notified everyone it should" is built on.
 
 <PyDemo
   title="Spy versus stub"
@@ -122,11 +122,11 @@ OrderService(StubMailer()).place("boris@example.com")
 print("stub records nothing")`}
 />
 
-Notice that `OrderService` is the same class with the same logic in both cases. The only difference is *what was injected*. When the dependency is swappable, the test fully controls the service's environment — and is therefore fast, deterministic, and independent of the outside world.
+Notice that `OrderService` is the same class with the same logic in both cases. The only difference is *what was injected*. When the dependency is swappable, the test fully controls the service's environment, and is therefore fast, deterministic, and independent of the outside world.
 
 ## MagicMock silently hides a typo in a method name
 
-`unittest.mock.MagicMock` is temptingly simple: it pretends to be anything and returns a new mock on any call without failing. But that is why it can *silently hide errors*. Call a nonexistent method — the mock will not object; it will act as if the method exists.
+`unittest.mock.MagicMock` is temptingly simple: it pretends to be anything and returns a new mock on any call without failing. But that is why it can *silently hide errors*. Call a nonexistent method: the mock will not object; it will act as if the method exists.
 
 ```python
 from unittest.mock import MagicMock
@@ -137,14 +137,14 @@ print(mailer.snd.called)
 print(mailer.send.called)
 ```
 
-Prints `True` and `False`. You typo'd — called `snd` instead of `send` — and the mock happily swallowed it: `snd.called` became `True`. A test with a real object would fail with `AttributeError` and point at the typo immediately; the mock let the bug through and even reported a "successful call". The surprising moral: an overly flexible double is more dangerous than a strict one. Fix it with the `spec` parameter (`MagicMock(spec=Mailer)`), which limits the mock to the real contract's shape — or prefer simple hand-written fake/spy where they suffice.
+Prints `True` and `False`. You typo'd, calling `snd` instead of `send`, and the mock happily swallowed it: `snd.called` became `True`. A test with a real object would fail with `AttributeError` and point at the typo immediately; the mock let the bug through and even reported a "successful call". The surprising moral: an overly flexible double is more dangerous than a strict one. Fix it with the `spec` parameter (`MagicMock(spec=Mailer)`), which limits the mock to the real contract's shape, or prefer a simple hand-written fake/spy where they suffice.
 
 ## Common mistakes
 
 - **Testing against real external systems.** If a test hits a real database, mail server, or third-party API, it is slow, fragile, and network-dependent. Replace such dependencies with doubles; real systems belong in a separate, rare integration layer.
 - **Checking internals instead of behavior.** A test that reaches into private attributes breaks on any refactor even when behavior unchanged. Verify what is visible through the contract.
 - **Forgetting to clear `dependency_overrides`.** An override left after a test leaks into later tests and gives false results depending on run order. Clear overrides in teardown (or use a fixture that cleans up automatically).
-- **Mocking too deeply.** The more mocks and the "smarter" they are, the less the test resembles reality — in the limit it verifies your mocks, not your code. Replace the dependency at the contract boundary, not every internal call.
+- **Mocking too deeply.** The more mocks and the "smarter" they are, the less the test resembles reality: in the limit it verifies your mocks, not your code. Replace the dependency at the contract boundary, not every internal call.
 
 <Detail summary="Mock versus fake: when to choose which">
 
@@ -162,13 +162,13 @@ Practical rule: start with a simple hand-written fake; reach for mock when you n
     "Doubles differ by role: stub returns a preset value; spy/fake also record calls for interaction checks.",
     "A good test verifies observable behavior at the contract boundary, not private internals that break on refactoring.",
     "In FastAPI replace dependencies via app.dependency_overrides and clear the dict after the test so overrides do not leak.",
-    "MagicMock without spec silently swallows method name typos and hides bugs — constrain doubles to the contract's shape.",
+    "MagicMock without spec silently swallows method name typos and hides bugs: constrain doubles to the contract's shape.",
     "Start with a simple hand-written fake; use mock when you need to record the fact and form of a dependency call.",
   ]}
 />
 
 ## References
 
-- [Python documentation — unittest.mock](https://docs.python.org/3/library/unittest.mock.html)
-- [FastAPI — Testing dependencies with overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)
-- [Martin Fowler — Mocks Aren't Stubs](https://martinfowler.com/articles/mocksArentStubs.html)
+- [Python documentation - unittest.mock](https://docs.python.org/3/library/unittest.mock.html)
+- [FastAPI - Testing dependencies with overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)
+- [Martin Fowler - Mocks Aren't Stubs](https://martinfowler.com/articles/mocksArentStubs.html)

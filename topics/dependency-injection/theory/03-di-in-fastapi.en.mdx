@@ -6,9 +6,9 @@ estimatedMinutes: 45
 
 # Depends: the framework assembles dependencies for you
 
-In the previous concept you wired dependencies by hand: `OrderService(SmtpMailer())`. With three classes that is tolerable. But a web app has dozens of handlers, each needing a database connection, the current user, settings — and often one depends on another: "user" is derived from "token", and "token" from a request header. Building that chain by hand at the start of every handler is tedious and error-prone. FastAPI takes assembly on itself: you *declare* what the handler needs, and the framework computes dependencies and plugs them in.
+In the previous concept you wired dependencies by hand: `OrderService(SmtpMailer())`. With three classes that is tolerable. But a web app has dozens of handlers, each needing a database connection, the current user, settings, and often one depends on another: "user" is derived from "token", and "token" from a request header. Building that chain by hand at the start of every handler is tedious and error-prone. FastAPI takes assembly on itself: you *declare* what the handler needs, and the framework computes dependencies and plugs them in.
 
-It does this through `Depends`. In this section you will see how `Depends` declares a dependency as a function parameter, how FastAPI builds and caches the dependency graph per request, and how to override a dependency for tests. FastAPI is not installed in pyodide, so we reproduce the mechanics in plain Python — but it is the same mechanics inside the framework.
+It does this through `Depends`. In this section you will see how `Depends` declares a dependency as a function parameter, how FastAPI builds and caches the dependency graph per request, and how to override a dependency for tests. FastAPI is not installed in pyodide, so we reproduce the mechanics in plain Python, but it is the same mechanics inside the framework.
 
 ## Mental model: dependency as a parameter
 
@@ -30,7 +30,7 @@ A normal FastAPI argument comes from the request: path, query string, body. `Dep
   </Sketch>
 </Figure>
 
-Handler `list_users` needs a database. It does not open a connection itself — it declares parameter `db = Depends(get_db)`. FastAPI sees that declaration, first computes `get_db()` (which may need settings in turn), and only then calls `list_users`, passing the ready `db`. Control is inverted again: the handler declares a need, and the framework handles assembly. Same DI as before — only the injector is FastAPI, not you.
+Handler `list_users` needs a database. It does not open a connection itself: it declares parameter `db = Depends(get_db)`. FastAPI sees that declaration, first computes `get_db()` (which may need settings in turn), and only then calls `list_users`, passing the ready `db`. Control is inverted again: the handler declares a need, and the framework handles assembly. Same DI as before, only the injector is FastAPI, not you.
 
 ## What it looks like in FastAPI code
 
@@ -49,7 +49,7 @@ def list_users(db = Depends(get_db)):
     return db["users"]
 ```
 
-When a request hits `/users`, FastAPI calls `get_db()`, gets the dict, passes it to `list_users` as `db`, and returns `db["users"]`. You never wrote `get_db()` yourself — the framework did because it saw `Depends(get_db)`. The handler depends on the *result* of `get_db`, not on how the database is built.
+When a request hits `/users`, FastAPI calls `get_db()`, gets the dict, passes it to `list_users` as `db`, and returns `db["users"]`. You never wrote `get_db()` yourself: the framework did because it saw `Depends(get_db)`. The handler depends on the *result* of `get_db`, not on how the database is built.
 
 ## Dependencies nest inside each other
 
@@ -67,7 +67,7 @@ def me(user = Depends(get_user)):
     return user
 ```
 
-Here `me` depends on `get_user`, and `get_user` on `get_token`. FastAPI orders execution itself: first `get_token` (reads the header from the request), then `get_user` (gets the token), then `me` (gets the user). You do not write `get_user(get_token(...))` — the graph unfolds automatically. Each dependency handles one small step; the framework assembles composition.
+Here `me` depends on `get_user`, and `get_user` on `get_token`. FastAPI orders execution itself: first `get_token` (reads the header from the request), then `get_user` (gets the token), then `me` (gets the user). You do not write `get_user(get_token(...))`: the graph unfolds automatically. Each dependency handles one small step; the framework assembles composition.
 
 <Callout type="info">
 A dependency can also be a class: `Depends(Settings)` calls `Settings()` and passes the instance. If the object has `__call__`, the framework invokes it like a function. That is handy for injecting settings or stateful services.
@@ -75,7 +75,7 @@ A dependency can also be a class: `Depends(Settings)` calls `Settings()` and pas
 
 ## Caching within a request
 
-If the same dependency is required in several places in the graph, FastAPI by default computes it *once per request* and reuses the result. Otherwise `get_db` in an example with five dependents would open five connections — wasteful and dangerous.
+If the same dependency is required in several places in the graph, FastAPI by default computes it *once per request* and reuses the result. Otherwise `get_db` in an example with five dependents would open five connections, wasteful and dangerous.
 
 ```python
 def get_db():
@@ -103,7 +103,7 @@ Returns `True`, and "opened connection" prints *once*, even though `get_db` appe
   </Sketch>
 </Figure>
 
-The cache lives exactly one request: the next request starts fresh and computes `get_db` again. That matters — dependencies do not "leak" between requests from different users.
+The cache lives exactly one request: the next request starts fresh and computes `get_db` again. That matters: dependencies do not "leak" between requests from different users.
 
 ## Try the mechanics yourself
 
@@ -153,18 +153,18 @@ def get_db():
         db["conn"] = "closed"
 ```
 
-FastAPI passes the handler what was yielded (the open database), and lines after `finally` run when the request finishes — closing the connection regardless of outcome. The surprising detail: the handler receives the *yielded value*, not the generator function, and cleanup happens not right after `yield` but at the end of the request lifecycle. One dependency manages a resource from open to close, and the handler does not need to think about it.
+FastAPI passes the handler what was yielded (the open database), and lines after `finally` run when the request finishes, closing the connection regardless of outcome. The surprising detail: the handler receives the *yielded value*, not the generator function, and cleanup happens not right after `yield` but at the end of the request lifecycle. One dependency manages a resource from open to close, and the handler does not need to think about it.
 
 ## Common mistakes
 
-- **Calling the dependency yourself: `Depends(get_db())`.** Pass the *function* `get_db` to `Depends`, not the result of calling it. With parentheses you evaluate `get_db` once at app startup and freeze a single result for all requests — almost never what you want.
-- **Doing heavy work in the handler body, bypassing `Depends`.** If you open a connection or check a token inside the handler, it cannot be reused or replaced in a test. Move such steps into dependencies — then they can be composed and overridden.
+- **Calling the dependency yourself: `Depends(get_db())`.** Pass the *function* `get_db` to `Depends`, not the result of calling it. With parentheses you evaluate `get_db` once at app startup and freeze a single result for all requests, almost never what you want.
+- **Doing heavy work in the handler body, bypassing `Depends`.** If you open a connection or check a token inside the handler, it cannot be reused or replaced in a test. Move such steps into dependencies, so they can be composed and overridden.
 - **Relying on cache between requests.** Dependency cache lives one request. State that must survive requests (connection pool, config) belongs at application level, not in an ordinary dependency.
 - **Forgetting `finally` in a yield dependency.** Without `finally` the resource will not close if the handler raises. Always release resources in `finally`.
 
 <Detail summary="dependency_overrides: replacing a dependency entirely">
 
-The `app` object has a dict `app.dependency_overrides`. Put a pair "original dependency → replacement" in it and FastAPI will call the second everywhere instead of the first — without touching handlers or the dependencies themselves.
+The `app` object has a dict `app.dependency_overrides`. Put a pair "original dependency → replacement" in it and FastAPI will call the second everywhere instead of the first, without touching handlers or the dependencies themselves.
 
 ```python
 def get_db():
@@ -176,23 +176,23 @@ def fake_db():
 app.dependency_overrides[get_db] = fake_db
 ```
 
-After that line every handler that declared `Depends(get_db)` gets the result of `fake_db`. This is the standard FastAPI testing mechanism: in a test you replace the database with an in-memory stub in one line, then clear the dict after the test. It is the same inversion of control — the decision *which* implementation to plug in is made outside, at test app assembly. The next concept covers dependency substitution in tests in detail.
+After that line every handler that declared `Depends(get_db)` gets the result of `fake_db`. This is the standard FastAPI testing mechanism: in a test you replace the database with an in-memory stub in one line, then clear the dict after the test. It is the same inversion of control: the decision *which* implementation to plug in is made outside, at test app assembly. The next concept covers dependency substitution in tests in detail.
 
 </Detail>
 
 <KeyTakeaways
   items={[
     "Depends(f) declares a handler parameter as the result of function f: FastAPI calls f itself before the handler and passes the result.",
-    "Dependencies compose — one can depend on another; FastAPI orders graph computation automatically.",
+    "Dependencies compose: one can depend on another; FastAPI orders graph computation automatically.",
     "By default a dependency is computed once per request and cached; the cache resets between requests; use_cache=False disables it.",
     "A yield dependency acts like a context: code after yield (in finally) runs when the request completes and closes the resource in any outcome.",
     "Pass the function itself to Depends, not its call: Depends(get_db), not Depends(get_db()).",
-    "app.dependency_overrides replaces a dependency entirely — the foundation of testing FastAPI without editing handlers.",
+    "app.dependency_overrides replaces a dependency entirely: the foundation of testing FastAPI without editing handlers.",
   ]}
 />
 
 ## References
 
-- [FastAPI — Dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/)
-- [FastAPI — Dependencies with yield](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/)
-- [FastAPI — Testing dependencies with overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)
+- [FastAPI - Dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/)
+- [FastAPI - Dependencies with yield](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/)
+- [FastAPI - Testing dependencies with overrides](https://fastapi.tiangolo.com/advanced/testing-dependencies/)

@@ -102,6 +102,11 @@ const TrackPage = lazy(() =>
     default: module.TrackPage,
   })),
 );
+const SearchPage = lazy(() =>
+  import('./pages/SearchPage').then((module) => ({
+    default: module.SearchPage,
+  })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -375,6 +380,19 @@ const glossaryRoute = new Route({
   component: GlossaryPage,
 });
 
+export interface SearchPageSearch {
+  q?: string | undefined;
+}
+
+const searchRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/search',
+  component: SearchPage,
+  validateSearch: (search: Record<string, unknown>): SearchPageSearch => ({
+    q: typeof search.q === 'string' && search.q.length > 0 ? search.q : undefined,
+  }),
+});
+
 const tracksRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/tracks',
@@ -406,6 +424,7 @@ const routeTree = rootRoute.addChildren([
   settingsRoute,
   libraryRoute,
   glossaryRoute,
+  searchRoute,
   tracksRoute,
   trackRoute,
 ]);

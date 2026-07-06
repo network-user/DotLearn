@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect } from 'react';
 
-import { Link, useRouterState } from '@tanstack/react-router';
+import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import { ChevronDown, Keyboard, Search, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -46,10 +46,19 @@ export const Layout = ({ children }: LayoutProps) => {
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const navigate = useNavigate();
   const { state: authState } = useAuth();
   const showAdminLink = authState.status === 'authenticated' || pathname.startsWith(adminPath);
 
   const isActive = (path: string): boolean => isNavPathActive(pathname, path);
+
+  const handleSearchClick = (): void => {
+    if (window.matchMedia('(min-width: 768px)').matches) {
+      openCommandPalette();
+      return;
+    }
+    void navigate({ to: '/search' });
+  };
 
   const overflowItems = secondaryNavItems.filter((item) => item.to !== '/settings');
   const overflowActive = overflowItems.some((item) => isActive(item.to));
@@ -143,7 +152,7 @@ export const Layout = ({ children }: LayoutProps) => {
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
-                onClick={openCommandPalette}
+                onClick={handleSearchClick}
                 aria-label={t('openSearch')}
                 title={t('openSearch')}
                 className="group inline-flex items-center gap-2 h-9 rounded-full border border-border-base/70 text-fg-muted hover:text-fg hover:bg-fg/[0.04] transition-colors px-2.5 lg:px-3.5"

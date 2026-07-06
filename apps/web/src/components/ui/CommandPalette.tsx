@@ -30,8 +30,14 @@ import {
   Waypoints,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { SearchEntry } from 'virtual:search-index';
 
+import {
+  loadSearchEntries,
+  searchContentEntries,
+  searchInterviewEntries,
+  searchLanguageOf,
+  type SearchEntry,
+} from '@/lib/content-search';
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
 import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
@@ -47,34 +53,6 @@ const GROUP_CLASS =
 
 const INTERVIEW_LIMIT = 25;
 const CONTENT_LIMIT = 30;
-const SNIPPET_RADIUS = 60;
-
-interface ContentMatch {
-  key: string;
-  slug: string;
-  conceptId: string;
-  conceptTitle: string;
-  topicTitle: string;
-  before: string;
-  hit: string;
-  after: string;
-}
-
-const buildSnippet = (
-  text: string,
-  query: string,
-  matchIndex: number,
-): { before: string; hit: string; after: string } => {
-  const start = Math.max(0, matchIndex - SNIPPET_RADIUS);
-  const end = Math.min(text.length, matchIndex + query.length + SNIPPET_RADIUS);
-  const leadingEllipsis = start > 0 ? '…' : '';
-  const trailingEllipsis = end < text.length ? '…' : '';
-  return {
-    before: `${leadingEllipsis}${text.slice(start, matchIndex)}`,
-    hit: text.slice(matchIndex, matchIndex + query.length),
-    after: `${text.slice(matchIndex + query.length, end)}${trailingEllipsis}`,
-  };
-};
 
 const runtimeIcon = (runtime: string) => {
   if (runtime === 'sql.js') return <Database size={14} />;
@@ -86,6 +64,7 @@ const runtimeIcon = (runtime: string) => {
 
 const navIcon: Record<string, React.ReactNode> = {
   '/': <Hash size={14} />,
+  '/search': <Search size={14} />,
   '/today': <CalendarCheck size={14} />,
   '/map': <Waypoints size={14} />,
   '/progress': <ListChecks size={14} />,
@@ -112,7 +91,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const bookmarks = useBookmarks();
   const notedKeys = useAllNotedKeys();
 
-  const searchLanguage: 'en' | 'ru' = i18n.resolvedLanguage === 'en' ? 'en' : 'ru';
+  const searchLanguage = searchLanguageOf(i18n.resolvedLanguage);
 
   useEffect(() => {
     if (!open) return;
@@ -121,17 +100,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     void import('@/lib/interview').then((module) => {
       if (!cancelled) setInterview(module.interviewQuestions);
     });
-    const loadIndex =
-      searchLanguage === 'en'
-        ? import('virtual:search-index/en')
-        : import('virtual:search-index/ru');
-    void loadIndex.then((module) => {
-      if (cancelled) return;
-      try {
-        setSearchEntries(JSON.parse(module.default) as SearchEntry[]);
-      } catch {
-        setSearchEntries([]);
-      }
+    void loadSearchEntries(searchLanguage).then((entries) => {
+      if (!cancelled) setSearchEntries(entries);
     });
     return () => {
       cancelled = true;
@@ -168,69 +138,15 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     return map;
   }, [concepts]);
 
-  const interviewMatches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q.length < 2) return [];
-    const out: InterviewQuestionMeta[] = [];
-    for (const item of interview) {
-      if (item.title.toLowerCase().includes(q) || item.categoryLabel.toLowerCase().includes(q)) {
-        out.push(item);
-        if (out.length >= INTERVIEW_LIMIT) break;
-      }
-    }
-    return out;
-  }, [interview, query]);
+  const interviewMatches = useMemo(
+    () => searchInterviewEntries(interview, query, INTERVIEW_LIMIT),
+    [interview, query],
+  );
 
-  const contentMatches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q.length < 2) return [];
-
-    type Ranked = ContentMatch & { titleHit: boolean; matchIndex: number };
-    const ranked: Ranked[] = [];
-    const seen = new Set<string>();
-
-    for (const entry of searchEntries) {
-      const titleIndex = entry.conceptTitle.toLowerCase().indexOf(q);
-      const bodyIndex = entry.text.toLowerCase().indexOf(q);
-      if (titleIndex < 0 && bodyIndex < 0) continue;
-
-      const dedupeKey = `${entry.slug}:${entry.conceptId}:${entry.type}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-
-      const matchIndex = bodyIndex >= 0 ? bodyIndex : 0;
-      const snippet =
-        bodyIndex >= 0
-          ? buildSnippet(entry.text, q, bodyIndex)
-          : {
-              before: '',
-              hit: '',
-              after:
-                entry.text.slice(0, SNIPPET_RADIUS * 2) +
-                (entry.text.length > SNIPPET_RADIUS * 2 ? '…' : ''),
-            };
-
-      ranked.push({
-        key: `${entry.type}-${entry.slug}-${entry.conceptId}`,
-        slug: entry.slug,
-        conceptId: entry.conceptId,
-        conceptTitle: entry.conceptTitle,
-        topicTitle: entry.topicTitle,
-        before: snippet.before,
-        hit: snippet.hit,
-        after: snippet.after,
-        titleHit: titleIndex >= 0,
-        matchIndex,
-      });
-    }
-
-    ranked.sort((left, right) => {
-      if (left.titleHit !== right.titleHit) return left.titleHit ? -1 : 1;
-      return left.matchIndex - right.matchIndex;
-    });
-
-    return ranked.slice(0, CONTENT_LIMIT);
-  }, [searchEntries, query]);
+  const contentMatches = useMemo(
+    () => searchContentEntries(searchEntries, query, CONTENT_LIMIT),
+    [searchEntries, query],
+  );
 
   const go = (path: string): void => {
     setOpen(false);
@@ -275,6 +191,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const navItems = useMemo(
     () => [
       { path: '/', label: t('topics') },
+      { path: '/search', label: t('openSearch') },
       { path: '/today', label: t('today') },
       { path: '/map', label: t('map') },
       { path: '/progress', label: t('progress') },

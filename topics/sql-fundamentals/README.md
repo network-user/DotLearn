@@ -4,9 +4,9 @@ A first contact with SQL. You leave knowing how to read rows from a single table
 
 ## Concepts
 
-1. **SELECT and filtering** — read rows, pick columns, filter with WHERE.
-2. **ORDER BY and LIMIT** — sort and paginate.
-3. **Aggregation** — COUNT, SUM, AVG and friends.
+1. **SELECT and filtering**: read rows, pick columns, filter with WHERE.
+2. **ORDER BY and LIMIT**: sort and paginate.
+3. **Aggregation**: COUNT, SUM, AVG and friends.
 
 ## Prerequisites
 
@@ -18,4 +18,4 @@ About 2 hours.
 
 ## Runtime
 
-`sql.js` — runs entirely in your browser. No setup.
+`sql.js` runs entirely in your browser. No setup.

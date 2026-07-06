@@ -7,7 +7,6 @@ import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
-import { openCommandPalette } from '@/lib/command-palette';
 import { isNavPathActive } from '@/lib/navigation';
 import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
 import { adminPath } from '@/router';
@@ -42,15 +41,16 @@ export const BottomTabBar = () => {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openCommandPalette}
-        aria-label={t('openSearch')}
-        title={t('openSearch')}
-        className="md:hidden fixed right-[calc(env(safe-area-inset-right,0px)+16px)] bottom-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] z-[var(--z-nav)] grid place-items-center size-14 rounded-full bg-accent text-surface dark:text-canvas shadow-float transition-transform duration-fast hover:bg-accent/90 active:scale-95"
-      >
-        <Search size={22} aria-hidden />
-      </button>
+      {pathname !== '/search' && (
+        <Link
+          to="/search"
+          aria-label={t('openSearch')}
+          title={t('openSearch')}
+          className="md:hidden fixed right-[calc(env(safe-area-inset-right,0px)+16px)] bottom-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] z-[var(--z-nav)] grid place-items-center size-14 rounded-full bg-accent text-surface dark:text-canvas shadow-float transition-transform duration-fast hover:bg-accent/90 active:scale-95"
+        >
+          <Search size={22} aria-hidden />
+        </Link>
+      )}
       <nav
         aria-label={t('primaryNavigation')}
         className="fixed bottom-0 inset-x-0 z-[var(--z-nav)] md:hidden"
