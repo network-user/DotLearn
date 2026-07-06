@@ -66,7 +66,7 @@ export const useActivity = (): ActivityRecord[] => {
 
 const FREEZE_WINDOW_DAYS = 7;
 
-const isActiveDay = (record: ActivityRecord): boolean =>
+export const isActiveDay = (record: ActivityRecord): boolean =>
   record.exercisesAttempted > 0 ||
   (record.exercisesPassed ?? 0) > 0 ||
   (record.interviewStudied ?? 0) > 0 ||

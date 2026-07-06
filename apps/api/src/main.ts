@@ -48,7 +48,8 @@ const bootstrap = async (): Promise<void> => {
   if (isProduction && trustProxyHops === 0) {
     logger.warn(
       'TRUSTED_PROXY_HOPS=0 in production: the rate limiter will bucket every request under the ' +
-        'proxy IP. Set it to the number of reverse proxies in front of the API (Caddy = 1).',
+        'proxy IP. Set it to the number of reverse proxies in front of the API ' +
+        "(count every hop: Caddy alone = 1, Caddy + this stack's nginx = 2).",
     );
   }
 

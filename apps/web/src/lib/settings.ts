@@ -57,6 +57,7 @@ export interface AppSettings {
   challengeLevel: ChallengeLevel;
   editor: EditorSettings;
   reminders: ReminderSettings;
+  freeRecall: boolean;
 }
 
 export const ACCENT_IDS: readonly AccentId[] = [
@@ -127,6 +128,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   challengeLevel: 'balanced',
   editor: DEFAULT_EDITOR_SETTINGS,
   reminders: DEFAULT_REMINDER_SETTINGS,
+  freeRecall: true,
 };
 
 const STORAGE_KEY = 'dotlearn:settings';
@@ -260,6 +262,8 @@ const sanitize = (raw: unknown): AppSettings => {
     challengeLevel: oneOf(CHALLENGE_LEVELS, value.challengeLevel, DEFAULT_SETTINGS.challengeLevel),
     editor: sanitizeEditor(value.editor),
     reminders: sanitizeReminders(value.reminders),
+    freeRecall:
+      typeof value.freeRecall === 'boolean' ? value.freeRecall : DEFAULT_SETTINGS.freeRecall,
   };
 };
 

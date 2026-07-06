@@ -279,6 +279,35 @@ const isAttemptEventRecord = (value: unknown): value is AttemptEventRecord =>
 const isAchievementRecord = (value: unknown): value is AchievementRecord =>
   isRecord(value) && isString(value.id) && isString(value.unlockedAt);
 
+const CHECKPOINT_RESULT_SOURCES = new Set(['checkpoint', 'recall']);
+
+const isCheckpointResultSource = (value: unknown): value is CheckpointResultRecord['source'] =>
+  typeof value === 'string' && CHECKPOINT_RESULT_SOURCES.has(value);
+
+const isNonNegativeNumber = (value: unknown): value is number => isNumber(value) && value >= 0;
+
+// A crafted/legacy backup may carry a garbage source (or a negative/non-finite recalled/total);
+// strip just those fields rather than dropping the whole checkpoint record, mirroring
+// stripInvalidConfidence (which this also applies, so callers only need one normalize pass).
+const stripInvalidCheckpointFields = (value: unknown): unknown => {
+  const withValidConfidence = stripInvalidConfidence(value);
+  if (!isRecord(withValidConfidence)) return withValidConfidence;
+  let next = withValidConfidence;
+  if ('source' in next && next.source !== undefined && !isCheckpointResultSource(next.source)) {
+    const { source: _dropped, ...rest } = next;
+    next = rest;
+  }
+  if ('recalled' in next && next.recalled !== undefined && !isNonNegativeNumber(next.recalled)) {
+    const { recalled: _dropped, ...rest } = next;
+    next = rest;
+  }
+  if ('total' in next && next.total !== undefined && !isNonNegativeNumber(next.total)) {
+    const { total: _dropped, ...rest } = next;
+    next = rest;
+  }
+  return next;
+};
+
 const isCheckpointResultRecord = (value: unknown): value is CheckpointResultRecord =>
   isRecord(value) &&
   isString(value.topicSlug) &&
@@ -286,7 +315,10 @@ const isCheckpointResultRecord = (value: unknown): value is CheckpointResultReco
   (value.status === 'pass' || value.status === 'fail') &&
   isString(value.at) &&
   (value.confidence === undefined || isConfidenceLevel(value.confidence)) &&
-  (value.conceptTitle === undefined || isBoundedString(value.conceptTitle));
+  (value.conceptTitle === undefined || isBoundedString(value.conceptTitle)) &&
+  (value.source === undefined || isCheckpointResultSource(value.source)) &&
+  (value.recalled === undefined || isNonNegativeNumber(value.recalled)) &&
+  (value.total === undefined || isNonNegativeNumber(value.total));
 
 const isReExamScheduleRecord = (value: unknown): value is ReExamScheduleRecord =>
   isRecord(value) &&
@@ -380,7 +412,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
   const checkpointResults =
     version >= 2
       ? collect(
-          normalizeEntries(data.checkpointResults, stripInvalidConfidence),
+          normalizeEntries(data.checkpointResults, stripInvalidCheckpointFields),
           isCheckpointResultRecord,
         )
       : { valid: [], skipped: 0 };

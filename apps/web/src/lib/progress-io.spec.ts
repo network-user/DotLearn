@@ -304,6 +304,62 @@ describe('importing a pre-confidence/re-exam export', () => {
   });
 });
 
+describe('free recall checkpointResults round-trip', () => {
+  it('round-trips a recall-sourced checkpoint result with recalled/total', async () => {
+    const recallCheckpoint: CheckpointResultRecord = {
+      topicSlug: 'fastapi',
+      conceptId: 'routing',
+      status: 'pass',
+      source: 'recall',
+      recalled: 4,
+      total: 5,
+      at: '2026-06-19T10:15:00.000Z',
+    };
+
+    await db.checkpointResults.bulkPut([recallCheckpoint]);
+
+    const exported = await exportProgress();
+    expect(exported.data.checkpointResults[0]?.source).toBe('recall');
+    expect(exported.data.checkpointResults[0]?.recalled).toBe(4);
+    expect(exported.data.checkpointResults[0]?.total).toBe(5);
+
+    await db.delete();
+    await db.open();
+
+    const summary = await importProgress(exported);
+    expect(summary.skipped).toBe(0);
+
+    const stored = await db.checkpointResults.toArray();
+    expect(stored[0]?.source).toBe('recall');
+    expect(stored[0]?.recalled).toBe(4);
+    expect(stored[0]?.total).toBe(5);
+  });
+
+  it('imports a checkpoint result with a garbage source but drops just that field', async () => {
+    const badCheckpoint = {
+      topicSlug: 'fastapi',
+      conceptId: 'routing',
+      status: 'pass',
+      source: 'made-up-source',
+      recalled: -1,
+      at: '2026-06-19T10:15:00.000Z',
+    };
+
+    const payload = wrap(5, {
+      checkpointResults: [badCheckpoint] as CheckpointResultRecord[],
+    });
+
+    const summary = await importProgress(payload);
+
+    expect(summary.skipped).toBe(0);
+    expect(summary.imported).toBe(1);
+
+    const stored = await db.checkpointResults.toArray();
+    expect(stored[0]?.source).toBeUndefined();
+    expect(stored[0]?.recalled).toBeUndefined();
+  });
+});
+
 describe('importProgress normalizes garbage confidence', () => {
   it('drops an invalid confidence value but keeps the rest of the record', async () => {
     const badAttempt = {

@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ExerciseRunner } from '@/components/ExerciseRunner';
+import { FreeRecall } from '@/components/FreeRecall';
 import { ReadingSettingsButton } from '@/components/ReadingSettingsButton';
 import { ReadingPositionTracker, ResumeBanner } from '@/components/ResumeReading';
 import { TheoryContent } from '@/components/TheoryContent';
@@ -1246,6 +1247,8 @@ const ConceptPanel = ({
       </div>
 
       {THEORY_HIGHLIGHTS_ENABLED ? <TheoryHighlighter slug={slug} conceptId={concept.id} /> : null}
+
+      <FreeRecall slug={slug} conceptId={concept.id} conceptTitle={concept.title} />
 
       <section
         id="concept-exercises"

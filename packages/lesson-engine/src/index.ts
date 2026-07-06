@@ -77,6 +77,14 @@ export {
   type ReExamState,
 } from './scheduling/re-exam';
 export {
+  freeRecallStatus,
+  RECALL_PASS_THRESHOLD,
+  scoreFreeRecall,
+  shouldScheduleFreeRecallReExam,
+  type FreeRecallItemOutcome,
+  type FreeRecallScore,
+} from './recall/free-recall';
+export {
   calibrationByTopic,
   calibrationPriority,
   classifyCalibration,

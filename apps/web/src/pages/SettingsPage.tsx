@@ -309,6 +309,21 @@ export const SettingsPage = () => {
             </div>
           }
         />
+        <Row
+          label={t('freeRecallLabel')}
+          hint={t('freeRecallDesc')}
+          control={
+            <Segmented
+              ariaLabel={t('freeRecallLabel')}
+              value={settings.freeRecall ? 'on' : 'off'}
+              onChange={(value: 'on' | 'off') => setSettings({ freeRecall: value === 'on' })}
+              options={[
+                { value: 'on', label: t('freeRecallOn') },
+                { value: 'off', label: t('freeRecallOff') },
+              ]}
+            />
+          }
+        />
       </Section>
 
       <Section title={t('dataLabel')} description={t('dataDesc')}>
@@ -352,7 +367,7 @@ export const SettingsPage = () => {
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button
             variant="outline"
-            leadingIcon={<Download size={15} />}
+            leadingIcon={<Upload size={15} />}
             className="w-full sm:w-auto"
             onClick={() => void handleExport()}
           >
@@ -360,7 +375,7 @@ export const SettingsPage = () => {
           </Button>
           <Button
             variant="outline"
-            leadingIcon={<Upload size={15} />}
+            leadingIcon={<Download size={15} />}
             className="w-full sm:w-auto"
             onClick={() => fileInputRef.current?.click()}
           >

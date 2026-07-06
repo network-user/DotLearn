@@ -1,6 +1,11 @@
 import Dexie, { type Table } from 'dexie';
 
-import { scheduleReExam, type ConfidenceLevel } from '@dotlearn/lesson-engine';
+import {
+  scheduleReExam,
+  shouldScheduleFreeRecallReExam,
+  type ConfidenceLevel,
+  type ReExamState,
+} from '@dotlearn/lesson-engine';
 
 export type { ConfidenceLevel };
 
@@ -149,6 +154,9 @@ export interface AchievementRecord {
 
 export type CheckpointResultStatus = 'pass' | 'fail';
 
+// Absent `source` means 'checkpoint' (pre-existing records predate this field).
+export type CheckpointResultSource = 'checkpoint' | 'recall';
+
 export interface CheckpointResultRecord {
   id?: number;
   topicSlug: string;
@@ -156,6 +164,9 @@ export interface CheckpointResultRecord {
   status: CheckpointResultStatus;
   confidence?: ConfidenceLevel;
   conceptTitle?: string;
+  source?: CheckpointResultSource;
+  recalled?: number; // only set when source === 'recall'
+  total?: number; // only set when source === 'recall'
   at: string;
 }
 
@@ -506,9 +517,9 @@ const upsertReExamSchedule = async (
   conceptId: string,
   passed: boolean,
   now: Date,
+  prev?: ReExamState,
 ): Promise<void> => {
   const id = reExamKey(topicSlug, conceptId);
-  const prev = await db.reExamSchedule.get(id);
   const schedule = scheduleReExam(prev, passed, now);
   await db.reExamSchedule.put({
     id,
@@ -523,14 +534,26 @@ const upsertReExamSchedule = async (
   });
 };
 
+interface WriteCheckpointOutcomeExtra {
+  conceptTitle?: string;
+  confidence?: ConfidenceLevel;
+  source?: CheckpointResultSource;
+  recalled?: number;
+  total?: number;
+  // Decides whether this outcome should move the re-exam ladder. Defaults to "always schedule",
+  // which is the checkpoint/re-exam behavior. Free recall passes a stricter rule instead.
+  shouldScheduleReExam?: (prev: ReExamState | undefined, passed: boolean) => boolean;
+}
+
 const writeCheckpointOutcome = async (
   topicSlug: string,
   conceptId: string,
   status: CheckpointResultStatus,
-  extra: { conceptTitle?: string; confidence?: ConfidenceLevel } = {},
-): Promise<void> => {
+  extra: WriteCheckpointOutcomeExtra = {},
+): Promise<{ scheduled: boolean }> => {
   const now = new Date();
-  await db.transaction('rw', db.checkpointResults, db.reExamSchedule, async () => {
+  const passed = status === 'pass';
+  return db.transaction('rw', db.checkpointResults, db.reExamSchedule, async () => {
     await db.checkpointResults.add({
       topicSlug,
       conceptId,
@@ -538,8 +561,17 @@ const writeCheckpointOutcome = async (
       at: now.toISOString(),
       ...(extra.conceptTitle !== undefined ? { conceptTitle: extra.conceptTitle } : {}),
       ...(extra.confidence !== undefined ? { confidence: extra.confidence } : {}),
+      ...(extra.source !== undefined ? { source: extra.source } : {}),
+      ...(extra.recalled !== undefined ? { recalled: extra.recalled } : {}),
+      ...(extra.total !== undefined ? { total: extra.total } : {}),
     });
-    await upsertReExamSchedule(topicSlug, conceptId, status === 'pass', now);
+
+    const prev = await db.reExamSchedule.get(reExamKey(topicSlug, conceptId));
+    const scheduled = extra.shouldScheduleReExam ? extra.shouldScheduleReExam(prev, passed) : true;
+    if (scheduled) {
+      await upsertReExamSchedule(topicSlug, conceptId, passed, now, prev);
+    }
+    return { scheduled };
   });
 };
 
@@ -549,17 +581,38 @@ export const recordCheckpointResult = async (input: {
   conceptTitle?: string;
   status: CheckpointResultStatus;
   confidence?: ConfidenceLevel;
-}): Promise<void> =>
-  writeCheckpointOutcome(input.topicSlug, input.conceptId, input.status, {
+}): Promise<void> => {
+  await writeCheckpointOutcome(input.topicSlug, input.conceptId, input.status, {
     ...(input.conceptTitle !== undefined ? { conceptTitle: input.conceptTitle } : {}),
     ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
   });
+};
 
 export const recordReExamResult = async (
   topicSlug: string,
   conceptId: string,
   passed: boolean,
-): Promise<void> => writeCheckpointOutcome(topicSlug, conceptId, passed ? 'pass' : 'fail');
+): Promise<void> => {
+  await writeCheckpointOutcome(topicSlug, conceptId, passed ? 'pass' : 'fail');
+};
+
+export const recordFreeRecallResult = async (input: {
+  topicSlug: string;
+  conceptId: string;
+  conceptTitle?: string;
+  status: 'pass' | 'fail';
+  confidence?: ConfidenceLevel;
+  recalled: number;
+  total: number;
+}): Promise<{ scheduled: boolean }> =>
+  writeCheckpointOutcome(input.topicSlug, input.conceptId, input.status, {
+    ...(input.conceptTitle !== undefined ? { conceptTitle: input.conceptTitle } : {}),
+    ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+    source: 'recall',
+    recalled: input.recalled,
+    total: input.total,
+    shouldScheduleReExam: shouldScheduleFreeRecallReExam,
+  });
 
 export type StudyActivityKind = 'review' | 'read' | 'focus';
 

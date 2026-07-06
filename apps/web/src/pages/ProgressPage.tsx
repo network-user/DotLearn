@@ -646,7 +646,7 @@ export const ProgressPage = () => {
               onClick={() => void handleExport()}
               className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-md border border-border-strong px-3 min-h-[var(--tap)] text-sm text-fg hover:bg-surface-2 transition-colors"
             >
-              <Download size={15} />
+              <Upload size={15} />
               {t('data.export')}
             </button>
             <button
@@ -654,7 +654,7 @@ export const ProgressPage = () => {
               onClick={() => fileInputRef.current?.click()}
               className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-md border border-border-strong px-3 min-h-[var(--tap)] text-sm text-fg hover:bg-surface-2 transition-colors"
             >
-              <Upload size={15} />
+              <Download size={15} />
               {t('data.import')}
             </button>
             <input
