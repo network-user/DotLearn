@@ -8,18 +8,20 @@ import {
   type ConceptNoteRecord,
   type ConceptReadRecord,
   type ConceptScrollRecord,
+  type ConfidenceLevel,
   type ExamResultRecord,
   type ExamScoreBucket,
   type FlashcardReviewRecord,
   type HighlightRecord,
   type InterviewStudiedRecord,
   type ProgressRecord,
+  type ReExamScheduleRecord,
   type TopicPlaceRecord,
   type UserCardRecord,
 } from './progress-db';
 import { exportableSettings, importSettings, type AppSettingsBackup } from './settings';
 
-export const PROGRESS_EXPORT_VERSION = 4;
+export const PROGRESS_EXPORT_VERSION = 5;
 
 // Reject oversized import files before reading/parsing them, so a crafted multi-hundred-MB
 // "backup" cannot freeze the tab in JSON.parse or balloon IndexedDB. A real export of a heavy
@@ -48,6 +50,7 @@ export interface ProgressExport {
     checkpointResults: CheckpointResultRecord[];
     examResults: ExamResultRecord[];
     userCards: UserCardRecord[];
+    reExamSchedule: ReExamScheduleRecord[];
   };
 }
 
@@ -75,6 +78,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
     checkpointResults,
     examResults,
     userCards,
+    reExamSchedule,
   ] = await Promise.all([
     db.progress.toArray(),
     db.activity.toArray(),
@@ -91,6 +95,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
     db.checkpointResults.toArray(),
     db.examResults.toArray(),
     db.userCards.toArray(),
+    db.reExamSchedule.toArray(),
   ]);
 
   return {
@@ -115,6 +120,7 @@ export const exportProgress = async (): Promise<ProgressExport> => {
       checkpointResults,
       examResults,
       userCards,
+      reExamSchedule,
     },
   };
 };
@@ -243,6 +249,23 @@ const isHighlightRecord = (value: unknown): value is HighlightRecord =>
   HIGHLIGHT_COLORS.has(value.color) &&
   isString(value.createdAt);
 
+// A crafted/legacy backup may carry a garbage confidence value; rather than dropping the whole
+// attempt/checkpoint record over one bad field, strip just that field before validating.
+const CONFIDENCE_LEVELS = new Set(['sure', 'unsure', 'guess']);
+
+const isConfidenceLevel = (value: unknown): value is ConfidenceLevel =>
+  typeof value === 'string' && CONFIDENCE_LEVELS.has(value);
+
+const stripInvalidConfidence = (value: unknown): unknown => {
+  if (!isRecord(value) || !('confidence' in value)) return value;
+  if (value.confidence === undefined || isConfidenceLevel(value.confidence)) return value;
+  const { confidence: _dropped, ...rest } = value;
+  return rest;
+};
+
+const normalizeEntries = (value: unknown, normalize: (entry: unknown) => unknown): unknown =>
+  Array.isArray(value) ? value.map(normalize) : value;
+
 const isAttemptEventRecord = (value: unknown): value is AttemptEventRecord =>
   isRecord(value) &&
   isString(value.topicSlug) &&
@@ -250,7 +273,8 @@ const isAttemptEventRecord = (value: unknown): value is AttemptEventRecord =>
   isString(value.concept) &&
   isString(value.difficulty) &&
   (value.status === 'pass' || value.status === 'fail') &&
-  isString(value.at);
+  isString(value.at) &&
+  (value.confidence === undefined || isConfidenceLevel(value.confidence));
 
 const isAchievementRecord = (value: unknown): value is AchievementRecord =>
   isRecord(value) && isString(value.id) && isString(value.unlockedAt);
@@ -260,7 +284,21 @@ const isCheckpointResultRecord = (value: unknown): value is CheckpointResultReco
   isString(value.topicSlug) &&
   isString(value.conceptId) &&
   (value.status === 'pass' || value.status === 'fail') &&
-  isString(value.at);
+  isString(value.at) &&
+  (value.confidence === undefined || isConfidenceLevel(value.confidence)) &&
+  (value.conceptTitle === undefined || isBoundedString(value.conceptTitle));
+
+const isReExamScheduleRecord = (value: unknown): value is ReExamScheduleRecord =>
+  isRecord(value) &&
+  isString(value.id) &&
+  isString(value.topicSlug) &&
+  isString(value.conceptId) &&
+  isString(value.due) &&
+  isNumber(value.stepIndex) &&
+  isNumber(value.streak) &&
+  (value.lastStatus === 'pass' || value.lastStatus === 'fail') &&
+  typeof value.graduated === 'boolean' &&
+  isString(value.updatedAt);
 
 // Real exam breakdowns carry a handful of keys (one per type/difficulty); cap the entry count
 // so a crafted backup cannot smuggle thousands of buckets into one examResults row.
@@ -334,17 +372,24 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
   const conceptScroll = collect(data.conceptScroll, isConceptScrollRecord);
   const highlights = collect(data.highlights, isHighlightRecord);
   const attemptEvents =
-    version >= 2 ? collect(data.attemptEvents, isAttemptEventRecord) : { valid: [], skipped: 0 };
+    version >= 2
+      ? collect(normalizeEntries(data.attemptEvents, stripInvalidConfidence), isAttemptEventRecord)
+      : { valid: [], skipped: 0 };
   const achievements =
     version >= 2 ? collect(data.achievements, isAchievementRecord) : { valid: [], skipped: 0 };
   const checkpointResults =
     version >= 2
-      ? collect(data.checkpointResults, isCheckpointResultRecord)
+      ? collect(
+          normalizeEntries(data.checkpointResults, stripInvalidConfidence),
+          isCheckpointResultRecord,
+        )
       : { valid: [], skipped: 0 };
   const examResults =
     version >= 3 ? collect(data.examResults, isExamResultRecord) : { valid: [], skipped: 0 };
   const userCards =
     version >= 4 ? collect(data.userCards, isUserCardRecord) : { valid: [], skipped: 0 };
+  const reExamSchedule =
+    version >= 5 ? collect(data.reExamSchedule, isReExamScheduleRecord) : { valid: [], skipped: 0 };
 
   await db.transaction(
     'rw',
@@ -364,6 +409,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
       db.checkpointResults,
       db.examResults,
       db.userCards,
+      db.reExamSchedule,
     ],
     async () => {
       await db.progress.bulkPut(progress.valid);
@@ -383,6 +429,9 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
       }
       if (examResults.valid.length > 0) await db.examResults.bulkPut(examResults.valid);
       if (userCards.valid.length > 0) await db.userCards.bulkPut(userCards.valid);
+      if (reExamSchedule.valid.length > 0) {
+        await db.reExamSchedule.bulkPut(reExamSchedule.valid);
+      }
     },
   );
 
@@ -402,6 +451,7 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
     checkpointResults,
     examResults,
     userCards,
+    reExamSchedule,
   ];
 
   const imported = collected.reduce((sum, result) => sum + result.valid.length, 0);
@@ -434,6 +484,7 @@ export const clearAllProgress = async (): Promise<void> => {
       db.checkpointResults,
       db.examResults,
       db.userCards,
+      db.reExamSchedule,
     ],
     async () => {
       await Promise.all([
@@ -453,6 +504,7 @@ export const clearAllProgress = async (): Promise<void> => {
         db.checkpointResults.clear(),
         db.examResults.clear(),
         db.userCards.clear(),
+        db.reExamSchedule.clear(),
       ]);
     },
   );

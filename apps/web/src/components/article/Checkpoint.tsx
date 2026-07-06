@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { Brain, Check, Eye, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { ConceptContext } from '@/lib/concept-context';
+import { ConfidenceSelector } from '@/components/ui/ConfidenceSelector';
 import { cx } from '@/components/ui/cx';
+import { recordCheckpointResult, type ConfidenceLevel } from '@/lib/progress-db';
 
 interface CheckpointProps {
   q: string;
@@ -23,19 +26,45 @@ const ChoiceMode = ({
   choices,
   answer,
   explain,
+  topicSlug,
+  conceptId,
+  conceptTitle,
 }: {
   choices: string[];
   answer: number;
   explain?: string | undefined;
+  topicSlug?: string | undefined;
+  conceptId?: string | undefined;
+  conceptTitle?: string | undefined;
 }) => {
   const { t } = useTranslation('viz');
   const [selected, setSelected] = useState<number | null>(null);
+  const [confidence, setConfidence] = useState<ConfidenceLevel | null>(null);
+  const recorded = useRef(false);
 
   const answered = selected !== null;
   const isCorrect = answered && selected === answer;
 
+  const handleChoose = (index: number) => {
+    if (answered) return;
+    setSelected(index);
+    if (!recorded.current && topicSlug && conceptId) {
+      recorded.current = true;
+      void recordCheckpointResult({
+        topicSlug,
+        conceptId,
+        ...(conceptTitle !== undefined ? { conceptTitle } : {}),
+        status: index === answer ? 'pass' : 'fail',
+        ...(confidence ? { confidence } : {}),
+      });
+    }
+  };
+
   return (
     <div className="mt-4">
+      {!answered && (
+        <ConfidenceSelector value={confidence} onChange={setConfidence} className="mb-3" />
+      )}
       <ul className="flex flex-col gap-2">
         {choices.map((choice, index) => {
           const isChosen = selected === index;
@@ -47,9 +76,7 @@ const ChoiceMode = ({
             <li key={index}>
               <button
                 type="button"
-                onClick={() => {
-                  if (!answered) setSelected(index);
-                }}
+                onClick={() => handleChoose(index)}
                 disabled={answered}
                 aria-pressed={isChosen}
                 className={cx(
@@ -90,10 +117,34 @@ const ChoiceMode = ({
   );
 };
 
-const RecallMode = ({ children }: { children?: ReactNode }) => {
+const RecallMode = ({
+  children,
+  topicSlug,
+  conceptId,
+  conceptTitle,
+}: {
+  children?: ReactNode;
+  topicSlug?: string | undefined;
+  conceptId?: string | undefined;
+  conceptTitle?: string | undefined;
+}) => {
   const { t } = useTranslation('viz');
   const [revealed, setRevealed] = useState(false);
   const [selfRated, setSelfRated] = useState<SelfRating>(null);
+  const recorded = useRef(false);
+
+  const handleSelfRate = (rating: Exclude<SelfRating, null>) => {
+    setSelfRated(rating);
+    if (!recorded.current && topicSlug && conceptId) {
+      recorded.current = true;
+      void recordCheckpointResult({
+        topicSlug,
+        conceptId,
+        ...(conceptTitle !== undefined ? { conceptTitle } : {}),
+        status: rating === 'gotIt' ? 'pass' : 'fail',
+      });
+    }
+  };
 
   if (!revealed) {
     return (
@@ -121,7 +172,7 @@ const RecallMode = ({ children }: { children?: ReactNode }) => {
           <>
             <button
               type="button"
-              onClick={() => setSelfRated('gotIt')}
+              onClick={() => handleSelfRate('gotIt')}
               className={ghostButtonClass}
             >
               <Check className="h-3.5 w-3.5" aria-hidden />
@@ -129,7 +180,7 @@ const RecallMode = ({ children }: { children?: ReactNode }) => {
             </button>
             <button
               type="button"
-              onClick={() => setSelfRated('missed')}
+              onClick={() => handleSelfRate('missed')}
               className={ghostButtonClass}
             >
               <X className="h-3.5 w-3.5" aria-hidden />
@@ -159,6 +210,7 @@ const RecallMode = ({ children }: { children?: ReactNode }) => {
 export const Checkpoint = (props: CheckpointProps) => {
   const { q, choices, answer, explain, children } = props;
   const { t } = useTranslation('viz');
+  const conceptContext = useContext(ConceptContext);
 
   return (
     <aside className="not-prose my-7 rounded-xl border border-border-base bg-surface-2/40 p-4 sm:p-5">
@@ -169,9 +221,22 @@ export const Checkpoint = (props: CheckpointProps) => {
       <p className="mt-2 font-serif text-[16.5px] text-fg">{q}</p>
 
       {Array.isArray(choices) && choices.length > 0 && typeof answer === 'number' ? (
-        <ChoiceMode choices={choices} answer={answer} explain={explain} />
+        <ChoiceMode
+          choices={choices}
+          answer={answer}
+          explain={explain}
+          topicSlug={conceptContext?.topicSlug}
+          conceptId={conceptContext?.conceptId}
+          conceptTitle={conceptContext?.conceptTitle}
+        />
       ) : (
-        <RecallMode>{children}</RecallMode>
+        <RecallMode
+          topicSlug={conceptContext?.topicSlug}
+          conceptId={conceptContext?.conceptId}
+          conceptTitle={conceptContext?.conceptTitle}
+        >
+          {children}
+        </RecallMode>
       )}
     </aside>
   );

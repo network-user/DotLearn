@@ -2,6 +2,11 @@ import { useMemo, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 
 import type { TopicManifest } from '@dotlearn/contracts';
+import {
+  calibrationByTopic,
+  summarizeCalibration,
+  type CalibrationSample,
+} from '@dotlearn/lesson-engine';
 import { Link } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -11,6 +16,7 @@ import {
   Bookmark,
   Compass,
   Download,
+  Gauge,
   Minus,
   Target,
   Upload,
@@ -94,6 +100,7 @@ export const ProgressPage = () => {
   const readByTopic = useReadConceptsByTopic();
   const recallByTopic = useRecallByTopic();
   const attemptEvents = useLiveQuery(() => db.attemptEvents.toArray(), [], []);
+  const checkpointResults = useLiveQuery(() => db.checkpointResults.toArray(), [], []);
 
   const language = useContentLanguage();
 
@@ -180,6 +187,48 @@ export const ProgressPage = () => {
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
   }, [attemptEvents, manifests]);
+
+  const calibrationSamples = useMemo<CalibrationSample[]>(() => {
+    const samples: CalibrationSample[] = [];
+    for (const event of attemptEvents ?? []) {
+      if (!event.confidence) continue;
+      samples.push({
+        confidence: event.confidence,
+        correct: event.status === 'pass',
+        topicSlug: event.topicSlug,
+      });
+    }
+    for (const result of checkpointResults ?? []) {
+      if (!result.confidence) continue;
+      samples.push({
+        confidence: result.confidence,
+        correct: result.status === 'pass',
+        topicSlug: result.topicSlug,
+      });
+    }
+    return samples;
+  }, [attemptEvents, checkpointResults]);
+
+  const calibration = useMemo(() => summarizeCalibration(calibrationSamples), [calibrationSamples]);
+
+  const calibrationTopicRows = useMemo(() => {
+    const manifestBySlug = new Map(manifests.map((manifest) => [manifest.slug, manifest]));
+    return [...calibrationByTopic(calibrationSamples).entries()]
+      .map(([topicSlug, summary]) => {
+        const sureBucket = summary.buckets.find((bucket) => bucket.confidence === 'sure');
+        if (!sureBucket || sureBucket.count === 0) return undefined;
+        return {
+          topicSlug,
+          topicTitle: manifestBySlug.get(topicSlug)?.title ?? topicSlug,
+          accuracy: sureBucket.accuracy,
+          expectedAccuracy: sureBucket.expectedAccuracy,
+          gap: sureBucket.gap,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined && entry.gap < 0)
+      .sort((a, b) => a.gap - b.gap)
+      .slice(0, 3);
+  }, [calibrationSamples, manifests]);
 
   const totalAttempted = useMemo(
     () => activity.reduce((sum, entry) => sum + entry.exercisesAttempted, 0),
@@ -353,6 +402,100 @@ export const ProgressPage = () => {
           </ul>
         </section>
       )}
+
+      <section className="space-y-3">
+        <h2 className="eyebrow border-b border-border-base pb-2">{t('calibration.heading')}</h2>
+        <p className="text-xs text-fg-subtle">{t('calibration.hint')}</p>
+        {calibration.total === 0 ? (
+          <EmptyState
+            icon={<Gauge size={22} className="text-accent" />}
+            title={t('calibration.empty')}
+          />
+        ) : (
+          <div className="rounded-lg border border-border-base bg-surface p-5 space-y-5">
+            <div className="flex items-center gap-5">
+              <div className="relative shrink-0">
+                <ProgressRing value={calibration.calibrationScore} size={72} stroke={6} />
+                <span className="absolute inset-0 grid place-items-center font-display text-lg tabular-nums text-fg">
+                  {Math.round(calibration.calibrationScore * 100)}
+                </span>
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-wide text-fg-subtle">
+                  {t('calibration.score')}
+                </p>
+                <p className="mt-1 text-xs text-fg-subtle tabular-nums">
+                  {t('calibration.samples', { count: calibration.total })}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-subtle tabular-nums">
+                  <span>
+                    {t('calibration.overconfident', {
+                      percent: Math.round(calibration.overconfidenceRate * 100),
+                    })}
+                  </span>
+                  <span>
+                    {t('calibration.underconfident', {
+                      percent: Math.round(calibration.underconfidenceRate * 100),
+                    })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {calibration.buckets.map((bucket) => (
+                <li
+                  key={bucket.confidence}
+                  className="rounded-lg border border-border-base bg-surface-2/40 p-3"
+                >
+                  <p className="text-xs font-medium text-fg">
+                    {t(`calibration.bucket.${bucket.confidence}`)}
+                  </p>
+                  <DualProgressBar
+                    reading={bucket.expectedAccuracy}
+                    solving={bucket.accuracy}
+                    className="mt-2"
+                    ariaLabel={t(`calibration.bucket.${bucket.confidence}`)}
+                  />
+                  <p className="mt-2 text-[11px] text-fg-subtle tabular-nums">
+                    {t('calibration.accuracy', { percent: Math.round(bucket.accuracy * 100) })} ·{' '}
+                    {t('calibration.expected', {
+                      percent: Math.round(bucket.expectedAccuracy * 100),
+                    })}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-fg-subtle tabular-nums">
+                    {t('calibration.samples', { count: bucket.count })}
+                  </p>
+                </li>
+              ))}
+            </ul>
+
+            {calibrationTopicRows.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-wide text-fg-subtle">
+                  {t('calibration.byTopic')}
+                </p>
+                <ul className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {calibrationTopicRows.map((row) => (
+                    <li
+                      key={row.topicSlug}
+                      className="rounded-lg border border-border-base bg-surface-2/40 p-3"
+                    >
+                      <p className="truncate text-xs font-medium text-fg">{row.topicTitle}</p>
+                      <p className="mt-1 text-[11px] text-fg-subtle tabular-nums">
+                        {t('calibration.accuracy', { percent: Math.round(row.accuracy * 100) })} ·{' '}
+                        {t('calibration.expected', {
+                          percent: Math.round(row.expectedAccuracy * 100),
+                        })}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {resolvedBookmarks.length > 0 && (
         <section className="space-y-3">

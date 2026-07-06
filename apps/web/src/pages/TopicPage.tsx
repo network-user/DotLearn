@@ -1231,7 +1231,12 @@ const ConceptPanel = ({
           <section key={filename} className={cx(sectionIndex > 0 && 'cv-auto-theory')}>
             {resolved ? (
               <Suspense fallback={<Skeleton rounded="lg" className="h-40" />}>
-                <TheoryContent Component={resolved.Component} />
+                <TheoryContent
+                  Component={resolved.Component}
+                  topicSlug={slug}
+                  conceptId={concept.id}
+                  conceptTitle={concept.title}
+                />
               </Suspense>
             ) : (
               <p className="text-err text-sm">{t('theoryMissing', { filename })}</p>

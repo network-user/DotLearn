@@ -69,3 +69,22 @@ export {
   type CardClassification,
   type CardScheduleRecord,
 } from './scheduling/due';
+export {
+  isReExamDue,
+  RE_EXAM_LADDER_DAYS,
+  scheduleReExam,
+  type ReExamSchedule,
+  type ReExamState,
+} from './scheduling/re-exam';
+export {
+  calibrationByTopic,
+  calibrationPriority,
+  classifyCalibration,
+  NOMINAL_CONFIDENCE,
+  summarizeCalibration,
+  type CalibrationFlag,
+  type CalibrationSample,
+  type CalibrationSummary,
+  type ConfidenceBucketStats,
+  type ConfidenceLevel,
+} from './calibration/calibration';

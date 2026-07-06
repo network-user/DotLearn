@@ -9,10 +9,11 @@ import { useTranslation } from 'react-i18next';
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { Button } from '@/components/ui/Button';
+import { ConfidenceSelector } from '@/components/ui/ConfidenceSelector';
 import { burstConfetti } from '@/components/ui/confetti';
 import { cx } from '@/components/ui/cx';
 import { extractFailureReason, useFailureMessage, type FailureReason } from '@/lib/failure-reason';
-import { recordAttempt } from '@/lib/progress-db';
+import { recordAttempt, type ConfidenceLevel } from '@/lib/progress-db';
 
 import { useDifficultyLabel } from './ExerciseRunner';
 
@@ -54,6 +55,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise, conceptId }: TheoryQuizR
   const [shuffledChoices] = useState(() => shuffleArray(exercise.choices));
   const [selected, setSelected] = useState<string[]>([]);
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
+  const [confidence, setConfidence] = useState<ConfidenceLevel | null>(null);
   const [pulse, setPulse] = useState(0);
 
   const toggle = (id: string): void => {
@@ -64,6 +66,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise, conceptId }: TheoryQuizR
       return [id];
     });
     setState({ kind: 'idle' });
+    setConfidence(null);
   };
 
   const handleCheck = (): void => {
@@ -78,6 +81,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise, conceptId }: TheoryQuizR
       void recordAttempt(topicSlug, exercise.id, 'pass', {
         difficulty: exercise.difficulty,
         concept: conceptId,
+        ...(confidence !== null ? { confidence } : {}),
       });
     } else {
       const details = (result.details ?? {}) as {
@@ -95,6 +99,7 @@ export const TheoryQuizRunner = ({ topicSlug, exercise, conceptId }: TheoryQuizR
       void recordAttempt(topicSlug, exercise.id, 'fail', {
         difficulty: exercise.difficulty,
         concept: conceptId,
+        ...(confidence !== null ? { confidence } : {}),
       });
     }
     setPulse((p) => p + 1);
@@ -176,6 +181,8 @@ export const TheoryQuizRunner = ({ topicSlug, exercise, conceptId }: TheoryQuizR
             );
           })}
         </ul>
+
+        <ConfidenceSelector value={confidence} onChange={setConfidence} />
 
         <div className="flex items-center gap-2 flex-wrap">
           <Button

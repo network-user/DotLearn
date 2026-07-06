@@ -45,9 +45,13 @@ import {
 } from '@/lib/recap';
 import { useSettings } from '@/lib/settings';
 import {
+  loadCalibrationReview,
   loadDueAcrossDecks,
+  loadDueReExams,
   loadFailedExercises,
+  type CalibrationReviewItem,
   type DueCard,
+  type DueReExam,
   type FailedExercise,
 } from '@/lib/today';
 import { useContentLanguage } from '@/lib/topics';
@@ -163,12 +167,18 @@ export const TodayPage = () => {
 
   const [due, setDue] = useState<DueCard[] | null | undefined>(undefined);
   const [failed, setFailed] = useState<FailedExercise[] | null | undefined>(undefined);
+  const [dueReExams, setDueReExams] = useState<DueReExam[] | null | undefined>(undefined);
+  const [calibrationReview, setCalibrationReview] = useState<
+    CalibrationReviewItem[] | null | undefined
+  >(undefined);
   const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setDue(undefined);
     setFailed(undefined);
+    setDueReExams(undefined);
+    setCalibrationReview(undefined);
     loadDueAcrossDecks(language)
       .then((cards) => {
         if (!cancelled) setDue(cards);
@@ -182,6 +192,20 @@ export const TodayPage = () => {
       })
       .catch(() => {
         if (!cancelled) setFailed(null);
+      });
+    loadDueReExams(language)
+      .then((items) => {
+        if (!cancelled) setDueReExams(items);
+      })
+      .catch(() => {
+        if (!cancelled) setDueReExams(null);
+      });
+    loadCalibrationReview(language)
+      .then((items) => {
+        if (!cancelled) setCalibrationReview(items);
+      })
+      .catch(() => {
+        if (!cancelled) setCalibrationReview(null);
       });
     return () => {
       cancelled = true;
@@ -238,11 +262,15 @@ export const TodayPage = () => {
 
       <ReviewSection due={due} onRetry={retry} />
 
+      <ReExamSection items={dueReExams} />
+
       <MistakesSection
         failed={failed}
         onRetry={retry}
         typeLabel={(type) => tTypes(`exam.types.${type}`, { defaultValue: type })}
       />
+
+      <CalibrationSection items={calibrationReview} />
     </div>
   );
 };
@@ -800,3 +828,127 @@ const MistakesSection = ({
     </section>
   );
 };
+
+const MS_PER_DAY = 86_400_000;
+
+function ReExamSection({ items }: { items: DueReExam[] | null | undefined }) {
+  const { t } = useTranslation('today');
+  if (!items || items.length === 0) return null;
+  return (
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="font-display text-2xl tracking-tightish text-fg">{t('reexam.heading')}</h2>
+        <p className="text-sm text-fg-muted">{t('reexam.hint')}</p>
+      </div>
+      <ul className="space-y-3">
+        {items.map((item) => {
+          const daysOverdue = Math.max(
+            0,
+            Math.floor((Date.now() - new Date(item.due).getTime()) / MS_PER_DAY),
+          );
+          return (
+            <li key={`${item.topicSlug}:${item.conceptId}`}>
+              <Surface variant="chrome">
+                <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[12px] uppercase tracking-widest text-fg-subtle">
+                        {item.topicTitle}
+                      </span>
+                      <Badge tone="accent" variant="outline">
+                        {t('reexam.badge')}
+                      </Badge>
+                    </div>
+                    <p className="line-clamp-2 text-sm text-fg">{item.conceptTitle}</p>
+                    {daysOverdue > 0 && (
+                      <p className="text-[12px] text-fg-subtle">
+                        {t('reexam.overdue', { count: daysOverdue })}
+                      </p>
+                    )}
+                  </div>
+                  <Link
+                    to="/topics/$slug"
+                    params={{ slug: item.topicSlug }}
+                    search={{ concept: item.conceptId }}
+                    className="shrink-0"
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      trailingIcon={<ArrowRight size={15} />}
+                    >
+                      {t('reexam.retake')}
+                    </Button>
+                  </Link>
+                </div>
+              </Surface>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+const calibrationBadgeTone = (flag: CalibrationReviewItem['flag']): 'danger' | 'neutral' =>
+  flag === 'high-confidence-error' ? 'danger' : 'neutral';
+
+const calibrationBadgeLabelKey = (flag: CalibrationReviewItem['flag']): string =>
+  flag === 'high-confidence-error'
+    ? 'calibrationReview.highConfidenceError'
+    : 'calibrationReview.fragile';
+
+function CalibrationSection({ items }: { items: CalibrationReviewItem[] | null | undefined }) {
+  const { t } = useTranslation('today');
+  if (!items || items.length === 0) return null;
+  return (
+    <section className="space-y-4">
+      <div className="space-y-1">
+        <h2 className="font-display text-2xl tracking-tightish text-fg">
+          {t('calibrationReview.heading')}
+        </h2>
+        <p className="text-sm text-fg-muted">{t('calibrationReview.hint')}</p>
+      </div>
+      <ul className="space-y-3">
+        {items.map((item) => {
+          const tone = calibrationBadgeTone(item.flag);
+          return (
+            <li key={`${item.topicSlug}:${item.exerciseId}`}>
+              <Surface variant="chrome">
+                <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[12px] uppercase tracking-widest text-fg-subtle">
+                        {item.topicTitle}
+                      </span>
+                      <Badge tone={tone} variant={tone === 'danger' ? 'soft' : 'outline'}>
+                        {t(calibrationBadgeLabelKey(item.flag))}
+                      </Badge>
+                    </div>
+                    <p className="line-clamp-2 text-sm text-fg">{item.exerciseTitle}</p>
+                  </div>
+                  <Link
+                    to="/topics/$slug"
+                    params={{ slug: item.topicSlug }}
+                    search={{ concept: item.conceptId }}
+                    className="shrink-0"
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      trailingIcon={<ArrowRight size={15} />}
+                    >
+                      {t('mistakes.retry')}
+                    </Button>
+                  </Link>
+                </div>
+              </Surface>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}

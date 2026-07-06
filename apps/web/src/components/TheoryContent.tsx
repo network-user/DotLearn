@@ -4,6 +4,7 @@ import {
   lazy,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -16,6 +17,7 @@ import { ChevronRight, FlaskConical, Info, Lightbulb, Sparkles, TriangleAlert } 
 import { useTranslation } from 'react-i18next';
 
 import { CopyButton } from '@/components/playground/CopyButton';
+import { ConceptContext, type ConceptRenderContext } from '@/lib/concept-context';
 import { stashSandboxIncoming, type PlaygroundTab } from '@/lib/playground';
 import { sanitizeHref } from '@/lib/safe-url';
 
@@ -55,6 +57,9 @@ import { LightboxProvider } from '@/components/ui/Lightbox';
 import { LightboxImage, withZoom } from '@/components/ui/Zoomable';
 interface TheoryContentProps {
   Component: ComponentType<Record<string, unknown>>;
+  topicSlug?: string;
+  conceptId?: string;
+  conceptTitle?: string;
 }
 
 const VizFallback = () => (
@@ -612,16 +617,35 @@ const mdxComponents = {
   img: LightboxImage,
 };
 
-export const TheoryContent = ({ Component }: TheoryContentProps) => (
-  <LightboxProvider>
-    <MDXProvider components={mdxComponents}>
-      <FigureProvider>
-        <FootnoteProvider>
-          <div className="theory-content">
-            <Component />
-          </div>
-        </FootnoteProvider>
-      </FigureProvider>
-    </MDXProvider>
-  </LightboxProvider>
-);
+export const TheoryContent = ({
+  Component,
+  topicSlug,
+  conceptId,
+  conceptTitle,
+}: TheoryContentProps) => {
+  const conceptContextValue = useMemo<ConceptRenderContext | null>(
+    () =>
+      topicSlug && conceptId
+        ? { topicSlug, conceptId, ...(conceptTitle !== undefined ? { conceptTitle } : {}) }
+        : null,
+    [topicSlug, conceptId, conceptTitle],
+  );
+
+  const content = (
+    <LightboxProvider>
+      <MDXProvider components={mdxComponents}>
+        <FigureProvider>
+          <FootnoteProvider>
+            <div className="theory-content">
+              <Component />
+            </div>
+          </FootnoteProvider>
+        </FigureProvider>
+      </MDXProvider>
+    </LightboxProvider>
+  );
+
+  if (!conceptContextValue) return content;
+
+  return <ConceptContext.Provider value={conceptContextValue}>{content}</ConceptContext.Provider>;
+};

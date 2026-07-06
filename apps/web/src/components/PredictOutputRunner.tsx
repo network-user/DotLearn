@@ -11,9 +11,10 @@ import { HintBlock } from '@/components/sandbox/HintBlock';
 import { parseSqlFixture } from '@/components/sandbox/parseSqlFixture';
 import { SqlSchemaPreview } from '@/components/sandbox/SqlSchemaPreview';
 import { Button } from '@/components/ui/Button';
+import { ConfidenceSelector } from '@/components/ui/ConfidenceSelector';
 import { burstConfetti } from '@/components/ui/confetti';
 import { extractFailureReason, useFailureMessage, type FailureReason } from '@/lib/failure-reason';
-import { recordAttempt } from '@/lib/progress-db';
+import { recordAttempt, type ConfidenceLevel } from '@/lib/progress-db';
 
 import { useDifficultyLabel } from './ExerciseRunner';
 
@@ -69,6 +70,7 @@ export const PredictOutputRunner = ({
     expected.kind === 'result-set' ? [emptyRow(Object.keys(expected.rows[0] ?? {}))] : [],
   );
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
+  const [confidence, setConfidence] = useState<ConfidenceLevel | null>(null);
   const [pulse, setPulse] = useState(0);
 
   const fixture = exercise.fixture;
@@ -108,6 +110,7 @@ export const PredictOutputRunner = ({
       void recordAttempt(topicSlug, exercise.id, 'pass', {
         difficulty: exercise.difficulty,
         concept: conceptId,
+        ...(confidence !== null ? { confidence } : {}),
       });
     } else {
       const details = (result.details ?? {}) as { expected?: unknown; actual?: unknown };
@@ -120,6 +123,7 @@ export const PredictOutputRunner = ({
       void recordAttempt(topicSlug, exercise.id, 'fail', {
         difficulty: exercise.difficulty,
         concept: conceptId,
+        ...(confidence !== null ? { confidence } : {}),
       });
     }
     setPulse((p) => p + 1);
@@ -234,6 +238,8 @@ export const PredictOutputRunner = ({
             className="w-full rounded-lg border border-border-base bg-code-bg px-3 py-2 min-h-[var(--tap)] sm:min-h-0 text-[16px] sm:text-[13px] font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20"
           />
         )}
+
+        <ConfidenceSelector value={confidence} onChange={setConfidence} />
 
         <div className="flex items-center gap-2 flex-wrap">
           <Button

@@ -12,6 +12,7 @@ import i18n from './lib/i18n';
 import { AuthProvider } from './lib/auth/AuthContext';
 import { COMMAND_PALETTE_EVENT } from './lib/command-palette';
 import { initSettings, useSettings } from './lib/settings';
+import { recoverFromStaleChunk } from './lib/stale-deploy-recovery';
 import { requestPersistAfterFirstWrite } from './lib/storage-health';
 import { watchSystemTheme } from './lib/theme';
 import { router } from './router';
@@ -76,6 +77,14 @@ const registerServiceWorker = (): void => {
 };
 
 registerServiceWorker();
+
+// A redeploy rotates hashed chunk names; a client on a stale index.html then 404s
+// on `import()`. Vite fires `vite:preloadError` — recover by dropping the stale
+// service worker/caches and reloading once so the fresh bundle loads.
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault();
+  void recoverFromStaleChunk();
+});
 
 const AppRoot = () => {
   const settings = useSettings();

@@ -8,8 +8,9 @@ import { toast } from 'sonner';
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { Button } from '@/components/ui/Button';
+import { ConfidenceSelector } from '@/components/ui/ConfidenceSelector';
 import { burstConfetti } from '@/components/ui/confetti';
-import { recordAttempt } from '@/lib/progress-db';
+import { recordAttempt, type ConfidenceLevel } from '@/lib/progress-db';
 
 import { useDifficultyLabel } from './ExerciseRunner';
 
@@ -56,6 +57,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise, conceptId }: FillInBla
   const segments = useMemo(() => splitTemplate(exercise.template), [exercise.template]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [state, setState] = useState<CheckState>({ kind: 'idle' });
+  const [confidence, setConfidence] = useState<ConfidenceLevel | null>(null);
   const [pulse, setPulse] = useState(0);
 
   const update = (blank: string, value: string): void => {
@@ -71,6 +73,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise, conceptId }: FillInBla
       void recordAttempt(topicSlug, exercise.id, 'pass', {
         difficulty: exercise.difficulty,
         concept: conceptId,
+        ...(confidence !== null ? { confidence } : {}),
       });
     } else {
       const details = (result.details ?? {}) as {
@@ -80,6 +83,7 @@ export const FillInBlanksRunner = ({ topicSlug, exercise, conceptId }: FillInBla
       void recordAttempt(topicSlug, exercise.id, 'fail', {
         difficulty: exercise.difficulty,
         concept: conceptId,
+        ...(confidence !== null ? { confidence } : {}),
       });
     }
     setPulse((p) => p + 1);
@@ -114,6 +118,8 @@ export const FillInBlanksRunner = ({ topicSlug, exercise, conceptId }: FillInBla
             ),
           )}
         </pre>
+
+        <ConfidenceSelector value={confidence} onChange={setConfidence} />
 
         <div className="flex items-center gap-2 flex-wrap">
           <Button

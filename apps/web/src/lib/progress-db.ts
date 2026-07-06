@@ -1,5 +1,9 @@
 import Dexie, { type Table } from 'dexie';
 
+import { scheduleReExam, type ConfidenceLevel } from '@dotlearn/lesson-engine';
+
+export type { ConfidenceLevel };
+
 export type ProgressStatus = 'pass' | 'fail';
 
 export interface ProgressRecord {
@@ -134,6 +138,7 @@ export interface AttemptEventRecord {
   hintsRevealed?: number;
   durationMs?: number;
   mode?: string;
+  confidence?: ConfidenceLevel;
   at: string;
 }
 
@@ -149,6 +154,8 @@ export interface CheckpointResultRecord {
   topicSlug: string;
   conceptId: string;
   status: CheckpointResultStatus;
+  confidence?: ConfidenceLevel;
+  conceptTitle?: string;
   at: string;
 }
 
@@ -170,6 +177,18 @@ export interface ExamResultRecord {
   finishedAt: string;
 }
 
+export interface ReExamScheduleRecord {
+  id: string; // `${topicSlug}:${conceptId}`
+  topicSlug: string;
+  conceptId: string;
+  due: string; // ISO
+  stepIndex: number;
+  streak: number;
+  lastStatus: 'pass' | 'fail';
+  graduated: boolean;
+  updatedAt: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -188,6 +207,7 @@ class ProgressDb extends Dexie {
   examResults!: Table<ExamResultRecord, string>;
   userCards!: Table<UserCardRecord, string>;
   playgroundSnippets!: Table<PlaygroundSnippetRecord, string>;
+  reExamSchedule!: Table<ReExamScheduleRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -367,6 +387,10 @@ class ProgressDb extends Dexie {
       providerCredentials: null,
       cryptoKeys: null,
     });
+    // Confidence calibration + spaced re-exam scheduling data.
+    this.version(15).stores({
+      reExamSchedule: 'id, topicSlug, conceptId, due, [topicSlug+conceptId]',
+    });
   }
 }
 
@@ -412,6 +436,7 @@ export interface RecordAttemptMeta {
   hintsRevealed?: number | undefined;
   durationMs?: number | undefined;
   mode?: string | undefined;
+  confidence?: ConfidenceLevel | undefined;
 }
 
 const ATTEMPT_EVENT_CAP = 4000;
@@ -466,12 +491,75 @@ export const recordAttempt = async (
       ...(meta.hintsRevealed !== undefined ? { hintsRevealed: meta.hintsRevealed } : {}),
       ...(meta.durationMs !== undefined ? { durationMs: meta.durationMs } : {}),
       ...(meta.mode !== undefined ? { mode: meta.mode } : {}),
+      ...(meta.confidence !== undefined ? { confidence: meta.confidence } : {}),
       at: now,
     });
   });
 
   void pruneAttemptEvents();
 };
+
+const reExamKey = (topicSlug: string, conceptId: string): string => `${topicSlug}:${conceptId}`;
+
+const upsertReExamSchedule = async (
+  topicSlug: string,
+  conceptId: string,
+  passed: boolean,
+  now: Date,
+): Promise<void> => {
+  const id = reExamKey(topicSlug, conceptId);
+  const prev = await db.reExamSchedule.get(id);
+  const schedule = scheduleReExam(prev, passed, now);
+  await db.reExamSchedule.put({
+    id,
+    topicSlug,
+    conceptId,
+    due: schedule.due,
+    stepIndex: schedule.stepIndex,
+    streak: schedule.streak,
+    lastStatus: schedule.lastStatus,
+    graduated: schedule.graduated,
+    updatedAt: now.toISOString(),
+  });
+};
+
+const writeCheckpointOutcome = async (
+  topicSlug: string,
+  conceptId: string,
+  status: CheckpointResultStatus,
+  extra: { conceptTitle?: string; confidence?: ConfidenceLevel } = {},
+): Promise<void> => {
+  const now = new Date();
+  await db.transaction('rw', db.checkpointResults, db.reExamSchedule, async () => {
+    await db.checkpointResults.add({
+      topicSlug,
+      conceptId,
+      status,
+      at: now.toISOString(),
+      ...(extra.conceptTitle !== undefined ? { conceptTitle: extra.conceptTitle } : {}),
+      ...(extra.confidence !== undefined ? { confidence: extra.confidence } : {}),
+    });
+    await upsertReExamSchedule(topicSlug, conceptId, status === 'pass', now);
+  });
+};
+
+export const recordCheckpointResult = async (input: {
+  topicSlug: string;
+  conceptId: string;
+  conceptTitle?: string;
+  status: CheckpointResultStatus;
+  confidence?: ConfidenceLevel;
+}): Promise<void> =>
+  writeCheckpointOutcome(input.topicSlug, input.conceptId, input.status, {
+    ...(input.conceptTitle !== undefined ? { conceptTitle: input.conceptTitle } : {}),
+    ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
+  });
+
+export const recordReExamResult = async (
+  topicSlug: string,
+  conceptId: string,
+  passed: boolean,
+): Promise<void> => writeCheckpointOutcome(topicSlug, conceptId, passed ? 'pass' : 'fail');
 
 export type StudyActivityKind = 'review' | 'read' | 'focus';
 

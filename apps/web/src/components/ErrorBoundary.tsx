@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
 import i18n from '@/lib/i18n';
+import { recoverFromStaleChunk } from '@/lib/stale-deploy-recovery';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -39,6 +40,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   reload = (): void => {
+    if (this.state.error && CHUNK_LOAD_ERROR.test(this.state.error.message)) {
+      // Stale-deploy chunk 404: drop the stale service worker/caches before reloading.
+      void recoverFromStaleChunk({ force: true });
+      return;
+    }
     window.location.reload();
   };
 

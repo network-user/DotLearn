@@ -4,6 +4,7 @@ import {
   db,
   type AchievementRecord,
   type ActivityRecord,
+  type AttemptEventRecord,
   type BookmarkRecord,
   type CheckpointResultRecord,
   type ConceptNoteRecord,
@@ -11,6 +12,7 @@ import {
   type FlashcardReviewRecord,
   type HighlightRecord,
   type ProgressRecord,
+  type ReExamScheduleRecord,
   type UserCardRecord,
 } from './progress-db';
 import {
@@ -115,6 +117,43 @@ const seedUserCards: UserCardRecord[] = [
   },
 ];
 
+const seedAttemptEvents: AttemptEventRecord[] = [
+  {
+    topicSlug: 'fastapi',
+    exerciseId: 'ex1',
+    concept: 'routing',
+    difficulty: '1',
+    status: 'pass',
+    confidence: 'sure',
+    at: '2026-06-19T10:05:00.000Z',
+  },
+];
+
+const seedCheckpointResults: CheckpointResultRecord[] = [
+  {
+    topicSlug: 'fastapi',
+    conceptId: 'routing',
+    status: 'pass',
+    confidence: 'unsure',
+    conceptTitle: 'Routing basics',
+    at: '2026-06-19T10:10:00.000Z',
+  },
+];
+
+const seedReExamSchedule: ReExamScheduleRecord[] = [
+  {
+    id: 'fastapi:routing',
+    topicSlug: 'fastapi',
+    conceptId: 'routing',
+    due: '2026-06-22T00:00:00.000Z',
+    stepIndex: 0,
+    streak: 1,
+    lastStatus: 'pass',
+    graduated: false,
+    updatedAt: '2026-06-19T10:10:00.000Z',
+  },
+];
+
 const seedDb = async (): Promise<void> => {
   await db.progress.bulkPut(seedProgress);
   await db.activity.bulkPut(seedActivity);
@@ -142,6 +181,7 @@ const emptyData = (): ProgressExport['data'] => ({
   checkpointResults: [],
   examResults: [],
   userCards: [],
+  reExamSchedule: [],
 });
 
 const wrap = (version: number, data: Partial<ProgressExport['data']>): ProgressExport => ({
@@ -195,6 +235,108 @@ describe('exportProgress / importProgress round-trip', () => {
     expect(sortById(reExported.data.highlights)).toEqual(sortById(seedHighlights));
     expect(sortById(reExported.data.examResults)).toEqual(sortById(seedExamResults));
     expect(sortById(reExported.data.userCards)).toEqual(sortById(seedUserCards));
+  });
+});
+
+describe('confidence + re-exam schedule round-trip', () => {
+  it('round-trips confidence on attemptEvents and checkpointResults', async () => {
+    await db.attemptEvents.bulkPut(seedAttemptEvents);
+    await db.checkpointResults.bulkPut(seedCheckpointResults);
+
+    const exported = await exportProgress();
+    expect(exported.data.attemptEvents[0]?.confidence).toBe('sure');
+    expect(exported.data.checkpointResults[0]?.confidence).toBe('unsure');
+    expect(exported.data.checkpointResults[0]?.conceptTitle).toBe('Routing basics');
+
+    await db.delete();
+    await db.open();
+
+    const summary = await importProgress(exported);
+    expect(summary.skipped).toBe(0);
+
+    const storedAttempts = await db.attemptEvents.toArray();
+    const storedCheckpoints = await db.checkpointResults.toArray();
+    expect(storedAttempts[0]?.confidence).toBe('sure');
+    expect(storedCheckpoints[0]?.confidence).toBe('unsure');
+    expect(storedCheckpoints[0]?.conceptTitle).toBe('Routing basics');
+  });
+
+  it('round-trips reExamSchedule records', async () => {
+    await db.reExamSchedule.bulkPut(seedReExamSchedule);
+
+    const exported = await exportProgress();
+    expect(exported.data.reExamSchedule).toEqual(seedReExamSchedule);
+
+    await db.delete();
+    await db.open();
+
+    const summary = await importProgress(exported);
+    expect(summary.imported).toBe(seedReExamSchedule.length);
+    expect(summary.skipped).toBe(0);
+
+    const stored = await db.reExamSchedule.toArray();
+    expect(stored).toEqual(seedReExamSchedule);
+  });
+});
+
+describe('importing a pre-confidence/re-exam export', () => {
+  it('imports the rest of a version 4 payload without reExamSchedule or confidence fields', async () => {
+    const payload = wrap(4, {
+      progress: seedProgress,
+      attemptEvents: [
+        {
+          topicSlug: 'fastapi',
+          exerciseId: 'ex1',
+          concept: 'routing',
+          difficulty: '1',
+          status: 'pass',
+          at: '2026-06-19T10:05:00.000Z',
+        },
+      ] as AttemptEventRecord[],
+    });
+
+    const summary = await importProgress(payload);
+
+    expect(summary.skipped).toBe(0);
+    expect(await db.progress.count()).toBe(seedProgress.length);
+    expect(await db.attemptEvents.count()).toBe(1);
+    expect(await db.reExamSchedule.count()).toBe(0);
+  });
+});
+
+describe('importProgress normalizes garbage confidence', () => {
+  it('drops an invalid confidence value but keeps the rest of the record', async () => {
+    const badAttempt = {
+      topicSlug: 'fastapi',
+      exerciseId: 'ex1',
+      concept: 'routing',
+      difficulty: '1',
+      status: 'pass',
+      confidence: 'super-sure',
+      at: '2026-06-19T10:05:00.000Z',
+    };
+    const badCheckpoint = {
+      topicSlug: 'fastapi',
+      conceptId: 'routing',
+      status: 'pass',
+      confidence: 'nope',
+      at: '2026-06-19T10:10:00.000Z',
+    };
+
+    const payload = wrap(5, {
+      attemptEvents: [badAttempt] as AttemptEventRecord[],
+      checkpointResults: [badCheckpoint] as CheckpointResultRecord[],
+    });
+
+    const summary = await importProgress(payload);
+
+    expect(summary.skipped).toBe(0);
+    expect(summary.imported).toBe(2);
+
+    const storedAttempts = await db.attemptEvents.toArray();
+    const storedCheckpoints = await db.checkpointResults.toArray();
+    expect(storedAttempts[0]?.confidence).toBeUndefined();
+    expect(storedCheckpoints[0]?.confidence).toBeUndefined();
   });
 });
 
@@ -325,5 +467,27 @@ describe('importProgress version gating', () => {
 
     expect(summary.imported).toBe(seedUserCards.length);
     expect(await db.userCards.count()).toBe(seedUserCards.length);
+  });
+
+  it('drops reExamSchedule for a version below 5 but keeps v4 tables', async () => {
+    const payload = wrap(4, {
+      userCards: seedUserCards,
+      reExamSchedule: seedReExamSchedule,
+    });
+
+    const summary = await importProgress(payload);
+
+    expect(await db.userCards.count()).toBe(seedUserCards.length);
+    expect(await db.reExamSchedule.count()).toBe(0);
+    expect(summary.imported).toBe(seedUserCards.length);
+  });
+
+  it('imports reExamSchedule for a version 5 payload', async () => {
+    const payload = wrap(5, { reExamSchedule: seedReExamSchedule });
+
+    const summary = await importProgress(payload);
+
+    expect(summary.imported).toBe(seedReExamSchedule.length);
+    expect(await db.reExamSchedule.count()).toBe(seedReExamSchedule.length);
   });
 });
