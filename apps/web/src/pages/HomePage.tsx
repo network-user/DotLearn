@@ -38,6 +38,11 @@ import { cx } from '@/components/ui/cx';
 import { DualProgressRing } from '@/components/ui/DualProgressRing';
 import { EmptyState as EmptyStateCard } from '@/components/ui/EmptyState';
 import { Surface } from '@/components/ui/Surface';
+import {
+  categoryLabelKey,
+  groupByCatalogCategory,
+  type CatalogCategoryId,
+} from '@/lib/catalog-categories';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
@@ -401,6 +406,11 @@ export const HomePage = () => {
     duration !== undefined ||
     search.sort !== undefined;
 
+  const categoryGroups = useMemo(
+    () => (filtersActive ? [] : groupByCatalogCategory(filteredRows, (row) => row.manifest.slug)),
+    [filtersActive, filteredRows],
+  );
+
   const resetFilters = useCallback((): void => {
     setQueryInput('');
     patch({
@@ -496,10 +506,10 @@ export const HomePage = () => {
           <EmptyState />
         ) : filteredRows.length === 0 ? (
           <NoMatchesState onReset={resetFilters} />
-        ) : (
+        ) : filtersActive ? (
           <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger">
             {filteredRows.map((row) => (
-              <li key={row.manifest.slug}>
+              <li key={row.manifest.slug} className="relative z-0 hover:z-20 focus-within:z-20">
                 <TopicCard
                   row={row}
                   activeTags={tagFilter}
@@ -509,9 +519,55 @@ export const HomePage = () => {
               </li>
             ))}
           </ul>
+        ) : (
+          <div className="space-y-10">
+            {categoryGroups.map((group) => (
+              <CatalogCategorySection
+                key={group.id}
+                id={group.id}
+                rows={group.items}
+                activeTags={tagFilter}
+                onToggleTag={toggleTag}
+              />
+            ))}
+          </div>
         )}
       </section>
     </div>
+  );
+};
+
+interface CatalogCategorySectionProps {
+  id: CatalogCategoryId;
+  rows: TopicRow[];
+  activeTags: string[];
+  onToggleTag: (tag: string) => void;
+}
+
+const CatalogCategorySection = ({
+  id,
+  rows,
+  activeTags,
+  onToggleTag,
+}: CatalogCategorySectionProps) => {
+  const { t } = useTranslation('home');
+  const headingId = `catalog-category-${id}`;
+  return (
+    <section aria-labelledby={headingId} className="space-y-4">
+      <div className="flex items-baseline gap-2.5">
+        <h2 id={headingId} className="text-lg font-semibold tracking-tightish text-fg">
+          {t(categoryLabelKey(id))}
+        </h2>
+        <span className="text-[13px] tabular-nums text-fg-subtle">{rows.length}</span>
+      </div>
+      <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger">
+        {rows.map((row) => (
+          <li key={row.manifest.slug} className="relative z-0 hover:z-20 focus-within:z-20">
+            <TopicCard row={row} activeTags={activeTags} onToggleTag={onToggleTag} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 };
 
@@ -586,7 +642,10 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
           </div>
           <span className="shrink-0 inline-flex items-center gap-1.5 text-accent text-sm font-medium">
             <span className="hidden sm:inline">{t('continue.cta')}</span>
-            <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+            <ArrowRight
+              size={16}
+              className="transition-transform duration-fast ease-standard group-hover:translate-x-0.5"
+            />
           </span>
         </div>
       </Surface>
@@ -636,7 +695,10 @@ const TodayCard = () => {
           </div>
           <span className="shrink-0 inline-flex items-center gap-1.5 text-accent text-sm font-medium">
             <span className="hidden sm:inline">{t('today.cta')}</span>
-            <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
+            <ArrowRight
+              size={16}
+              className="transition-transform duration-fast ease-standard group-hover:translate-x-0.5"
+            />
           </span>
         </div>
       </Surface>
@@ -995,7 +1057,7 @@ const CatalogToolbar = ({
             aria-expanded={filtersOpen}
             aria-controls="catalog-facets"
             aria-label={t('filtersToggle.aria')}
-            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] w-full sm:w-auto shrink-0"
+            className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55 w-full sm:w-auto shrink-0"
           >
             <SlidersHorizontal size={14} />
             {filtersOpen ? t('filtersToggle.hide') : t('filtersToggle.show')}
@@ -1013,7 +1075,7 @@ const CatalogToolbar = ({
             <button
               type="button"
               onClick={onReset}
-              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] w-full sm:w-auto shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55 w-full sm:w-auto shrink-0"
             >
               <X size={14} />
               {t('reset')}
@@ -1068,7 +1130,7 @@ const Chip = ({
     onClick={onClick}
     aria-pressed={active}
     className={cx(
-      'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] tracking-snug transition-colors duration-fast',
+      'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] tracking-snug transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55',
       active
         ? 'border-accent/50 bg-accent/[0.08] text-accent font-medium'
         : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
@@ -1089,7 +1151,7 @@ const ContentResultsSection = ({
   const { t } = useTranslation('home');
   return (
     <Surface variant="inset" className="p-4 sm:p-5">
-      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-fg-subtle">
+      <div className="eyebrow flex items-center gap-2 text-[10px] text-fg-subtle">
         <BookOpen size={14} className="text-accent" />
         <span>{t('contentResults.heading', { defaultValue: 'Совпадения в материалах' })}</span>
       </div>
@@ -1114,7 +1176,7 @@ const ContentResultsSection = ({
               </span>
               <ArrowRight
                 size={14}
-                className="shrink-0 text-fg-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-accent"
+                className="shrink-0 text-fg-subtle transition-transform duration-fast ease-standard group-hover:translate-x-0.5 group-hover:text-accent"
               />
             </Link>
           </li>
@@ -1161,13 +1223,13 @@ const TopicCard = memo(function TopicCard({
         <div className="p-5 h-full flex flex-col gap-4 min-h-[200px]">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-fg-subtle">
+              <div className="eyebrow flex items-center gap-1.5 text-[10px] text-fg-subtle">
                 {runtimeIcon(manifest.runtime)}
                 <span>{t(taglineKey)}</span>
               </div>
               <h3
                 title={manifest.title}
-                className="mt-2 font-display text-2xl leading-tight tracking-tightish text-fg truncate group-hover:whitespace-normal group-hover:overflow-visible group-focus-visible:whitespace-normal"
+                className="mt-2 line-clamp-1 max-h-[1.875rem] overflow-hidden font-display text-2xl leading-tight tracking-tightish text-fg transition-[max-height] duration-[var(--dur-med)] ease-standard group-hover:line-clamp-4 group-hover:max-h-[7.5rem] group-focus-visible:line-clamp-4 group-focus-visible:max-h-[7.5rem]"
               >
                 {manifest.title}
               </h3>
@@ -1222,7 +1284,7 @@ const TopicCard = memo(function TopicCard({
                       onToggleTag(tag);
                     }}
                     className={cx(
-                      'rounded-full border px-2 py-0.5 text-[11px] tracking-snug transition-colors duration-fast',
+                      'rounded-full border px-2 py-0.5 text-[11px] tracking-snug transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55',
                       active
                         ? 'border-accent/50 bg-accent/[0.08] text-accent font-medium'
                         : 'border-border-base text-fg-subtle hover:text-fg hover:border-border-strong',
@@ -1258,7 +1320,7 @@ const TopicCard = memo(function TopicCard({
                 </Badge>
               ))}
             </div>
-            <span className="opacity-0 -translate-x-1 transition-all duration-fast group-hover:opacity-100 group-hover:translate-x-0">
+            <span className="opacity-0 -translate-x-1 transition-[transform,opacity] duration-fast ease-standard group-hover:opacity-100 group-hover:translate-x-0">
               <ArrowRight size={16} className="text-accent" />
             </span>
           </div>

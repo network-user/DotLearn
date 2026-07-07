@@ -18,6 +18,7 @@ export const tracks: readonly Track[] = [
       'python-oop',
       'python-decorators',
       'python-context-managers',
+      'python-concurrency',
       'fastapi',
       'python-orm',
       'celery',
@@ -41,6 +42,8 @@ export const tracks: readonly Track[] = [
     topicSlugs: [
       'python-main-guard',
       'python-walrus',
+      'python-iterators-generators',
+      'python-dataclasses',
       'python-typevar',
       'python-mro',
       'python-storage-internals',
@@ -55,6 +58,8 @@ export const tracks: readonly Track[] = [
     topicSlugs: [
       'database-types',
       'sql-fundamentals',
+      'db-indexes',
+      'db-scaling',
       'cors',
       'websockets-realtime',
       'keycloak',

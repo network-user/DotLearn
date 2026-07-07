@@ -188,8 +188,8 @@ const NodeCard = ({
       onTouchStart={() => prefetchTopic(manifest.slug)}
       aria-current={recommended ? 'step' : undefined}
       className={cx(
-        'group relative block rounded-2xl border bg-surface p-3.5 shadow-card transition-[transform,box-shadow,border-color,opacity] duration-med ease-standard',
-        'hover:border-border-strong hover:shadow-float hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
+        'group relative z-0 block rounded-2xl border bg-surface p-3.5 shadow-card transition-[transform,box-shadow,border-color,opacity] duration-med ease-standard',
+        'hover:z-20 hover:border-border-strong hover:shadow-float hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
         statusRingTone[status],
         highlighted && 'border-accent shadow-float',
         recommended && 'border-accent ring-2 ring-accent/40 shadow-float',
@@ -218,7 +218,7 @@ const NodeCard = ({
           ariaLabel={`${masteryPercent}%`}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-fg-subtle">
+          <div className="eyebrow flex items-center gap-1.5 text-[10px] text-fg-subtle">
             {runtimeIcon(manifest.runtime)}
             {locked && (
               <span className="inline-flex items-center gap-0.5 text-warn" title={t('lockedHint')}>
@@ -228,7 +228,7 @@ const NodeCard = ({
           </div>
           <h3
             title={manifest.title}
-            className="mt-0.5 font-display text-[15px] leading-tight tracking-tightish text-fg truncate group-hover:whitespace-normal"
+            className="mt-0.5 line-clamp-1 max-h-[1.1875rem] overflow-hidden font-display text-[15px] leading-tight tracking-tightish text-fg transition-[max-height] duration-[var(--dur-med)] ease-standard group-hover:line-clamp-3 group-hover:max-h-[3.5625rem] group-focus-visible:line-clamp-3 group-focus-visible:max-h-[3.5625rem]"
           >
             {manifest.title}
           </h3>
@@ -408,7 +408,11 @@ const GraphView = ({
               const highlighted = connectedSlugs?.has(node.manifest.slug) ?? false;
               const dimmed = connectedSlugs !== null && !highlighted;
               return (
-                <div key={node.manifest.slug} ref={(el) => setNodeRef(node.manifest.slug, el)}>
+                <div
+                  key={node.manifest.slug}
+                  ref={(el) => setNodeRef(node.manifest.slug, el)}
+                  className="relative z-0 hover:z-20 focus-within:z-20"
+                >
                   <NodeCard
                     node={node}
                     locked={locked}
