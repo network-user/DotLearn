@@ -1,0 +1,190 @@
+exercises:
+  - id: comp-leftmost-quiz
+    concept: composite-covering
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Есть составной индекс orders(user_id, status). Для какого запроса он бесполезен по правилу leftmost prefix?"
+    choices:
+      - id: a
+        text: "WHERE status = 'paid' (фильтр только по второй колонке индекса)."
+      - id: b
+        text: "WHERE user_id = 10 AND status = 'paid'."
+      - id: c
+        text: "WHERE user_id = 10."
+      - id: d
+        text: "WHERE user_id = 10 AND status = 'cancelled'."
+    correct: [a]
+    explanation: "Индекс отсортирован сначала по user_id, потом по status. Без условия на user_id значения status разбросаны по всему индексу, непрерывного диапазона нет. Индекс работает по левому префиксу колонок."
+    variants:
+      - prompt: "Индекс orders(user_id, created_at). Какой фильтр индекс НЕ ускорит?"
+        choices:
+          - id: a
+            text: "WHERE created_at >= '2024-03-01' (условие только по второй колонке)."
+          - id: b
+            text: "WHERE user_id = 12."
+          - id: c
+            text: "WHERE user_id = 12 AND created_at >= '2024-03-01'."
+          - id: d
+            text: "WHERE user_id = 12 AND created_at < '2024-02-01'."
+        correct: [a]
+        explanation: "Ведущая колонка индекса это user_id. Запрос без условия на user_id не попадает на префикс, и индекс (user_id, created_at) ему не помогает."
+      - prompt: "Индекс orders(a, b, c) из трёх колонок. Какие запросы он обслуживает по правилу leftmost prefix?"
+        choices:
+          - id: a
+            text: "По a; по a и b; по a, b и c. По одному b или c без a нет."
+          - id: b
+            text: "Любой запрос по любой из колонок a, b, c по отдельности."
+          - id: c
+            text: "Только запрос сразу по всем трём колонкам a, b, c."
+          - id: d
+            text: "По c; по b и c; по a, b и c."
+        correct: [a]
+        explanation: "Индекс это сортировка по кортежу (a, b, c). Использовать можно любой левый префикс: a, затем b, затем c. Колонка без предшествующих ей не даёт непрерывного диапазона."
+
+  - id: comp-index-order-blanks
+    concept: composite-covering
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Запрос фильтрует WHERE user_id = ? AND created_at > ?. Впишите колонки составного индекса в правильном порядке: под равенство слева, под диапазон справа."
+    template: |
+      CREATE INDEX idx_orders ON orders({{first}}, {{second}});
+    blanks:
+      first:
+        accept: ['user_id']
+      second:
+        accept: ['created_at']
+    variants:
+      - prompt: "Запрос: WHERE status = ? AND amount > ?. Расставьте колонки составного индекса: равенство слева, диапазон справа."
+        template: |
+          CREATE INDEX idx_orders ON orders({{first}}, {{second}});
+        blanks:
+          first:
+            accept: ['status']
+          second:
+            accept: ['amount']
+      - prompt: "Запрос: WHERE user_id = ? ORDER BY created_at. Составной индекс, чтобы и фильтр по user_id, и порядок по created_at легли на индекс."
+        template: |
+          CREATE INDEX idx_orders ON orders({{first}}, {{second}});
+        blanks:
+          first:
+            accept: ['user_id']
+          second:
+            accept: ['created_at']
+
+  - id: comp-two-col-filter
+    concept: composite-covering
+    type: sql-query
+    difficulty: 2
+    prompt: "Верните id и amount оплаченных заказов (status = 'paid') пользователя user_id = 10, отсортированные по id по возрастанию."
+    fixture: |
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER, created_at TEXT);
+      INSERT INTO orders VALUES
+        (1, 10, 'paid', 1200, '2024-01-05'),
+        (2, 10, 'paid', 800, '2024-01-20'),
+        (3, 10, 'cancelled', 500, '2024-02-02'),
+        (4, 11, 'paid', 2000, '2024-02-15'),
+        (5, 11, 'pending', 300, '2024-02-28'),
+        (6, 12, 'paid', 1500, '2024-03-04'),
+        (7, 12, 'paid', 450, '2024-03-18'),
+        (8, 12, 'cancelled', 900, '2024-03-25'),
+        (9, 13, 'pending', 700, '2024-04-01'),
+        (10, 13, 'paid', 1100, '2024-04-12');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { id: 1, amount: 1200 }
+        - { id: 2, amount: 800 }
+    solution: |
+      SELECT id, amount FROM orders
+      WHERE user_id = 10 AND status = 'paid'
+      ORDER BY id;
+    variants:
+      - prompt: "Верните id и amount оплаченных заказов (status = 'paid') пользователя user_id = 12, по id по возрастанию."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 6, amount: 1500 }
+            - { id: 7, amount: 450 }
+        solution: |
+          SELECT id, amount FROM orders
+          WHERE user_id = 12 AND status = 'paid'
+          ORDER BY id;
+      - prompt: "Верните id и amount оплаченных заказов (status = 'paid') пользователя user_id = 11, по id по возрастанию."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { id: 4, amount: 2000 }
+        solution: |
+          SELECT id, amount FROM orders
+          WHERE user_id = 11 AND status = 'paid'
+          ORDER BY id;
+
+  - id: comp-status-breakdown
+    concept: composite-covering
+    type: sql-query
+    difficulty: 3
+    prompt: "Для пользователя user_id = 10 верните каждый его статус заказа и число заказов с этим статусом. Колонки: status и cnt. Сортировка по status по возрастанию."
+    fixture: |
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER, created_at TEXT);
+      INSERT INTO orders VALUES
+        (1, 10, 'paid', 1200, '2024-01-05'),
+        (2, 10, 'paid', 800, '2024-01-20'),
+        (3, 10, 'cancelled', 500, '2024-02-02'),
+        (4, 11, 'paid', 2000, '2024-02-15'),
+        (5, 11, 'pending', 300, '2024-02-28'),
+        (6, 12, 'paid', 1500, '2024-03-04'),
+        (7, 12, 'paid', 450, '2024-03-18'),
+        (8, 12, 'cancelled', 900, '2024-03-25'),
+        (9, 13, 'pending', 700, '2024-04-01'),
+        (10, 13, 'paid', 1100, '2024-04-12');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { status: 'cancelled', cnt: 1 }
+        - { status: 'paid', cnt: 2 }
+    hints:
+      - "Такой запрос целиком закрывается индексом (user_id, status): по user_id вы прыгаете в блок пользователя, а внутри него статусы уже сгруппированы по порядку. Сколько разных статусов у user_id = 10?"
+      - "Отфильтруйте по user_id, сгруппируйте по status, посчитайте строки в каждой группе через COUNT(*) и отсортируйте по status."
+    solution: |
+      SELECT status, COUNT(*) AS cnt FROM orders
+      WHERE user_id = 10
+      GROUP BY status
+      ORDER BY status;
+
+  - id: comp-covering-challenge
+    concept: composite-covering
+    type: sql-query
+    difficulty: 4
+    prompt: "Верните пользователей, чья суммарная выручка по оплаченным заказам (status = 'paid') не меньше 2000. Колонки: user_id и total. Сортировка по total по убыванию, при равенстве по user_id по возрастанию."
+    fixture: |
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER, created_at TEXT);
+      INSERT INTO orders VALUES
+        (1, 10, 'paid', 1200, '2024-01-05'),
+        (2, 10, 'paid', 800, '2024-01-20'),
+        (3, 10, 'cancelled', 500, '2024-02-02'),
+        (4, 11, 'paid', 2000, '2024-02-15'),
+        (5, 11, 'pending', 300, '2024-02-28'),
+        (6, 12, 'paid', 1500, '2024-03-04'),
+        (7, 12, 'paid', 450, '2024-03-18'),
+        (8, 12, 'cancelled', 900, '2024-03-25'),
+        (9, 13, 'pending', 700, '2024-04-01'),
+        (10, 13, 'paid', 1100, '2024-04-12');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { user_id: 10, total: 2000 }
+        - { user_id: 11, total: 2000 }
+    hints:
+      - "Сначала отберите только оплаченные строки, потом сверните их по пользователю. Порог 2000 это условие на уже посчитанную сумму группы, а не на отдельную строку: где в запросе живёт такое условие?"
+      - "Здесь нужны все четыре клаузы по очереди: фильтр по статусу до группировки, сама группировка по пользователю, проверка порога уже на сумме группы и сортировка по этой сумме с пользователем как дополнительным ключом. Составной индекс, чья ведущая колонка совпадает с колонкой фильтра, а следом идут колонка группировки и суммируемая колонка, позволяет пройти по нему один раз и почти не обращаться к самой таблице."
+    solution: |
+      SELECT user_id, SUM(amount) AS total FROM orders
+      WHERE status = 'paid'
+      GROUP BY user_id
+      HAVING SUM(amount) >= 2000
+      ORDER BY total DESC, user_id;

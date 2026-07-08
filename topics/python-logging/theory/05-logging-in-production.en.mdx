@@ -1,0 +1,272 @@
+---
+conceptId: logging-in-production
+title: Logging in production
+estimatedMinutes: 50
+---
+
+# The same pipeline, but now machines read it and a hundred processes share it
+
+On your machine you assembled a pipeline from logger, handler, and formatter, saw neat lines, and decided logging was done. Production flips the picture. The lines are now read not by a human but by a collection system that indexes them in bulk. The single file is written not by one process but by a dozen workers at once. And every extra call on the hot path costs milliseconds multiplied by a million requests. What looked solved on the laptop becomes a question again in production.
+
+In this section you assemble the whole production setup at once: a single `dictConfig` dictionary describing formatters, handlers, and loggers together. You learn to log exceptions so the traceback lands in the record. You see why an `f-string` on the hot path costs more than it looks, and how `isEnabledFor` fixes it. You thread a `request_id` through an entire request with no extra arguments. And you make writes to one file safe across many processes with a queue. This is the difference between "logging works" and "you can lean on the logs at three in the morning during an incident".
+
+## Mental model: one dictionary describes the whole pipeline
+
+In production you do not assemble logging with scattered calls. You describe it declaratively, in one dictionary, kept next to the rest of the app config. `logging.config.dictConfig` takes that dictionary and builds the whole pipeline in one pass. The dictionary has four load-bearing sections: `formatters` set how a line looks, `handlers` decide where it goes and through which formatter, `loggers` place thresholds per subsystem, and `root` catches everything the named loggers did not.
+
+<Figure caption="One dictionary describes four sections, they reference each other by name, and dictConfig assembles the finished pipeline from them.">
+  <Sketch viewBox="0 0 470 240" title="dictConfig as the pipeline blueprint">
+    <SketchBox x={20} y={90} width={110} height={50} accent />
+    <SketchLabel x={75} y={112} mono accent>config dict</SketchLabel>
+    <SketchLabel x={75} y={128} mono accent>dictConfig()</SketchLabel>
+
+    <SketchArrow from={[130, 100]} to={[210, 40]} accent />
+    <SketchArrow from={[130, 112]} to={[210, 100]} accent />
+    <SketchArrow from={[130, 124]} to={[210, 160]} accent />
+
+    <SketchBox x={210} y={22} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={43} mono>formatters</SketchLabel>
+    <SketchBox x={210} y={84} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={105} mono>handlers</SketchLabel>
+    <SketchBox x={210} y={146} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={167} mono>loggers · root</SketchLabel>
+
+    <SketchArrow from={[340, 100]} to={[400, 100]} />
+    <SketchBox x={400} y={82} width={56} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={428} y={104} mono>pipeline</SketchLabel>
+    <SketchLabel x={275} y={210} muted>sections reference by name: handler → formatter, logger → handlers</SketchLabel>
+  </Sketch>
+</Figure>
+
+The figure shows the key idea: sections reference each other by name. A handler points to a formatter with `"formatter": "plain"`, a logger lists its handlers as a list of names. So one formatter is reused by several handlers, and the whole structure stays in one place that is easy to change per environment.
+
+## The full dictConfig: a working example
+
+Here is a setup close to a real one. Console for a human in development, a rotating file for the collection system, and a separate threshold for the payments subsystem.
+
+```python
+import logging.config
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+        "brief": {"format": "%(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "brief"},
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "plain",
+            "filename": "app.log",
+            "maxBytes": 5_000_000,
+            "backupCount": 3,
+        },
+    },
+    "loggers": {
+        "shop.pay": {"level": "DEBUG", "handlers": ["file"], "propagate": False},
+    },
+    "root": {"level": "INFO", "handlers": ["console"]},
+})
+```
+
+The `"version": 1` key pins the schema version, not the application version. The `disable_existing_loggers: False` value matters here: by default it is `True`, and then loggers created by modules at import time go silent (more on this in the edge case). The `shop.pay` subsystem gets its own file handler and cuts `propagate` so its records do not duplicate into the root console. Everything else falls into `root` and goes to the console. Such a dictionary is easy to externalize into config and swap between dev and prod without touching code.
+
+Run the setup below and read its output. The formatter here omits `asctime` to keep the line predictable. Change the `shop.pay` level from `WARNING` to `DEBUG` and watch the previously dropped line appear.
+
+<PyDemo
+  title="dictConfig at work"
+  code={`import logging
+import logging.config
+import sys
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler",
+                             "formatter": "brief", "stream": sys.stdout}},
+    "loggers": {"shop.pay": {"level": "WARNING"}},
+    "root": {"level": "INFO", "handlers": ["console"]},
+})
+
+pay = logging.getLogger("shop.pay")
+pay.info("charge started")
+pay.warning("retry attempt")`}
+/>
+
+Only `shop.pay WARNING retry attempt` prints. The `info` line did not pass the `WARNING` threshold set for `shop.pay`, while the warning rose to the root console via propagation. Raise the level to `DEBUG` and you see both lines: the threshold stops dropping `info`.
+
+## Exceptions: exc_info and logger.exception
+
+A dedicated call exists precisely to put a traceback into the record. Inside an `except` block, use `logger.exception`.
+
+```python
+import logging
+
+logger = logging.getLogger("shop.pay")
+
+try:
+    charge(order_id)
+except PaymentError:
+    logger.exception("failed to charge order %s", order_id)
+```
+
+`logger.exception(...)` writes at `ERROR` and attaches the current exception traceback to the record itself. Under the hood it is the same as `logger.error("...", exc_info=True)`: the `exc_info` flag tells the formatter to append the exception type, its message, and the stack. When you need a traceback where there is no exception (say, to see who called a function), pass `stack_info=True`: it adds the call stack up to the log point.
+
+<Callout type="warning">
+Do not swallow the traceback with `logger.error(str(e))`. That leaves one message line without the stack, and you have to guess where things broke. Inside `except` the exception info is already at hand; hand it to the logger in full.
+</Callout>
+
+## The cost of a log: why an f-string is dearer than it looks
+
+On the hot path it matters how much work a log call does when it outputs nothing in the end. A subtlety hides here that even experienced developers trip over.
+
+```python
+logger.debug("state: %s", build_snapshot())
+logger.debug(f"state: {build_snapshot()}")
+```
+
+The difference is not in formatting. In both lines `build_snapshot()` is evaluated before entering `debug`, because Python computes arguments before handing control to the function. The parametric form with `%s` defers only the substitution, the string interpolation, and that saves work when the record is dropped by level. But the expensive `build_snapshot()` call happens either way.
+
+To avoid paying for the argument itself, you ask the logger up front:
+
+```python
+if logger.isEnabledFor(logging.DEBUG):
+    logger.debug("state: %s", build_snapshot())
+```
+
+`isEnabledFor` returns whether a record at that level would pass the logger filter. If debug is off, the `if` body does not run, and `build_snapshot()` is never called. The demo below proves it: the counter tracks how many times the expensive function was actually called.
+
+<PyDemo
+  title="The argument is computed even when the log is dropped"
+  code={`import logging
+import sys
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
+logger = logging.getLogger("perf")
+
+calls = {"n": 0}
+
+def snapshot():
+    calls["n"] += 1
+    return "big object"
+
+logger.debug("state: %s", snapshot())
+print("after debug, snapshot calls:", calls["n"])
+
+if logger.isEnabledFor(logging.DEBUG):
+    logger.debug("state: %s", snapshot())
+print("after isEnabledFor, snapshot calls:", calls["n"])`}
+/>
+
+Both times `1` prints. The first `debug` called `snapshot()` even though the record was dropped by the `INFO` threshold: the argument was computed for nothing. The `isEnabledFor(DEBUG)` check returned `False` and stopped the second call. Remove the check and leave a plain `logger.debug(...)`, and the counter becomes `2`.
+
+## request_id through the whole request: contextvars and Filter
+
+One line in a log is not enough: to reconstruct the story of one request among thousands of others you need a shared id in all of its records. Passing it as an argument through every call is impossible. `contextvars` answer this: a variable local to each async task and each request, plus a filter that stamps its value onto any record.
+
+```python
+import logging
+from contextvars import ContextVar
+
+current_request: ContextVar[str] = ContextVar("current_request", default="-")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = current_request.get()
+        return True
+
+handler = logging.StreamHandler()
+handler.addFilter(RequestIdFilter())
+handler.setFormatter(logging.Formatter("[%(request_id)s] %(message)s"))
+```
+
+A `ContextVar` with `default="-"` guarantees the field always exists, even outside a request, so the formatter never raises `KeyError`. The filter returns `True` because it drops nothing and only enriches the record, and it puts the current value into `record.request_id`. At the request entry you call `current_request.set(new_id)`, and from then on any log inside that request carries the right id with no extra arguments. The same trick is wrapped in a `LoggerAdapter` when the context is more convenient beside the logger than inside a handler filter.
+
+## Many processes, one file: a queue saves you
+
+`RotatingFileHandler` is thread-safe but not process-safe. When several workers write to one file, their lines interleave, and during rotation someone loses a record or keeps writing to an already renamed file. The docs suggest splitting the roles: workers do not write to the file themselves. Each puts a record onto a shared queue via `QueueHandler`, and one `QueueListener` on a separate thread drains the queue and hands records to the real handlers.
+
+<Figure caption="Workers only put a record onto the queue via QueueHandler; a single QueueListener owns the file and rotation, so there is no contention for the file.">
+  <Sketch viewBox="0 0 480 220" title="QueueHandler and QueueListener">
+    <SketchBox x={20} y={30} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={54} mono>worker 1 · QueueHandler</SketchLabel>
+    <SketchBox x={20} y={140} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={164} mono>worker 2 · QueueHandler</SketchLabel>
+
+    <SketchArrow from={[140, 50]} to={[210, 95]} />
+    <SketchArrow from={[140, 160]} to={[210, 115]} />
+
+    <SketchBox x={210} y={85} width={80} height={40} accent />
+    <SketchLabel x={250} y={109} mono accent>queue</SketchLabel>
+
+    <SketchArrow from={[290, 105]} to={[340, 105]} accent />
+    <SketchBox x={340} y={85} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={400} y={109} mono>QueueListener</SketchLabel>
+
+    <SketchArrow from={[400, 125]} to={[400, 165]} />
+    <SketchBox x={340} y={165} width={120} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={400} y={186} mono>file · rotation</SketchLabel>
+  </Sketch>
+</Figure>
+
+The figure splits two roles. Workers do a cheap operation: put a record onto the queue and immediately return to work without waiting for disk. The single listener owns the file handler and rotation, so contention for the file is gone. As a bonus, logging stops blocking the hot path on a slow disk.
+
+```python
+import logging
+import queue
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+
+log_queue = queue.Queue(-1)
+file_handler = RotatingFileHandler("app.log", maxBytes=5_000_000, backupCount=3)
+
+listener = QueueListener(log_queue, file_handler)
+listener.start()
+
+logging.getLogger().addHandler(QueueHandler(log_queue))
+```
+
+Workers see only `QueueHandler`, while the heavy `RotatingFileHandler` lives behind `QueueListener`. The `listener.start()` call raises a background thread, and `listener.stop()` on shutdown drains the rest of the queue. Forgetting `stop()` means losing the last records at exit.
+
+## Edge case that will surprise you: silent loggers after dictConfig
+
+You called `dictConfig`, and a logger created in a module at import time suddenly goes silent. The cause is a default: `disable_existing_loggers` is `True` by default. Every logger created before the `dictConfig` call and not mentioned in its dictionary is disabled. The `logger = logging.getLogger(__name__)` idiom at module level fires at import time, which is usually earlier than the app calls `dictConfig`. The surprise is that configuring logging can turn off loggers that were already set up. Set `disable_existing_loggers: False` unless you want to silence them by name.
+
+## Common mistakes
+
+- **Treating an `f-string` in a log as free on the hot path.** The argument is always evaluated, even when the record is dropped. Hide the expensive message build behind `isEnabledFor`, or at least do not log heavy things at `DEBUG` inside a loop.
+- **Configuring logging per request.** `dictConfig` is called once at app startup. Inside a request handler it reassembles the pipeline again and multiplies duplicates.
+- **Writing to one file from several processes directly.** Lines interleave, and rotation starts losing records. Route everything through `QueueHandler` and one `QueueListener`.
+- **Swallowing an exception with `logger.error(str(e))`.** Inside `except` use `logger.exception(...)` or the `exc_info=True` flag: without them the log keeps a message without a traceback, and you have to guess where the failure was.
+
+<Detail summary="How RotatingFileHandler decides when to roll the file">
+
+Before writing a message the handler checks whether the current file size plus the message length would exceed `maxBytes`. If so, it renames `app.log` to `app.log.1`, shifts older copies (`app.log.1` becomes `app.log.2` and so on), deletes the oldest beyond `backupCount`, opens a fresh empty `app.log`, and writes into it. With `backupCount=0` it keeps no copies and simply truncates the file. `TimedRotatingFileHandler` works the same way but rolls by time (`when="midnight"`) rather than size. You will model exactly this mechanic in the challenge exercise.
+
+</Detail>
+
+<Detail summary="basicConfig, dictConfig, or fileConfig">
+
+`basicConfig` suits scripts and prototypes: one line, one root handler. `dictConfig` is for applications: it describes several formatters and handlers, per-subsystem levels, `propagate`, and the queue in full, so it is enough almost always. `fileConfig` reads the same settings from an INI file, but it cannot reach part of the dictionary's power, and new projects tend to avoid it. The practical rule is simple: configure a production app through `dictConfig`, externalized into config next to the rest of the environment settings.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "dictConfig describes the whole pipeline in one dictionary: sections formatters, handlers, loggers, and root reference each other by name.",
+    "logger.exception inside except writes at ERROR and attaches the traceback; exc_info=True gives the same effect, and stack_info=True adds the stack without an exception.",
+    "A log argument is always evaluated: the parametric form defers only substitution, and only isEnabledFor saves you from the expensive call.",
+    "Keep request_id in a ContextVar with a default and stamp it onto each record via a Filter or LoggerAdapter, not as an argument.",
+    "From several processes write through QueueHandler onto a queue, and one QueueListener owns the file handler and rotation.",
+    "disable_existing_loggers is True by default and silences loggers created before dictConfig; production usually sets it False.",
+  ]}
+/>
+
+## Links
+
+- [Python documentation - logging.config](https://docs.python.org/3/library/logging.config.html)
+- [Python documentation - logging.handlers (RotatingFileHandler, QueueHandler, QueueListener)](https://docs.python.org/3/library/logging.handlers.html)
+- [Python documentation - Logging Cookbook: logging from multiple processes](https://docs.python.org/3/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes)
+- [Python documentation - contextvars](https://docs.python.org/3/library/contextvars.html)

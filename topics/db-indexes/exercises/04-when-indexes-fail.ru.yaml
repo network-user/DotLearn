@@ -1,0 +1,158 @@
+exercises:
+  - id: fail-function-quiz
+    concept: when-indexes-fail
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Есть индекс users(email). Какой запрос НЕ сможет им воспользоваться?"
+    choices:
+      - id: a
+        text: "WHERE lower(email) = 'anna@mail.ru' (функция над колонкой)."
+      - id: b
+        text: "WHERE email = 'anna@mail.ru'."
+      - id: c
+        text: "WHERE email LIKE 'anna%'."
+      - id: d
+        text: "WHERE email >= 'm'."
+    correct: [a]
+    explanation: "Индекс хранит значения email как есть. lower(email) вычисляет новое значение для каждой строки, и отсортированный поиск по нему невозможен. Помогут выражение-индекс на lower(email) или заранее нормализованное поле."
+    variants:
+      - prompt: "Индекс users(created_at), даты хранятся текстом в формате 'YYYY-MM-DD'. Какой фильтр не ляжет на индекс?"
+        choices:
+          - id: a
+            text: "WHERE substr(created_at, 1, 7) = '2024-02' (функция вырезает часть колонки)."
+          - id: b
+            text: "WHERE created_at >= '2024-02-01' AND created_at < '2024-03-01'."
+          - id: c
+            text: "WHERE created_at = '2024-02-15'."
+          - id: d
+            text: "WHERE created_at LIKE '2024-02%'."
+        correct: [a]
+        explanation: "substr(created_at, ...) превращает колонку в новое значение, и индекс по created_at не применяется. Тот же отбор через диапазон дат (вариант b) индекс использует."
+      - prompt: "Какой LIKE по колонке email (есть индекс users(email)) не сможет использовать индекс?"
+        choices:
+          - id: a
+            text: "WHERE email LIKE '%mail.ru' (ведущий процент)."
+          - id: b
+            text: "WHERE email LIKE 'anna%'."
+          - id: c
+            text: "WHERE email LIKE 'an%'."
+          - id: d
+            text: "WHERE email LIKE 'boris@%'."
+        correct: [a]
+        explanation: "Индекс отсортирован по началу строки. Известный префикс (anna%) задаёт непрерывный диапазон, а ведущий процент значит любое начало, и диапазон построить нельзя, остаётся перебор."
+
+  - id: fail-like-prefix
+    concept: when-indexes-fail
+    type: sql-query
+    difficulty: 2
+    prompt: "Верните email пользователей, чей адрес начинается с 'an', отсортированные по email по возрастанию."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT, created_at TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Москва', '2024-02-10'),
+        (2, 'boris@gmail.com', 'Казань', '2024-02-15'),
+        (3, 'anton@mail.ru', 'Москва', '2024-02-15'),
+        (4, 'vera@yandex.ru', 'Пермь', '2024-03-01'),
+        (5, 'dmitry@mail.ru', 'Москва', '2024-03-01'),
+        (6, 'elena@gmail.com', 'Казань', '2024-03-15'),
+        (7, 'anatoly@yandex.ru', 'Сочи', '2024-04-01'),
+        (8, 'olga@mail.ru', 'Пермь', '2024-04-02');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'anatoly@yandex.ru' }
+        - { email: 'anna@mail.ru' }
+        - { email: 'anton@mail.ru' }
+    solution: |
+      SELECT email FROM users
+      WHERE email LIKE 'an%'
+      ORDER BY email;
+    variants:
+      - prompt: "Верните email пользователей, чей адрес начинается с 'bo', по возрастанию email."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'boris@gmail.com' }
+        solution: |
+          SELECT email FROM users
+          WHERE email LIKE 'bo%'
+          ORDER BY email;
+      - prompt: "Верните email пользователей, чей адрес начинается с 'ol', по возрастанию email."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'olga@mail.ru' }
+        solution: |
+          SELECT email FROM users
+          WHERE email LIKE 'ol%'
+          ORDER BY email;
+
+  - id: fail-sargable-blanks
+    concept: when-indexes-fail
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Фильтр WHERE substr(created_at, 1, 7) = '2024-02' оборачивает колонку функцией и ломает индекс. Перепишите его как полуинтервал по голой колонке created_at. Впишите границы строковыми литералами в одинарных кавычках."
+    template: |
+      SELECT id FROM users
+      WHERE created_at >= {{lo}} AND created_at < {{hi}};
+    blanks:
+      lo:
+        accept: ["'2024-02-01'"]
+      hi:
+        accept: ["'2024-03-01'"]
+    variants:
+      - prompt: "Фильтр WHERE substr(created_at, 1, 7) = '2024-03'. Перепишите через полуинтервал по created_at. Впишите границы."
+        template: |
+          SELECT id FROM users
+          WHERE created_at >= {{lo}} AND created_at < {{hi}};
+        blanks:
+          lo:
+            accept: ["'2024-03-01'"]
+          hi:
+            accept: ["'2024-04-01'"]
+      - prompt: "Фильтр WHERE substr(created_at, 1, 4) = '2024' (весь 2024 год). Перепишите через полуинтервал по created_at. Впишите границы."
+        template: |
+          SELECT id FROM users
+          WHERE created_at >= {{lo}} AND created_at < {{hi}};
+        blanks:
+          lo:
+            accept: ["'2024-01-01'"]
+          hi:
+            accept: ["'2025-01-01'"]
+
+  - id: fail-or-to-union
+    concept: when-indexes-fail
+    type: sql-query
+    difficulty: 3
+    prompt: "Условие OR по разным колонкам плохо ложится на индексы. Верните id пользователей из Москвы ИЛИ зарегистрированных в апреле 2024 (created_at с '2024-04-01' по '2024-04-30'), переписав запрос через UNION двух индексируемых веток. Сортировка по id по возрастанию."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT, created_at TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Москва', '2024-02-10'),
+        (2, 'boris@gmail.com', 'Казань', '2024-02-15'),
+        (3, 'anton@mail.ru', 'Москва', '2024-02-15'),
+        (4, 'vera@yandex.ru', 'Пермь', '2024-03-01'),
+        (5, 'dmitry@mail.ru', 'Москва', '2024-03-01'),
+        (6, 'elena@gmail.com', 'Казань', '2024-03-15'),
+        (7, 'anatoly@yandex.ru', 'Сочи', '2024-04-01'),
+        (8, 'olga@mail.ru', 'Пермь', '2024-04-02');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { id: 1 }
+        - { id: 3 }
+        - { id: 5 }
+        - { id: 7 }
+        - { id: 8 }
+    hints:
+      - "Один индекс не умеет удовлетворить сразу два условия OR по разным колонкам. Разбейте задачу на два независимых, каждое из которых индекс закрывает по отдельности, а потом объедините строки."
+      - "Напишите два SELECT id: один с city = 'Москва', другой с диапазоном дат апреля, соедините их через UNION (он сам уберёт дубликаты) и в конце допишите ORDER BY id."
+    solution: |
+      SELECT id FROM users WHERE city = 'Москва'
+      UNION
+      SELECT id FROM users WHERE created_at BETWEEN '2024-04-01' AND '2024-04-30'
+      ORDER BY id;

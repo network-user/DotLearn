@@ -1,0 +1,166 @@
+---
+conceptId: beat-monitoring
+title: "Periodic tasks and monitoring"
+estimatedMinutes: 45
+---
+
+# The report that arrived twice at 3:00
+
+Every night at 3:00 a periodic task recomputes yesterday's revenue and mails a summary to managers. One day you scaled the deployment and brought up a second container replica where a scheduler lived next to the worker. In the morning managers received two identical summaries, and the numbers in the report had doubled. There is no guilty code: the Celery task scheduler, called Beat, now ran in two copies, and each dutifully enqueued its own copy of the task.
+
+Periodic tasks and watching the queue are the two sides of operating Celery that surface once the system is already in production. By the end of this section you will configure schedules through `beat_schedule` and `crontab`, understand why Beat must be exactly one per cluster, and read the state of a live system: task states, `celery inspect` output, the Flower dashboard, and queue health metrics (depth, latency, retry ratio).
+
+## Mental model: Beat is a producer on a timer
+
+Beat does not execute tasks. Beat is a separate process that, on a schedule, drops tasks into the same broker the workers pull from. It is really an ordinary producer, except a timer wakes it instead of an HTTP request. You start it with its own command `celery -A app beat`, next to the workers, but these are different processes with different roles.
+
+<Figure caption="Beat drops tasks into the broker on schedule, the worker runs them; a second Beat sends the same tasks again. One scheduler per cluster, as many workers as you like.">
+  <Sketch viewBox="0 0 480 210" title="Beat, broker, worker">
+    <SketchBox x={20} y={45} width={110} height={48} accent radius={8} />
+    <SketchLabel x={75} y={66} mono accent>beat</SketchLabel>
+    <SketchLabel x={75} y={84} muted size={11}>on schedule</SketchLabel>
+    <SketchBox x={20} y={150} width={110} height={48} radius={8} dashed />
+    <SketchLabel x={75} y={171} mono>second beat</SketchLabel>
+    <SketchLabel x={75} y={189} muted size={11}>duplicates</SketchLabel>
+    <SketchBox x={210} y={85} width={90} height={70} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={255} y={116} mono>broker</SketchLabel>
+    <SketchLabel x={255} y={134} muted size={11}>queue</SketchLabel>
+    <SketchBox x={370} y={85} width={100} height={70} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={420} y={124} mono>worker</SketchLabel>
+    <SketchArrow from={[130, 69]} to={[210, 105]} accent />
+    <SketchArrow from={[130, 174]} to={[210, 140]} dashed />
+    <SketchArrow from={[300, 120]} to={[370, 120]} />
+  </Sketch>
+</Figure>
+
+In the diagram Beat sits beside the worker and talks to it only through the broker. Hence the main operating rule: Beat must be exactly one for the whole cluster. Beat coordinates with no other Beat, it just looks at the schedule and at the mark for when it last ran a given task. Bring up two Beats and each independently enqueues the task "at 3:00 build the report". Workers meanwhile can be as many as you like (they are precisely there for parallelism), and the scheduler stays single.
+
+## beat_schedule and crontab
+
+The schedule is described by a `beat_schedule` dict in the application config. Each entry ties together a name, a task, and the firing moment.
+
+```python
+from celery.schedules import crontab
+
+app.conf.beat_schedule = {
+    "nightly-report": {
+        "task": "reports.build_daily",
+        "schedule": crontab(minute=0, hour=3),
+    },
+    "poll-inbox": {
+        "task": "mail.poll",
+        "schedule": 30.0,
+    },
+}
+```
+
+The `schedule` field accepts three forms. A number is an interval in seconds (`30.0` means every thirty seconds). `timedelta(minutes=5)` does the same but reads clearer. `crontab(...)` binds to the calendar: `crontab(minute=0, hour=3)` fires every day at 3:00, `crontab(minute="*/15")` every fifteen minutes, `crontab(minute=0, hour=6, day_of_week="mon")` on Mondays at 6:00. An interval suits "once per N time from start", crontab suits "at a specific time of day".
+
+<Callout type="info">
+Beat keeps the last-run marks across restarts (by default in a local shelve file). So a daily task will not fire an extra time just because you restarted Beat, and it will not be lost if Beat was briefly off.
+</Callout>
+
+## Two Beats are duplicates, not fault tolerance
+
+The temptation is clear: since we have two replicas for reliability, let Beat live on each, so that "if one falls, the other takes over". But Beat elects no leader and splits no schedule. Both replicas run the whole schedule in full, and each periodic task leaves for the queue twice. For a non-idempotent task (charge, credit, broadcast) that is direct damage.
+
+There are two correct solutions. The simple one: keep Beat as a single instance (a separate process or a separate Deployment with one replica), and scale workers as needed. The robust one for HA: a scheduler with an external lock, for example RedBeat, which keeps the schedule and the lock in Redis, so that of several Beats only one is really on duty. The built-in `-B` mode (Beat inside the worker) is handy on a local machine, but in production it is exactly what most often leads to several schedulers at once.
+
+Even with one Beat a schedule can create a burst. If at 3:00 a task starts that fans out a sub-task for each of thousands of users, they all fall into the queue at once, and the workers hit a peak. Spreading them over time (jitter) cures this: add a random start delay and spread the load across a window. At enqueue that is `apply_async(countdown=random.uniform(0, 300))`; on retries after failure it is `retry_jitter=True` together with `retry_backoff=True`, so that failed tasks do not rush back all in the same second.
+
+## Watching the system: states and events
+
+A background task runs somewhere out of your sight, so you observe it indirectly. The first source is the task state in the result backend: `PENDING`, `STARTED`, `SUCCESS`, `RETRY`, `FAILURE`, `REVOKED`. The second is the event stream: a worker started with the `-E` flag emits task-received, task-started, task-succeeded, task-failed events and its own heartbeat. Events are ephemeral and flow in real time; dashboards like Flower live on them.
+
+<Callout type="warning">
+You will not see the `STARTED` state until you enable `task_track_started=True`: by default Celery does not mark the moment a task is taken into work, and the task jumps from PENDING straight to SUCCESS or FAILURE.
+</Callout>
+
+## celery inspect: three baskets
+
+The `celery -A app inspect` command asks live workers what is happening on them right now and gathers the answers. The three most useful queries are shown in the figure.
+
+<Figure caption="celery inspect shows three baskets on a worker: active is running · reserved is taken ahead as prefetch · scheduled waits for its eta. Reserved and active are already off the broker, so they make the queue length look shorter.">
+  <Sketch viewBox="0 0 480 220" title="active, reserved, scheduled">
+    <SketchBox x={20} y={75} width={100} height={64} accent radius={8} />
+    <SketchLabel x={70} y={102} mono accent>broker</SketchLabel>
+    <SketchLabel x={70} y={120} muted size={11}>queue</SketchLabel>
+    <SketchBox x={210} y={40} width={120} height={42} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={270} y={61} mono>reserved</SketchLabel>
+    <SketchLabel x={270} y={77} muted size={11}>prefetch</SketchLabel>
+    <SketchBox x={210} y={100} width={120} height={42} accent radius={8} />
+    <SketchLabel x={270} y={121} mono accent>active</SketchLabel>
+    <SketchLabel x={270} y={137} muted size={11}>running</SketchLabel>
+    <SketchBox x={210} y={160} width={120} height={42} radius={8} dashed />
+    <SketchLabel x={270} y={181} mono>scheduled</SketchLabel>
+    <SketchLabel x={270} y={197} muted size={11}>waits eta</SketchLabel>
+    <SketchHighlight x={205} y={35} width={130} height={112} />
+    <SketchLabel x={410} y={94} muted size={11}>taken</SketchLabel>
+    <SketchLabel x={410} y={110} muted size={11}>off broker</SketchLabel>
+    <SketchArrow from={[120, 95]} to={[210, 61]} />
+    <SketchArrow from={[270, 82]} to={[270, 100]} accent />
+    <SketchArrow from={[120, 120]} to={[210, 181]} dashed />
+  </Sketch>
+</Figure>
+
+`inspect active` shows tasks the worker is executing right now. `inspect reserved` are tasks the worker has already taken from the broker ahead of time (prefetch) but not yet started: they sit in its local buffer. `inspect scheduled` is not your Beat schedule but tasks with a deferred start (eta or countdown) that the worker holds until their time comes. Confusing `scheduled` with `beat_schedule` is a common interview mistake.
+
+The practical takeaway about reserved: tasks in the worker's buffer are already off the broker. So the queue length in the broker undercounts the real backlog by exactly the number of prefetched tasks. This is governed by `worker_prefetch_multiplier`; for long tasks it is lowered to 1, so that tasks do not get stuck in a busy worker's buffer while another worker sits idle.
+
+## Flower: convenient and dangerous
+
+Flower is a web dashboard that, on top of events and inspect, shows tasks, workers, queues, throughput charts and, importantly, task arguments and results. From there you can also control the cluster: revoke a task, change a rate limit, shut down a worker, shrink the process pool.
+
+<Callout type="warning">
+Flower by default has no authentication. Exposed to the internet, it hands anyone the arguments of your tasks (and those sometimes hold email, tokens, contract numbers) and lets an anonymous visitor kill workers and revoke tasks. Keep Flower behind authentication (`--basic-auth`, OAuth) and in a private network, not on a public port.
+</Callout>
+
+## Queue health metrics
+
+Three numbers answer "is the system healthy" better than reading logs.
+
+- **Queue depth**: how many messages wait in the broker. A flat line near zero is normal; steady growth means producers outpace workers. Remember the prefetch correction.
+- **Task latency**: the sum of time waiting in the queue (from enqueue to pickup) and execution time. If the wait grows, it is a capacity shortage; if execution itself grows, the task got heavier or its dependency slowed down.
+- **Retry ratio**: what share of executions ended in RETRY. A jump in the retry ratio is an early signal that an external dependency broke or a bad release shipped, long before users notice.
+
+Separately worth a worker health check: `celery inspect ping` asks whether workers are alive and answering. A truly dead worker looks like this: the queue grows, active is empty, ping does not answer, even though the process formally "exists".
+
+## Edge cases
+
+**This will surprise you: PENDING does not mean "in the queue".** Ask for the status of a task by an id that never existed (say you mistyped the id), and the backend returns `PENDING`, not an error. The reason is that PENDING in Celery means "there is no result", not "the task was accepted". The backend keeps no list of known tasks: no result record means PENDING, whether an as-yet-unrun task or a made-up id. You cannot rely on PENDING as proof that "the task was definitely enqueued".
+
+**Reserved hides backlog.** Prefetch takes tasks off the broker into the worker's buffer. If you look only at the queue length in the broker, at a large `worker_prefetch_multiplier` you may decide the queue is nearly empty, while hundreds of tasks stand in the buffers of busy workers and wait.
+
+**scheduled is not Beat.** `inspect scheduled` shows tasks with eta or countdown, not the periodic schedule. The Beat schedule lives in the config and in its state file; it is nowhere in the inspect output.
+
+## Common mistakes
+
+- **Running Beat on every replica.** Each Beat runs the whole schedule, and periodic tasks duplicate. Keep one Beat (a separate process or RedBeat with a lock), and scale the workers instead.
+- **Exposing Flower to the internet without authentication.** That is a leak of task arguments and a control panel over your workers for any passer-by. Authentication plus a private network are mandatory.
+- **Judging health by queue length alone.** Prefetch hides part of the backlog, and "the queue is empty but everything is slow" happens with growing execution latency. Watch queue depth, latency, and retry ratio together.
+
+<Detail summary="How RedBeat and jitter solve problems of scale">
+
+RedBeat replaces Celery's standard scheduler. It keeps the schedule and the run marks in Redis, and before each tick it takes a distributed lock. Of five Beats brought up, the lock goes to one and the rest wait; if the holder dies, the lock is freed by TTL, and the next one picks up duty. This yields a fault-tolerant scheduler without duplicates: several processes for reliability, but only the current lock holder runs the schedule.
+
+Jitter is worth remembering not only at enqueue but on retries. If an external service went down and a thousand tasks caught a timeout at once, then without jitter they all retry exactly `countdown` seconds later and hit the barely recovered service in one volley (thundering herd). `retry_jitter=True` smears the retries across a window, and `retry_backoff=True` grows the pause with each attempt. Together they turn a synchronous volley of retries into an even stream that the receiving service survives.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Beat is a producer on a timer and must be exactly one per cluster: two Beats do not coordinate and enqueue every periodic task twice.",
+    "schedule in beat_schedule is set by a number of seconds, a timedelta, or crontab; crontab binds the run to time of day and days of the week.",
+    "Tasks are observed through states (PENDING, STARTED, SUCCESS, RETRY, FAILURE) and an event stream; STARTED appears only with task_track_started=True.",
+    "celery inspect shows active (running), reserved (the prefetch buffer), and scheduled (tasks with eta, not the Beat schedule).",
+    "Flower without authentication facing outward leaks task arguments and is a control panel over the workers; keep it behind auth and in a private network.",
+    "Queue health is read from three metrics together: queue depth, task latency, and retry ratio; prefetch understates the visible depth.",
+  ]}
+/>
+
+## References
+
+- [Celery - Periodic Tasks (Beat)](https://docs.celeryq.dev/en/stable/userguide/periodic-tasks.html)
+- [Celery - Monitoring and Management Guide](https://docs.celeryq.dev/en/stable/userguide/monitoring.html)
+- [Flower - Celery monitoring tool](https://flower.readthedocs.io/en/latest/)
+- [RedBeat - Redis-backed Beat scheduler](https://redbeat.readthedocs.io/en/latest/)

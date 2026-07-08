@@ -1,0 +1,230 @@
+---
+conceptId: python-integration
+title: Проверка токенов Keycloak в Python
+estimatedMinutes: 50
+---
+
+# Проверяем токен Keycloak в Python: PyJWT, PyJWKClient и FastAPI
+
+У вас есть FastAPI-сервис, и в каждый запрос приходит заголовок `Authorization: Bearer eyJ...`. Токен выпустил Keycloak и подписал своим приватным ключом. Вопрос стоит просто: как в Python убедиться, что этот токен настоящий, не истёк и выписан именно вашему сервису, и сделать это без похода в Keycloak на каждый запрос?
+
+Наивный подход, когда вы спрашиваете Keycloak про каждый токен, превращает identity provider в узкое место и единую точку отказа. Правильный путь другой: один раз загрузить публичные ключи realm и проверять подпись локально. В экосистеме Python это связка из двух инструментов. PyJWKClient достаёт и кэширует ключи, а `jwt.decode` из библиотеки PyJWT проверяет подпись и обязательные claims. К концу раздела вы соберёте зависимость `get_current_user` для FastAPI, научитесь доставать роли из токена и различать ответы 401 и 403.
+
+## Ключи приходят по сети, проверка идёт локально
+
+Разделите задачу на две независимые половины. Первая половина получает материал для проверки: публичные ключи realm. Их набор Keycloak публикует по адресу JWKS, и меняются они редко, только при ротации. Вторая половина проверяет конкретный токен: разбирает три части JWT, выбирает ключ по `kid` из header, сверяет подпись и claims `iss`, `aud`, `exp`. Первая половина обращается к сети и кэшируется, вторая работает локально и быстро.
+
+<Figure caption="Горячий путь запроса: ключи уже в кэше, на запрос остаётся выбрать ключ по kid и прогнать jwt.decode. Сеть · только при пустом или устаревшем кэше.">
+  <PipelineFigure
+    stages={[
+      { label: 'Bearer токен', note: 'Authorization header' },
+      { label: 'PyJWKClient', note: 'kid → ключ из JWKS · кэш' },
+      { label: 'jwt.decode', note: 'подпись · iss · aud · exp' },
+      { label: 'claims', note: 'sub · realm_access · resource_access' },
+      { label: 'доступ', note: '200 · 401 · 403' },
+    ]}
+  />
+</Figure>
+
+Картинка показывает горячий путь запроса. Ключи уже загружены и лежат в кэше PyJWKClient, поэтому единственная работа на запрос сводится к выбору ключа по `kid` и вызову `jwt.decode`. Обращение к Keycloak по сети происходит, только когда кэш пуст или устарел, а не на каждый вызов.
+
+## Discovery: находим jwks_uri, не зашивая его руками
+
+Адрес JWKS не зашивают в код. Каждый realm Keycloak публикует discovery-документ по стандартному пути `.well-known/openid-configuration`, и в нём лежат и `issuer`, и `jwks_uri`. Прочитайте его один раз на старте приложения:
+
+```python
+import requests
+
+BASE = "https://kc.example.com/realms/corp"
+meta = requests.get(f"{BASE}/.well-known/openid-configuration").json()
+issuer = meta["issuer"]
+jwks_uri = meta["jwks_uri"]
+```
+
+Теперь `jwks_uri` отдаёте PyJWKClient. Этот класс из PyJWT берёт на себя всю возню с ключами: загружает набор JWKS, кэширует его и по `kid` из заголовка токена выбирает нужный ключ.
+
+```python
+import jwt
+from jwt import PyJWKClient
+
+jwks_client = PyJWKClient(jwks_uri, lifespan=300)
+signing_key = jwks_client.get_signing_key_from_jwt(token)
+```
+
+Метод `get_signing_key_from_jwt` читает header токена, достаёт оттуда `kid` и возвращает подходящий ключ из набора. Параметр `lifespan` задаёт, сколько секунд держать JWKS в кэше; по умолчанию это 300 секунд. Пока кэш свеж, обращения к сети нет. Когда Keycloak вводит новый ключ при ротации, клиент подхватывает его при следующем обновлении кэша, а токены со старым `kid` продолжают проверяться, пока старый ключ остаётся в наборе. Ради этого проверку и выбирают по `kid`, а не по первому попавшемуся ключу набора.
+
+<Callout type="tip">
+Создавайте PyJWKClient один раз на всё приложение, а не в теле обработчика. Новый клиент на каждый запрос обнуляет кэш и превращает офлайн-проверку обратно в поход по сети за JWKS.
+</Callout>
+
+## jwt.decode: обязательный набор проверок и их аргументы
+
+Ключ есть, дальше `jwt.decode`. Именно этот вызов делает всю содержательную работу, и в нём легко ошибиться недосказанностью.
+
+```python
+claims = jwt.decode(
+    token,
+    signing_key.key,
+    algorithms=["RS256"],
+    audience="reports-api",
+    issuer=issuer,
+    leeway=10,
+)
+```
+
+Каждый аргумент закрывает одну проверку. `algorithms=["RS256"]` фиксирует допустимый алгоритм подписи. Без него PyJWT откажется работать и потребует список явно, и это не каприз: если доверять полю `alg` из самого токена, открывается классическая атака. Нападающий ставит `alg: none` или подменяет RS256 на HS256, подписывая токен публичным ключом как секретом. Явный список алгоритмов закрывает обе лазейки.
+
+`audience="reports-api"` требует, чтобы claim `aud` содержал идентификатор вашего сервиса. `issuer=issuer` сверяет claim `iss` с адресом вашего realm. Срок `exp` PyJWT проверяет сам, по умолчанию, и бросает `ExpiredSignatureError`, когда токен просрочен. Подпись проверяется тоже всегда, если вы не отключили её вручную. `leeway=10` даёт десять секунд допуска на разъехавшиеся часы, чтобы только что выпущенный токен не отвергался из-за рассинхронизации времени между Keycloak и вашим сервером.
+
+При любой неудаче `jwt.decode` бросает исключение, подкласс `jwt.PyJWTError`: `InvalidSignatureError`, `ExpiredSignatureError`, `InvalidAudienceError`, `InvalidIssuerError`. Ловить достаточно базовый `PyJWTError`, чтобы разом покрыть все причины отказа.
+
+## Грабли aud: почему Keycloak отдаёт aud=account
+
+Вот что ломает первую же интеграцию. Вы пишете `audience="reports-api"`, запускаете, и `jwt.decode` бросает `InvalidAudienceError`, хотя токен только что выдан вашим Keycloak. Причина в том, что access token Keycloak по умолчанию несёт `aud`, равный `"account"`, встроенному клиенту realm, а не идентификатору вашего API. Вашего сервиса в `aud` просто нет.
+
+Тут тянет отключить проверку: `options={"verify_aud": False}`. Так вы своими руками убираете именно ту проверку, которая мешает чужому токену этого realm попасть в ваш сервис. Правильный выход лежит на стороне Keycloak: добавить audience-маппер или client scope, чтобы realm клал идентификатор вашего API в `aud`. После этого `audience="reports-api"` проходит честно, и вы отбрасываете токены, выписанные другим клиентам того же realm.
+
+<Callout type="warning">
+`options={"verify_aud": False}` и `options={"verify_signature": False}` в проде это дыра, а не решение. Первое пускает чужие токены realm, второе принимает вообще любую подделку. Если проверка мешает, чините конфиг Keycloak, а не глушите проверку.
+</Callout>
+
+## get_current_user: зависимость FastAPI и роли из токена
+
+Соберём проверку в зависимость FastAPI. `OAuth2PasswordBearer` достаёт токен из заголовка `Authorization` и заодно рисует форму авторизации в Swagger; сам он ничего не проверяет, только извлекает строку токена.
+
+```python
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{BASE}/protocol/openid-connect/token")
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    try:
+        key = jwks_client.get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token, key.key, algorithms=["RS256"],
+            audience="reports-api", issuer=issuer, leeway=10,
+        )
+    except jwt.PyJWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+```
+
+Любой обработчик, объявивший `user: dict = Depends(get_current_user)`, получит проверенные claims или ответ 401. Роли Keycloak кладёт в два места. Realm-роли лежат в `realm_access.roles`, роли конкретного клиента в `resource_access.<client>.roles`. Достаются они обычным разбором словаря:
+
+```python
+realm_roles = claims.get("realm_access", {}).get("roles", [])
+client_roles = (
+    claims.get("resource_access", {}).get("reports-api", {}).get("roles", [])
+)
+```
+
+Проверку роли удобно завернуть в отдельную зависимость. И тут важно различать два кода ответа. 401 означает «не знаю, кто вы»: токена нет, он просрочен или подпись не сошлась. 403 означает «знаю, кто вы, но этого делать нельзя»: токен валиден, личность установлена, но нужной роли у пользователя нет.
+
+```python
+def require_role(role: str):
+    def checker(user: dict = Depends(get_current_user)) -> dict:
+        roles = user.get("realm_access", {}).get("roles", [])
+        if role not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+        return user
+    return checker
+```
+
+<Figure caption="401 отвечает на вопрос «кто вы» · 403 отвечает «что вам можно»: разные причины отказа и разная разумная реакция клиента.">
+  <Sketch viewBox="0 0 460 160" title="401 против 403">
+    <SketchBox x={20} y={36} width={190} height={78} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={60} mono>401 Unauthorized</SketchLabel>
+    <SketchLabel x={115} y={80} size={11} muted>нет токена · истёк · подпись</SketchLabel>
+    <SketchLabel x={115} y={98} size={11} muted>клиент: обновить токен, войти</SketchLabel>
+    <SketchBox x={250} y={36} width={190} height={78} accent />
+    <SketchLabel x={345} y={60} mono accent>403 Forbidden</SketchLabel>
+    <SketchLabel x={345} y={80} size={11} accent>токен валиден · роли нет</SketchLabel>
+    <SketchLabel x={345} y={98} size={11} accent>клиент: логин не поможет</SketchLabel>
+    <SketchLabel x={230} y={140} size={12} muted>кто вы ←→ что вам можно</SketchLabel>
+  </Sketch>
+</Figure>
+
+Путать эти коды это частая ошибка. Отдавать 403 на невалидный токен неверно: клиент решит, что дело в правах, и не станет обновлять токен, хотя нужно именно это. И наоборот, 401 на нехватку роли толкнёт клиент на бессмысленный логин, который прав не добавит.
+
+## Частые ошибки
+
+- **Не фиксировать `algorithms`.** Доверие полю `alg` из токена открывает атаки `alg: none` и подмену RS256 на HS256. Список алгоритмов задают явно и всегда.
+- **Глушить проверку вместо починки конфига.** `verify_aud: False` пускает чужие токены realm, `verify_signature: False` принимает подделки. Причину `InvalidAudienceError` лечат audience-маппером в Keycloak.
+- **Создавать PyJWKClient на каждый запрос.** Это стирает кэш ключей и возвращает сетевой вызов за JWKS на каждый запрос, ровно то, чего офлайн-проверка должна избегать.
+- **Путать 401 и 403.** Невалидный или отсутствующий токен даёт 401, нехватка роли при валидном токене даёт 403. Смешивание ломает поведение клиента.
+
+<Detail summary="Client credentials: токен для вызовов сервис-сервис">
+
+Когда один сервис зовёт другой без участия пользователя, пользовательского токена нет. Для этого случая существует grant `client_credentials`: сервис аутентифицируется своим `client_id` и `client_secret` и получает access token, где `sub` указывает на сервисную учётку, а не на человека.
+
+```python
+resp = requests.post(
+    f"{BASE}/protocol/openid-connect/token",
+    data={
+        "grant_type": "client_credentials",
+        "client_id": "report-service",
+        "client_secret": CLIENT_SECRET,
+    },
+)
+service_token = resp.json()["access_token"]
+```
+
+Принимающая сторона проверяет такой токен ровно так же, как пользовательский: PyJWKClient плюс `jwt.decode`. Разница в claims: у сервисного токена нет `refresh_token` (при истечении просто запрашивают новый), а роли берут из `resource_access` сервисной учётки.
+
+</Detail>
+
+<Detail summary="Introspection против офлайн-проверки">
+
+Офлайн-проверка через PyJWT быстрая и не ходит в сеть, но не видит отзыва: токен считается валидным до `exp`, даже если сессию уже завершили. Когда нужен мгновенный отзыв, у Keycloak есть endpoint introspection (RFC 7662): вы спрашиваете сам realm, активен ли токен.
+
+```python
+resp = requests.post(
+    f"{BASE}/protocol/openid-connect/token/introspect",
+    data={"token": token},
+    auth=("reports-api", CLIENT_SECRET),
+)
+active = resp.json()["active"]
+```
+
+<Compare
+  leftTitle="Офлайн-проверка (PyJWT)"
+  rightTitle="Introspection"
+  left={
+    <ul>
+      <li>Проверка локальная, без сети</li>
+      <li>Масштабируется, Keycloak не узкое место</li>
+      <li>Отзыв не виден до exp</li>
+    </ul>
+  }
+  right={
+    <ul>
+      <li>Сетевой вызов на каждую проверку</li>
+      <li>Видит отзыв немедленно</li>
+      <li>Зависит от доступности Keycloak</li>
+    </ul>
+  }
+  verdict="Офлайн на горячем пути, introspection на чувствительных операциях, где важен мгновенный отзыв."
+/>
+
+Практика обычно комбинирует оба подхода: быстрые токены с офлайн-проверкой на большинстве запросов и introspection там, где мгновенный отзыв критичен, например на операциях с деньгами.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Разделите работу: PyJWKClient загружает и кэширует публичные ключи realm, jwt.decode проверяет подпись и claims локально, без сети на каждый запрос.",
+    "jwks_uri берут из discovery-документа .well-known/openid-configuration, а не зашивают руками; PyJWKClient выбирает ключ по kid и поддерживает ротацию.",
+    "В jwt.decode обязательны algorithms=['RS256'], audience и issuer; exp и подпись PyJWT проверяет по умолчанию, leeway гасит рассинхронизацию часов.",
+    "algorithms задают явно всегда: доверие полю alg из токена открывает атаки alg:none и подмену RS256 на HS256.",
+    "Keycloak по умолчанию кладёт в aud значение account; чинить это надо audience-маппером в realm, а не отключением verify_aud.",
+    "Роли лежат в realm_access.roles и resource_access.<client>.roles; невалидный токен даёт 401, нехватка роли при валидном токене даёт 403.",
+  ]}
+/>
+
+## Ссылки
+
+- [PyJWT - документация](https://pyjwt.readthedocs.io/en/stable/)
+- [PyJWT - PyJWKClient и работа с JWKS](https://pyjwt.readthedocs.io/en/stable/usage.html#retrieve-rsa-signing-keys-from-a-jwks-endpoint)
+- [FastAPI - OAuth2 и защита эндпоинтов](https://fastapi.tiangolo.com/tutorial/security/)
+- [Keycloak - Securing Applications and Services Guide](https://www.keycloak.org/docs/latest/securing_apps/index.html)
+- [RFC 7662 - OAuth 2.0 Token Introspection](https://datatracker.ietf.org/doc/html/rfc7662)

@@ -1,0 +1,329 @@
+exercises:
+  - id: kc-py-jwks-discovery-001
+    concept: python-integration
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Where does a Python service get the public keys to verify a Keycloak token's signature?"
+    choices:
+      - id: a
+        text: "From the JWKS set at jwks_uri, taken from the .well-known/openid-configuration discovery document."
+      - id: b
+        text: "From the service's client_secret stored in environment variables."
+      - id: c
+        text: "The key arrives inside the token itself, in its payload."
+      - id: d
+        text: "The service generates the public key itself from the kid value."
+    correct: [a]
+    explanation: "The realm's public keys live in the JWKS set. Its address jwks_uri comes from the .well-known/openid-configuration discovery document, not hardcoded. client_secret serves other purposes, and there is no key in the token payload."
+    variants:
+      - prompt: "What does a Keycloak realm's .well-known/openid-configuration discovery document contain?"
+        choices:
+          - id: a
+            text: "Realm metadata: issuer, jwks_uri, and the token and introspection endpoint addresses."
+          - id: b
+            text: "A list of the realm's active users."
+          - id: c
+            text: "The realm's private keys for signing tokens."
+          - id: d
+            text: "A ready-made access_token for your service."
+        correct: [a]
+        explanation: "The discovery document returns realm metadata: issuer, jwks_uri, and endpoint addresses. Keycloak never publishes private keys, only public ones in JWKS."
+      - prompt: "Why read jwks_uri from discovery instead of hardcoding the key address?"
+        choices:
+          - id: a
+            text: "The address and key set can change on rotation or realm relocation; discovery gives current values from one source."
+          - id: b
+            text: "Discovery is faster than a direct JWKS request."
+          - id: c
+            text: "Without discovery the token cannot be decoded at all."
+          - id: d
+            text: "jwks_uri is secret and only handed out via discovery."
+        correct: [a]
+        explanation: "Discovery is the single source of current addresses. A hardcoded jwks_uri breaks on realm relocation or path changes; jwks_uri is not a secret, public keys are open."
+
+  - id: kc-py-client-credentials-001
+    concept: python-integration
+    type: theory-quiz
+    difficulty: 2
+    prompt: "A reports service calls billing on a nightly schedule with no user involved. How should it obtain a token for that call?"
+    choices:
+      - id: a
+        text: "The client_credentials grant: the service authenticates with its own client_id and client_secret and gets an access token with a service-account sub."
+      - id: b
+        text: "Use the refresh_token of the last user who logged in."
+      - id: c
+        text: "Copy any valid user access_token."
+      - id: d
+        text: "Call billing with no token at all, since it is an internal call."
+    correct: [a]
+    explanation: "For service-to-service calls with no user, the client_credentials grant exists. The service presents client_id and client_secret and gets an access token for its service account. Borrowing user tokens or calling with no token are not substitutes."
+    variants:
+      - prompt: "What does a service get from the client_credentials grant, and what does that token lack?"
+        choices:
+          - id: a
+            text: "An access token for the service account; no refresh_token is issued, on expiry it just requests a new one."
+          - id: b
+            text: "Both access and refresh, like a user login."
+          - id: c
+            text: "Only an id_token with no access_token."
+          - id: d
+            text: "A username and password to reach billing."
+        correct: [a]
+        explanation: "client_credentials gives an access token with no refresh_token: a machine client has no interactive session, so on expiry it simply requests a new token the same way."
+      - prompt: "How does the receiving service verify a token obtained via client_credentials?"
+        choices:
+          - id: a
+            text: "The same as a user token: PyJWKClient plus jwt.decode with signature, iss, aud, and exp checks."
+          - id: b
+            text: "It does not: internal service tokens are trusted without verification."
+          - id: c
+            text: "Only by matching client_id, without checking the signature."
+          - id: d
+            text: "It sends the token back to the calling service for confirmation."
+        correct: [a]
+        explanation: "A service token is an ordinary signed JWT. The receiver verifies it with the same code: pick the key by kid and call jwt.decode with the mandatory checks. Trusting it unverified is not an option."
+
+  - id: kc-py-algorithms-pin-001
+    concept: python-integration
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Why must you set algorithms=['RS256'] explicitly in jwt.decode instead of trusting the token's own alg field?"
+    choices:
+      - id: a
+        text: "Otherwise an attacker sets alg:none or swaps RS256 for HS256, signing the token with the public key as the secret; an explicit list closes both attacks."
+      - id: b
+        text: "PyJWT is slower without an explicit algorithm list."
+      - id: c
+        text: "The alg field is not part of a JWT, so there is nowhere to read it from."
+      - id: d
+        text: "It is only needed for symmetric keys; for RS256 it is optional."
+    correct: [a]
+    explanation: "Trusting the token's alg opens two classic attacks: alg:none (an unsigned token) and the RS256-to-HS256 swap (the public key used as an HMAC secret). An explicit algorithm list in decode closes both, which is why PyJWT requires it."
+    variants:
+      - prompt: "What is the essence of the alg:none attack on JWT validation?"
+        choices:
+          - id: a
+            text: "The token declares algorithm 'none' (no signature); a service that trusts the token's alg accepts an entirely unsigned token."
+          - id: b
+            text: "The payload is encrypted so the service cannot read it."
+          - id: c
+            text: "Keycloak is forced to issue a new signing key."
+          - id: d
+            text: "The exp claim is removed so the token never expires."
+        correct: [a]
+        explanation: "alg:none means 'no signature'. If the code trusts the alg field, it skips signature verification and accepts a forged token. An explicit algorithms=['RS256'] rejects such a token."
+      - prompt: "What is the essence of the RS256-to-HS256 swap when trusting the alg field?"
+        choices:
+          - id: a
+            text: "The attacker declares HS256 and signs the token with the RSA public key as an HMAC secret; a service trusting alg verifies with that same public string and accepts the forgery."
+          - id: b
+            text: "HS256 is faster, so Keycloak switches to it automatically."
+          - id: c
+            text: "RS256 and HS256 are incompatible, so the token simply fails to decode."
+          - id: d
+            text: "The swap changes the token's issuer, not its signing algorithm."
+        correct: [a]
+        explanation: "The RSA public key is known to everyone. If a service trusts alg and sees HS256, it uses the public key as an HMAC secret to verify, and the attacker signed with that same public key. An explicit RS256 list prevents downgrading the check to HS256."
+
+  - id: kc-py-decode-blanks-001
+    concept: python-integration
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill the blanks: the three jwt.decode arguments that close the signing-algorithm, audience, and issuer checks."
+    template: |
+      claims = jwt.decode(
+          token,
+          signing_key.key,
+          {{p_alg}}=["RS256"],
+          {{p_aud}}="reports-api",
+          {{p_iss}}=issuer,
+      )
+    blanks:
+      p_alg:
+        accept: ["algorithms"]
+      p_aud:
+        accept: ["audience"]
+      p_iss:
+        accept: ["issuer"]
+    hints:
+      - "One argument pins the list of allowed algorithms, one sets the expected aud recipient, one checks the iss issuer."
+    variants:
+      - prompt: "Fill the blanks for a different service: the same three mandatory jwt.decode arguments."
+        template: |
+          claims = jwt.decode(
+              token,
+              signing_key.key,
+              {{p_alg}}=["RS256"],
+              {{p_aud}}="billing-api",
+              {{p_iss}}=issuer,
+          )
+        blanks:
+          p_alg:
+            accept: ["algorithms"]
+          p_aud:
+            accept: ["audience"]
+          p_iss:
+            accept: ["issuer"]
+      - prompt: "Fill the blanks: the same arguments plus an allowance for clock drift."
+        template: |
+          claims = jwt.decode(
+              token,
+              signing_key.key,
+              {{p_alg}}=["RS256"],
+              audience="orders-api",
+              issuer=issuer,
+              {{p_leeway}}=10,
+          )
+        blanks:
+          p_alg:
+            accept: ["algorithms"]
+          p_leeway:
+            accept: ["leeway"]
+
+  - id: kc-py-roles-predict-001
+    concept: python-integration
+    type: predict-output
+    difficulty: 2
+    prompt: "Keycloak roles live in realm_access and resource_access. What does this claims parse print?"
+    snippet: |
+      claims = {
+          "sub": "u-42",
+          "realm_access": {"roles": ["default-roles-corp", "manager"]},
+          "resource_access": {"reports-api": {"roles": ["report.read"]}},
+      }
+
+      realm_roles = claims.get("realm_access", {}).get("roles", [])
+      client_roles = claims.get("resource_access", {}).get("reports-api", {}).get("roles", [])
+      print("manager" in realm_roles, "report.read" in client_roles)
+    expected:
+      kind: stdout
+      value: "True True"
+    hints:
+      - "realm_access.roles are realm roles; resource_access.<client>.roles are a specific client's roles. Check whether the wanted role is in each list."
+    variants:
+      - snippet: |
+          claims = {
+              "sub": "u-7",
+              "realm_access": {"roles": ["user"]},
+              "resource_access": {"account": {"roles": ["view-profile"]}},
+          }
+
+          realm_roles = claims.get("realm_access", {}).get("roles", [])
+          client_roles = claims.get("resource_access", {}).get("reports-api", {}).get("roles", [])
+          print("admin" in realm_roles, client_roles)
+        expected:
+          kind: stdout
+          value: "False []"
+      - snippet: |
+          claims = {
+              "realm_access": {"roles": ["user", "manager", "auditor"]},
+          }
+
+          roles = claims.get("realm_access", {}).get("roles", [])
+          print(len(roles), "manager" in roles)
+        expected:
+          kind: stdout
+          value: "3 True"
+
+  - id: kc-py-aud-default-001
+    concept: python-integration
+    type: theory-quiz
+    difficulty: 3
+    prompt: "jwt.decode with audience='reports-api' raises InvalidAudienceError on a fresh token from your Keycloak. Why, and how do you fix it correctly?"
+    choices:
+      - id: a
+        text: "Keycloak puts 'account' in aud by default, not your API's identifier; the fix is an audience mapper or client scope in the realm, not disabling verify_aud."
+      - id: b
+        text: "The token was corrupted in transit and must be reissued."
+      - id: c
+        text: "The aud check should always be disabled via options={'verify_aud': False}."
+      - id: d
+        text: "PyJWT cannot verify aud; you need a different package."
+    correct: [a]
+    explanation: "By default a Keycloak access token carries aud='account', the realm's built-in client. Your service is not in aud, so audience='reports-api' does not match. The fix is to configure the realm to put your API's identifier into aud (an audience mapper or scope). Disabling verify_aud removes the very check that keeps other realm tokens out."
+    hints:
+      - "Look at what is actually in the token's aud by default: does it match your service's identifier?"
+      - "There are two ways to 'fix' it: remove the aud check, or make the realm emit the right aud. One opens a hole, the other closes it."
+
+  - id: kc-py-dependency-blanks-001
+    concept: python-integration
+    type: fill-in-blanks
+    difficulty: 3
+    prompt: "Fill the blanks in the FastAPI dependency: get the token, verify it, and return 401 on any verification error."
+    template: |
+      oauth2_scheme = OAuth2PasswordBearer(tokenUrl=TOKEN_URL)
+
+      def get_current_user(token: str = {{dep}}(oauth2_scheme)) -> dict:
+          try:
+              key = jwks_client.get_signing_key_from_jwt(token)
+              return jwt.decode(
+                  token, key.key, algorithms=["RS256"],
+                  audience="reports-api", issuer=issuer,
+              )
+          except jwt.{{err}}:
+              raise HTTPException(status.{{code}}, "invalid token")
+    blanks:
+      dep:
+        accept: ["Depends"]
+      err:
+        accept: ["PyJWTError"]
+      code:
+        accept: ["HTTP_401_UNAUTHORIZED"]
+    hints:
+      - "The first blank is the FastAPI function that declares a dependency on the security scheme. It extracts the token from the header."
+      - "The second blank is the base PyJWT exception class covering every rejection reason. The third is the 'I do not know who you are' status."
+    variants:
+      - prompt: "Fill the blanks in the role check: valid token, but return 403 when the role is missing."
+        template: |
+          def require_role(role: str):
+              def checker(user: dict = {{dep}}(get_current_user)) -> dict:
+                  roles = user.get("realm_access", {}).get("roles", [])
+                  if role not in roles:
+                      raise HTTPException(status.{{code}}, "forbidden")
+                  return user
+              return checker
+        blanks:
+          dep:
+            accept: ["Depends"]
+          code:
+            accept: ["HTTP_403_FORBIDDEN"]
+
+  - id: kc-py-401-403-001
+    concept: python-integration
+    type: theory-quiz
+    difficulty: 3
+    prompt: "The token is valid and the signature checks out, but the user lacks the report.admin role for the operation. Which status do you return, and why?"
+    choices:
+      - id: a
+        text: "403 Forbidden: identity is established but permissions are insufficient; 401 would say 'I do not know who you are' and trigger a pointless re-login."
+      - id: b
+        text: "401 Unauthorized: since access is denied, the client should log in again."
+      - id: c
+        text: "200 OK with an empty body: let the client decide what to do."
+      - id: d
+        text: "500 Internal Server Error: a missing role is a server failure."
+    correct: [a]
+    explanation: "401 answers 'who are you' and fits when the token is missing, expired, or the signature failed. Here identity is established and only permissions are missing, which is exactly 403. Returning 401 pushes the client into a re-login that adds no permissions."
+    hints:
+      - "Separate two questions: 'who are you' and 'what may you do'. Which one fails here?"
+      - "Think about the client's reaction: will refreshing the token or logging in again add the missing role? That decides the right code."
+
+  - id: kc-py-introspection-when-001
+    concept: python-integration
+    type: theory-quiz
+    difficulty: 4
+    prompt: "Money-debit operations require a revoked token to stop working immediately. What do you choose instead of offline verification, and at what cost?"
+    choices:
+      - id: a
+        text: "Introspection (RFC 7662): ask the realm whether the token is active; it sees revocation at once, at the cost of a network call per check and dependency on Keycloak availability."
+      - id: b
+        text: "Just shorten the JWKS cache lifespan to zero."
+      - id: c
+        text: "Disable signature verification to speed up processing."
+      - id: d
+        text: "Store the list of revoked tokens inside the token itself."
+    correct: [a]
+    explanation: "Offline verification does not see revocation: the token is valid until exp even after the session ends. Introspection asks the realm about the token's status right now and sees revocation immediately, but adds a network call per check and a dependency on Keycloak. So you apply it selectively, on sensitive operations, not across the whole hot path. A short JWKS lifespan does not solve revocation; keys and revocation are different things."
+    hints:
+      - "Offline verification does not see revocation until exp. Which mechanism asks Keycloak about the token's status right now?"
+      - "Instant revocation is paid for on every request. Paid with what, and why is it tolerable only on sensitive operations?"

@@ -1,0 +1,247 @@
+---
+conceptId: di-containers
+title: "DI containers: dishka assembles the graph for the whole application"
+estimatedMinutes: 45
+---
+
+# DI containers: who assembles the dependency graph of a whole application
+
+`Depends` from the previous concept serves a single handler well, but it has a ceiling. A database connection pool, an ML model loaded into memory, and a parsed config each live once for the whole process, yet `Depends` caches a dependency only within one request: the next request recomputes it. To let an object outlive requests, developers reach for module-level globals, `@lru_cache` on the dependency function, or `app.state`. Every such detour hides the dependency: it no longer shows up in the signature, its type is lost, it is hard to swap in a test. On top of that, every edge of the graph is spelled out by hand where the dependency is used: `Depends(get_db)`, `Depends(get_user)`, dozens of times over.
+
+A container removes both limits. You register how each dependency is built and how long it lives, then ask the container for the service you need. From there it unrolls the whole chain itself, creates long-lived objects once and short-lived ones per request, and closes them in the right order. In this section we look at exactly what `Depends` lacks compared to a container, how scopes work in `dishka` (today the main DI container in Python), how it plugs into FastAPI and Litestar, and why the graph assembly point is pulled out into a composition root.
+
+## What `Depends` cannot do as a container
+
+`Depends` is strong inside a request, but three things are beyond it, and those are what set a full container apart.
+
+First, `Depends` has no **app-scope**. A dependency's cache lives exactly one request, so a process-wide singleton has to be bolted on from the side: a global variable, `@lru_cache`, `app.state`. All three hide the dependency from typing and substitution; on top of that `@lru_cache` caches for the whole process and is not reset between tests, so swapping such an object in one test without leaving traces in its neighbors is hard. Second, `Depends` has no **automatic assembly by type** (wiring). The framework does not know *how to build* `OrderService`; you are obliged to state `Depends(...)` at each point and thread the subdependencies yourself. Third, `Depends` has no **shared lifecycle**. A `yield` dependency closes its resource at the end of a request, but application startup and shutdown events (`lifespan`) live separately from the dependency graph and are not tied to it.
+
+A container closes all three gaps: it holds several lifetimes (scopes), builds an object by its type while unrolling the subdependencies itself, and ties resource release to the closing of the matching scope.
+
+## Mental model: scope as nested lifetimes
+
+The key to a container is not *how* to create an object but *how long* it lives. That is what scope sets. Scopes nest inside one another like boxes: the outer `Scope.APP` spans the whole application lifetime; the inner `Scope.REQUEST` opens on each request and closes when the request is handled. An object in `Scope.APP` is created once and shared by all requests: a singleton. An object in `Scope.REQUEST` is recreated for each request and cached within it.
+
+<Figure caption="Scope.APP spans the whole application and holds singletons: pool is created once. Each request opens a nested Scope.REQUEST with its own set of objects (uow is per-request) and closes it when done. The inner scope sees the outer, but not the reverse.">
+  <Sketch viewBox="0 0 480 250" title="Nested container scopes">
+    <SketchBox x={16} y={16} width={448} height={218} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={240} y={40} weight="bold">Scope.APP · whole application lifetime</SketchLabel>
+    <SketchBox x={170} y={54} width={140} height={44} accent />
+    <SketchLabel x={240} y={74} mono size={11} accent>pool</SketchLabel>
+    <SketchLabel x={240} y={90} size={10} muted>created once</SketchLabel>
+    <SketchBox x={40} y={122} width={186} height={96} dashed />
+    <SketchLabel x={133} y={142} size={11}>Scope.REQUEST · request 1</SketchLabel>
+    <SketchBox x={62} y={156} width={142} height={44} accent />
+    <SketchLabel x={133} y={182} mono size={11} accent>uow #1</SketchLabel>
+    <SketchBox x={254} y={122} width={186} height={96} dashed />
+    <SketchLabel x={347} y={142} size={11}>Scope.REQUEST · request 2</SketchLabel>
+    <SketchBox x={276} y={156} width={142} height={44} accent />
+    <SketchLabel x={347} y={182} mono size={11} accent>uow #2</SketchLabel>
+    <SketchArrow from={[133, 156]} to={[214, 98]} accent dashed />
+    <SketchArrow from={[347, 156]} to={[266, 98]} accent dashed />
+  </Sketch>
+</Figure>
+
+In the figure `pool` sits in the shared outer box, so both requests take the same object. `uow` is born inside its own request box, so request 1 and request 2 get different ones. The dashed arrows show the direction of visibility: a request reaches up to the app object, but the app object cannot see the contents of a specific request: it outlives them all.
+
+## dishka: the provider describes how a dependency is built
+
+`dishka` assembles the graph around two notions: `Provider` and `Scope`. In a provider you declare factories: a method under the `@provide` decorator builds a dependency, and its return annotation tells the container *what type* the method yields. The container fills in the method parameters itself, resolving them by type.
+
+```python
+from dishka import Provider, Scope, provide, make_async_container
+
+class AppProvider(Provider):
+    @provide(scope=Scope.APP)
+    def pool(self) -> Pool:
+        return Pool(dsn="postgresql://localhost/shop")
+
+    @provide(scope=Scope.REQUEST)
+    def uow(self, pool: Pool) -> UnitOfWork:
+        return UnitOfWork(pool)
+
+    @provide(scope=Scope.REQUEST)
+    def order_service(self, uow: UnitOfWork) -> OrderService:
+        return OrderService(uow)
+
+container = make_async_container(AppProvider())
+```
+
+Here `pool` is declared in `Scope.APP`, so the pool is created once and reused by every request. `uow` is declared in `Scope.REQUEST` and asks for `pool: Pool` in a parameter; the container sees this annotation, takes the ready pool from the outer scope, and passes it into the factory. Likewise `order_service` asks for `uow`. When a handler asks the container for `OrderService`, it assembles the chain `pool → uow → order_service` itself: you never wrote `OrderService(UnitOfWork(Pool(...)))` by hand, the graph unrolled by types. `make_async_container` packs all of this into an async container for an async application (for a sync one there is `make_container`).
+
+To make the container not only create a resource but also close it, the factory is made a generator. Code before `yield` runs on entering the scope, code after it runs on closing the scope, exactly like a `yield` dependency in FastAPI, only now it works at the application level too.
+
+```python
+from collections.abc import AsyncIterator
+
+class AppProvider(Provider):
+    @provide(scope=Scope.APP)
+    async def pool(self) -> AsyncIterator[Pool]:
+        pool = await create_pool(dsn="postgresql://localhost/shop")
+        yield pool
+        await pool.close()
+```
+
+The line `await pool.close()` runs not at the end of a request but when the application container closes. Resource release is tied to the scope in which the resource was created. That is exactly the link `Depends` did not give: there a `yield` dependency knows only about the request.
+
+## Plugging into FastAPI and Litestar
+
+A standalone container would be useless if a handler could not draw from it. The integration closes that seam. For FastAPI, `setup_dishka(container, app)` installs middleware that opens a nested `Scope.REQUEST` on each request and puts the request container into `request.state`. In a handler you mark a parameter `FromDishka[...]`, and the `@inject` decorator fills it with an object from the container instead of request data.
+
+```python
+from dishka.integrations.fastapi import setup_dishka, FromDishka, inject
+from fastapi import FastAPI
+
+app = FastAPI()
+container = make_async_container(AppProvider())
+setup_dishka(container, app)
+
+@app.get("/orders/{order_id}")
+@inject
+async def get_order(order_id: int, service: FromDishka[OrderService]):
+    return await service.get(order_id)
+```
+
+FastAPI still pulls `order_id` from the path, and `service` arrives from the container already assembled: a request-scoped `uow` over an app-scoped `pool`. Litestar plugs in with the same move: only the import line changes, while the handler markup and `FromDishka` stay the same.
+
+```python
+from dishka.integrations.litestar import setup_dishka, FromDishka, inject
+from litestar import Litestar, get
+
+@get("/orders/{order_id:int}")
+@inject
+async def get_order(order_id: int, service: FromDishka[OrderService]) -> dict:
+    return await service.get(order_id)
+
+app = Litestar(route_handlers=[get_order])
+setup_dishka(container, app)
+```
+
+The same container serves different frameworks because it knows nothing about them: only the thin integration is framework-specific, while the providers and the graph are portable.
+
+## Build a mini-container by hand
+
+`dishka` is not installed in the sandbox, so below is a tiny pure-Python container that reproduces the essence of scope: app objects are cached in a shared `app_cache`, request objects in the request's local cache. Run the code and watch how `pool` matches between requests while `uow` differs. Then change `pool`'s scope to `REQUEST` and confirm that now it too differs between requests.
+
+<PyDemo
+  title="A tiny scoped container in pure Python"
+  code={`APP, REQUEST = "app", "request"
+
+class Container:
+    def __init__(self, providers):
+        self.providers = providers
+        self.app_cache = {}
+    def request(self):
+        return Request(self)
+
+class Request:
+    def __init__(self, container):
+        self.container = container
+        self.local = {}
+    def get(self, key):
+        factory, scope = self.container.providers[key]
+        cache = self.container.app_cache if scope == APP else self.local
+        if key not in cache:
+            cache[key] = factory()
+        return cache[key]
+
+container = Container({
+    "pool": (lambda: object(), APP),
+    "uow": (lambda: object(), REQUEST),
+})
+
+r1 = container.request()
+r2 = container.request()
+print("pool shared across requests:", r1.get("pool") is r2.get("pool"))
+print("uow per request:", r1.get("uow") is r2.get("uow"))
+print("same uow within one request:", r1.get("uow") is r1.get("uow"))`}
+/>
+
+The whole difference between a singleton and a per-request object comes down to one line: which cache to store the result in. The real `dishka` adds type resolution, scope checks, and finalization on top, but the core is exactly this: choosing the cache by lifetime.
+
+## Pitfall: scope cannot be inverted
+
+The most common surprise is the direction of dependencies between scopes. An inner scope sees the outer, but not the reverse. So an app object **cannot** depend on a request object: it outlives any request, and the request object is long closed by then. `dishka` catches this and will not let you assemble such a graph.
+
+```python
+class Broken(Provider):
+    @provide(scope=Scope.APP)
+    def cache(self, uow: UnitOfWork) -> Cache:
+        return Cache(uow)
+```
+
+Here the app-scoped `cache` asks for the request-scoped `uow`, and the container reports a scope error: a singleton has no right to hold a reference to something that lives for a single request. The fix is choosing the right lifetime: either `cache` is also moved to `Scope.REQUEST`, or it must depend on something app-level.
+
+The second price for app-scope is subtler. Since an app object is shared by all requests, any mutable state in it is shared across all of them at once, and across different users. An app-scoped list that handlers append to turns into a data leak between requests and a race under load. In `Scope.APP` you keep immutable or thread-safe things: config, pool, client. Anything with "current request state", a session, the current user, a unit of work, lives in `Scope.REQUEST`.
+
+## Composition root: the graph is assembled at the application boundary
+
+There is exactly one place where the abstract graph meets concrete classes: there you create the providers, call `make_async_container`, and connect it to the application. That place is called the composition root, and you keep it at the very edge, in the entry point or a `create_app` factory. The rest of the application only declares its needs by type, and *which* implementation to supply is decided by that single assembly point.
+
+<Figure caption="The composition root assembles the graph in a single place at the application boundary: providers bind a contract to a concrete implementation. The domain layer depends only on the Mailer protocol and knows nothing about the container; the implementation arrow points from outside inward.">
+  <Sketch viewBox="0 0 480 210" title="Composition root and the direction of dependencies">
+    <SketchBox x={20} y={26} width={188} height={162} dashed />
+    <SketchLabel x={114} y={46} weight="bold">Composition root</SketchLabel>
+    <SketchLabel x={114} y={63} size={10} muted>main.py · graph assembly</SketchLabel>
+    <SketchBox x={40} y={78} width={148} height={40} accent />
+    <SketchLabel x={114} y={102} mono size={11} accent>Provider + container</SketchLabel>
+    <SketchBox x={40} y={132} width={148} height={40} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={114} y={156} mono size={11}>SmtpMailer</SketchLabel>
+    <SketchBox x={300} y={66} width={160} height={92} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={380} y={88} weight="bold">Domain layer</SketchLabel>
+    <SketchLabel x={380} y={110} mono size={11}>OrderService</SketchLabel>
+    <SketchLabel x={380} y={134} mono size={11} accent>Mailer · Protocol</SketchLabel>
+    <SketchArrow from={[188, 150]} to={[300, 128]} accent />
+    <SketchLabel x={244} y={184} size={10} muted>implementation is supplied to fit the contract</SketchLabel>
+  </Sketch>
+</Figure>
+
+This separation is exactly the boundary that clean architecture draws (the `clean-architecture` topic): the domain layer depends only on contracts and points inward, while the outer layer with frameworks and drivers binds concrete adapters to the domain's ports. The DI container is the mechanism on this seam: it lives outside, in the composition root, and supplies implementations without ever making the domain import it. As long as the container has not leaked into business logic, the domain stays portable and testable.
+
+## Common mistakes
+
+- **Forgetting the return annotation on a factory.** `dishka` takes the provided type precisely from the return annotation of the `@provide` method. Without `-> Pool` the container does not know what the method yields and cannot resolve the dependency by type.
+- **Making everything `Scope.APP`.** It is tempting to declare everything a singleton "for speed". But a database session, the current user, and a unit of work must be `Scope.REQUEST`: in app-scope they leak between requests and share state across everyone. Singletons are only for immutable, shared resources.
+- **Not closing the container.** App-scoped resources with finalization (pool, connection) are released when the container closes. Forget `await container.close()` on shutdown and you get a leak. Integrations close the request scope themselves, but the root container is yours to close.
+- **Dragging the container into the domain.** If a business class imports the container or `FromDishka`, it is tied to the framework again. Keep container access only in the composition root and at the edge of handlers; the domain should depend on contracts, not on how they are assembled.
+
+<Detail summary="dishka versus dependency-injector">
+
+`dependency-injector` is another popular container, and its approach is different. There you assemble the graph from provider objects right inside a container class: `providers.Singleton` for a singleton, `providers.Factory` for "a new one on each call".
+
+```python
+from dependency_injector import containers, providers
+
+class Container(containers.DeclarativeContainer):
+    config = providers.Configuration()
+    pool = providers.Singleton(Pool, dsn=config.dsn)
+    uow = providers.Factory(UnitOfWork, pool=pool)
+```
+
+To get the values down to handlers, modules are "wired" via `container.wire(modules=[...])`, and markers `Provide[Container.uow]` are added to the signatures. That is explicit and visible, but more verbose, and lifetime is set by the provider type rather than by nested scopes. `dishka` starts from type annotations and puts scope at the center: you ask for a type, and the container finds the factory and picks the scope itself. Roughly: `dependency-injector` describes the graph with provider objects and requires wiring, `dishka` derives the graph from types and manages it through scopes.
+
+</Detail>
+
+<Detail summary="How the container finds a factory by type">
+
+When `dishka` builds the container, it walks all providers and builds a mapping "type → the factory that yields it" (the type is taken from the return annotation). The request `container.get(OrderService)` starts a graph traversal: at the `OrderService` factory it looks at the parameters, for each one finds its own factory by type, and descends deeper until it hits leaves with no dependencies. Along the way the container checks scope (you cannot reference an inner scope from an outer one) and caches the result in its scope's cache. The error "no provider for type X" means the type is nowhere declared as a return type; a scope error means the factory asks for an object with a shorter lifetime than its own.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Depends caches a dependency within one request and gives neither app-scope, nor assembly by type, nor a shared lifecycle: that is what sets it apart from a full container.",
+    "Scope sets lifetime: Scope.APP creates an object once for the whole application (a singleton), Scope.REQUEST recreates it per request; scopes nest, and the inner one sees the outer.",
+    "In dishka a provider declares factories via @provide, the provided type comes from the return annotation, and the container resolves factory parameters by type.",
+    "make_async_container assembles the graph; setup_dishka + FromDishka plug it into FastAPI and Litestar the same way, keeping the providers portable.",
+    "An app-scoped object cannot depend on a request-scoped one (it outlives it), and mutable state in Scope.APP is shared across all requests.",
+    "The composition root assembles the graph in a single place at the application boundary; the domain depends on contracts and knows nothing about the container: the seam of clean architecture.",
+  ]}
+/>
+
+## References
+
+- [dishka - documentation](https://dishka.readthedocs.io/)
+- [dishka - FastAPI and Litestar integrations](https://dishka.readthedocs.io/en/stable/integrations/index.html)
+- [dependency-injector - documentation](https://python-dependency-injector.ets-labs.org/)
+- [Mark Seemann - Composition Root](https://blog.ploeh.dk/2011/07/28/CompositionRoot/)

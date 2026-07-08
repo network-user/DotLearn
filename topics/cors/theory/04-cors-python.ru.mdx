@@ -1,0 +1,218 @@
+---
+conceptId: cors-python
+title: "Настройка CORS в Python"
+estimatedMinutes: 50
+---
+
+# Теперь CORS настраиваете вы: FastAPI и Django
+
+В прошлом разделе вывод был простой: CORS чинит сервер, а не клиент, и разрешение приходит в заголовках ответа. Теперь вы по ту сторону: этот сервер пишете вы на Python. Вы добавляете три строки `CORSMiddleware`, деплоите и получаете один из трёх исходов. Либо всё сразу работает. Либо со звёздочкой в настройках cookie загадочно не ездят. Либо в проде каждый браузер вдруг отвергает ответ, потому что заголовок `Access-Control-Allow-Origin` пришёл дважды.
+
+Разберём, как настраивается CORS в двух самых частых Python-стеках: FastAPI (через `CORSMiddleware` из Starlette) и Django (через пакет `django-cors-headers`). Заодно посмотрим, почему порядок middleware влияет на то, попадёт ли заголовок на ответ, как отлаживать конфиг через `curl` и почему двойные заголовки от прокси и приложения это классическая прод-авария.
+
+## Ментальная модель: CORS это ещё один слой middleware
+
+Со стороны Python CORS не магия и не отдельная подсистема. Это middleware: тонкий слой, который оборачивает ваш обработчик, пропускает запрос внутрь, а на обратном пути штампует к ответу заголовки `Access-Control-*`. Все параметры, которые вы задаёте, ложатся один в один на заголовки из прошлого раздела: список origin превращается в `Allow-Origin`, список методов в `Allow-Methods`, и так далее.
+
+<Figure caption="CORS-слой оборачивает обработчик и штампует заголовки Access-Control-* на ответ по пути наружу. Ответ, который родился вне этого слоя, уедет без заголовков.">
+  <Sketch viewBox="0 0 480 200" title="Где рождаются CORS-заголовки">
+    <SketchBox x={20} y={75} width={80} height={50} accent radius={8} />
+    <SketchLabel x={60} y={104} mono accent size={11}>браузер</SketchLabel>
+
+    <SketchBox x={190} y={35} width={160} height={130} fill="rgb(var(--surface-2))" radius={10} />
+    <SketchLabel x={270} y={28} size={11}>CORS-слой (middleware)</SketchLabel>
+    <SketchBox x={225} y={80} width={90} height={55} accent radius={6} />
+    <SketchLabel x={270} y={112} mono accent size={10}>обработчик</SketchLabel>
+
+    <SketchArrow from={[100, 88]} to={[190, 88]} />
+    <SketchLabel x={145} y={80} size={10} muted>запрос</SketchLabel>
+    <SketchArrow from={[190, 120]} to={[100, 120]} accent />
+    <SketchLabel x={140} y={150} size={9} muted>ответ · Access-Control-*</SketchLabel>
+  </Sketch>
+</Figure>
+
+Из этой картинки следуют два практических вопроса, которые и составляют весь раздел. Первый: какие параметры слоя каким заголовкам соответствуют. Второй: где именно в стеке слой стоит, потому что заголовок появится только на тех ответах, которые физически прошли через него.
+
+## FastAPI: четыре параметра, четыре заголовка
+
+В FastAPI CORS подключается middleware из Starlette. Базовая настройка выглядит так:
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app.example.com"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=True,
+)
+```
+
+Читается это прямым переводом на заголовки ответа. `allow_origins` задаёт `Access-Control-Allow-Origin`: список точных origin, каждый со схемой и портом. `allow_methods` наполняет `Access-Control-Allow-Methods` для preflight, `allow_headers` наполняет `Access-Control-Allow-Headers`. `allow_credentials=True` добавляет `Access-Control-Allow-Credentials: true`, то есть разрешает cookie и заголовки авторизации.
+
+Для методов и заголовков допустима короткая запись `allow_methods=["*"]` и `allow_headers=["*"]`, которая означает «любые». Со списком origin такая же звёздочка тоже работает, но именно на ней и стоит главная ловушка.
+
+## Ловушка звёздочки с credentials
+
+Соблазн написать `allow_origins=["*"]` и `allow_credentials=True` велик: кажется, что так вы разрешили всё и точно ничего не забыли. На деле вы собрали ровно ту несовместимую пару, о которой шла речь в прошлом разделе. Браузер отказывается принимать `Access-Control-Allow-Origin: *` для запроса с credentials, поэтому такой конфиг ломает как раз те запросы, ради которых вы включили credentials.
+
+<Figure caption="Звёздочка и credentials несовместимы и в Python. Слева браузер отвергает ответ; справа origin назван явно, и запрос с cookie проходит.">
+  <Compare
+    leftTitle='allow_origins=["*"]'
+    rightTitle="точные origin"
+    left={
+      <ul>
+        <li>allow_credentials=True</li>
+        <li>ответ: Allow-Origin: *</li>
+        <li>браузер отвергает credentialed-запрос</li>
+      </ul>
+    }
+    right={
+      <ul>
+        <li>allow_origins=["https://app.example.com"]</li>
+        <li>ответ: Allow-Origin: https://app.example.com</li>
+        <li>cookie и Authorization проходят</li>
+      </ul>
+    }
+    verdict="Для credentials origin называют поимённо, а не звёздочкой."
+  />
+</Figure>
+
+<Callout type="warning">
+Не совмещайте `allow_origins=["*"]` с `allow_credentials=True`. Перечислите разрешённые origin явным списком. Если доменов несколько, это по-прежнему список конкретных значений, а не звёздочка: middleware само сверит `Origin` запроса со списком и отразит подходящий обратно одним значением.
+</Callout>
+
+## allow_origin_regex: разрешить превью-домены, не открыв дверь всем
+
+Список точных origin хорош, пока домены известны заранее. Но у превью-деплоев (сборка на каждый pull request) домен динамический: `https://pr-42.preview.example.com`, `https://pr-43.preview.example.com` и так далее. Перечислить их невозможно, а звёздочка небезопасна. Для этого у Starlette есть `allow_origin_regex`:
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https://pr-\d+\.preview\.example\.com",
+    allow_credentials=True,
+)
+```
+
+Теперь middleware пропускает любой origin, подошедший под регэксп, и отражает его в `Allow-Origin`. Это совместимо с credentials, потому что в ответ уходит конкретный origin, а не звёздочка.
+
+<Callout type="warning">
+Регэксп должен быть заякорен и точен. Забытая точка перед `example` или незаэкранированная точка в домене легко превращает `pr-\d+.preview.example.com` в шаблон, который пропустит `pr-1xpreviewYexample.com` или чужой поддомен. Экранируйте точки (`\.`) и проверяйте, что шаблон не совпадает с origin вида `https://evil-example.com`.
+</Callout>
+
+## Django: django-cors-headers и место в MIDDLEWARE
+
+В Django CORS не встроен: ставят пакет `django-cors-headers`. Он даёт своё middleware и настройки в `settings.py`:
+
+```python
+INSTALLED_APPS = [
+    "corsheaders",
+    # ...
+]
+
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    # ...остальные
+]
+
+CORS_ALLOWED_ORIGINS = ["https://app.example.com"]
+CORS_ALLOW_CREDENTIALS = True
+```
+
+Соответствие настроек заголовкам такое же, как в FastAPI. `CORS_ALLOWED_ORIGINS` это список точных origin для `Allow-Origin`, `CORS_ALLOW_CREDENTIALS = True` включает cookie. Правило звёздочки в силе и здесь: отдельная настройка `CORS_ALLOW_ALL_ORIGINS = True` отправляет `*` и несовместима с credentials. Для превью-доменов есть `CORS_ALLOWED_ORIGIN_REGEXES`, прямой аналог `allow_origin_regex`.
+
+Ключевой момент именно у Django это место `CorsMiddleware` в списке `MIDDLEWARE`. Его ставят как можно выше, обязательно перед `CommonMiddleware`. Причина в порядке обработки: Django пропускает запрос по списку сверху вниз, а ответ собирает снизу вверх, поэтому верхнее middleware оборачивает нижние. `CommonMiddleware` умеет само сформировать ответ (например, редирект при `APPEND_SLASH`), и если CORS-слой окажется ниже, такой ответ уедет без заголовков `Access-Control-*`.
+
+## Порядок middleware решает, попадёт ли заголовок на ответ
+
+Обобщим то, что мы увидели в Django, потому что в FastAPI действует та же логика: заголовок `Access-Control-*` появляется только на ответе, который прошёл через CORS-слой. Если ответ родился вне его, заголовков не будет.
+
+В FastAPI порядок задаётся порядком вызовов `add_middleware`. Тонкость в том, что Starlette оборачивает middleware в обратном порядке: **последний** добавленный `add_middleware` оказывается самым внешним, ближайшим к браузеру. Поэтому если вы хотите, чтобы CORS оборачивал остальные слои, его `add_middleware` должен идти после них, а не первым по привычке.
+
+<MarginNote label="Эхо прошлого раздела">Необработанное исключение (ошибка 500) в FastAPI перехватывает самый внешний слой, стоящий снаружи вашего CORS. Такой ответ уходит без заголовков `Access-Control-*`, и браузер показывает его как CORS-ошибку. Это ровно тот случай из прошлого раздела, когда «CORS-ошибка» на деле означает «сервер упал».</MarginNote>
+
+## Отладка через curl: читаем сырые заголовки
+
+Гадать по консоли браузера утомительно, потому что браузер и находит ошибку, и сам же прячет детали. `curl` удобнее: он не браузер, CORS не применяет и ничего не блокирует, а просто показывает сырые заголовки ответа. Вы читаете их сами и сверяете со списком из прошлого раздела.
+
+Простой запрос имитируется добавлением заголовка `Origin`:
+
+```bash
+curl -i -H "Origin: https://app.example.com" https://api.example.com/items
+```
+
+В ответе смотрите, есть ли `Access-Control-Allow-Origin` и совпадает ли он с вашим origin символ в символ. Preflight имитируется методом `OPTIONS` и заголовками вопроса:
+
+```bash
+curl -i -X OPTIONS \
+  -H "Origin: https://app.example.com" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: content-type" \
+  https://api.example.com/items
+```
+
+Здесь вы проверяете `Access-Control-Allow-Methods` и `Allow-Headers` в ответе. Такой прогон разделяет две разные ситуации: «сервер шлёт не те заголовки» (чинить конфиг) и «сервер шлёт правильные заголовки, а браузер корректно блокирует по другой причине» (смотреть на форму запроса и credentials). Пока вы не посмотрели сырой ответ, вы не знаете, на какой вы стороне.
+
+## Прод: один слой CORS, а не два
+
+В проде перед приложением обычно стоит обратный прокси (nginx, Caddy). CORS-заголовки можно выдавать либо на прокси, либо в приложении. Оба варианта рабочие, но выбрать нужно ровно один. Классическая авария рождается, когда CORS настроен сразу в двух местах: приложение уже отдаёт `Access-Control-Allow-Origin`, а кто-то добавляет `add_header Access-Control-Allow-Origin ...` ещё и на прокси.
+
+<Figure caption="Прокси и приложение независимо добавили Allow-Origin. Браузер видит несколько значений в одном заголовке и отвергает ответ, хотя каждый слой по отдельности настроен верно.">
+  <Sketch viewBox="0 0 480 200" title="Двойные CORS-заголовки">
+    <SketchBox x={20} y={75} width={80} height={50} accent radius={8} />
+    <SketchLabel x={60} y={104} mono accent size={11}>браузер</SketchLabel>
+
+    <SketchBox x={150} y={75} width={90} height={50} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={195} y={104} mono size={11}>прокси</SketchLabel>
+    <SketchLabel x={195} y={66} size={9} accent>+ Allow-Origin</SketchLabel>
+
+    <SketchBox x={290} y={75} width={100} height={50} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={340} y={104} mono size={11}>приложение</SketchLabel>
+    <SketchLabel x={340} y={66} size={9} accent>+ Allow-Origin</SketchLabel>
+
+    <SketchArrow from={[290, 100]} to={[242, 100]} accent />
+    <SketchArrow from={[150, 100]} to={[102, 100]} accent />
+
+    <SketchLabel x={240} y={152} size={10}>у браузера · Allow-Origin: origin, origin</SketchLabel>
+    <SketchLabel x={240} y={170} size={9} muted>несколько значений · ответ отклонён</SketchLabel>
+  </Sketch>
+</Figure>
+
+Ответ приходит к браузеру с заголовком `Access-Control-Allow-Origin`, в котором два значения через запятую (или `*, origin`). Спецификация допускает ровно одно, поэтому браузер отвергает вообще все кросс-доменные запросы с ошибкой вроде «header contains multiple values, but only one is allowed». Коварство в том, что каждый слой по отдельности был настроен верно, и в тестах поодиночке оба проходят. Ломается только их сумма, и только в проде, где оба слоя стоят вместе. Лечится однозначно: владеть CORS должен ровно один слой. Либо прокси, либо приложение снимает с себя CORS полностью.
+
+## Типичные ошибки
+
+- **`allow_origins=["*"]` вместе с `allow_credentials=True`.** Несовместимо: браузер отвергнет `Allow-Origin: *` у credentialed-запроса. Перечислите origin явным списком, для превью используйте `allow_origin_regex`.
+- **Незаякоренный `allow_origin_regex`.** Незаэкранированная точка или отсутствие границ превращают шаблон в дыру, пропускающую чужие домены. Экранируйте `\.` и проверяйте шаблон на посторонних origin.
+- **`CorsMiddleware` слишком низко в `MIDDLEWARE` (Django) или добавлен не тем по счёту в FastAPI.** Ответы, рождённые вне CORS-слоя (редиректы, ошибки), уедут без заголовков. Ставьте CORS так, чтобы он оборачивал тех, чьи ответы читает браузер.
+- **CORS настроен и на прокси, и в приложении.** Двойной `Allow-Origin` даёт браузеру несколько значений, и он отклоняет все запросы. Оставьте CORS ровно в одном слое.
+- **Отлаживать только по браузеру.** Браузер прячет детали. Прогоните `curl -H "Origin: ..."` и прочитайте сырые заголовки, прежде чем менять конфиг наугад.
+
+<Detail summary="Почему звёздочка с credentials иногда как будто работает">
+
+Starlette пытается подстраховать от ловушки звёздочки. При `allow_origins=["*"]`, если в запросе есть заголовок `Cookie`, middleware отражает конкретный `Origin` вместо `*`. Поэтому запрос с cookie может неожиданно пройти, и в ручной проверке кажется, что всё в порядке. Но тот же конфиг для credentialed-запроса без cookie (например, с токеном в `Authorization`) отдаст `Allow-Origin: *`, и браузер его отклонит. Полагаться на это поведение не стоит: оно зависит от наличия конкретного заголовка и от версии библиотеки. Надёжно только явное перечисление origin, тогда ответ одинаково корректен и с cookie, и без них.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "В Python CORS это middleware: FastAPI (Starlette CORSMiddleware) и django-cors-headers добавляют заголовки Access-Control-*, а параметры один в один ложатся на заголовки ответа.",
+    "allow_origins и CORS_ALLOWED_ORIGINS принимают список точных origin; звёздочка вместе с credentials ломает именно credentialed-запросы, поэтому origin называют явно.",
+    "Для превью-доменов есть allow_origin_regex (FastAPI) и CORS_ALLOWED_ORIGIN_REGEXES (Django); держите шаблон заякоренным и экранируйте точки, иначе он пропустит чужой домен.",
+    "Порядок middleware решает, попадёт ли заголовок на ответ: слой должен оборачивать тех, чьи ответы читает браузер (в FastAPI самый внешний это последний add_middleware, в Django CorsMiddleware ставят высоко).",
+    "Отлаживайте curl с заголовком Origin: он не блокирует, а показывает сырые заголовки, отделяя «сервер шлёт не то» от «браузер блокирует правильно».",
+    "Настраивайте CORS ровно в одном слое: двойные заголовки от прокси и приложения дают несколько значений Allow-Origin, и браузер отвергает все запросы.",
+  ]}
+/>
+
+## Ссылки
+
+- [FastAPI - CORS (Cross-Origin Resource Sharing)](https://fastapi.tiangolo.com/tutorial/cors/)
+- [Starlette - CORSMiddleware](https://www.starlette.io/middleware/#corsmiddleware)
+- [django-cors-headers - документация](https://github.com/adamchainz/django-cors-headers)
+- [MDN - Reason: Multiple CORS header 'Access-Control-Allow-Origin' not allowed](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS/Errors/CORSMultipleAllowOriginNotAllowed)

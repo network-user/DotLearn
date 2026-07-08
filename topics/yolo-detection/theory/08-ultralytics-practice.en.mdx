@@ -1,0 +1,181 @@
+---
+conceptId: ultralytics-practice
+title: "Ultralytics in practice: from weights to ONNX"
+estimatedMinutes: 30
+---
+
+# Ultralytics in practice: running, fine-tuning, and exporting YOLO
+
+Across seven sections you took the detector apart bolt by bolt: boxes and IoU, grid and anchors, output decoding, NMS, the loss function, mAP. In practice you rarely write all this by hand. The `ultralytics` library packs the pipeline into a few lines: load weights, call `predict`, read boxes. But precisely because the earlier sections explained the mechanics, those lines stop being magic. You know what sits behind `conf`, `imgsz`, and `mAP`, so you understand what you are tuning.
+
+There is one honest caveat. Real `ultralytics` code drags in PyTorch, weight files, sometimes a GPU. The browser sandbox on this page does not run torch, so every block with `torch` or `ultralytics` here is read-only: you read and study it, you do not execute it. The one runnable block below is plain Python that only models the shape of what the API returns, so you can feel how results are read.
+
+<Callout type="warning">Code with `from ultralytics import YOLO` on this page does not run in the sandbox: it needs PyTorch and weights. Study it as reading, and run by hand only the pure-stdlib block.</Callout>
+
+## Five calls that cover the whole cycle
+
+A detector's working cycle in `ultralytics` fits a short chain: load weights, predict, read the result, optionally fine-tune on your own data, measure quality, and export for deployment. Each step in the figure below maps to one method on the `model` object.
+
+<Figure caption="The ultralytics cycle: predict for inference, train for fine-tuning, val for metrics (concept 07), export for deployment. One model object · six steps.">
+  <PipelineFigure
+    title="The ultralytics working cycle"
+    stages={[
+      { label: 'YOLO("yolov8n.pt")', note: 'weights · 80 COCO classes' },
+      { label: 'model.predict(img)', note: 'conf · imgsz', active: true },
+      { label: 'Results.boxes', note: 'xyxy · conf · cls' },
+      { label: 'model.train(data.yaml)', note: 'fine-tuning' },
+      { label: 'model.val()', note: 'mAP' },
+      { label: 'model.export("onnx")', note: 'deploy' },
+    ]}
+  />
+</Figure>
+
+You start with install and load. The package installs with one command, and weights are pulled on first use.
+
+```bash
+pip install ultralytics
+```
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolov8n.pt")
+results = model.predict("bus.jpg", conf=0.25, imgsz=640)
+```
+
+The line `YOLO("yolov8n.pt")` loads pretrained weights of the lightest model in the YOLOv8 family (the `n` suffix means nano). These weights were trained on COCO and know 80 classes, and the file downloads automatically on first call. The `conf` parameter sets the minimum confidence threshold: predictions below it are dropped before output (the same confidence from the decoding and mAP sections). The `imgsz` parameter sets the side the image is letterbox-scaled to before it runs through the network, exactly as discussed in the grid section.
+
+## What lives inside a Results object
+
+`predict` returns not a single result but a list: one `Results` object per image. Even for a single input image you get a list of one element, so you take `results[0]`. Inside is `boxes` with parallel arrays: `xyxy` holds box coordinates as `(x1, y1, x2, y2)`, the top-left and bottom-right corners in pixels of the original image; `conf` holds confidences; `cls` holds class indices. The `names` dictionary maps a class index to a human-readable name.
+
+```python
+r = results[0]
+for box in r.boxes:
+    cls_id = int(box.cls)
+    name = r.names[cls_id]
+    score = float(box.conf)
+    x1, y1, x2, y2 = box.xyxy[0].tolist()
+    print(name, round(score, 2), int(x1), int(y1), int(x2), int(y2))
+```
+
+Note `int(box.cls)`: class indices arrive as floating-point numbers, and without casting to `int` you cannot use them as a key into `names`. The `r.plot()` method draws boxes with labels over the frame and returns a ready image (a numpy array in BGR channel order), convenient to save with OpenCV or show.
+
+For a batch of images you pass a list of paths or a folder, and `results` will hold one element per frame. For video you call `predict` with `stream=True`: then a generator is returned that yields `Results` frame by frame, instead of a whole-video list at once. That saves memory on long clips.
+
+```python
+for r in model.predict("clip.mp4", stream=True):
+    people = sum(1 for c in r.boxes.cls if int(c) == 0)
+```
+
+## Try it yourself: reading results
+
+You cannot run torch on this page, but you can reproduce the result-reading logic in plain Python. Below, the `names` dictionary, the class-index list `cls`, and the confidence list `conf` play the role of the `boxes.cls`, `r.names`, and `boxes.conf` fields. The function keeps only the names of detections whose confidence is at least the threshold, exactly as `conf` does inside `predict`. Change the threshold in the `labels_above(0.5)` call to `0.7` and watch less-confident objects drop out; then to `0.4` and see a missed box return.
+
+<PyDemo
+  title="Reading boxes by confidence threshold"
+  code={`names = {0: "person", 2: "car", 5: "bus"}
+cls = [0, 2, 2, 5, 0]
+conf = [0.90, 0.61, 0.42, 0.88, 0.33]
+
+def labels_above(threshold):
+    return [names[c] for c, s in zip(cls, conf) if s >= threshold]
+
+print(labels_above(0.5))`}
+/>
+
+## Fine-tuning to your own classes
+
+Pretrained weights know COCO classes, but a real task is usually different: helmets and vests on a site, defects on a board, products on a shelf. For that you fine-tune the model with `train`. Starting from `yolov8n.pt` means transfer learning: the network does not learn from scratch but adapts already meaningful features to new classes, so far less data and fewer epochs are needed.
+
+```python
+model = YOLO("yolov8n.pt")
+model.train(data="data.yaml", epochs=100, imgsz=640, batch=16)
+```
+
+Everything the model needs to know about the dataset lives in `data.yaml`: where the training and validation images are and what the classes are called. The name indices in `names` match the indices in the labels, and those are exactly what later end up in `boxes.cls`.
+
+```yaml
+path: datasets/ppe
+train: images/train
+val: images/val
+names:
+  0: person
+  1: helmet
+  2: vest
+```
+
+During training `ultralytics` prints a line per epoch with the three loss terms from the sixth section: `box_loss` (coordinate error), `cls_loss` (class error), and `dfl_loss` (distribution focal loss for box borders in YOLOv8). Alongside come validation metrics: precision, recall, and mAP. Run artifacts land in the `runs/detect/train` folder: there sit `weights/best.pt` and `weights/last.pt`, plus `results.csv` with per-epoch metric history. Falling losses with rising mAP mean training is heading the right way.
+
+## Metrics and model.val
+
+When training is done, you measure quality on the validation set with `val`. It returns an object with metrics, and this is exactly the mAP from the seventh section, only computed for you.
+
+```python
+metrics = model.val()
+print(metrics.box.map)     # mAP@[.5:.95]
+print(metrics.box.map50)   # mAP@0.5
+print(metrics.box.mp, metrics.box.mr)  # mean precision and recall
+```
+
+The `map` field holds the strict COCO metric `mAP@[.5:.95]`, averaged over ten IoU thresholds, while `map50` is the softer `mAP@0.5`. As shown in the mAP section, the strict metric is never greater than the soft one: `map` does not exceed `map50`.
+
+<Figure caption="Example metrics from model.val(): mAP@[.5:.95] is noticeably lower than mAP@0.5 because strict IoU thresholds only count precisely placed boxes (concept 07).">
+  <BarChart
+    title="Detector validation metrics"
+    data={[
+      { label: 'precision', value: 0.89 },
+      { label: 'recall', value: 0.82 },
+      { label: 'mAP50', value: 0.87 },
+      { label: 'mAP50-95', value: 0.61 },
+    ]}
+    highlight={['mAP50-95']}
+  />
+</Figure>
+
+## Exporting to ONNX and why you need it
+
+A trained model lives in PyTorch format and drags the whole training stack with it. In production that is dead weight: there you only need inference. The `export` method converts the model to a portable format, most often ONNX.
+
+```python
+model.export(format="onnx", imgsz=640, dynamic=True)
+```
+
+ONNX describes a computation graph in a framework-independent form. An exported model runs through ONNX Runtime, TensorRT, or mobile runtimes, with no PyTorch or `ultralytics` on the server at all. The payoff is threefold: deployment is decoupled from the heavy training stack, inference often speeds up thanks to graph optimizations, and the same model ships to a server, a browser, and an edge device. Export serves inference and deployment, not faster training, and that is a common misconception.
+
+## Where this surprises you
+
+The first stumbling block: `predict` always returns a list, even for one image. Forgetting `results[0]` and reaching for `results.boxes` directly is the typical first mistake, because intuitively you expect one result per one picture.
+
+The second: `conf` defaults differ between `predict` and `val`. `predict` uses a threshold around `0.25` to hand back a clean list of boxes for display. But `val` internally lowers the threshold almost to zero (`0.001`), because an honest PR curve from the seventh section needs every prediction, including unconfident ones. The same model on the same frame yields noticeably more boxes at evaluation than at display, and that is not a bug but two different modes.
+
+The third: `xyxy` coordinates are already rescaled to original-image pixels. The network saw a letterbox version of size `imgsz`, but `ultralytics` itself undoes the scaling and padding, so you multiply nothing by hand. Trying to "restore" coordinates to the original size breaks the boxes.
+
+## Common mistakes
+
+- **Reading `results` as one object.** `predict` returns a list; take `results[0]` for a single image, otherwise you get an attribute-access error.
+- **Indexing `names` with a float.** `boxes.cls` arrives as a float; cast to `int` before `names[int(cls)]`.
+- **Expecting torch to run in this sandbox.** `ultralytics` blocks here are read-only; check API logic in plain Python or a local environment with a GPU.
+- **Confusing `conf` defaults of predict and val.** A different box count at display versus evaluation comes from different `conf` defaults, not a model error.
+
+<Detail summary="Why ONNX rather than just shipping the .pt file">
+
+The `.pt` format is serialized PyTorch: to load it, the target machine needs PyTorch of the same version line and the `ultralytics` model class. For an inference server that is an extra dependency weighing hundreds of megabytes and a version-mismatch risk. ONNX breaks that tie: the operation graph and weights are saved in one file by an open standard, and any compatible runtime executes it. ONNX Runtime adds graph optimizations (constant folding, layer fusion), and through execution providers reaches a GPU or specialized accelerators. The practical upshot: you train in PyTorch, where experimenting is convenient, and deploy in ONNX, where startup speed, predictability, and minimal dependencies matter.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "YOLO('yolov8n.pt') loads pretrained nano COCO weights for 80 classes; the file downloads on first call.",
+    "predict returns a list of Results (one per image); you read results[0].boxes: xyxy, conf, cls and the names dictionary.",
+    "boxes.cls arrives as a float; cast to int before indexing names, and xyxy coordinates are already in original-frame pixels.",
+    "train(data='data.yaml', epochs, imgsz) fine-tunes from current weights; data.yaml sets train/val paths and class names, and model.val() computes the mAP from concept 07.",
+    "export(format='onnx') decouples inference from PyTorch for portable and often faster deployment, but does not speed up training.",
+  ]}
+/>
+
+## References
+
+- [Ultralytics YOLO: Predict mode](https://docs.ultralytics.com/modes/predict/)
+- [Ultralytics YOLO: Train mode](https://docs.ultralytics.com/modes/train/)
+- [Ultralytics YOLO: Export to ONNX](https://docs.ultralytics.com/modes/export/)

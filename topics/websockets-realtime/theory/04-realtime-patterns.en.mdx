@@ -12,19 +12,17 @@ This section covers the patterns that keep realtime alive: broadcast (send to ma
 
 ## Broadcast: send to everyone except the sender
 
-The basic realtime pattern is delivering an event to a group. Socket.IO offers three addressing options, and they're easy to mix up. `io.emit` sends to **everyone** connected. `socket.broadcast.emit` sends to everyone **except** the sender (the "don't show me my own message twice" case). `io.to(room).emit` sends only to room members.
+The basic realtime pattern is delivering an event to a group. In `python-socketio` all addressing is set by arguments to a single `sio.emit` method, and they're easy to mix up. A call with no addressing arguments - `sio.emit("chat:message", msg)` - goes to **everyone** connected. The `skip_sid=sid` argument excludes the **sender** (the "don't show me my own message twice" case). The `room="room:general"` argument delivers only to room members, and together - `room=..., skip_sid=sid` - to everyone in the room except the sender.
 
-```js
-io.on("connection", (socket) => {
-  socket.on("chat:message", (msg) => {
-    socket.broadcast.to(msg.room).emit("chat:message", msg);
-  });
-});
+```python
+@sio.on("chat:message")
+async def chat_message(sid, msg):
+    await sio.emit("chat:message", msg, room=msg["room"], skip_sid=sid)
 ```
 
-Here `socket.broadcast.to(room)` delivers to everyone in the room except the sender: their client already rendered the message optimistically, so echo isn't needed. The difference between "everyone" and "everyone but me" seems small, but duplicate messages in chats break on exactly that line.
+Here `room=msg["room"]` addresses the room and `skip_sid=sid` excludes the sender: their client already rendered the message optimistically, so echo isn't needed. The difference between "everyone" and "everyone but the sender" seems small, but duplicate messages in chats break on exactly that line.
 
-<Figure caption="socket.broadcast.to(room) delivers the event to room members except the sender - their client already showed the message locally.">
+<Figure caption="sio.emit(room=..., skip_sid=sid) delivers the event to room members except the sender · their client already showed the message locally.">
   <Sketch viewBox="0 0 460 170" title="Broadcast except sender">
     <SketchBox x={20} y={65} width={90} height={45} accent />
     <SketchLabel x={65} y={87} size={11} accent mono>sender</SketchLabel>
@@ -35,25 +33,29 @@ Here `socket.broadcast.to(room)` delivers to everyone in the room except the sen
     <SketchArrow from={[110, 80]} to={[300, 40]} accent />
     <SketchArrow from={[110, 92]} to={[300, 88]} accent />
     <SketchArrow from={[65, 65]} to={[65, 40]} dashed />
-    <SketchLabel x={120} y={140} size={10} muted>no echo to sender - they already rendered locally</SketchLabel>
+    <SketchLabel x={120} y={140} size={10} muted>no echo to sender · they already rendered locally</SketchLabel>
   </Sketch>
 </Figure>
 
 ## Presence: who's online now
 
-Presence is the "online" indicator, participant list, green dot on an avatar. The naive approach: on `connection` add the user to an online set, on `disconnect` remove them. That works - until the first network drop. If Wi-Fi dies, `disconnect` arrives only after a heartbeat timeout; until then they're "online" when they're not. And with two tabs open, one tab's `disconnect` doesn't mean the person left.
+Presence is the "online" indicator, participant list, green dot on an avatar. The naive approach: on `connect` add the user to an online set, on `disconnect` remove them. That works - until the first network drop. If Wi-Fi dies, `disconnect` arrives only after a heartbeat timeout; until then they're "online" when they're not. And with two tabs open, one tab's `disconnect` doesn't mean the person left.
 
 Reliable presence counts connections per user, not "is there a connection": tab connects - increment, disconnects - decrement, online while the count is above zero.
 
-```js
-io.on("connection", (socket) => {
-  const userId = socket.handshake.auth.userId;
-  presence.increment(userId);
-  socket.on("disconnect", () => presence.decrement(userId));
-});
+```python
+@sio.event
+async def connect(sid, environ, auth):
+    await sio.save_session(sid, {"user_id": auth["userId"]})
+    await presence.increment(auth["userId"])
+
+@sio.event
+async def disconnect(sid):
+    session = await sio.get_session(sid)
+    await presence.decrement(session["user_id"])
 ```
 
-That counter survives multiple tabs and reconnects correctly: a person is online while at least one connection lives. To keep the counter from leaking when a server crashes (connections died but `disconnect` never ran), store it in external storage with TTL, not in process memory.
+`userId` arrives in the `connect` handler as the third argument `auth`; to recall it on disconnect, store it in the connection session via `sio.save_session` and read it in `disconnect` via `sio.get_session`. That counter survives multiple tabs and reconnects correctly: a person is online while at least one connection lives. To keep the counter from leaking when a server crashes (connections died but `disconnect` never ran), store it in external storage with TTL, not in process memory.
 
 <Callout type="warning">
 Connection-based presence lies on drops and multiple tabs: `disconnect` after network loss is delayed by the heartbeat timeout. Count online by connections per user with TTL so a crashed server doesn't leave "forever online" ghosts.
@@ -61,9 +63,9 @@ Connection-based presence lies on drops and multiple tabs: `disconnect` after ne
 
 ## Scaling: why naive broadcast breaks
 
-Back to Anna and Boris on different servers. `io.to(room).emit` on server #1 walks sockets **in that process** - it knows nothing about server #2's connections. Boris never sees Anna's message. That's fundamental: the in-memory connection list is visible only to its process, and a room spread across servers is half invisible to each one.
+Back to Anna and Boris on different servers. `sio.emit(room=...)` on server #1 reaches only sockets **in that process** - it knows nothing about server #2's connections. Boris never sees Anna's message. That's fundamental: the in-memory connection list is visible only to its process, and a room spread across servers is half invisible to each one.
 
-<Figure caption="Without a shared layer, io.to(room) on server 1 can't reach server 2's connections: broadcast only hits half the room.">
+<Figure caption="Without a shared layer, sio.emit(room=...) on server 1 can't reach server 2's connections · broadcast only hits half the room.">
   <Sketch viewBox="0 0 460 180" title="Cross-server broadcast problem">
     <SketchBox x={20} y={30} width={120} height={120} fill="rgb(var(--surface-2))" />
     <SketchLabel x={80} y={50} size={11} weight="bold">server 1</SketchLabel>
@@ -78,23 +80,23 @@ Back to Anna and Boris on different servers. `io.to(room).emit` on server #1 wal
   </Sketch>
 </Figure>
 
-The fix is to move broadcast outside the process. Servers attach a shared **adapter** (for Socket.IO - Redis adapter): when server #1 does `io.to(room).emit`, the adapter publishes the event to Redis, and every other server subscribed delivers it to its local sockets in that room. Redis acts as a publish/subscribe bus: one publishes, all deliver.
+The fix is to move broadcast outside the process. Servers attach a shared **client manager**: in `python-socketio` that's `socketio.AsyncRedisManager`, which uses Redis as a publish/subscribe bus. When server #1 does `sio.emit(room=...)`, the manager publishes the event to Redis, and every other server subscribed to the same Redis delivers it to its local sockets in that room.
 
-```js
-const { createAdapter } = require("@socket.io/redis-adapter");
-io.adapter(createAdapter(pubClient, subClient));
+```python
+mgr = socketio.AsyncRedisManager("redis://localhost:6379")
+sio = socketio.AsyncServer(client_manager=mgr, async_mode="asgi")
 ```
 
-After attaching the adapter, your application code **doesn't change**: you still write `io.to(room).emit`, but broadcast now reaches the whole cluster. The magic hides in the adapter; to the app the cluster looks like one server again.
+The manager is passed to the server as the `client_manager` argument at creation. After that your application code **doesn't change**: you still write `sio.emit(room=...)`, but broadcast now reaches the whole cluster. The magic hides in the manager; to the app the cluster looks like one server again.
 
 ## Sticky sessions: another scaling trap
 
 There's a second pitfall, separate from broadcast. Socket.IO starts with long-polling and upgrades to WebSocket - several HTTP requests that **must** hit the same server. If the load balancer round-robins them across processes, the Engine.IO handshake falls apart: one server starts the session, another knows nothing about it.
 
-Sticky sessions fix this: the load balancer binds the client to one backend for the whole connection (usually by cookie or IP hash). Redis adapter solves broadcast across servers but **doesn't** replace sticky sessions - two independent settings, and the second is easy to forget.
+Sticky sessions fix this: the load balancer binds the client to one backend for the whole connection (usually by cookie or IP hash). `AsyncRedisManager` solves broadcast across servers but **doesn't** replace sticky sessions - two independent settings, and the second is easy to forget.
 
 <Callout type="info">
-Redis adapter and sticky sessions solve different problems. The adapter delivers broadcast across cluster servers. Sticky sessions ensure all requests of one Engine.IO session (polling + upgrade) hit one server. Horizontal Socket.IO scaling needs both.
+`AsyncRedisManager` and sticky sessions solve different problems. The manager delivers broadcast across cluster servers. Sticky sessions ensure all requests of one Engine.IO session (polling + upgrade) hit one server. Horizontal Socket.IO scaling needs both.
 </Callout>
 
 ## Surprise: scale limits are usually fan-out, not connections
@@ -103,9 +105,9 @@ It seems the scaling limit is open connection count. In practice **fan-out** hit
 
 ## Common mistakes
 
-- **Using `io.emit` where you need a room.** `io.emit` hits everyone on the server; in a multi-room app that leaks messages between chats and wastes traffic. Address with `io.to(room)`.
+- **Using `sio.emit` without `room` where you need a room.** With no addressing arguments `sio.emit` hits everyone on the server; in a multi-room app that leaks messages between chats and wastes traffic. Address with `room=`.
 - **Presence from raw `disconnect`.** Drops and tabs break a naive flag. Count live connections per user and store with TTL.
-- **Thinking Redis adapter replaces sticky sessions.** Different problems: adapter is broadcast across servers; sticky is keeping one Engine.IO session on one server during upgrade.
+- **Thinking `AsyncRedisManager` replaces sticky sessions.** Different problems: the manager is broadcast across servers; sticky is keeping one Engine.IO session on one server during upgrade.
 - **Ignoring fan-out when estimating load.** Counting only connections misses the real limit: outbound traffic grows as room size times message rate.
 
 <Detail summary="Delivery after disconnect: message history and idempotency">
@@ -116,16 +118,16 @@ WebSocket and Socket.IO deliver "while the connection is alive," but during an o
 
 <KeyTakeaways
   items={[
-    "Three broadcast targets: io.emit - everyone, socket.broadcast - everyone except sender, io.to(room) - the room; mixing them up causes duplicates and leaks.",
+    "Broadcast addressing in python-socketio is sio.emit arguments: no arguments for everyone, skip_sid=sid except the sender, room=room for the room; mixing them up causes duplicates and leaks.",
     "Reliable presence uses a live-connection counter per user with TTL, not raw connection/disconnect - drops and tabs break the naive approach.",
-    "Naive broadcast fails on multiple servers: io.to(room) sees only local sockets; a shared adapter (Redis pub/sub) reaches the whole cluster without changing application code.",
-    "Redis adapter doesn't replace sticky sessions: adapter is cross-server broadcast; sticky keeps one Engine.IO session's requests on one server.",
+    "Naive broadcast fails on multiple servers: sio.emit(room=...) sees only local sockets; a shared AsyncRedisManager (Redis pub/sub) reaches the whole cluster without changing application code.",
+    "AsyncRedisManager doesn't replace sticky sessions: the manager is cross-server broadcast; sticky keeps one Engine.IO session's requests on one server.",
     "Scale limits are usually fan-out (outbound per inbound), not connection count; reduce it with smaller rooms, aggregation, and dropping non-critical events.",
   ]}
 />
 
 ## References
 
-- [Socket.IO - Broadcasting events](https://socket.io/docs/v4/broadcasting-events/)
-- [Socket.IO - Scaling and Redis adapter](https://socket.io/docs/v4/redis-adapter/)
+- [python-socketio - server: rooms, emitting, sessions](https://python-socketio.readthedocs.io/en/stable/server.html)
+- [python-socketio - AsyncRedisManager and client managers](https://python-socketio.readthedocs.io/en/stable/api.html)
 - [Socket.IO - Using multiple nodes and sticky sessions](https://socket.io/docs/v4/using-multiple-nodes/)

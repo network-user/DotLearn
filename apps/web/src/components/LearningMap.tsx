@@ -189,7 +189,7 @@ const NodeCard = ({
       aria-current={recommended ? 'step' : undefined}
       className={cx(
         'group relative z-0 block rounded-2xl border bg-surface p-3.5 shadow-card transition-[transform,box-shadow,border-color,opacity] duration-med ease-standard',
-        'hover:z-20 hover:border-border-strong hover:shadow-float hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
+        'hover:z-20 hover:border-border-strong hover:shadow-float hover:-translate-y-0.5 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:-translate-y-0.5 focus-visible:scale-[1.02]',
         statusRingTone[status],
         highlighted && 'border-accent shadow-float',
         recommended && 'border-accent ring-2 ring-accent/40 shadow-float',
@@ -386,9 +386,9 @@ const GraphView = ({
                 key={edge.id}
                 d={edge.path}
                 fill="none"
-                strokeWidth={active ? 2 : 1.5}
+                strokeWidth={active ? 2.5 : 1.5}
                 className={cx(
-                  'transition-[stroke,opacity] duration-fast',
+                  'transition-[stroke,stroke-width,opacity] duration-slow ease-standard',
                   active ? 'text-accent' : 'text-border-strong',
                   activeSlug !== null && !active ? 'opacity-20' : 'opacity-70',
                 )}

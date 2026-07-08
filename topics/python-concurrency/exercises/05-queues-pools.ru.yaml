@@ -1,0 +1,183 @@
+exercises:
+  - id: queues-get-quiz-001
+    concept: queues-pools
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Что делает `queue.Queue.get()` по умолчанию, если очередь пуста?"
+    choices:
+      - id: a
+        text: "Блокирует вызывающий поток, пока другой поток не положит элемент через put()."
+      - id: b
+        text: "Сразу возвращает None."
+      - id: c
+        text: "Немедленно бросает исключение Empty."
+      - id: d
+        text: "Возвращает последний ранее выданный элемент."
+    correct: [a]
+    explanation: "По умолчанию get() блокирующий: поток ждёт на пустой очереди, пока не появится элемент. Это и делает очередь удобной точкой встречи producer'ов и consumer'ов."
+    variants:
+      - prompt: "Что означает, что `queue.Queue` потокобезопасна?"
+        choices:
+          - id: a
+            text: "Внутри у неё есть замок, поэтому одновременные put и get из разных потоков корректны без вашей ручной синхронизации."
+          - id: b
+            text: "Её можно использовать только из одного потока."
+          - id: c
+            text: "Она хранит копию данных для каждого потока отдельно."
+          - id: d
+            text: "Она отключает GIL на время доступа."
+        correct: [a]
+        explanation: "Очередь синхронизирует доступ своим внутренним замком. Именно поэтому, отдав состояние очереди, вы перестаёте писать Lock руками."
+      - prompt: "Что делает `q.task_done()`?"
+        choices:
+          - id: a
+            text: "Отмечает, что взятый из очереди элемент обработан; вместе с q.join() позволяет дождаться, пока вся работа разгребена."
+          - id: b
+            text: "Удаляет очередь из памяти."
+          - id: c
+            text: "Кладёт в очередь sentinel."
+          - id: d
+            text: "Останавливает все потоки-consumer'ы."
+        correct: [a]
+        explanation: "task_done() увеличивает счётчик выполненных задач. q.join() блокируется, пока число task_done не сравняется с числом put, то есть пока очередь не разгребли."
+
+  - id: queues-executor-blanks-001
+    concept: queues-pools
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Заполните пропуски: отправить задачу в пул и забрать результат."
+    template: |
+      with ThreadPoolExecutor(max_workers=4) as pool:
+          future = pool.{{submit}}(work, 10)
+          value = future.{{result}}()
+    blanks:
+      submit:
+        accept: ["submit"]
+      result:
+        accept: ["result"]
+    variants:
+      - prompt: "Заполните пропуск: применить функцию ко всем элементам конкурентно, сохранив порядок входа."
+        template: |
+          with ThreadPoolExecutor() as pool:
+              for result in pool.{{map}}(fetch, urls):
+                  handle(result)
+        blanks:
+          map:
+            accept: ["map"]
+      - prompt: "Заполните пропуск: выход consumer'а по sentinel."
+        template: |
+          while True:
+              item = q.get()
+              if item is {{sentinel}}:
+                  break
+        blanks:
+          sentinel:
+            accept: ["None"]
+
+  - id: queues-sentinel-predict-001
+    concept: queues-pools
+    type: predict-output
+    difficulty: 3
+    prompt: "Снипет моделирует consumer'а на очереди со sentinel: элементы забираются по одному, None это сигнал «работа кончилась». Что напечатает программа?"
+    snippet: |
+      q = ["a", "b", "c", None]
+      consumed = []
+
+      def get():
+          return q.pop(0)
+
+      while True:
+          item = get()
+          if item is None:
+              break
+          consumed.append(item)
+
+      print(len(consumed), consumed)
+    expected:
+      kind: stdout
+      value: "3 ['a', 'b', 'c']"
+    hints:
+      - "None здесь sentinel: сигнал выхода. На каком элементе цикл прервётся и что успеет попасть в consumed до этого?"
+      - "Три реальных элемента обрабатываются, затем None прерывает цикл до добавления. Значит длина 3, а список это ['a', 'b', 'c']."
+    variants:
+      - prompt: "Sentinel стоит в середине: то, что после него, до consumer'а не дойдёт. Что напечатает программа?"
+        snippet: |
+          q = ["x", None, "y"]
+          consumed = []
+
+          def get():
+              return q.pop(0)
+
+          while True:
+              item = get()
+              if item is None:
+                  break
+              consumed.append(item)
+
+          print(len(consumed), consumed)
+        expected:
+          kind: stdout
+          value: "1 ['x']"
+      - prompt: "Четыре числовых элемента и sentinel в конце. Что напечатает программа?"
+        snippet: |
+          q = [1, 2, 3, 4, None]
+          consumed = []
+
+          def get():
+              return q.pop(0)
+
+          while True:
+              item = get()
+              if item is None:
+                  break
+              consumed.append(item)
+
+          print(len(consumed), consumed)
+        expected:
+          kind: stdout
+          value: "4 [1, 2, 3, 4]"
+
+  - id: queues-as-completed-order-predict-001
+    concept: queues-pools
+    type: predict-output
+    difficulty: 3
+    prompt: "Снипет контрастирует порядок submit и порядок as_completed: задачи завершаются по возрастанию длительности, а не в порядке отправки. Печатается список отправки и список в порядке готовности. Что выведет программа?"
+    snippet: |
+      submitted = ["A", "B", "C"]
+      durations = {"A": 30, "B": 10, "C": 20}
+
+      as_completed = sorted(submitted, key=lambda name: durations[name])
+      print(submitted, as_completed)
+    expected:
+      kind: stdout
+      value: "['A', 'B', 'C'] ['B', 'C', 'A']"
+    hints:
+      - "map отдавал бы результаты в порядке входа. as_completed выдаёт Future по мере завершения, то есть по времени, а не по порядку submit."
+      - "Отсортируйте по длительности: B(10), C(20), A(30). Список submit не меняется, а порядок готовности это ['B', 'C', 'A']."
+
+  - id: queues-future-exception-predict-001
+    concept: queues-pools
+    type: predict-output
+    difficulty: 3
+    prompt: "Снипет моделирует, как Future ловит исключение задачи: ошибка не роняет программу, а сохраняется и всплывает при разборе результата. Что напечатает программа?"
+    snippet: |
+      def run(task):
+          try:
+              return ("ok", task())
+          except Exception as exc:
+              return ("error", type(exc).__name__)
+
+      def good():
+          return 42
+
+      def bad():
+          raise ValueError("boom")
+
+      results = [run(good), run(bad)]
+      print(results)
+    expected:
+      kind: stdout
+      value: "[('ok', 42), ('error', 'ValueError')]"
+    hints:
+      - "Исключение внутри задачи не вылетает наружу сразу: Future ловит его и хранит. Что вернёт обработка каждой из двух задач?"
+      - "good() даёт ('ok', 42). bad() бросает ValueError, обработчик ловит его и возвращает ('error', 'ValueError'). Итог это список из двух этих кортежей."

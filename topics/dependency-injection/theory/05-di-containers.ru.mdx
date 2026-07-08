@@ -1,0 +1,247 @@
+---
+conceptId: di-containers
+title: "DI-контейнеры: dishka собирает граф за всё приложение"
+estimatedMinutes: 45
+---
+
+# DI-контейнеры: кто собирает граф зависимостей целого приложения
+
+`Depends` из прошлого концепта отлично обслуживает один обработчик, но у него есть потолок. Пул соединений к базе, загруженная в память ML-модель, разобранный конфиг живут один раз на весь процесс, а `Depends` кэширует зависимость только в пределах запроса: следующий запрос вычислит её заново. Чтобы объект пережил запросы, разработчики тянутся к модульным глобалам, `@lru_cache` на функции-зависимости или `app.state`. Каждый такой обход прячет зависимость: её не видно в сигнатуре, её тип теряется, её тяжело подменить в тесте. Вдобавок каждое ребро графа приходится прописывать руками там, где зависимость используется: `Depends(get_db)`, `Depends(get_user)`, и так десятки раз.
+
+Контейнер снимает оба ограничения. Вы регистрируете, как строится каждая зависимость и как долго она живёт, а потом просите у контейнера нужный сервис. Дальше он сам разворачивает всю цепочку, создаёт долгоживущие объекты один раз, короткоживущие на каждый запрос, и закрывает их в правильном порядке. В этом разделе разберём, чего именно не хватает `Depends` до контейнера, как устроены scope в `dishka` (сегодня это основной DI-контейнер в Python), как он подключается к FastAPI и Litestar, и почему точку сборки графа выносят в composition root.
+
+## Чего `Depends` не умеет как контейнер
+
+`Depends` силён внутри запроса, но три вещи ему не по силам, и именно они отличают полноценный контейнер.
+
+Во-первых, у `Depends` нет **app-scope**. Кэш зависимости живёт ровно один запрос, поэтому объект-одиночку на весь процесс приходится городить в обход: глобальная переменная, `@lru_cache`, `app.state`. Все три варианта прячут зависимость от типизации и подмены; вдобавок `@lru_cache` кэширует на весь процесс и не сбрасывается между тестами, так что подменить такой объект в одном тесте, не наследив в соседних, тяжело. Во-вторых, у `Depends` нет **автоматической сборки по типу** (wiring). Фреймворк не знает, *как построить* `OrderService`; вы обязаны в каждой точке вручную указать `Depends(...)` и сами прошить подзависимости. В-третьих, у `Depends` нет **общего жизненного цикла**. Зависимость с `yield` закрывает ресурс в конце запроса, но события старта и остановки приложения (`lifespan`) живут отдельно от графа зависимостей и с ним не связаны.
+
+Контейнер закрывает все три пробела: он держит несколько времён жизни (scope), строит объект по его типу, разворачивая подзависимости сам, и привязывает освобождение ресурсов к закрытию соответствующего scope.
+
+## Ментальная модель: scope как вложенные времена жизни
+
+Ключ к контейнеру не в том, *как* создать объект, а в том, *как долго* он живёт. Это и задаёт scope. Scope вложены друг в друга, как коробки: внешний `Scope.APP` охватывает весь срок жизни приложения, внутренний `Scope.REQUEST` открывается на каждый запрос и закрывается, когда запрос обработан. Объект в `Scope.APP` создаётся один раз и общий для всех запросов - это одиночка. Объект в `Scope.REQUEST` создаётся заново в каждом запросе и внутри него кэшируется.
+
+<Figure caption="Scope.APP охватывает всё приложение и хранит объекты-одиночки: pool создаётся один раз. Каждый запрос открывает вложенный Scope.REQUEST со своим набором объектов (uow свой на каждый запрос) и закрывает его по завершении. Внутренний scope видит внешний, но не наоборот.">
+  <Sketch viewBox="0 0 480 250" title="Вложенные scope контейнера">
+    <SketchBox x={16} y={16} width={448} height={218} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={240} y={40} weight="bold">Scope.APP · весь срок жизни приложения</SketchLabel>
+    <SketchBox x={170} y={54} width={140} height={44} accent />
+    <SketchLabel x={240} y={74} mono size={11} accent>pool</SketchLabel>
+    <SketchLabel x={240} y={90} size={10} muted>создан один раз</SketchLabel>
+    <SketchBox x={40} y={122} width={186} height={96} dashed />
+    <SketchLabel x={133} y={142} size={11}>Scope.REQUEST · запрос 1</SketchLabel>
+    <SketchBox x={62} y={156} width={142} height={44} accent />
+    <SketchLabel x={133} y={182} mono size={11} accent>uow #1</SketchLabel>
+    <SketchBox x={254} y={122} width={186} height={96} dashed />
+    <SketchLabel x={347} y={142} size={11}>Scope.REQUEST · запрос 2</SketchLabel>
+    <SketchBox x={276} y={156} width={142} height={44} accent />
+    <SketchLabel x={347} y={182} mono size={11} accent>uow #2</SketchLabel>
+    <SketchArrow from={[133, 156]} to={[214, 98]} accent dashed />
+    <SketchArrow from={[347, 156]} to={[266, 98]} accent dashed />
+  </Sketch>
+</Figure>
+
+На схеме `pool` лежит в общей внешней коробке, поэтому оба запроса берут один и тот же объект. А `uow` рождается внутри своей коробки-запроса, поэтому у запроса 1 и запроса 2 он разный. Пунктирные стрелки показывают направление видимости: запрос дотягивается до app-объекта, но app-объект не может увидеть содержимое конкретного запроса - он ведь переживёт их все.
+
+## dishka: в провайдере вы описываете, как построить зависимость
+
+`dishka` собирает граф вокруг двух понятий: `Provider` и `Scope`. В провайдере вы объявляете фабрики: метод под декоратором `@provide` строит зависимость, а его аннотация возврата говорит контейнеру, *какой тип* этот метод отдаёт. Параметры метода контейнер подставляет сам, разрешая их по типу.
+
+```python
+from dishka import Provider, Scope, provide, make_async_container
+
+class AppProvider(Provider):
+    @provide(scope=Scope.APP)
+    def pool(self) -> Pool:
+        return Pool(dsn="postgresql://localhost/shop")
+
+    @provide(scope=Scope.REQUEST)
+    def uow(self, pool: Pool) -> UnitOfWork:
+        return UnitOfWork(pool)
+
+    @provide(scope=Scope.REQUEST)
+    def order_service(self, uow: UnitOfWork) -> OrderService:
+        return OrderService(uow)
+
+container = make_async_container(AppProvider())
+```
+
+Здесь `pool` объявлен в `Scope.APP`, поэтому пул создаётся однажды и переиспользуется всеми запросами. `uow` объявлен в `Scope.REQUEST` и в параметре просит `pool: Pool`; контейнер видит эту аннотацию, берёт готовый пул из внешнего scope и передаёт в фабрику. Так же `order_service` просит `uow`. Когда обработчик попросит у контейнера `OrderService`, тот сам соберёт цепочку `pool → uow → order_service`: вы нигде не написали `OrderService(UnitOfWork(Pool(...)))` руками, граф развернулся по типам. `make_async_container` собирает всё это в асинхронный контейнер для async-приложения (для синхронного есть `make_container`).
+
+Чтобы контейнер не только создавал ресурс, но и закрывал его, фабрику делают генератором. Код до `yield` выполняется при входе в scope, код после - при его закрытии, ровно как у зависимости с `yield` в FastAPI, только теперь это работает и на уровне приложения.
+
+```python
+from collections.abc import AsyncIterator
+
+class AppProvider(Provider):
+    @provide(scope=Scope.APP)
+    async def pool(self) -> AsyncIterator[Pool]:
+        pool = await create_pool(dsn="postgresql://localhost/shop")
+        yield pool
+        await pool.close()
+```
+
+Строка `await pool.close()` выполнится не в конце запроса, а при закрытии контейнера приложения. Освобождение ресурса привязано к тому scope, в котором ресурс создан. Именно эту связку `Depends` и не давал: там `yield`-зависимость знает только про запрос.
+
+## Подключение к FastAPI и Litestar
+
+Отдельный контейнер был бы бесполезен, если бы обработчик не мог из него брать. Интеграция закрывает этот шов. Для FastAPI: `setup_dishka(container, app)` вешает middleware, которое на каждый запрос открывает вложенный `Scope.REQUEST` и кладёт request-контейнер в `request.state`. В обработчике параметр помечают `FromDishka[...]`, а декоратор `@inject` подставляет в него объект из контейнера вместо данных запроса.
+
+```python
+from dishka.integrations.fastapi import setup_dishka, FromDishka, inject
+from fastapi import FastAPI
+
+app = FastAPI()
+container = make_async_container(AppProvider())
+setup_dishka(container, app)
+
+@app.get("/orders/{order_id}")
+@inject
+async def get_order(order_id: int, service: FromDishka[OrderService]):
+    return await service.get(order_id)
+```
+
+`order_id` FastAPI по-прежнему достаёт из пути, а `service` приходит из контейнера уже собранным: с request-scoped `uow` поверх app-scoped `pool`. Litestar подключается тем же движением - меняется только строка импорта, а разметка обработчика и `FromDishka` те же.
+
+```python
+from dishka.integrations.litestar import setup_dishka, FromDishka, inject
+from litestar import Litestar, get
+
+@get("/orders/{order_id:int}")
+@inject
+async def get_order(order_id: int, service: FromDishka[OrderService]) -> dict:
+    return await service.get(order_id)
+
+app = Litestar(route_handlers=[get_order])
+setup_dishka(container, app)
+```
+
+Один и тот же контейнер обслуживает разные фреймворки, потому что он ничего о них не знает: фреймворк-специфична только тонкая интеграция, а провайдеры и граф переносимы.
+
+## Соберите мини-контейнер руками
+
+`dishka` в песочнице не установлен, поэтому ниже - крошечный контейнер на чистом Python, который воспроизводит суть scope: app-объекты кэшируются в общем `app_cache`, request-объекты - в локальном кэше запроса. Запустите код и посмотрите, как `pool` совпадает между запросами, а `uow` различается. Затем поменяйте scope у `pool` на `REQUEST` и убедитесь, что теперь и он стал разным между запросами.
+
+<PyDemo
+  title="Мини-контейнер со scope на чистом Python"
+  code={`APP, REQUEST = "app", "request"
+
+class Container:
+    def __init__(self, providers):
+        self.providers = providers
+        self.app_cache = {}
+    def request(self):
+        return Request(self)
+
+class Request:
+    def __init__(self, container):
+        self.container = container
+        self.local = {}
+    def get(self, key):
+        factory, scope = self.container.providers[key]
+        cache = self.container.app_cache if scope == APP else self.local
+        if key not in cache:
+            cache[key] = factory()
+        return cache[key]
+
+container = Container({
+    "pool": (lambda: object(), APP),
+    "uow": (lambda: object(), REQUEST),
+})
+
+r1 = container.request()
+r2 = container.request()
+print("pool один на приложение:", r1.get("pool") is r2.get("pool"))
+print("uow свой на запрос:", r1.get("uow") is r2.get("uow"))
+print("в одном запросе uow тот же:", r1.get("uow") is r1.get("uow"))`}
+/>
+
+Вся разница между одиночкой и объектом-на-запрос сводится к одной строке: в какой кэш положить результат. Настоящий `dishka` добавляет к этому разрешение по типам, проверку scope и финализацию, но сердцевина именно такая - выбор кэша по времени жизни.
+
+## Грабли: scope нельзя перевернуть
+
+Самая частая неожиданность - направление зависимостей между scope. Внутренний scope видит внешний, но не наоборот. Значит, app-объект **не может** зависеть от request-объекта: он переживёт любой запрос, а request-объект к тому времени давно закрыт. `dishka` ловит это и не даст собрать такой граф.
+
+```python
+class Broken(Provider):
+    @provide(scope=Scope.APP)
+    def cache(self, uow: UnitOfWork) -> Cache:
+        return Cache(uow)
+```
+
+Здесь app-scoped `cache` просит request-scoped `uow`, и контейнер сообщит об ошибке scope: одиночка не имеет права держать ссылку на то, что живёт один запрос. Лечится это выбором правильного времени жизни - либо `cache` тоже переводят в `Scope.REQUEST`, либо он должен зависеть от чего-то app-уровня.
+
+Вторая расплата за app-scope тоньше. Раз app-объект общий для всех запросов, любое изменяемое состояние в нём общее сразу для всех - и разных пользователей. App-scoped список, куда обработчики что-то дописывают, превращается в утечку данных между запросами и в гонку под нагрузкой. В `Scope.APP` держат неизменяемое или потокобезопасное: конфиг, пул, клиент. Всё, у чего есть «состояние текущего запроса» - сессия, текущий пользователь, unit of work - живёт в `Scope.REQUEST`.
+
+## Composition root: граф собирают на границе приложения
+
+Есть ровно одно место, где абстрактный граф встречается с конкретными классами: там создают провайдеры, вызывают `make_async_container` и подключают его к приложению. Это место называют composition root, и держат его на самом краю - в точке входа или в фабрике `create_app`. Всё остальное приложение только объявляет свои потребности типами, а *какую* реализацию подставить, решает единственная точка сборки.
+
+<Figure caption="Composition root собирает граф в единственном месте на границе приложения: провайдеры связывают контракт с конкретной реализацией. Доменный слой зависит только от протокола Mailer и о контейнере не знает; стрелка реализации идёт снаружи внутрь.">
+  <Sketch viewBox="0 0 480 210" title="Composition root и направление зависимостей">
+    <SketchBox x={20} y={26} width={188} height={162} dashed />
+    <SketchLabel x={114} y={46} weight="bold">Composition root</SketchLabel>
+    <SketchLabel x={114} y={63} size={10} muted>main.py · сборка графа</SketchLabel>
+    <SketchBox x={40} y={78} width={148} height={40} accent />
+    <SketchLabel x={114} y={102} mono size={11} accent>Provider + контейнер</SketchLabel>
+    <SketchBox x={40} y={132} width={148} height={40} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={114} y={156} mono size={11}>SmtpMailer</SketchLabel>
+    <SketchBox x={300} y={66} width={160} height={92} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={380} y={88} weight="bold">Доменный слой</SketchLabel>
+    <SketchLabel x={380} y={110} mono size={11}>OrderService</SketchLabel>
+    <SketchLabel x={380} y={134} mono size={11} accent>Mailer · Protocol</SketchLabel>
+    <SketchArrow from={[188, 150]} to={[300, 128]} accent />
+    <SketchLabel x={244} y={184} size={10} muted>реализация подставляется под контракт</SketchLabel>
+  </Sketch>
+</Figure>
+
+Такое разделение - это ровно граница, которую проводит чистая архитектура (тема `clean-architecture`): доменный слой зависит только от контрактов и направлен внутрь, а внешний слой с фреймворками и драйверами связывает конкретные адаптеры с портами домена. DI-контейнер работает механизмом на этом шве: он живёт снаружи, в composition root, и подставляет реализации, ни разу не заставив домен импортировать себя. Пока контейнер не протёк в бизнес-логику, домен остаётся переносимым и тестируемым.
+
+## Типичные ошибки
+
+- **Забыть аннотацию возврата у фабрики.** `dishka` берёт предоставляемый тип именно из аннотации возврата метода `@provide`. Без `-> Pool` контейнер не знает, что метод отдаёт, и не сможет разрешить зависимость по типу.
+- **Сделать всё `Scope.APP`.** Заманчиво объявить одиночками вообще всё «ради скорости». Но сессия базы, текущий пользователь и unit of work обязаны быть `Scope.REQUEST`: в app-scope они утекают между запросами и делят состояние на всех. Одиночки - только для неизменяемых и разделяемых ресурсов.
+- **Не закрыть контейнер.** App-scoped ресурсы с финализацией (пул, соединение) освобождаются при закрытии контейнера. Забудете `await container.close()` на остановке приложения - получите утечку. Интеграции закрывают request-scope сами, но корневой контейнер закрываете вы.
+- **Протащить контейнер в домен.** Если бизнес-класс импортирует контейнер или `FromDishka`, он снова привязан к фреймворку. Держите обращение к контейнеру только в composition root и на кромке обработчиков; домен должен зависеть от контрактов, а не от способа их сборки.
+
+<Detail summary="dishka против dependency-injector">
+
+`dependency-injector` - другой популярный контейнер, и подход у него иной. Граф там собирают из объектов-провайдеров прямо в классе-контейнере: `providers.Singleton` для одиночки, `providers.Factory` для «нового на каждый вызов».
+
+```python
+from dependency_injector import containers, providers
+
+class Container(containers.DeclarativeContainer):
+    config = providers.Configuration()
+    pool = providers.Singleton(Pool, dsn=config.dsn)
+    uow = providers.Factory(UnitOfWork, pool=pool)
+```
+
+Чтобы значения дошли до обработчиков, модули «прошивают» через `container.wire(modules=[...])`, а в сигнатуры добавляют маркеры `Provide[Container.uow]`. Это явно и наглядно, но многословнее, и время жизни задают типом провайдера, а не вложенными scope. `dishka` идёт от аннотаций типов и ставит scope в центр: вы просите тип, а контейнер сам находит фабрику и выбирает scope. Грубо: `dependency-injector` описывает граф объектами-провайдерами и требует wiring, `dishka` выводит граф из типов и управляет им через scope.
+
+</Detail>
+
+<Detail summary="Как контейнер находит фабрику по типу">
+
+Когда `dishka` собирает контейнер, он проходит по всем провайдерам и строит отображение «тип → фабрика, которая его отдаёт» (тип берётся из аннотации возврата). Запрос `container.get(OrderService)` запускает обход графа: у фабрики `OrderService` смотрят параметры, для каждого по типу находят свою фабрику, спускаются глубже, пока не упрутся в листья без зависимостей. По пути контейнер проверяет scope (нельзя из внешнего сослаться на внутренний) и кэширует результат в кэше своего scope. Ошибка «нет провайдера для типа X» означает, что тип нигде не объявлен как возвращаемый; ошибка scope - что фабрика просит объект с более коротким временем жизни, чем у неё самой.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Depends кэширует зависимость в пределах запроса и не даёт ни app-scope, ни сборки по типу, ни общего жизненного цикла - это и отличает его от полноценного контейнера.",
+    "Scope задаёт время жизни: Scope.APP создаёт объект один раз на всё приложение (одиночка), Scope.REQUEST - заново на каждый запрос; scope вложены, внутренний видит внешний.",
+    "В dishka провайдер объявляет фабрики через @provide, предоставляемый тип берётся из аннотации возврата, а параметры фабрики контейнер разрешает по типу.",
+    "make_async_container собирает граф; setup_dishka + FromDishka подключают его к FastAPI и Litestar одинаково, оставляя провайдеры переносимыми.",
+    "App-scoped объект не может зависеть от request-scoped (он его переживёт), а изменяемое состояние в Scope.APP делится между всеми запросами.",
+    "Composition root собирает граф в единственном месте на границе приложения; домен зависит от контрактов и о контейнере не знает - это шов чистой архитектуры.",
+  ]}
+/>
+
+## Ссылки
+
+- [dishka - документация](https://dishka.readthedocs.io/)
+- [dishka - интеграции с FastAPI и Litestar](https://dishka.readthedocs.io/en/stable/integrations/index.html)
+- [dependency-injector - документация](https://python-dependency-injector.ets-labs.org/)
+- [Mark Seemann - Composition Root](https://blog.ploeh.dk/2011/07/28/CompositionRoot/)

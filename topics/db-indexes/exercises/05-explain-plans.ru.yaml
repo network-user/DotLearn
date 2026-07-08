@@ -1,0 +1,219 @@
+exercises:
+  - id: explain-read-quiz
+    concept: explain-plans
+    type: theory-quiz
+    difficulty: 1
+    prompt: "В выводе EXPLAIN QUERY PLAN вы видите строку SCAN orders. Что это значит?"
+    choices:
+      - id: a
+        text: "Движок читает всю таблицу orders построчно, индекс не используется."
+      - id: b
+        text: "Движок нашёл нужные строки по индексу и не читал остального."
+      - id: c
+        text: "Таблица orders пуста."
+      - id: d
+        text: "Запрос завершился ошибкой."
+    correct: [a]
+    explanation: "SCAN означает полный перебор таблицы. Для точечного доступа по индексу в плане была бы строка SEARCH с именем индекса."
+    variants:
+      - prompt: "Строка плана SEARCH orders USING INDEX idx_orders_user (user_id=?) означает, что..."
+        choices:
+          - id: a
+            text: "движок идёт по индексу idx_orders_user прямо к нужным строкам, не читая всю таблицу."
+          - id: b
+            text: "движок читает всю таблицу orders, а индекс только проверяет условие."
+          - id: c
+            text: "индекс idx_orders_user повреждён и его надо пересоздать."
+          - id: d
+            text: "движку пришлось отдельно отсортировать результат."
+        correct: [a]
+        explanation: "SEARCH это точечный или диапазонный доступ по индексу. В скобках указана колонка и вид условия, по которому движок вошёл в индекс."
+      - prompt: "Строка плана SEARCH ... USING COVERING INDEX означает, что..."
+        choices:
+          - id: a
+            text: "все нужные колонки лежат в индексе, поэтому к самой таблице движок не обращается вовсе."
+          - id: b
+            text: "индекс покрывает только часть строк таблицы."
+          - id: c
+            text: "движок соединяет две таблицы через индекс."
+          - id: d
+            text: "индекс используется только для сортировки, но не для поиска."
+        correct: [a]
+        explanation: "COVERING значит index-only scan: и условие, и возвращаемые колонки берутся из индекса, обращения к таблице нет."
+
+  - id: explain-predict-join
+    concept: explain-plans
+    type: predict-output
+    difficulty: 2
+    prompt: "Соединение это вложенный цикл. Сколько строк вернёт этот запрос?"
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Москва'),
+        (2, 'boris@mail.ru', 'Казань'),
+        (3, 'vera@mail.ru', 'Москва'),
+        (4, 'grigori@mail.ru', 'Казань'),
+        (5, 'dmitry@mail.ru', 'Москва');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    snippet: |
+      SELECT COUNT(*) FROM users u
+      JOIN orders o ON o.user_id = u.id
+      WHERE o.status = 'paid';
+    expected:
+      kind: scalar
+      value: 5
+    variants:
+      - prompt: "Сколько строк вернёт запрос, если поменять статус на cancelled?"
+        snippet: |
+          SELECT COUNT(*) FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE o.status = 'cancelled';
+        expected:
+          kind: scalar
+          value: 2
+      - prompt: "Сколько строк даст соединение всех заказов пользователей из Москвы (любой статус)?"
+        snippet: |
+          SELECT COUNT(*) FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE u.city = 'Москва';
+        expected:
+          kind: scalar
+          value: 7
+
+  - id: explain-join-query
+    concept: explain-plans
+    type: sql-query
+    difficulty: 2
+    prompt: "Соедините users и orders и верните email и amount для оплаченных (status = 'paid') заказов пользователей из Москвы. Сортировка по amount по убыванию."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Москва'),
+        (2, 'boris@mail.ru', 'Казань'),
+        (3, 'vera@mail.ru', 'Москва'),
+        (4, 'grigori@mail.ru', 'Казань'),
+        (5, 'dmitry@mail.ru', 'Москва');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'vera@mail.ru', amount: 2000 }
+        - { email: 'dmitry@mail.ru', amount: 1500 }
+        - { email: 'anna@mail.ru', amount: 1200 }
+        - { email: 'anna@mail.ru', amount: 800 }
+        - { email: 'dmitry@mail.ru', amount: 450 }
+    solution: |
+      SELECT u.email AS email, o.amount AS amount
+      FROM users u
+      JOIN orders o ON o.user_id = u.id
+      WHERE u.city = 'Москва' AND o.status = 'paid'
+      ORDER BY o.amount DESC;
+    variants:
+      - prompt: "То же, но для пользователей из Казани и любого статуса. Верните email и amount, сортировка по amount по убыванию."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'boris@mail.ru', amount: 500 }
+        solution: |
+          SELECT u.email AS email, o.amount AS amount
+          FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE u.city = 'Казань'
+          ORDER BY o.amount DESC;
+      - prompt: "То же для Москвы, но только неоплаченные заказы (status не равен 'paid'). email и amount, по amount по убыванию."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'dmitry@mail.ru', amount: 900 }
+            - { email: 'vera@mail.ru', amount: 300 }
+        solution: |
+          SELECT u.email AS email, o.amount AS amount
+          FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE u.city = 'Москва' AND o.status <> 'paid'
+          ORDER BY o.amount DESC;
+
+  - id: explain-nplusone-query
+    concept: explain-plans
+    type: sql-query
+    difficulty: 3
+    prompt: "Вместо N+1 (отдельный запрос на число заказов для каждого пользователя) получите всё одним запросом: верните email и число заказов для каждого пользователя, включая тех, у кого заказов нет (0). Колонки: email и orders_count. Сортировка по email по возрастанию."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Москва'),
+        (2, 'boris@mail.ru', 'Казань'),
+        (3, 'vera@mail.ru', 'Москва'),
+        (4, 'grigori@mail.ru', 'Казань'),
+        (5, 'dmitry@mail.ru', 'Москва');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'anna@mail.ru', orders_count: 2 }
+        - { email: 'boris@mail.ru', orders_count: 1 }
+        - { email: 'dmitry@mail.ru', orders_count: 3 }
+        - { email: 'grigori@mail.ru', orders_count: 0 }
+        - { email: 'vera@mail.ru', orders_count: 2 }
+    hints:
+      - "N+1 это один запрос на каждого родителя. Лекарство это один запрос, где дети сгруппированы под родителями. Какое соединение сохранит пользователя, у которого заказов нет?"
+      - "Соедините users с orders через LEFT JOIN, сгруппируйте по пользователю и посчитайте COUNT(o.id), а не COUNT(*): иначе пользователь без заказов получит 1 вместо 0."
+    solution: |
+      SELECT u.email AS email, COUNT(o.id) AS orders_count
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      GROUP BY u.id, u.email
+      ORDER BY u.email;
+
+  - id: explain-city-revenue-challenge
+    concept: explain-plans
+    type: sql-query
+    difficulty: 5
+    prompt: "Для каждого города верните: город, число пользователей из него и суммарную выручку по их оплаченным (status = 'paid') заказам. Города без выручки должны показать 0, а не исчезнуть. Оставьте только города, где минимум два пользователя. Колонки: city, users, revenue. Сортировка по revenue по убыванию, при равенстве по city по возрастанию."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Москва'),
+        (2, 'boris@mail.ru', 'Казань'),
+        (3, 'vera@mail.ru', 'Москва'),
+        (4, 'grigori@mail.ru', 'Казань'),
+        (5, 'dmitry@mail.ru', 'Москва');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { city: 'Москва', users: 3, revenue: 5950 }
+        - { city: 'Казань', users: 2, revenue: 0 }
+    hints:
+      - "Если отфильтровать WHERE status = 'paid', города, где никто не платил, пропадут, а их надо показать с нулём. Держите всех через LEFT JOIN, а проверку на 'paid' спрячьте внутрь агрегата."
+      - "После LEFT JOIN группируйте по городу. Число людей это счёт различных пользователей, а не строк соединения, иначе один человек с несколькими заказами посчитается несколько раз. Выручка это условная агрегация: проверка статуса живёт внутри самой агрегатной функции, а не в WHERE, и на группе без единого оплаченного заказа результат стоит подстраховать от NULL. Порог по числу пользователей и порядок вывода применяются уже после группировки."
+    solution: |
+      SELECT u.city AS city,
+             COUNT(DISTINCT u.id) AS users,
+             COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.amount END), 0) AS revenue
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      GROUP BY u.city
+      HAVING COUNT(DISTINCT u.id) >= 2
+      ORDER BY revenue DESC, u.city;

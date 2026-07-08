@@ -1,0 +1,230 @@
+---
+conceptId: python-integration
+title: Verifying Keycloak tokens in Python
+estimatedMinutes: 50
+---
+
+# Verifying a Keycloak token in Python: PyJWT, PyJWKClient, and FastAPI
+
+You have a FastAPI service, and every request carries an `Authorization: Bearer eyJ...` header. Keycloak issued the token and signed it with its private key. The question is plain: how do you make sure in Python that this token is genuine, not expired, and issued to your service, without calling Keycloak on every request?
+
+The naive approach, asking Keycloak about every token, turns the identity provider into a bottleneck and a single point of failure. The right path is different: load the realm's public keys once and verify the signature locally. In the Python ecosystem this is two tools working together. PyJWKClient fetches and caches the keys, and `jwt.decode` from the PyJWT library verifies the signature and the mandatory claims. By the end of this section you will assemble a `get_current_user` dependency for FastAPI, learn to read roles from the token, and tell 401 from 403.
+
+## Keys arrive over the network, verification stays local
+
+Split the task into two independent halves. The first half fetches the material for verification: the realm's public keys. Keycloak publishes that set at the JWKS address, and it changes rarely, only on rotation. The second half verifies a specific token: it splits the three JWT parts, picks the key by `kid` from the header, and checks the signature and the `iss`, `aud`, `exp` claims. The first half hits the network and is cached; the second runs locally and fast.
+
+<Figure caption="The request hot path: keys are already cached, so per request you only pick a key by kid and run jwt.decode. Network · only when the cache is empty or stale.">
+  <PipelineFigure
+    stages={[
+      { label: 'Bearer token', note: 'Authorization header' },
+      { label: 'PyJWKClient', note: 'kid → key from JWKS · cache' },
+      { label: 'jwt.decode', note: 'signature · iss · aud · exp' },
+      { label: 'claims', note: 'sub · realm_access · resource_access' },
+      { label: 'access', note: '200 · 401 · 403' },
+    ]}
+  />
+</Figure>
+
+The figure shows the request hot path. The keys are already loaded and sit in the PyJWKClient cache, so the only work per request is picking the key by `kid` and calling `jwt.decode`. A network call to Keycloak happens only when the cache is empty or stale, not on every request.
+
+## Discovery: find jwks_uri instead of hardcoding it
+
+Do not hardcode the JWKS address. Every Keycloak realm publishes a discovery document at the standard `.well-known/openid-configuration` path, and it holds both `issuer` and `jwks_uri`. Read it once at application startup:
+
+```python
+import requests
+
+BASE = "https://kc.example.com/realms/corp"
+meta = requests.get(f"{BASE}/.well-known/openid-configuration").json()
+issuer = meta["issuer"]
+jwks_uri = meta["jwks_uri"]
+```
+
+Now hand `jwks_uri` to PyJWKClient. This class from PyJWT takes on all the key handling: it fetches the JWKS set, caches it, and picks the right key by the `kid` from the token header.
+
+```python
+import jwt
+from jwt import PyJWKClient
+
+jwks_client = PyJWKClient(jwks_uri, lifespan=300)
+signing_key = jwks_client.get_signing_key_from_jwt(token)
+```
+
+The `get_signing_key_from_jwt` method reads the token header, extracts the `kid`, and returns the matching key from the set. The `lifespan` parameter sets how many seconds to keep JWKS in the cache; the default is 300 seconds. While the cache is fresh, there is no network call. When Keycloak introduces a new key on rotation, the client picks it up on the next cache refresh, and tokens with the old `kid` keep validating while the old key stays in the set. That is exactly why the key is chosen by `kid` rather than by the first key in the set.
+
+<Callout type="tip">
+Create the PyJWKClient once for the whole application, not inside the handler. A new client per request resets the cache and turns offline verification back into a network round trip for JWKS.
+</Callout>
+
+## jwt.decode: the mandatory checks and their arguments
+
+You have the key; next comes `jwt.decode`. This call does all the substantive work, and it is easy to weaken it by omission.
+
+```python
+claims = jwt.decode(
+    token,
+    signing_key.key,
+    algorithms=["RS256"],
+    audience="reports-api",
+    issuer=issuer,
+    leeway=10,
+)
+```
+
+Each argument closes one check. `algorithms=["RS256"]` pins the allowed signing algorithm. Without it PyJWT refuses to run and demands the list explicitly, and that is not a whim: trusting the token's own `alg` field opens a classic attack. An attacker sets `alg: none` or swaps RS256 for HS256, signing the token with the public key as the secret. An explicit algorithm list closes both holes.
+
+`audience="reports-api"` requires the `aud` claim to contain your service's identifier. `issuer=issuer` checks the `iss` claim against your realm address. PyJWT verifies `exp` itself by default and raises `ExpiredSignatureError` when the token is past its expiry. The signature is always verified too, unless you disable it by hand. `leeway=10` allows ten seconds of slack for clock drift, so a freshly issued token is not rejected because Keycloak and your server disagree on the time.
+
+On any failure `jwt.decode` raises an exception, a subclass of `jwt.PyJWTError`: `InvalidSignatureError`, `ExpiredSignatureError`, `InvalidAudienceError`, `InvalidIssuerError`. Catching the base `PyJWTError` covers every rejection reason at once.
+
+## The aud trap: why Keycloak sends aud=account
+
+Here is what breaks the very first integration. You write `audience="reports-api"`, run it, and `jwt.decode` raises `InvalidAudienceError`, even though your Keycloak just issued the token. The reason is that a Keycloak access token by default carries `aud` equal to `"account"`, the realm's built-in client, not your API's identifier. Your service is simply not in `aud`.
+
+The tempting move is to disable the check: `options={"verify_aud": False}`. That removes, with your own hands, the exact check that keeps another realm token out of your service. The right fix lives on the Keycloak side: add an audience mapper or client scope so the realm puts your API's identifier into `aud`. After that `audience="reports-api"` passes honestly, and you reject tokens issued to other clients of the same realm.
+
+<Callout type="warning">
+`options={"verify_aud": False}` and `options={"verify_signature": False}` in production are a hole, not a fix. The first admits other realm tokens; the second accepts any forgery at all. When a check gets in the way, fix the Keycloak config, do not silence the check.
+</Callout>
+
+## get_current_user: a FastAPI dependency and roles from the token
+
+Let us package verification into a FastAPI dependency. `OAuth2PasswordBearer` pulls the token from the `Authorization` header and also draws the authorize form in Swagger; it verifies nothing itself, it only extracts the token string.
+
+```python
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{BASE}/protocol/openid-connect/token")
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    try:
+        key = jwks_client.get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token, key.key, algorithms=["RS256"],
+            audience="reports-api", issuer=issuer, leeway=10,
+        )
+    except jwt.PyJWTError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
+```
+
+Any handler that declares `user: dict = Depends(get_current_user)` gets verified claims or a 401. Keycloak puts roles in two places. Realm roles live in `realm_access.roles`, and a specific client's roles live in `resource_access.<client>.roles`. You read them with ordinary dict access:
+
+```python
+realm_roles = claims.get("realm_access", {}).get("roles", [])
+client_roles = (
+    claims.get("resource_access", {}).get("reports-api", {}).get("roles", [])
+)
+```
+
+It is convenient to wrap the role check in a separate dependency. And here it matters to tell two status codes apart. 401 means "I do not know who you are": no token, expired, or signature mismatch. 403 means "I know who you are, but you may not do this": the token is valid, identity is established, but the user lacks the required role.
+
+```python
+def require_role(role: str):
+    def checker(user: dict = Depends(get_current_user)) -> dict:
+        roles = user.get("realm_access", {}).get("roles", [])
+        if role not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+        return user
+    return checker
+```
+
+<Figure caption="401 answers 'who are you' · 403 answers 'what may you do': different rejection reasons and a different sensible client reaction.">
+  <Sketch viewBox="0 0 460 160" title="401 versus 403">
+    <SketchBox x={20} y={36} width={190} height={78} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={115} y={60} mono>401 Unauthorized</SketchLabel>
+    <SketchLabel x={115} y={80} size={11} muted>no token · expired · signature</SketchLabel>
+    <SketchLabel x={115} y={98} size={11} muted>client: refresh token, log in</SketchLabel>
+    <SketchBox x={250} y={36} width={190} height={78} accent />
+    <SketchLabel x={345} y={60} mono accent>403 Forbidden</SketchLabel>
+    <SketchLabel x={345} y={80} size={11} accent>token valid · role missing</SketchLabel>
+    <SketchLabel x={345} y={98} size={11} accent>client: login will not help</SketchLabel>
+    <SketchLabel x={230} y={140} size={12} muted>who are you ←→ what may you do</SketchLabel>
+  </Sketch>
+</Figure>
+
+Confusing these codes is a common mistake. Returning 403 for an invalid token is wrong: the client decides it is a permissions issue and will not refresh the token, when that is exactly what is needed. Conversely, 401 for a missing role pushes the client into a pointless login that adds no permissions.
+
+## Common mistakes
+
+- **Not pinning `algorithms`.** Trusting the token's `alg` field opens the `alg: none` attack and the RS256 to HS256 swap. Set the algorithm list explicitly, always.
+- **Silencing a check instead of fixing config.** `verify_aud: False` admits other realm tokens; `verify_signature: False` accepts forgeries. Cure the cause of `InvalidAudienceError` with an audience mapper in Keycloak.
+- **Creating PyJWKClient per request.** This wipes the key cache and brings back a network call for JWKS on every request, the exact thing offline verification should avoid.
+- **Confusing 401 and 403.** An invalid or missing token gives 401; a missing role on a valid token gives 403. Mixing them breaks client behavior.
+
+<Detail summary="Client credentials: a token for service-to-service calls">
+
+When one service calls another with no user involved, there is no user token. For that case there is the `client_credentials` grant: the service authenticates with its own `client_id` and `client_secret` and gets an access token whose `sub` points to a service account, not a person.
+
+```python
+resp = requests.post(
+    f"{BASE}/protocol/openid-connect/token",
+    data={
+        "grant_type": "client_credentials",
+        "client_id": "report-service",
+        "client_secret": CLIENT_SECRET,
+    },
+)
+service_token = resp.json()["access_token"]
+```
+
+The receiving side verifies such a token exactly like a user token: PyJWKClient plus `jwt.decode`. The difference is in the claims: a service token has no `refresh_token` (on expiry you just request a new one), and roles come from the service account's `resource_access`.
+
+</Detail>
+
+<Detail summary="Introspection versus offline verification">
+
+Offline verification via PyJWT is fast and never hits the network, but it does not see revocation: the token counts as valid until `exp`, even if the session has already ended. When instant revocation matters, Keycloak has an introspection endpoint (RFC 7662): you ask the realm itself whether the token is active.
+
+```python
+resp = requests.post(
+    f"{BASE}/protocol/openid-connect/token/introspect",
+    data={"token": token},
+    auth=("reports-api", CLIENT_SECRET),
+)
+active = resp.json()["active"]
+```
+
+<Compare
+  leftTitle="Offline verification (PyJWT)"
+  rightTitle="Introspection"
+  left={
+    <ul>
+      <li>Check is local, no network</li>
+      <li>Scales, Keycloak is not a bottleneck</li>
+      <li>Revocation invisible until exp</li>
+    </ul>
+  }
+  right={
+    <ul>
+      <li>A network call per check</li>
+      <li>Sees revocation immediately</li>
+      <li>Depends on Keycloak availability</li>
+    </ul>
+  }
+  verdict="Offline on the hot path, introspection on sensitive operations where instant revocation matters."
+/>
+
+Practice usually combines both: fast tokens with offline verification on most requests, and introspection where instant revocation is critical, for example on money operations.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Split the work: PyJWKClient fetches and caches the realm's public keys; jwt.decode verifies signature and claims locally, with no network on every request.",
+    "Take jwks_uri from the .well-known/openid-configuration discovery document instead of hardcoding it; PyJWKClient picks the key by kid and supports rotation.",
+    "In jwt.decode, algorithms=['RS256'], audience, and issuer are mandatory; PyJWT checks exp and the signature by default, and leeway absorbs clock drift.",
+    "Always set algorithms explicitly: trusting the token's alg field opens the alg:none attack and the RS256-to-HS256 swap.",
+    "Keycloak puts account in aud by default; fix it with an audience mapper in the realm, not by disabling verify_aud.",
+    "Roles live in realm_access.roles and resource_access.<client>.roles; an invalid token gives 401, a missing role on a valid token gives 403.",
+  ]}
+/>
+
+## References
+
+- [PyJWT documentation](https://pyjwt.readthedocs.io/en/stable/)
+- [PyJWT - PyJWKClient and JWKS handling](https://pyjwt.readthedocs.io/en/stable/usage.html#retrieve-rsa-signing-keys-from-a-jwks-endpoint)
+- [FastAPI - OAuth2 and securing endpoints](https://fastapi.tiangolo.com/tutorial/security/)
+- [Keycloak - Securing Applications and Services Guide](https://www.keycloak.org/docs/latest/securing_apps/index.html)
+- [RFC 7662 - OAuth 2.0 Token Introspection](https://datatracker.ietf.org/doc/html/rfc7662)

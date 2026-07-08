@@ -1,0 +1,275 @@
+exercises:
+  - id: container-why-001
+    concept: di-containers
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Why does FastAPI's `Depends` not replace a full DI container?"
+    choices:
+      - id: a
+        text: "Depends has no app-scope: it caches a dependency only within one request, so a process-wide singleton has to be bolted on from the side (global, lru_cache, app.state)."
+      - id: b
+        text: "Depends cannot inject dependencies into handlers at all."
+      - id: c
+        text: "Depends works only with synchronous handlers."
+      - id: d
+        text: "Depends requires a separate database to store the dependency graph."
+    correct: [a]
+    explanation: "Depends is strong inside a request, but its cache lives exactly one request. An object for the whole process (pool, model, config) has to be kept globally or in app.state, and such a dependency drops out of typing and substitution. A container closes this with app-scope."
+    variants:
+      - prompt: "What does it mean that `Depends` has no automatic assembly by type (wiring)?"
+        choices:
+          - id: a
+            text: "The framework does not know how to build OrderService by its type: at each point you write Depends(...) by hand and thread the subdependencies yourself."
+          - id: b
+            text: "Depends cannot inject more than one dependency into a single handler."
+          - id: c
+            text: "Depends assembles an object only if it has no subdependencies."
+          - id: d
+            text: "Wiring is about connecting a database and has nothing to do with Depends."
+        correct: [a]
+        explanation: "A container builds an object by type, unrolling the chain of subdependencies itself. Depends does not: you spell out the graph edges by hand at each point of use."
+      - prompt: "What shared lifecycle is `Depends` missing?"
+        choices:
+          - id: a
+            text: "A Depends with yield closes its resource at the end of a request, but application startup and shutdown events (lifespan) live separately from the dependency graph."
+          - id: b
+            text: "Depends does not call __init__ on injected classes."
+          - id: c
+            text: "Depends closes resources only if the application crashed with an error."
+          - id: d
+            text: "Depends does not support asynchronous dependencies."
+        correct: [a]
+        explanation: "A yield dependency is tied to the request. A process-wide resource and its closing on shutdown are not tied to the graph by Depends; a container does that, binding finalization to the scope."
+
+  - id: container-scope-001
+    concept: di-containers
+    type: theory-quiz
+    difficulty: 2
+    prompt: "A unit of work holds the current request's state. Which scope should it be declared in with dishka?"
+    choices:
+      - id: a
+        text: "Scope.REQUEST: a unit of work holds request state, so it must be recreated on each request."
+      - id: b
+        text: "Scope.APP: that way it is created once and runs faster."
+      - id: c
+        text: "Scope does not matter, a unit of work works the same in any."
+      - id: d
+        text: "Scope.APP, but with manual state cleanup after each request."
+    correct: [a]
+    explanation: "In Scope.APP one unit of work would be shared across all requests and users: races and leaks of other people's data. Current request state lives in Scope.REQUEST."
+    variants:
+      - prompt: "Why can an app-scoped object not depend on a request-scoped one?"
+        choices:
+          - id: a
+            text: "The app object outlives any request, and the request object is already closed by then: the reference would dangle. dishka will not let you assemble such a graph."
+          - id: b
+            text: "Because request-scoped objects cannot be passed to functions."
+          - id: c
+            text: "Because app-scoped objects are created later than request-scoped ones."
+          - id: d
+            text: "Such a dependency is allowed and works without problems."
+        correct: [a]
+        explanation: "An inner scope sees the outer, not the reverse. A singleton has no right to hold a reference to something that lives for one request, so the container reports a scope error."
+      - prompt: "What is appropriate to keep in `Scope.APP`?"
+        choices:
+          - id: a
+            text: "Immutable or thread-safe resources for the whole process: config, connection pool, HTTP client."
+          - id: b
+            text: "The current user of the request."
+          - id: c
+            text: "An open database transaction."
+          - id: d
+            text: "Any object, as long as the application runs faster."
+        correct: [a]
+        explanation: "An app-scoped object is shared by all requests, so mutable per-request state in it is shared across everyone. Only immutable or thread-safe things are made singletons."
+
+  - id: container-predict-001
+    concept: di-containers
+    type: predict-output
+    difficulty: 2
+    prompt: "What will this program print?"
+    snippet: |
+      class Container:
+          def __init__(self, scopes):
+              self.scopes = scopes
+              self.app_cache = {}
+          def resolve(self, name, req):
+              cache = self.app_cache if self.scopes[name] == "app" else req
+              if name not in cache:
+                  cache[name] = object()
+              return cache[name]
+
+      c = Container({"pool": "app", "uow": "request"})
+      r1, r2 = {}, {}
+      print(c.resolve("pool", r1) is c.resolve("pool", r2))
+      print(c.resolve("uow", r1) is c.resolve("uow", r2))
+    expected:
+      kind: stdout
+      value: "True\nFalse"
+    hints:
+      - "pool is app-scoped, so it is cached in the shared app_cache and is the same for both requests. uow is request-scoped and cached in its own request's cache. What does the is comparison give in each case?"
+    variants:
+      - snippet: |
+          class Container:
+              def __init__(self, scopes):
+                  self.scopes = scopes
+                  self.app_cache = {}
+              def resolve(self, name, req):
+                  cache = self.app_cache if self.scopes[name] == "app" else req
+                  if name not in cache:
+                      cache[name] = object()
+                  return cache[name]
+
+          c = Container({"cfg": "app"})
+          r = {}
+          print(c.resolve("cfg", r) is c.resolve("cfg", r))
+          print("cfg" in c.app_cache)
+        expected:
+          kind: stdout
+          value: "True\nTrue"
+      - snippet: |
+          class Container:
+              def __init__(self, scopes):
+                  self.scopes = scopes
+                  self.app_cache = {}
+              def resolve(self, name, req):
+                  cache = self.app_cache if self.scopes[name] == "app" else req
+                  if name not in cache:
+                      cache[name] = object()
+                  return cache[name]
+
+          c = Container({"pool": "app", "uow": "request", "svc": "request"})
+          r = {}
+          c.resolve("pool", r)
+          c.resolve("uow", r)
+          c.resolve("svc", r)
+          print(len(r))
+          print(len(c.app_cache))
+        expected:
+          kind: stdout
+          value: "2\n1"
+
+  - id: container-fill-001
+    concept: di-containers
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Complete the dishka provider: pool must be a singleton for the whole application, and uow must be created per request."
+    template: |
+      from dishka import Provider, Scope, provide
+
+      class AppProvider(Provider):
+          @{{deco}}(scope=Scope.{{scope1}})
+          def pool(self) -> Pool:
+              return Pool()
+
+          @provide(scope=Scope.{{scope2}})
+          def uow(self, pool: Pool) -> UnitOfWork:
+              return UnitOfWork(pool)
+    blanks:
+      deco:
+        accept: ["provide"]
+      scope1:
+        accept: ["APP"]
+      scope2:
+        accept: ["REQUEST"]
+    hints:
+      - "A provided factory is marked with a decorator from dishka, and lifetime is set by scope. A pool for the whole process and an object per request differ only in the scope value."
+    variants:
+      - prompt: "Complete plugging a dishka container into FastAPI: the middleware, the injection decorator, and the parameter marker."
+        template: |
+          from dishka.integrations.fastapi import setup_dishka, FromDishka, inject
+
+          app = FastAPI()
+          container = make_async_container(AppProvider())
+          {{setup}}(container, app)
+
+          @app.get("/orders/{order_id}")
+          @{{inject}}
+          async def get_order(order_id: int, service: {{marker}}[OrderService]):
+              return await service.get(order_id)
+        blanks:
+          setup:
+            accept: ["setup_dishka"]
+          inject:
+            accept: ["inject"]
+          marker:
+            accept: ["FromDishka"]
+      - prompt: "Complete the generator factory: it yields pool into the scope and closes it when the scope exits."
+        template: |
+          from collections.abc import AsyncIterator
+
+          class AppProvider(Provider):
+              @provide(scope=Scope.APP)
+              async def pool(self) -> AsyncIterator[Pool]:
+                  pool = await create_pool()
+                  {{keyword}} pool
+                  await pool.{{close}}()
+        blanks:
+          keyword:
+            accept: ["yield"]
+          close:
+            accept: ["close"]
+
+  - id: container-scope-check-001
+    concept: di-containers
+    type: python-function
+    difficulty: 3
+    prompt: "Implement `validate_scope(provider_scope, dep_scopes)`: return `True` if a factory in scope `provider_scope` is allowed to depend on every scope in the list `dep_scopes`. Rule: a factory may depend only on its own scope or a more outer (longer-lived) one. The outer scope is `\"APP\"`, the inner is `\"REQUEST\"`. An empty dependency list is always allowed."
+    starter: |
+      def validate_scope(provider_scope, dep_scopes):
+          ...
+    cases:
+      - call: "validate_scope('REQUEST', ['APP', 'REQUEST'])"
+        expect: true
+      - call: "validate_scope('APP', ['APP'])"
+        expect: true
+      - call: "validate_scope('APP', ['REQUEST'])"
+        expect: false
+      - call: "validate_scope('APP', [])"
+        expect: true
+      - call: "validate_scope('REQUEST', ['REQUEST', 'APP'])"
+        expect: true
+    hints:
+      - "Scope is nested lifetimes: APP outlives REQUEST. A factory must not hold a reference to something that lives shorter than itself. In which direction is a dependency allowed?"
+      - "Encode the scope order as a number: APP = 0 (outer), REQUEST = 1 (inner). A dependency is allowed when its number is not greater than the number of provider_scope. Check this for every element of the list."
+    solution: |
+      def validate_scope(provider_scope, dep_scopes):
+          order = {"APP": 0, "REQUEST": 1}
+          return all(order[d] <= order[provider_scope] for d in dep_scopes)
+
+  - id: container-build-001
+    concept: di-containers
+    type: python-function
+    difficulty: 4
+    prompt: "Implement the `resolve(name, request_cache)` method of a mini-container. By name it picks a cache: app-scoped objects are cached in the shared `self.app_cache`, request-scoped ones in the passed `request_cache`. On first access create the object via `object()` and store it in the cache; on repeat access return the cached one. The scope of a name is taken from `self.scopes[name]` and equals `\"app\"` or `\"request\"`."
+    starter: |
+      class ScopedContainer:
+          def __init__(self, scopes):
+              self.scopes = scopes
+              self.app_cache = {}
+          def resolve(self, name, request_cache):
+              ...
+    cases:
+      - call: "(lambda c: c.resolve('pool', {}) is c.resolve('pool', {}))(ScopedContainer({'pool': 'app'}))"
+        expect: true
+      - call: "(lambda c: c.resolve('uow', {}) is c.resolve('uow', {}))(ScopedContainer({'uow': 'request'}))"
+        expect: false
+      - call: "(lambda c, r: c.resolve('uow', r) is c.resolve('uow', r))(ScopedContainer({'uow': 'request'}), {})"
+        expect: true
+      - call: "(lambda c, r: (c.resolve('pool', r), 'pool' in c.app_cache)[1])(ScopedContainer({'pool': 'app'}), {})"
+        expect: true
+      - call: "(lambda c, r: (c.resolve('pool', r), 'pool' in r)[1])(ScopedContainer({'pool': 'app'}), {})"
+        expect: false
+    hints:
+      - "The whole point of scope is choosing the cache by lifetime: app-scoped lives for the whole container, request-scoped within one request. Where do you store the object in each case?"
+      - "Pick the cache dict (self.app_cache for 'app', otherwise request_cache), then apply get-or-create: if the key is missing, create object() and store it; at the end return the value from the cache."
+    solution: |
+      class ScopedContainer:
+          def __init__(self, scopes):
+              self.scopes = scopes
+              self.app_cache = {}
+          def resolve(self, name, request_cache):
+              cache = self.app_cache if self.scopes[name] == "app" else request_cache
+              if name not in cache:
+                  cache[name] = object()
+              return cache[name]

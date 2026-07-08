@@ -1,0 +1,263 @@
+exercises:
+  - id: descriptors-data-nondata-quiz
+    concept: descriptors
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Что превращает объект-дескриптор в data-дескриптор?"
+    choices:
+      - id: a
+        text: "Он определяет `__set__` или `__delete__`."
+      - id: b
+        text: "Он определяет только `__get__`."
+      - id: c
+        text: "Он лежит в `__dict__` экземпляра."
+      - id: d
+        text: "Он наследуется от `object`."
+    correct: [a]
+    explanation: "Наличие `__set__` или `__delete__` делает дескриптор data-дескриптором и даёт ему приоритет над словарём экземпляра. Только `__get__` это non-data дескриптор."
+    variants:
+      - prompt: "Как data-дескриптор соотносится со словарём экземпляра при чтении атрибута?"
+        choices:
+          - id: a
+            text: "Data-дескриптор имеет приоритет: чтение идёт через его `__get__`, что бы ни лежало в `obj.__dict__`."
+          - id: b
+            text: "Словарь экземпляра всегда важнее любого дескриптора."
+          - id: c
+            text: "Они игнорируют друг друга, побеждает случайный."
+          - id: d
+            text: "Порядок определяется алфавитом имён атрибутов."
+        correct: [a]
+        explanation: "Порядок поиска ставит data-дескриптор класса выше словаря экземпляра, поэтому его `__get__` вызывается всегда."
+      - prompt: "Почему обычная функция в классе это non-data дескриптор?"
+        choices:
+          - id: a
+            text: "У функции есть только `__get__`, поэтому словарь экземпляра может её затенить."
+          - id: b
+            text: "У функции есть `__set__`, поэтому она главнее словаря."
+          - id: c
+            text: "Функции вообще не участвуют в поиске атрибутов."
+          - id: d
+            text: "Функция хранится в экземпляре, а не в классе."
+        correct: [a]
+        explanation: "Тип `function` определяет `__get__` и не определяет `__set__`, значит это non-data дескриптор, и одноимённый ключ в `obj.__dict__` его перекроет."
+
+  - id: descriptors-bound-method-predict
+    concept: descriptors
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Проследите, во что превращается доступ к методу через экземпляр и через класс."
+    snippet: |
+      class Greeter:
+          def hi(self):
+              return "ok"
+
+      g = Greeter()
+      print(type(g.hi).__name__, type(Greeter.hi).__name__, g.hi.__func__ is Greeter.hi)
+    expected:
+      kind: stdout
+      value: "method function True"
+    hints:
+      - "Доступ через экземпляр запускает `__get__` функции и рождает bound method; доступ через класс отдаёт голую функцию."
+      - "`__func__` у связанного метода это та самая функция из класса, поэтому проверка на идентичность истинна."
+    variants:
+      - snippet: |
+          class C:
+              def m(self):
+                  return 1
+
+          a = C()
+          b = C()
+          print(a.m == a.m, a.m is a.m, a.m.__func__ is b.m.__func__)
+        expected:
+          kind: stdout
+          value: "True False True"
+      - snippet: |
+          class C:
+              def m(self):
+                  return 1
+
+          c = C()
+          c.__dict__['m'] = lambda: 99
+          print(c.m(), type(C.__dict__['m']).__name__)
+        expected:
+          kind: stdout
+          value: "99 function"
+
+  - id: descriptors-cache-once
+    concept: descriptors
+    type: python-function
+    difficulty: 3
+    prompt: |
+      Реализуйте non-data дескриптор `Once` (упрощённый `cached_property`): при
+      первом чтении он вызывает обёрнутую функцию, сохраняет результат в словаре
+      экземпляра под своим именем и возвращает его, а при следующих чтениях отдаёт
+      готовое значение, больше не вызывая функцию.
+    hints:
+      - "Дескриптор только с `__get__` является non-data: при следующем чтении словарь экземпляра победит его. Именно на этом держится кэш."
+      - "В `__set_name__` запомните имя. В `__get__` вычислите `self.func(obj)`, положите результат в `obj.__dict__[имя]` и верните его."
+    starter: |
+      class Once:
+          def __init__(self, func):
+              self.func = func
+
+          def __set_name__(self, owner, name):
+              ...
+
+          def __get__(self, obj, objtype=None):
+              ...
+    cases:
+      - call: |
+          class Circle:
+              def __init__(self, r):
+                  self.r = r
+                  self.calls = 0
+
+              @Once
+              def area(self):
+                  self.calls += 1
+                  return 3 * self.r * self.r
+
+          c = Circle(10)
+          first = c.area
+          second = c.area
+          [first, second, c.calls]
+        expect: [300, 300, 1]
+      - call: |
+          class Circle:
+              def __init__(self, r):
+                  self.r = r
+                  self.calls = 0
+
+              @Once
+              def area(self):
+                  self.calls += 1
+                  return 3 * self.r * self.r
+
+          a = Circle(1)
+          b = Circle(2)
+          a.area
+          b.area
+          [a.area, b.area, a.calls, b.calls]
+        expect: [3, 12, 1, 1]
+      - call: |
+          class Box:
+              def __init__(self, n):
+                  self.n = n
+                  self.calls = 0
+
+              @Once
+              def doubled(self):
+                  self.calls += 1
+                  return self.n * 2
+
+          x = Box(7)
+          x.doubled
+          x.doubled
+          x.doubled
+          x.calls
+        expect: 1
+    solution: |
+      class Once:
+          def __init__(self, func):
+              self.func = func
+
+          def __set_name__(self, owner, name):
+              self.name = name
+
+          def __get__(self, obj, objtype=None):
+              if obj is None:
+                  return self
+              value = self.func(obj)
+              obj.__dict__[self.name] = value
+              return value
+
+  - id: descriptors-validated-field
+    concept: descriptors
+    type: python-function
+    difficulty: 4
+    prompt: |
+      Реализуйте переиспользуемый дескриптор `Field(minimum=None, maximum=None)`.
+      Значение он хранит в словаре экземпляра, а в сеттере проверяет границы:
+      значение меньше `minimum` или больше `maximum` поднимает ValueError; граница
+      `None` означает отсутствие ограничения. Неудачное присваивание не должно
+      менять состояние, а разные экземпляры и несколько полей одного класса обязаны
+      работать независимо.
+    hints:
+      - "Проверка живёт в `__set__`, хранение в `obj.__dict__` под именем из `__set_name__`, чтение в `__get__`. Значение не держите в самом дескрипторе, иначе оно станет общим для всех экземпляров."
+      - "`__set_name__(self, owner, name)` даёт имя атрибута: сохраните его и используйте ключом в `obj.__dict__`."
+      - "В `__set__` сравнивайте с `minimum` и `maximum` только когда они не `None`; поднимайте ValueError до записи, тогда неудачное присваивание не тронет словарь."
+    starter: |
+      class Field:
+          def __init__(self, minimum=None, maximum=None):
+              self.minimum = minimum
+              self.maximum = maximum
+
+          def __set_name__(self, owner, name):
+              ...
+
+          def __get__(self, obj, objtype=None):
+              ...
+
+          def __set__(self, obj, value):
+              ...
+    cases:
+      - call: |
+          class Product:
+              price = Field(minimum=0)
+
+          p = Product()
+          p.price = 250
+          p.price
+        expect: 250
+      - call: |
+          class Product:
+              price = Field(minimum=0)
+
+          p = Product()
+          try:
+              p.price = -1
+              outcome = "accepted"
+          except ValueError:
+              outcome = "rejected"
+          [outcome, "price" in p.__dict__]
+        expect: ["rejected", false]
+      - call: |
+          class Account:
+              age = Field(minimum=0, maximum=150)
+              score = Field(minimum=0, maximum=100)
+
+          a = Account()
+          a.age = 40
+          a.score = 90
+          a.age + a.score
+        expect: 130
+      - call: |
+          class Box:
+              n = Field(minimum=0)
+
+          x = Box()
+          y = Box()
+          x.n = 5
+          y.n = 9
+          [x.n, y.n]
+        expect: [5, 9]
+    solution: |
+      class Field:
+          def __init__(self, minimum=None, maximum=None):
+              self.minimum = minimum
+              self.maximum = maximum
+
+          def __set_name__(self, owner, name):
+              self.name = name
+
+          def __get__(self, obj, objtype=None):
+              if obj is None:
+                  return self
+              return obj.__dict__[self.name]
+
+          def __set__(self, obj, value):
+              if self.minimum is not None and value < self.minimum:
+                  raise ValueError(f"{self.name}: ниже минимума")
+              if self.maximum is not None and value > self.maximum:
+                  raise ValueError(f"{self.name}: выше максимума")
+              obj.__dict__[self.name] = value

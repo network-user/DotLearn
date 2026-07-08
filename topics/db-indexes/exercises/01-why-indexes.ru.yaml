@@ -1,0 +1,151 @@
+exercises:
+  - id: why-scan-vs-index
+    concept: why-indexes
+    type: theory-quiz
+    difficulty: 1
+    prompt: "В таблице orders два миллиона строк и нет подходящего индекса. Что делает СУБД при запросе WHERE user_id = 4821?"
+    choices:
+      - id: a
+        text: "Читает и проверяет каждую строку таблицы (полный перебор)."
+      - id: b
+        text: "Сразу переходит к нужным строкам, минуя остальные."
+      - id: c
+        text: "Отказывается выполнять запрос, пока не создан индекс."
+      - id: d
+        text: "Возвращает только первую подходящую строку."
+    correct: [a]
+    explanation: "Без индекса остаётся один путь: полный перебор (SCAN). Движок сверяет условие с каждой из двух миллионов строк, и время растёт линейно с их числом."
+    variants:
+      - prompt: "Зачем таблице индекс по колонке, по которой часто идёт фильтрация?"
+        choices:
+          - id: a
+            text: "Чтобы находить нужные строки, не читая всю таблицу."
+          - id: b
+            text: "Чтобы таблица занимала меньше места на диске."
+          - id: c
+            text: "Чтобы ускорить вставку новых строк."
+          - id: d
+            text: "Чтобы автоматически запретить дубликаты в колонке."
+        correct: [a]
+        explanation: "Индекс хранит значения колонки по порядку, поэтому нужную строку база находит без перебора. Место он, наоборот, добавляет, а вставку замедляет."
+      - prompt: "Колонка объявлена как id INTEGER PRIMARY KEY. Нужен ли отдельный индекс для WHERE id = 5?"
+        choices:
+          - id: a
+            text: "Нет: INTEGER PRIMARY KEY в SQLite уже работает как индекс (rowid)."
+          - id: b
+            text: "Да: без CREATE INDEX поиск по id идёт перебором."
+          - id: c
+            text: "Да: первичный ключ хранится отдельно и сам не индексируется."
+          - id: d
+            text: "Нет, потому что по числовым колонкам индексы не строят."
+        correct: [a]
+        explanation: "Колонка INTEGER PRIMARY KEY совпадает с rowid, встроенным ключом строки. Поиск по ней идёт через него без отдельного CREATE INDEX."
+
+  - id: why-create-index
+    concept: why-indexes
+    type: sql-query
+    difficulty: 2
+    prompt: "Создайте индекс с именем idx_orders_user на колонке user_id таблицы orders, затем верните имя созданного индекса из sqlite_master."
+    fixture: |
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1,1,'paid',1200), (2,1,'paid',800), (3,2,'cancelled',500),
+        (4,3,'paid',2000), (5,3,'pending',300), (6,5,'paid',1500),
+        (7,5,'paid',450), (8,5,'cancelled',900), (9,6,'pending',700), (10,7,'paid',1100);
+    expected:
+      kind: result-set
+      ordered: false
+      rows:
+        - { name: 'idx_orders_user' }
+    hints:
+      - "Индекс создаётся командой CREATE INDEX <имя> ON <таблица>(<колонка>)."
+      - "Список всех индексов базы лежит в служебной таблице sqlite_master, где type равен строке index."
+    solution: |
+      CREATE INDEX idx_orders_user ON orders(user_id);
+      SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_orders_user';
+    variants:
+      - prompt: "Создайте индекс idx_orders_status на колонке status таблицы orders, затем верните его имя из sqlite_master."
+        expected:
+          kind: result-set
+          ordered: false
+          rows:
+            - { name: 'idx_orders_status' }
+        solution: |
+          CREATE INDEX idx_orders_status ON orders(status);
+          SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_orders_status';
+      - prompt: "Создайте индекс idx_orders_amount на колонке amount таблицы orders, затем верните его имя из sqlite_master."
+        expected:
+          kind: result-set
+          ordered: false
+          rows:
+            - { name: 'idx_orders_amount' }
+        solution: |
+          CREATE INDEX idx_orders_amount ON orders(amount);
+          SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_orders_amount';
+
+  - id: why-index-keeps-results
+    concept: why-indexes
+    type: predict-output
+    difficulty: 2
+    prompt: "Индекс ускоряет поиск, но не меняет результат. Сколько заказов у пользователя с user_id = 5?"
+    fixture: |
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1,1,'paid',1200), (2,1,'paid',800), (3,2,'cancelled',500),
+        (4,3,'paid',2000), (5,3,'pending',300), (6,5,'paid',1500),
+        (7,5,'paid',450), (8,5,'cancelled',900), (9,6,'pending',700), (10,7,'paid',1100);
+    snippet: |
+      SELECT COUNT(*) FROM orders WHERE user_id = 5;
+    expected:
+      kind: scalar
+      value: 3
+    variants:
+      - prompt: "Тот же вопрос для пользователя с user_id = 1. Сколько у него заказов?"
+        snippet: |
+          SELECT COUNT(*) FROM orders WHERE user_id = 1;
+        expected:
+          kind: scalar
+          value: 2
+      - prompt: "А сколько всего оплаченных заказов со статусом paid?"
+        snippet: |
+          SELECT COUNT(*) FROM orders WHERE status = 'paid';
+        expected:
+          kind: scalar
+          value: 6
+
+  - id: why-users-without-orders
+    concept: why-indexes
+    type: sql-query
+    difficulty: 3
+    prompt: "Верните email пользователей, у которых нет ни одного заказа. Отсортируйте по email по возрастанию."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT, created_at TEXT);
+      INSERT INTO users VALUES
+        (1,'anna@mail.ru','Москва','2024-01-05'),
+        (2,'boris@mail.ru','Казань','2024-01-06'),
+        (3,'vera@mail.ru','Москва','2024-02-10'),
+        (4,'grigori@mail.ru','Пермь','2024-02-11'),
+        (5,'dmitry@mail.ru','Москва','2024-03-01'),
+        (6,'elena@mail.ru','Казань','2024-03-02'),
+        (7,'fedor@mail.ru','Сочи','2024-03-15'),
+        (8,'olga@mail.ru','Пермь','2024-04-01');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1,1,'paid',1200), (2,1,'paid',800), (3,2,'cancelled',500),
+        (4,3,'paid',2000), (5,3,'pending',300), (6,5,'paid',1500),
+        (7,5,'paid',450), (8,5,'cancelled',900), (9,6,'pending',700), (10,7,'paid',1100);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'grigori@mail.ru' }
+        - { email: 'olga@mail.ru' }
+    hints:
+      - "«Нет заказов» означает, что при соединении таким пользователям не нашлось пары в orders. Какой JOIN сохраняет строки без пары?"
+      - "Сделайте users левой таблицей и присоедините orders. У пользователей без заказа колонки orders окажутся NULL: именно это их и выдаёт."
+    solution: |
+      SELECT u.email
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      WHERE o.id IS NULL
+      ORDER BY u.email;

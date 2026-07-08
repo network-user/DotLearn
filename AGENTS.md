@@ -65,7 +65,7 @@ pnpm dev:api      # NestJS API (опционально)
 │   ├── contracts/      # Zod-схемы, общие типы (единственный общий слой)
 │   ├── lesson-engine/  # загрузчик тем, раннеры упражнений, CLI-валидатор
 │   └── sandbox/        # sql.js + Pyodide в Web Workers
-├── topics/         # 34 темы (manifest + MDX + YAML)
+├── topics/         # 39 тем (manifest + MDX + YAML)
 ├── deploy/         # шаблоны Caddyfile + systemd-юнит (bare-metal деплой)
 ├── scripts/        # deploy.sh, sync/checks, контент-тулинг
 ├── .cursor/skills/ # lesson-forge, generate-readme (канон)

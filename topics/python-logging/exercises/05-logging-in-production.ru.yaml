@@ -1,0 +1,277 @@
+exercises:
+  - id: prod-lazy-quiz-001
+    concept: logging-in-production
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Почему на горячем пути logger.debug(\"x=%s\", build()) не дешевле f-string по стоимости самого аргумента?"
+    choices:
+      - id: a
+        text: "Аргумент build() вычисляется до вызова в обеих формах; параметрическая форма откладывает только подстановку строки, но не сам вызов."
+      - id: b
+        text: "Параметрическая форма всегда медленнее f-string на любой строке."
+      - id: c
+        text: "logging кэширует результат build() между вызовами, поэтому разницы нет."
+      - id: d
+        text: "f-string в logging запрещён, поэтому сравнивать нечего."
+    correct: [a]
+    explanation: "Python считает аргументы до входа в функцию, поэтому build() выполнится и там, и там. Параметрическая форма откладывает лишь склейку строки, которая пропускается для отброшенной по уровню записи. От дорогого вызова спасает только isEnabledFor."
+    variants:
+      - prompt: "Что даёт проверка if logger.isEnabledFor(logging.DEBUG): перед дорогим debug-логом?"
+        choices:
+          - id: a
+            text: "Пропускает и вычисление дорогого аргумента, и сам лог, когда уровень DEBUG выключен."
+          - id: b
+            text: "Ускоряет форматирование строки примерно вдвое."
+          - id: c
+            text: "Гарантирует, что запись дойдёт до всех хендлеров дерева."
+          - id: d
+            text: "Меняет уровень логгера на DEBUG до конца программы."
+        correct: [a]
+        explanation: "isEnabledFor возвращает, пройдёт ли запись данного уровня фильтр. Если DEBUG выключен, тело if не выполняется, и дорогой аргумент даже не считается."
+      - prompt: "Что делает logger.exception(\"сбой\"), вызванный внутри блока except?"
+        choices:
+          - id: a
+            text: "Пишет запись уровня ERROR и прикладывает к ней traceback текущего исключения."
+          - id: b
+            text: "Повторно возбуждает исключение сразу после записи в лог."
+          - id: c
+            text: "Пишет запись уровня DEBUG без traceback."
+          - id: d
+            text: "Полностью подавляет исключение и продолжает выполнение как ни в чём не бывало."
+        correct: [a]
+        explanation: "logger.exception работает только внутри except, пишет на ERROR и сам добавляет traceback. Это то же, что logger.error(..., exc_info=True). Подавлением исключения он не занимается."
+
+  - id: prod-dictconfig-002
+    concept: logging-in-production
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет эта программа?"
+    snippet: |
+      import logging
+      import sys
+      from logging.config import dictConfig
+
+      dictConfig({
+          "version": 1,
+          "disable_existing_loggers": False,
+          "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+          "handlers": {"console": {"class": "logging.StreamHandler",
+                                   "formatter": "brief", "stream": sys.stdout}},
+          "loggers": {"pay": {"level": "WARNING"}},
+          "root": {"level": "INFO", "handlers": ["console"]},
+      })
+
+      logging.getLogger("pay").info("списание")
+      logging.getLogger("pay").warning("повторная попытка")
+    expected:
+      kind: stdout
+      value: "pay WARNING повторная попытка"
+    hints:
+      - "Логгеру pay задан уровень WARNING, и он отбрасывает info ещё на входе. Какая из двух строк переживёт этот порог?"
+      - "У pay нет своего хендлера, поэтому запись поднимается к console на root. Форматтер печатает имя логгера, уровень и текст."
+    variants:
+      - snippet: |
+          import logging
+          import sys
+          from logging.config import dictConfig
+
+          dictConfig({
+              "version": 1,
+              "disable_existing_loggers": False,
+              "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+              "handlers": {"console": {"class": "logging.StreamHandler",
+                                       "formatter": "brief", "stream": sys.stdout}},
+              "loggers": {"api": {"level": "INFO"}},
+              "root": {"level": "INFO", "handlers": ["console"]},
+          })
+
+          logging.getLogger("api").debug("тихо")
+          logging.getLogger("api").error("сбой")
+        expected:
+          kind: stdout
+          value: "api ERROR сбой"
+      - snippet: |
+          import logging
+          import sys
+          from logging.config import dictConfig
+
+          dictConfig({
+              "version": 1,
+              "disable_existing_loggers": False,
+              "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+              "handlers": {"console": {"class": "logging.StreamHandler",
+                                       "formatter": "brief", "stream": sys.stdout}},
+              "loggers": {"db": {"level": "ERROR"}},
+              "root": {"level": "INFO", "handlers": ["console"]},
+          })
+
+          logging.getLogger("db").warning("медленно")
+          logging.getLogger("db").error("нет связи")
+        expected:
+          kind: stdout
+          value: "db ERROR нет связи"
+
+  - id: prod-config-blanks-003
+    concept: logging-in-production
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Допишите словарь dictConfig: обязательный ключ версии схемы, ссылку хендлера на оформителя и ключ, которым корень перечисляет свои приёмники записи."
+    template: |
+      from logging.config import dictConfig
+
+      dictConfig({
+          "{{schema}}": 1,
+          "formatters": {"plain": {"format": "%(levelname)s %(message)s"}},
+          "handlers": {"console": {"class": "logging.StreamHandler", "{{fmtref}}": "plain"}},
+          "root": {"level": "INFO", "{{hkey}}": ["console"]},
+      })
+    blanks:
+      schema:
+        accept: ["version"]
+      fmtref:
+        accept: ["formatter"]
+      hkey:
+        accept: ["handlers"]
+    hints:
+      - "Один ключ верхнего уровня объявляет версию формата схемы конфигурации и всегда равен 1."
+      - "Хендлер ссылается на оформителя по имени, а корень перечисляет свои приёмники записи списком. Вспомните имена этих двух ключей из словаря."
+    variants:
+      - prompt: "Допишите настройку файлового хендлера с ротацией по размеру: класс из logging.handlers и параметр, задающий число хранимых старых файлов."
+        template: |
+          import logging.handlers
+
+          handler = logging.handlers.{{cls}}(
+              "app.log",
+              maxBytes=1_000_000,
+              {{backups}}=3,
+          )
+        blanks:
+          cls:
+            accept: ["RotatingFileHandler"]
+          backups:
+            accept: ["backupCount"]
+      - prompt: "Допишите обработку исключения: метод уровня ERROR, который сам приложит traceback, и флаг, дающий тот же traceback обычному error."
+        template: |
+          import logging
+
+          logger = logging.getLogger("pay")
+          try:
+              charge()
+          except Exception:
+              logger.{{method}}("charge failed")
+              logger.error("charge failed", {{flag}}=True)
+        blanks:
+          method:
+            accept: ["exception"]
+          flag:
+            accept: ["exc_info"]
+
+  - id: prod-render-004
+    concept: logging-in-production
+    type: python-function
+    difficulty: 3
+    prompt: "Реализуйте render(events, request_id), моделирующую фильтр request_id. events это список словарей с ключом 'msg' и необязательным 'user_id'. Верните список строк вида '[<rid>] <msg>', где <rid> это request_id либо '-', если request_id равен None. Если у события есть 'user_id', допишите в конец ' user=<user_id>'."
+    starter: |
+      def render(events, request_id):
+          ...
+    cases:
+      - call: "render([{'msg': 'ok', 'user_id': 7}], 'r1')"
+        expect: ["[r1] ok user=7"]
+      - call: "render([{'msg': 'ping'}], 'r1')"
+        expect: ["[r1] ping"]
+      - call: "render([{'msg': 'x'}], None)"
+        expect: ["[-] x"]
+      - call: "render([], 'r1')"
+        expect: []
+    hints:
+      - "Сначала решите, что подставить вместо request_id, когда он None. Фильтр в теории держит для этого значение по умолчанию '-'."
+      - "Пройдите по событиям по порядку: соберите базовую строку с rid и msg, а хвост user_id дописывайте только когда ключ присутствует в событии."
+    solution: |
+      def render(events, request_id):
+          rid = request_id if request_id is not None else "-"
+          lines = []
+          for event in events:
+              line = "[" + rid + "] " + event["msg"]
+              if "user_id" in event:
+                  line = line + " user=" + str(event["user_id"])
+              lines.append(line)
+          return lines
+
+  - id: prod-drain-005
+    concept: logging-in-production
+    type: python-function
+    difficulty: 4
+    prompt: "Реализуйте drain(records, handlers), моделирующую работу QueueListener. records это список пар (level, text), handlers это список пар (name, hlevel). Слушатель отдаёт каждую запись каждому хендлеру, и хендлер выводит её, только если level записи не ниже hlevel. Верните суммарное число выводов по всем записям и хендлерам."
+    starter: |
+      def drain(records, handlers):
+          ...
+    cases:
+      - call: "drain([(20, 'a'), (30, 'b')], [('con', 20), ('file', 30)])"
+        expect: 3
+      - call: "drain([(10, 'x')], [('con', 20)])"
+        expect: 0
+      - call: "drain([], [('con', 10)])"
+        expect: 0
+      - call: "drain([(40, 'e'), (40, 'e2')], [('a', 10), ('b', 20), ('c', 50)])"
+        expect: 4
+      - call: "drain([(30, 'w')], [('a', 30), ('b', 31)])"
+        expect: 1
+    hints:
+      - "Слушатель раздаёт запись всем хендлерам разом. Для одной записи посчитайте, сколько хендлеров пропустят её по своему уровню."
+      - "Для каждой записи переберите хендлеры и прибавьте единицу там, где level записи не ниже hlevel хендлера. Затем просуммируйте по всем записям."
+    solution: |
+      def drain(records, handlers):
+          total = 0
+          for level, text in records:
+              for name, hlevel in handlers:
+                  if level >= hlevel:
+                      total += 1
+          return total
+
+  - id: prod-rotate-006
+    concept: logging-in-production
+    type: python-function
+    difficulty: 5
+    prompt: "Реализуйте rotate(max_bytes, backup_count, writes), моделирующую RotatingFileHandler. Есть текущий файл 'app.log'. Для каждой длины сообщения из writes: если текущий файл не пуст и его размер плюс длина сообщения превысит max_bytes, выполните ротацию, затем допишите длину к текущему файлу. Ротация при backup_count больше 0: удалите самый старый бэкап с индексом backup_count, сдвиньте бэкапы (app.log.k становится app.log.(k+1)), переименуйте текущий в app.log.1 и начните новый пустой app.log. При backup_count равном 0 просто обнулите текущий файл. Верните словарь: имя файла в его размер, включая существующие бэкапы."
+    starter: |
+      def rotate(max_bytes, backup_count, writes):
+          ...
+    cases:
+      - call: "rotate(10, 2, [6, 6, 6, 6])"
+        expect: { "app.log": 6, "app.log.1": 6, "app.log.2": 6 }
+      - call: "rotate(10, 0, [6, 6, 6])"
+        expect: { "app.log": 6 }
+      - call: "rotate(100, 3, [40, 40, 40])"
+        expect: { "app.log": 40, "app.log.1": 80 }
+      - call: "rotate(10, 1, [4, 4, 4])"
+        expect: { "app.log": 4, "app.log.1": 8 }
+      - call: "rotate(5, 2, [2, 2, 2, 2, 2])"
+        expect: { "app.log": 2, "app.log.1": 4, "app.log.2": 4 }
+    hints:
+      - "Держите размеры в словаре имя в размер, начиная с одного пустого 'app.log'. Ротацию проверяйте перед записью, а не после."
+      - "Сдвиг бэкапов идёт от старших индексов к младшим, чтобы не затереть: сначала уберите самый старый сверх backup_count, затем поднимите индексы, и лишь потом текущий файл станет app.log.1."
+      - "Условие ротации включает и непустоту текущего файла, и превышение max_bytes суммой размер плюс длина. При backup_count равном 0 бэкапов нет, текущий просто обнуляется."
+    solution: |
+      def rotate(max_bytes, backup_count, writes):
+          base = "app.log"
+          sizes = {base: 0}
+
+          def rollover():
+              if backup_count <= 0:
+                  sizes[base] = 0
+                  return
+              oldest = base + "." + str(backup_count)
+              if oldest in sizes:
+                  del sizes[oldest]
+              for k in range(backup_count - 1, 0, -1):
+                  src = base + "." + str(k)
+                  if src in sizes:
+                      sizes[base + "." + str(k + 1)] = sizes.pop(src)
+              sizes[base + ".1"] = sizes[base]
+              sizes[base] = 0
+
+          for length in writes:
+              if sizes[base] > 0 and sizes[base] + length > max_bytes:
+                  rollover()
+              sizes[base] += length
+          return sizes

@@ -1,0 +1,283 @@
+exercises:
+  - id: beat-role-001
+    concept: beat-monitoring
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does Celery Beat do, and why must there be exactly one per cluster?"
+    choices:
+      - id: a
+        text: "Beat drops periodic tasks into the broker on a schedule; two Beats do not coordinate and enqueue every task twice."
+      - id: b
+        text: "Beat runs periodic tasks itself, so for parallelism you start it on every replica."
+      - id: c
+        text: "Beat stores task results, and two Beats need a shared backend."
+      - id: d
+        text: "Beat is a web dashboard that shows the state of the queue."
+    correct: [a]
+    explanation: "Beat is a producer on a timer: it does not execute tasks, it drops them into the broker on schedule. Two Beats elect no leader and split no schedule, so each runs the whole schedule and every periodic task goes to the queue twice."
+    variants:
+      - prompt: "What happens if you run Beat on two application replicas for reliability?"
+        choices:
+          - id: a
+            text: "Each Beat independently runs the whole schedule, and every periodic task goes to the queue twice."
+          - id: b
+            text: "The second Beat becomes a hot standby and starts only if the first one falls."
+          - id: c
+            text: "The Beats split the schedule in half and run half of the tasks each."
+          - id: d
+            text: "Celery notices the second Beat and refuses to let it start."
+        correct: [a]
+        explanation: "Beat does not coordinate with other Beats: it only looks at its own schedule. Both replicas run the schedule in full and the tasks double. That is not fault tolerance, it is a source of duplicates."
+      - prompt: "What is the role of the Beat process in the Celery setup?"
+        choices:
+          - id: a
+            text: "A producer on a timer: it does not execute tasks, it drops them into the broker on a schedule."
+          - id: b
+            text: "A consumer: it takes tasks from the broker and executes them."
+          - id: c
+            text: "A broker: it holds the message queue between producer and worker."
+          - id: d
+            text: "A result backend: it stores the states and results of finished tasks."
+        correct: [a]
+        explanation: "Beat is a producer woken by a timer rather than an HTTP request. The worker (consumer) executes tasks, the broker holds the queue, and the result backend stores states and results."
+
+  - id: beat-schedule-blanks-001
+    concept: beat-monitoring
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Fill in the blanks: schedule reports.build_daily every day at 3:00 via crontab."
+    template: |
+      from celery.schedules import crontab
+
+      app.conf.beat_schedule = {
+          "nightly-report": {
+              "task": "reports.build_daily",
+              "schedule": crontab(minute={{m}}, hour={{h}}),
+          },
+      }
+    blanks:
+      m:
+        accept: ["0"]
+      h:
+        accept: ["3"]
+    hints:
+      - "crontab(minute=, hour=) binds the run to time of day: the minute and hour at which the task fires."
+    variants:
+      - prompt: "Fill in the blanks: schedule the task every day at 6:30 in the morning."
+        template: |
+          app.conf.beat_schedule = {
+              "morning-sync": {
+                  "task": "sync.run",
+                  "schedule": crontab(minute={{m}}, hour={{h}}),
+              },
+          }
+        blanks:
+          m:
+            accept: ["30"]
+          h:
+            accept: ["6"]
+      - prompt: "Fill in the blanks: schedule the task exactly at noon, 12:00."
+        template: |
+          app.conf.beat_schedule = {
+              "noon-digest": {
+                  "task": "digest.send",
+                  "schedule": crontab(minute={{m}}, hour={{h}}),
+              },
+          }
+        blanks:
+          m:
+            accept: ["0"]
+          h:
+            accept: ["12"]
+
+  - id: beat-schedule-form-001
+    concept: beat-monitoring
+    type: theory-quiz
+    difficulty: 2
+    prompt: "In `beat_schedule` the `schedule` field is set to the number `30.0`. What does that mean?"
+    choices:
+      - id: a
+        text: "The task will be enqueued every 30 seconds, counting from Beat start."
+      - id: b
+        text: "The task runs once, 30 seconds after start, and never repeats."
+      - id: c
+        text: "The task fires on the 30th minute of every hour."
+      - id: d
+        text: "30.0 is the maximum number of retries on failure."
+    correct: [a]
+    explanation: "A number in the schedule field is an interval in seconds: 30.0 means every thirty seconds from start. For a time-of-day binding you use crontab, not a number."
+    variants:
+      - prompt: 'What does `crontab(minute=0, hour="*/2")` set in a Beat schedule?'
+        choices:
+          - id: a
+            text: "A run every two hours on the zero minute: 00:00, 02:00, 04:00, and so on."
+          - id: b
+            text: "A run every two minutes."
+          - id: c
+            text: "A run exactly twice per hour."
+          - id: d
+            text: "One run at 2:00 once a day."
+        correct: [a]
+        explanation: 'hour="*/2" means every second hour, and minute=0 fixes the zero minute. The result is a run at the start of each even hour.'
+      - prompt: "You need to run a task every Monday at 9:00. Which schedule form fits?"
+        choices:
+          - id: a
+            text: 'crontab(minute=0, hour=9, day_of_week="mon"): a calendar binding by weekday and time.'
+          - id: b
+            text: "the number 9.0, that is an interval of 9 seconds."
+          - id: c
+            text: "timedelta(days=7), exactly once a week counting from Beat start."
+          - id: d
+            text: "crontab(minute=9, hour=0) on any day of the week."
+        correct: [a]
+        explanation: "Only crontab binds the run to weekday and time of day. timedelta(days=7) counts a week from Beat start and will not land reliably on Monday morning."
+
+  - id: beat-inspect-baskets-001
+    concept: beat-monitoring
+    type: theory-quiz
+    difficulty: 2
+    prompt: "What does `celery inspect active` show?"
+    choices:
+      - id: a
+        text: "Tasks the worker is executing right now."
+      - id: b
+        text: "Tasks still waiting in the broker queue."
+      - id: c
+        text: "The periodic Beat schedule from beat_schedule."
+      - id: d
+        text: "Tasks with a deferred eta, waiting for their time."
+    correct: [a]
+    explanation: "active is what the worker executes at the moment. Tasks waiting in the broker are not visible in inspect, the Beat schedule lives in the config, and eta-deferred tasks are shown by scheduled."
+    variants:
+      - prompt: "What does `celery inspect reserved` show?"
+        choices:
+          - id: a
+            text: "Tasks the worker has already taken from the broker ahead of time (prefetch) but not yet started."
+          - id: b
+            text: "Tasks the worker is executing right now."
+          - id: c
+            text: "Periodic tasks from beat_schedule."
+          - id: d
+            text: "Tasks the worker rejected due to an error."
+        correct: [a]
+        explanation: "reserved is the local prefetch buffer: the tasks are already off the broker but still wait their turn on this worker. Because of that the broker queue length undercounts the real backlog."
+      - prompt: "What does `celery inspect scheduled` show, and how does it differ from the Beat schedule?"
+        choices:
+          - id: a
+            text: "Tasks with a deferred start (eta or countdown) that the worker holds until their time; this is not beat_schedule."
+          - id: b
+            text: "The periodic Beat schedule from beat_schedule."
+          - id: c
+            text: "Tasks the worker is executing right now."
+          - id: d
+            text: "A full list of every task ever enqueued."
+        correct: [a]
+        explanation: "scheduled is tasks with eta or countdown in the worker buffer, not the periodic schedule. The Beat schedule lives in the config and its state file; it is not in the inspect output. Confusing scheduled with beat_schedule is a common interview question."
+
+  - id: beat-reserved-backlog-001
+    concept: beat-monitoring
+    type: theory-quiz
+    difficulty: 3
+    prompt: "The broker queue length is near zero, yet tasks run with a big delay, and `worker_prefetch_multiplier` is set high. Where did the backlog go?"
+    choices:
+      - id: a
+        text: "Prefetch pulled the tasks into the local buffers of busy workers (reserved) and they are already off the broker, so the queue looks empty."
+      - id: b
+        text: "The broker lost the tasks and they are gone from the system."
+      - id: c
+        text: "The tasks finished and the backend simply did not record the result."
+      - id: d
+        text: "Beat stopped enqueuing tasks, so the queue drained."
+    correct: [a]
+    explanation: "Prefetch takes tasks off the broker into the worker buffer before execution starts. At a high worker_prefetch_multiplier hundreds of tasks stand in reserved on busy workers, and the broker queue length does not count them. For long tasks the multiplier is lowered to 1 so tasks do not get stuck in the buffer."
+    hints:
+      - "Tasks in reserved are already off the broker. What does that mean for the number the queue length reports?"
+      - "Where do prefetched tasks go when the worker is busy and has not reached them yet?"
+
+  - id: beat-pending-001
+    concept: beat-monitoring
+    type: theory-quiz
+    difficulty: 3
+    prompt: "You ask for a task status by an id you mistyped, and that task never existed. What does the result backend return, and why?"
+    choices:
+      - id: a
+        text: "PENDING: the backend stores only results, so 'no result' and 'task not enqueued' are indistinguishable to it."
+      - id: b
+        text: "A 'task not found' error, because the backend keeps a list of all known ids."
+      - id: c
+        text: "FAILURE, because a task with such an id cannot be executed."
+      - id: d
+        text: "REVOKED, because a non-existent task counts as cancelled."
+    correct: [a]
+    explanation: "PENDING in Celery means 'there is no result', not 'the task was accepted'. The backend keeps no list of enqueued tasks: no result record means PENDING, whether an as-yet-unrun task or a made-up id. You cannot rely on PENDING as proof the task is really queued."
+    hints:
+      - "PENDING does not answer 'was the task accepted'. What question does it answer instead?"
+      - "Does the backend keep a list of all enqueued tasks, or only records of their results?"
+
+  - id: beat-retry-ratio-001
+    concept: beat-monitoring
+    type: predict-output
+    difficulty: 3
+    prompt: "This program computes the retry ratio from a log of execution outcomes. What does it print?"
+    snippet: |
+      outcomes = ["SUCCESS", "SUCCESS", "RETRY", "SUCCESS", "RETRY", "FAILURE", "SUCCESS"]
+
+      total = len(outcomes)
+      retries = sum(1 for s in outcomes if s == "RETRY")
+      ratio = round(retries / total, 2)
+      print("retry_ratio", ratio)
+    expected:
+      kind: stdout
+      value: "retry_ratio 0.29"
+    hints:
+      - "The retry ratio is the number of RETRY outcomes divided by the total number of outcomes."
+      - "Count two numbers: how many items in total and how many equal RETRY, then divide and round to two places."
+    variants:
+      - snippet: |
+          outcomes = ["SUCCESS", "RETRY", "RETRY", "RETRY", "SUCCESS"]
+
+          total = len(outcomes)
+          retries = sum(1 for s in outcomes if s == "RETRY")
+          ratio = round(retries / total, 2)
+          print("retry_ratio", ratio)
+        expected:
+          kind: stdout
+          value: "retry_ratio 0.6"
+      - snippet: |
+          outcomes = ["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]
+
+          total = len(outcomes)
+          retries = sum(1 for s in outcomes if s == "RETRY")
+          ratio = round(retries / total, 2)
+          print("retry_ratio", ratio)
+        expected:
+          kind: stdout
+          value: "retry_ratio 0.0"
+
+  - id: beat-health-challenge-001
+    concept: beat-monitoring
+    type: predict-output
+    difficulty: 4
+    prompt: "This program classifies worker health from three signals: whether ping answers, queue depth, and the active count. What does it print?"
+    snippet: |
+      samples = [
+          {"queue_depth": 5, "active": 3, "ping": True},
+          {"queue_depth": 40, "active": 0, "ping": False},
+          {"queue_depth": 40, "active": 6, "ping": True},
+      ]
+
+      def health(s):
+          if not s["ping"]:
+              return "dead"
+          if s["queue_depth"] > 20 and s["active"] > 0:
+              return "overloaded"
+          return "ok"
+
+      print([health(s) for s in samples])
+    expected:
+      kind: stdout
+      value: "['ok', 'dead', 'overloaded']"
+    hints:
+      - "The checks in health run in order: ping first, then the combination of queue depth and active. The first matching condition returns the answer."
+      - "A dead worker is spotted by a non-answering ping (the queue grows while active is empty). An overloaded one is a live worker with a long queue and non-empty active."
+      - "Walk the three records in order, apply health to each, and collect the answers into a list."

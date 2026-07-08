@@ -1,0 +1,275 @@
+exercises:
+  - id: container-why-001
+    concept: di-containers
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Почему `Depends` в FastAPI не заменяет полноценный DI-контейнер?"
+    choices:
+      - id: a
+        text: "У Depends нет app-scope: он кэширует зависимость только в пределах запроса, поэтому объект-одиночку на весь процесс приходится городить в обход (глобал, lru_cache, app.state)."
+      - id: b
+        text: "Depends вообще не умеет внедрять зависимости в обработчики."
+      - id: c
+        text: "Depends работает только с синхронными обработчиками."
+      - id: d
+        text: "Depends требует отдельной базы данных для хранения графа зависимостей."
+    correct: [a]
+    explanation: "Depends силён внутри запроса, но его кэш живёт ровно один запрос. Объект на весь процесс (пул, модель, конфиг) приходится держать глобально или в app.state, и такая зависимость выпадает из типизации и подмены. Контейнер закрывает это через app-scope."
+    variants:
+      - prompt: "Что означает, что у `Depends` нет автоматической сборки по типу (wiring)?"
+        choices:
+          - id: a
+            text: "Фреймворк не знает, как построить OrderService по его типу: в каждой точке вы вручную пишете Depends(...) и сами прошиваете подзависимости."
+          - id: b
+            text: "Depends не может внедрить больше одной зависимости в один обработчик."
+          - id: c
+            text: "Depends собирает объект, только если у него нет подзависимостей."
+          - id: d
+            text: "Wiring относится к подключению базы данных и к Depends отношения не имеет."
+        correct: [a]
+        explanation: "Контейнер строит объект по типу, сам разворачивая цепочку подзависимостей. Depends этого не делает: связи графа вы указываете руками в каждой точке использования."
+      - prompt: "Какого общего жизненного цикла не хватает `Depends`?"
+        choices:
+          - id: a
+            text: "Depends с yield закрывает ресурс в конце запроса, но события старта и остановки приложения (lifespan) живут отдельно от графа зависимостей."
+          - id: b
+            text: "Depends не вызывает __init__ у внедряемых классов."
+          - id: c
+            text: "Depends закрывает ресурсы, только если приложение упало с ошибкой."
+          - id: d
+            text: "Depends не поддерживает асинхронные зависимости."
+        correct: [a]
+        explanation: "yield-зависимость привязана к запросу. Ресурс на весь процесс и его закрытие на остановке приложения Depends с графом не связывает; это делает контейнер, привязывая финализацию к scope."
+
+  - id: container-scope-001
+    concept: di-containers
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Unit of work хранит состояние текущего запроса. В каком scope объявить его в dishka?"
+    choices:
+      - id: a
+        text: "Scope.REQUEST: unit of work хранит состояние запроса, поэтому должен создаваться заново на каждый запрос."
+      - id: b
+        text: "Scope.APP: так он создастся один раз и будет работать быстрее."
+      - id: c
+        text: "Scope не важен, unit of work работает одинаково в любом."
+      - id: d
+        text: "Scope.APP, но с ручной очисткой состояния после каждого запроса."
+    correct: [a]
+    explanation: "В Scope.APP один unit of work разделялся бы между всеми запросами и пользователями: гонки и утечка чужих данных. Состояние текущего запроса живёт в Scope.REQUEST."
+    variants:
+      - prompt: "Почему app-scoped объект не может зависеть от request-scoped?"
+        choices:
+          - id: a
+            text: "App-объект переживает любой запрос, а request-объект к тому времени уже закрыт: ссылка на него повисла бы. dishka не даёт собрать такой граф."
+          - id: b
+            text: "Потому что request-scoped объекты нельзя передавать в функции."
+          - id: c
+            text: "Потому что app-scoped объекты создаются позже request-scoped."
+          - id: d
+            text: "Такая зависимость разрешена и работает без проблем."
+        correct: [a]
+        explanation: "Внутренний scope видит внешний, но не наоборот. Одиночка не имеет права держать ссылку на то, что живёт один запрос, поэтому контейнер сообщит об ошибке scope."
+      - prompt: "Что уместно держать в `Scope.APP`?"
+        choices:
+          - id: a
+            text: "Неизменяемые или потокобезопасные ресурсы на весь процесс: конфиг, пул соединений, HTTP-клиент."
+          - id: b
+            text: "Текущего пользователя запроса."
+          - id: c
+            text: "Открытую транзакцию базы данных."
+          - id: d
+            text: "Любой объект, лишь бы приложение работало быстрее."
+        correct: [a]
+        explanation: "App-scoped объект общий для всех запросов, поэтому изменяемое per-request состояние в нём делится на всех. Одиночками делают только неизменяемое или потокобезопасное."
+
+  - id: container-predict-001
+    concept: di-containers
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет эта программа?"
+    snippet: |
+      class Container:
+          def __init__(self, scopes):
+              self.scopes = scopes
+              self.app_cache = {}
+          def resolve(self, name, req):
+              cache = self.app_cache if self.scopes[name] == "app" else req
+              if name not in cache:
+                  cache[name] = object()
+              return cache[name]
+
+      c = Container({"pool": "app", "uow": "request"})
+      r1, r2 = {}, {}
+      print(c.resolve("pool", r1) is c.resolve("pool", r2))
+      print(c.resolve("uow", r1) is c.resolve("uow", r2))
+    expected:
+      kind: stdout
+      value: "True\nFalse"
+    hints:
+      - "pool объявлен app-scoped, поэтому кэшируется в общем app_cache и одинаков для обоих запросов. uow объявлен request-scoped и кэшируется в кэше своего запроса. Что даст сравнение через is в каждом случае?"
+    variants:
+      - snippet: |
+          class Container:
+              def __init__(self, scopes):
+                  self.scopes = scopes
+                  self.app_cache = {}
+              def resolve(self, name, req):
+                  cache = self.app_cache if self.scopes[name] == "app" else req
+                  if name not in cache:
+                      cache[name] = object()
+                  return cache[name]
+
+          c = Container({"cfg": "app"})
+          r = {}
+          print(c.resolve("cfg", r) is c.resolve("cfg", r))
+          print("cfg" in c.app_cache)
+        expected:
+          kind: stdout
+          value: "True\nTrue"
+      - snippet: |
+          class Container:
+              def __init__(self, scopes):
+                  self.scopes = scopes
+                  self.app_cache = {}
+              def resolve(self, name, req):
+                  cache = self.app_cache if self.scopes[name] == "app" else req
+                  if name not in cache:
+                      cache[name] = object()
+                  return cache[name]
+
+          c = Container({"pool": "app", "uow": "request", "svc": "request"})
+          r = {}
+          c.resolve("pool", r)
+          c.resolve("uow", r)
+          c.resolve("svc", r)
+          print(len(r))
+          print(len(c.app_cache))
+        expected:
+          kind: stdout
+          value: "2\n1"
+
+  - id: container-fill-001
+    concept: di-containers
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Допишите провайдер dishka: pool должен быть одиночкой на всё приложение, а uow создаваться на каждый запрос."
+    template: |
+      from dishka import Provider, Scope, provide
+
+      class AppProvider(Provider):
+          @{{deco}}(scope=Scope.{{scope1}})
+          def pool(self) -> Pool:
+              return Pool()
+
+          @provide(scope=Scope.{{scope2}})
+          def uow(self, pool: Pool) -> UnitOfWork:
+              return UnitOfWork(pool)
+    blanks:
+      deco:
+        accept: ["provide"]
+      scope1:
+        accept: ["APP"]
+      scope2:
+        accept: ["REQUEST"]
+    hints:
+      - "Предоставляемую фабрику помечают декоратором из dishka, а время жизни задаёт scope. Пул на весь процесс и объект на каждый запрос отличаются только значением scope."
+    variants:
+      - prompt: "Допишите подключение контейнера dishka к FastAPI: middleware, декоратор инъекции и маркер параметра."
+        template: |
+          from dishka.integrations.fastapi import setup_dishka, FromDishka, inject
+
+          app = FastAPI()
+          container = make_async_container(AppProvider())
+          {{setup}}(container, app)
+
+          @app.get("/orders/{order_id}")
+          @{{inject}}
+          async def get_order(order_id: int, service: {{marker}}[OrderService]):
+              return await service.get(order_id)
+        blanks:
+          setup:
+            accept: ["setup_dishka"]
+          inject:
+            accept: ["inject"]
+          marker:
+            accept: ["FromDishka"]
+      - prompt: "Допишите фабрику-генератор: она отдаёт pool в scope и закрывает его при выходе из scope."
+        template: |
+          from collections.abc import AsyncIterator
+
+          class AppProvider(Provider):
+              @provide(scope=Scope.APP)
+              async def pool(self) -> AsyncIterator[Pool]:
+                  pool = await create_pool()
+                  {{keyword}} pool
+                  await pool.{{close}}()
+        blanks:
+          keyword:
+            accept: ["yield"]
+          close:
+            accept: ["close"]
+
+  - id: container-scope-check-001
+    concept: di-containers
+    type: python-function
+    difficulty: 3
+    prompt: "Реализуйте `validate_scope(provider_scope, dep_scopes)`: верните `True`, если фабрике в scope `provider_scope` разрешено зависеть от всех scope из списка `dep_scopes`. Правило: зависеть можно только от своего scope или более внешнего (более долгоживущего). Внешний scope это `\"APP\"`, внутренний `\"REQUEST\"`. Пустой список зависимостей допустим всегда."
+    starter: |
+      def validate_scope(provider_scope, dep_scopes):
+          ...
+    cases:
+      - call: "validate_scope('REQUEST', ['APP', 'REQUEST'])"
+        expect: true
+      - call: "validate_scope('APP', ['APP'])"
+        expect: true
+      - call: "validate_scope('APP', ['REQUEST'])"
+        expect: false
+      - call: "validate_scope('APP', [])"
+        expect: true
+      - call: "validate_scope('REQUEST', ['REQUEST', 'APP'])"
+        expect: true
+    hints:
+      - "Scope это вложенные времена жизни: APP переживает REQUEST. Фабрике нельзя держать ссылку на то, что живёт меньше неё самой. В какую сторону разрешена зависимость?"
+      - "Задайте порядок scope числом: APP = 0 (внешний), REQUEST = 1 (внутренний). Зависимость допустима, когда её номер не больше номера provider_scope. Проверьте это для каждого элемента списка."
+    solution: |
+      def validate_scope(provider_scope, dep_scopes):
+          order = {"APP": 0, "REQUEST": 1}
+          return all(order[d] <= order[provider_scope] for d in dep_scopes)
+
+  - id: container-build-001
+    concept: di-containers
+    type: python-function
+    difficulty: 4
+    prompt: "Реализуйте метод `resolve(name, request_cache)` мини-контейнера. По имени он выбирает кэш: app-scoped объекты кэшируются в общем `self.app_cache`, request-scoped в переданном `request_cache`. При первом обращении создайте объект через `object()` и запишите в кэш, при повторном верните закэшированный. Scope имени берётся из `self.scopes[name]` и равен `\"app\"` или `\"request\"`."
+    starter: |
+      class ScopedContainer:
+          def __init__(self, scopes):
+              self.scopes = scopes
+              self.app_cache = {}
+          def resolve(self, name, request_cache):
+              ...
+    cases:
+      - call: "(lambda c: c.resolve('pool', {}) is c.resolve('pool', {}))(ScopedContainer({'pool': 'app'}))"
+        expect: true
+      - call: "(lambda c: c.resolve('uow', {}) is c.resolve('uow', {}))(ScopedContainer({'uow': 'request'}))"
+        expect: false
+      - call: "(lambda c, r: c.resolve('uow', r) is c.resolve('uow', r))(ScopedContainer({'uow': 'request'}), {})"
+        expect: true
+      - call: "(lambda c, r: (c.resolve('pool', r), 'pool' in c.app_cache)[1])(ScopedContainer({'pool': 'app'}), {})"
+        expect: true
+      - call: "(lambda c, r: (c.resolve('pool', r), 'pool' in r)[1])(ScopedContainer({'pool': 'app'}), {})"
+        expect: false
+    hints:
+      - "Вся суть scope в выборе кэша по времени жизни: app-scoped живёт на весь контейнер, request-scoped в пределах одного запроса. Куда класть объект в каждом случае?"
+      - "Выберите словарь-кэш (self.app_cache для 'app', иначе request_cache), затем примените приём get-or-create: если ключа нет, создайте object() и запишите; в конце верните значение из кэша."
+    solution: |
+      class ScopedContainer:
+          def __init__(self, scopes):
+              self.scopes = scopes
+              self.app_cache = {}
+          def resolve(self, name, request_cache):
+              cache = self.app_cache if self.scopes[name] == "app" else request_cache
+              if name not in cache:
+                  cache[name] = object()
+              return cache[name]

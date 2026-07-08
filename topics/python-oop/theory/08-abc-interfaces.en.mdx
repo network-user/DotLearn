@@ -1,0 +1,204 @@
+---
+conceptId: abc-interfaces
+title: "ABC and abstract methods"
+estimatedMinutes: 50
+---
+
+# ABC and abstract methods: a contract that fails early
+
+You are building a notification system: every channel (email, SMS, push) must be able to `send`. As long as the agreement rests on good faith, someone will add a channel without `send`, the object will happily be created, and the failure will strike deep in production when the first message reaches that channel. Abstract base classes (ABCs) turn a spoken agreement into a checked one: a class with an unfilled obligation cannot even be created. The error surfaces at the boundary, at the moment of `Channel()`, not somewhere downstream. By the end of this section you will know how to declare such a contract, make not only methods but also properties abstract, plug in third-party types via `register`, take ready-made interfaces from `collections.abc`, and choose deliberately between an ABC and a `Protocol`.
+
+## A contract checked when the object is created
+
+An abstract base class describes what a subclass must be able to do while leaving the implementation empty. A method marked `@abstractmethod` is a hole in the contract. As long as even one such hole is open, Python refuses to create an instance and raises `TypeError`, listing the unfilled names. The check happens once, at instantiation, and catches a forgotten implementation immediately instead of on the first call to the method.
+
+<Figure caption="A class with @abstractmethod cannot be created · a subclass that closes every hole instantiates freely.">
+  <Sketch viewBox="0 0 460 190" title="An abstract contract and its implementation">
+    <SketchBox x={20} y={40} width={170} height={110} hatched />
+    <SketchLabel x={105} y={66} mono>Notifier(ABC)</SketchLabel>
+    <SketchLabel x={105} y={92} mono muted>@abstractmethod</SketchLabel>
+    <SketchLabel x={105} y={112} mono muted>send()</SketchLabel>
+    <SketchLabel x={105} y={136}>cannot create</SketchLabel>
+    <SketchArrow from={[195, 95]} to={[265, 95]} accent />
+    <SketchLabel x={230} y={80} muted>implements</SketchLabel>
+    <SketchBox x={270} y={40} width={170} height={110} accent />
+    <SketchLabel x={355} y={66} mono accent>Email(Notifier)</SketchLabel>
+    <SketchLabel x={355} y={92} mono>def send():</SketchLabel>
+    <SketchLabel x={355} y={112} mono>...</SketchLabel>
+    <SketchLabel x={355} y={136} accent>can create</SketchLabel>
+  </Sketch>
+</Figure>
+
+## `abc.ABC` and `@abstractmethod`
+
+You declare the contract by inheriting from `abc.ABC` and marking methods with the `@abstractmethod` decorator:
+
+```python
+from abc import ABC, abstractmethod
+
+class Notifier(ABC):
+    @abstractmethod
+    def send(self, message):
+        ...
+```
+
+An attempt at `Notifier()` now fails with `TypeError: Can't instantiate abstract class Notifier with abstract method send`. The class exists and is fit to be a parent, but it cannot be a standalone object. A subclass comes to life the moment it closes every hole:
+
+```python
+class Email(Notifier):
+    def send(self, message):
+        return f"email: {message}"
+```
+
+`Email("hi")` is created and works. One subtlety decides everything - `@abstractmethod` on its own forbids nothing. The enforcement lives in the `ABCMeta` metaclass, and inheriting from `ABC` is what supplies it. You can hang the decorator on a method of an ordinary class, but instantiation will pass quietly and the contract turns out decorative.
+
+## Try it: storage with a required interface
+
+The base `Storage` requires `save` and `load`. The concrete `InMemory` implements them, while a bare `Storage()` cannot be created:
+
+<PyDemo
+  title="An abstract interface and its implementation"
+  code={`from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self, key, value):
+        ...
+
+    @abstractmethod
+    def load(self, key):
+        ...
+
+class InMemory(Storage):
+    def __init__(self):
+        self._data = {}
+
+    def save(self, key, value):
+        self._data[key] = value
+
+    def load(self, key):
+        return self._data[key]
+
+store = InMemory()
+store.save("city", "Kazan")
+print(store.load("city"))
+
+try:
+    Storage()
+except TypeError as error:
+    print("Storage directly:", error)`}
+/>
+
+Remove the `load` method from `InMemory` and run again: now `InMemory()` itself refuses to be created, because one hole in the contract stayed open. Put the method back and try adding a third abstract method to `Storage`.
+
+## Not only methods can be abstract
+
+The contract can require a property or a class method. Decorators stack, and the order matters: `@abstractmethod` must sit closest to the function, at the bottom.
+
+```python
+class Config(ABC):
+    @property
+    @abstractmethod
+    def name(self):
+        ...
+
+    @classmethod
+    @abstractmethod
+    def from_file(cls, path):
+        ...
+```
+
+A subclass must supply both the `name` property and the `from_file` class method. The wrong decorator order (`@abstractmethod` on top) quietly breaks abstractness: the class stops requiring an implementation, and the forgotten method slips into production again.
+
+## `register` and virtual subclasses
+
+Sometimes a type is already written and you cannot change its hierarchy, yet by meaning it fits the contract. `ABC.register` declares it a virtual subclass:
+
+```python
+class JsonFile:
+    def save(self, key, value): ...
+    def load(self, key): ...
+
+Storage.register(JsonFile)
+
+isinstance(JsonFile(), Storage)   # True
+issubclass(JsonFile, Storage)     # True
+```
+
+After `register`, the `isinstance` and `issubclass` checks return `True`, even though `JsonFile` does not inherit `Storage`. The price of the flexibility is honest - no methods are inherited (you get no mixins), and there is no contract check at all. You can register even a class without `save` and `load`, and `isinstance` will still lie that it is a `Storage`. This is exactly how the standard library teaches built-in `list` and `dict` to answer to abstract interfaces without rewriting them.
+
+## `collections.abc`: ready-made interfaces from the standard library
+
+You rarely need to write your own ABC - for collections it is all assembled in `collections.abc`. There you find `Iterable`, `Iterator`, `Sequence`, `Mapping`, `Set`, and more. Inheriting from them is useful for two reasons at once, and the second matters more than the first.
+
+```python
+from collections.abc import Mapping
+
+class FrozenDict(Mapping):
+    def __init__(self, data):
+        self._data = dict(data)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+```
+
+You implemented three methods and got a full mapping. `Mapping` gives you the mixin methods `keys`, `values`, `items`, `get`, `__contains__`, `__eq__` for free, built on top of your three. That is the first payoff. The second - `isinstance(FrozenDict(...), Mapping)` is now `True`, and your type honestly passes checks that expect a mapping. Inheriting from `collections.abc` gives you both free behavior and a place in the type system in one move.
+
+## ABC vs `Protocol`: nominal and structural typing
+
+An ABC defines **nominal** typing: a type counts as a subtype only if it explicitly inherits the base class or is registered via `register`. Kinship is declared by name. `typing.Protocol` defines **structural** typing: a type fits if it has the right shape (those methods and attributes), with no inheritance at all. It is formalized duck typing, and static analyzers check it, not the runtime.
+
+<Compare
+  leftTitle="ABC (nominal)"
+  rightTitle="Protocol (structural)"
+  left={<>
+
+A subtype must explicitly inherit the base or pass through `register`. In exchange you get mixins and a runtime ban on creating an incomplete implementation.
+
+  </>}
+  right={<>
+
+Any type of the right shape fits, no inheritance required. The type checker does the checking; the runtime forbids nothing. Handy for third-party types you do not control.
+
+  </>}
+  verdict="Reach for an ABC when you own the hierarchy and want shared code plus a create-time guard; reach for a Protocol when you need to accept outside types by their shape."
+/>
+
+For a deeper look at the difference between the nominal and structural approaches and how it maps onto generics and `TypeVar`, see the `python-typevar` topic.
+
+## Edge cases
+
+The decorator without the metaclass is useless - `@abstractmethod` on a method of a class that does not inherit `ABC` and does not set `metaclass=ABCMeta` does not block instantiation. It is `ABCMeta` that provides abstractness.
+
+`register` checks nothing. It merely adds a type to the list of virtual subclasses, so `isinstance` after registration can hand out a false promise. You cannot rely on it as a guarantee that methods are present.
+
+An abstract method may have a body. A subclass must still override it, but it can call the base's shared logic via `super().method(...)`.
+
+## Common mistakes
+
+- **Forgot to inherit `ABC`.** A lone `@abstractmethod` without `ABCMeta` does not forbid creating an object. Inherit `abc.ABC` or set `metaclass=ABCMeta`.
+- **Wrong decorator order.** For an abstract property or class method, `@abstractmethod` goes closest to the function (at the bottom), otherwise abstractness is lost.
+- **Mistook `register` for inheritance.** A virtual subclass gets no methods from the base and is not checked against the contract. If you need mixins or a guarantee of implementation, you need ordinary inheritance.
+
+<KeyTakeaways
+  items={[
+    "abc.ABC plus @abstractmethod describe a contract; a class with an unfilled abstract obligation cannot be created, and TypeError fires at instantiation.",
+    "The ban is provided by the ABCMeta metaclass, supplied by inheriting from ABC; the decorator alone forbids nothing.",
+    "Properties and class methods can be abstract too; put @abstractmethod closest to the function, under the other decorators.",
+    "ABC.register makes a virtual subclass: isinstance/issubclass return True, but no methods are inherited and the contract is not checked.",
+    "Inheriting from collections.abc (Mapping, Sequence, ...) gives free mixin methods and a place in the type system; you implement only a few abstract methods.",
+    "ABC is nominal typing (needs inheritance or register), Protocol is structural (by shape); ABC for your own hierarchies with a guard, Protocol for outside types by their shape.",
+  ]}
+/>
+
+## References
+
+- [Python docs: the abc module](https://docs.python.org/3/library/abc.html)
+- [Python docs: collections.abc](https://docs.python.org/3/library/collections.abc.html)
+- [Python docs: typing.Protocol](https://docs.python.org/3/library/typing.html#typing.Protocol)

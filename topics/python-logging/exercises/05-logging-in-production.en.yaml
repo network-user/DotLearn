@@ -1,0 +1,277 @@
+exercises:
+  - id: prod-lazy-quiz-001
+    concept: logging-in-production
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Why is logger.debug(\"x=%s\", build()) on the hot path not cheaper than an f-string in the cost of the argument itself?"
+    choices:
+      - id: a
+        text: "build() is evaluated before the call in both forms; the parametric form defers only the string substitution, not the call."
+      - id: b
+        text: "The parametric form is always slower than an f-string on any string."
+      - id: c
+        text: "logging caches the result of build() between calls, so there is no difference."
+      - id: d
+        text: "An f-string is forbidden inside logging, so there is nothing to compare."
+    correct: [a]
+    explanation: "Python evaluates arguments before entering the function, so build() runs either way. The parametric form defers only the interpolation, which is skipped for a record dropped by level. Only isEnabledFor saves you from the expensive call."
+    variants:
+      - prompt: "What does the guard if logger.isEnabledFor(logging.DEBUG): before an expensive debug log give you?"
+        choices:
+          - id: a
+            text: "It skips both the expensive argument computation and the log itself when DEBUG is off."
+          - id: b
+            text: "It speeds up string formatting roughly twofold."
+          - id: c
+            text: "It guarantees the record reaches every handler in the tree."
+          - id: d
+            text: "It changes the logger level to DEBUG until the program ends."
+        correct: [a]
+        explanation: "isEnabledFor returns whether a record at that level would pass the filter. If DEBUG is off, the if body does not run, so the expensive argument is never computed."
+      - prompt: "What does logger.exception(\"failure\") do when called inside an except block?"
+        choices:
+          - id: a
+            text: "Writes a record at ERROR level and attaches the traceback of the current exception."
+          - id: b
+            text: "Re-raises the exception immediately after logging."
+          - id: c
+            text: "Writes a record at DEBUG level with no traceback."
+          - id: d
+            text: "Fully suppresses the exception and continues as if nothing happened."
+        correct: [a]
+        explanation: "logger.exception works only inside except, writes at ERROR, and adds the traceback itself. It is the same as logger.error(..., exc_info=True). It does not suppress the exception."
+
+  - id: prod-dictconfig-002
+    concept: logging-in-production
+    type: predict-output
+    difficulty: 2
+    prompt: "What does this program print?"
+    snippet: |
+      import logging
+      import sys
+      from logging.config import dictConfig
+
+      dictConfig({
+          "version": 1,
+          "disable_existing_loggers": False,
+          "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+          "handlers": {"console": {"class": "logging.StreamHandler",
+                                   "formatter": "brief", "stream": sys.stdout}},
+          "loggers": {"pay": {"level": "WARNING"}},
+          "root": {"level": "INFO", "handlers": ["console"]},
+      })
+
+      logging.getLogger("pay").info("charge")
+      logging.getLogger("pay").warning("retry attempt")
+    expected:
+      kind: stdout
+      value: "pay WARNING retry attempt"
+    hints:
+      - "The pay logger has level WARNING and drops info at the entry. Which of the two lines survives that threshold?"
+      - "pay has no handler of its own, so the record propagates to console on root. The formatter prints logger name, level, and text."
+    variants:
+      - snippet: |
+          import logging
+          import sys
+          from logging.config import dictConfig
+
+          dictConfig({
+              "version": 1,
+              "disable_existing_loggers": False,
+              "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+              "handlers": {"console": {"class": "logging.StreamHandler",
+                                       "formatter": "brief", "stream": sys.stdout}},
+              "loggers": {"api": {"level": "INFO"}},
+              "root": {"level": "INFO", "handlers": ["console"]},
+          })
+
+          logging.getLogger("api").debug("quiet")
+          logging.getLogger("api").error("failure")
+        expected:
+          kind: stdout
+          value: "api ERROR failure"
+      - snippet: |
+          import logging
+          import sys
+          from logging.config import dictConfig
+
+          dictConfig({
+              "version": 1,
+              "disable_existing_loggers": False,
+              "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+              "handlers": {"console": {"class": "logging.StreamHandler",
+                                       "formatter": "brief", "stream": sys.stdout}},
+              "loggers": {"db": {"level": "ERROR"}},
+              "root": {"level": "INFO", "handlers": ["console"]},
+          })
+
+          logging.getLogger("db").warning("slow")
+          logging.getLogger("db").error("no connection")
+        expected:
+          kind: stdout
+          value: "db ERROR no connection"
+
+  - id: prod-config-blanks-003
+    concept: logging-in-production
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Complete the dictConfig dict: the required schema version key, the handler's reference to its formatter, and the key by which root lists its record sinks."
+    template: |
+      from logging.config import dictConfig
+
+      dictConfig({
+          "{{schema}}": 1,
+          "formatters": {"plain": {"format": "%(levelname)s %(message)s"}},
+          "handlers": {"console": {"class": "logging.StreamHandler", "{{fmtref}}": "plain"}},
+          "root": {"level": "INFO", "{{hkey}}": ["console"]},
+      })
+    blanks:
+      schema:
+        accept: ["version"]
+      fmtref:
+        accept: ["formatter"]
+      hkey:
+        accept: ["handlers"]
+    hints:
+      - "One top-level key declares the configuration schema format version and is always 1."
+      - "A handler references its formatter by name, and root lists its record sinks in a list. Recall the names of those two keys from the dict."
+    variants:
+      - prompt: "Complete a size-based rotating file handler: the class from logging.handlers and the parameter that sets how many old files are kept."
+        template: |
+          import logging.handlers
+
+          handler = logging.handlers.{{cls}}(
+              "app.log",
+              maxBytes=1_000_000,
+              {{backups}}=3,
+          )
+        blanks:
+          cls:
+            accept: ["RotatingFileHandler"]
+          backups:
+            accept: ["backupCount"]
+      - prompt: "Complete the exception handling: the ERROR-level method that attaches a traceback by itself, and the flag that gives the same traceback to a plain error."
+        template: |
+          import logging
+
+          logger = logging.getLogger("pay")
+          try:
+              charge()
+          except Exception:
+              logger.{{method}}("charge failed")
+              logger.error("charge failed", {{flag}}=True)
+        blanks:
+          method:
+            accept: ["exception"]
+          flag:
+            accept: ["exc_info"]
+
+  - id: prod-render-004
+    concept: logging-in-production
+    type: python-function
+    difficulty: 3
+    prompt: "Implement render(events, request_id), modeling a request_id filter. events is a list of dicts with a 'msg' key and an optional 'user_id'. Return a list of strings '[<rid>] <msg>', where <rid> is request_id or '-' when request_id is None. If an event has 'user_id', append ' user=<user_id>' at the end."
+    starter: |
+      def render(events, request_id):
+          ...
+    cases:
+      - call: "render([{'msg': 'ok', 'user_id': 7}], 'r1')"
+        expect: ["[r1] ok user=7"]
+      - call: "render([{'msg': 'ping'}], 'r1')"
+        expect: ["[r1] ping"]
+      - call: "render([{'msg': 'x'}], None)"
+        expect: ["[-] x"]
+      - call: "render([], 'r1')"
+        expect: []
+    hints:
+      - "First decide what to substitute for request_id when it is None. The filter in the theory keeps a default value '-' for this."
+      - "Walk the events in order: build the base string from rid and msg, and append the user_id tail only when the key is present in the event."
+    solution: |
+      def render(events, request_id):
+          rid = request_id if request_id is not None else "-"
+          lines = []
+          for event in events:
+              line = "[" + rid + "] " + event["msg"]
+              if "user_id" in event:
+                  line = line + " user=" + str(event["user_id"])
+              lines.append(line)
+          return lines
+
+  - id: prod-drain-005
+    concept: logging-in-production
+    type: python-function
+    difficulty: 4
+    prompt: "Implement drain(records, handlers), modeling a QueueListener. records is a list of pairs (level, text), handlers is a list of pairs (name, hlevel). The listener hands each record to every handler, and a handler emits it only if the record level is not below hlevel. Return the total number of emissions across all records and handlers."
+    starter: |
+      def drain(records, handlers):
+          ...
+    cases:
+      - call: "drain([(20, 'a'), (30, 'b')], [('con', 20), ('file', 30)])"
+        expect: 3
+      - call: "drain([(10, 'x')], [('con', 20)])"
+        expect: 0
+      - call: "drain([], [('con', 10)])"
+        expect: 0
+      - call: "drain([(40, 'e'), (40, 'e2')], [('a', 10), ('b', 20), ('c', 50)])"
+        expect: 4
+      - call: "drain([(30, 'w')], [('a', 30), ('b', 31)])"
+        expect: 1
+    hints:
+      - "The listener hands the record to all handlers at once. For one record, count how many handlers let it through by their level."
+      - "For each record, iterate the handlers and add one wherever the record level is not below the handler hlevel. Then sum across all records."
+    solution: |
+      def drain(records, handlers):
+          total = 0
+          for level, text in records:
+              for name, hlevel in handlers:
+                  if level >= hlevel:
+                      total += 1
+          return total
+
+  - id: prod-rotate-006
+    concept: logging-in-production
+    type: python-function
+    difficulty: 5
+    prompt: "Implement rotate(max_bytes, backup_count, writes), modeling a RotatingFileHandler. There is a current file 'app.log'. For each message length in writes: if the current file is non-empty and its size plus the message length would exceed max_bytes, perform a rollover, then append the length to the current file. Rollover when backup_count is above 0: delete the oldest backup at index backup_count, shift backups (app.log.k becomes app.log.(k+1)), rename the current to app.log.1, and start a fresh empty app.log. When backup_count is 0, just reset the current file to zero. Return a dict mapping filename to its size, including existing backups."
+    starter: |
+      def rotate(max_bytes, backup_count, writes):
+          ...
+    cases:
+      - call: "rotate(10, 2, [6, 6, 6, 6])"
+        expect: { "app.log": 6, "app.log.1": 6, "app.log.2": 6 }
+      - call: "rotate(10, 0, [6, 6, 6])"
+        expect: { "app.log": 6 }
+      - call: "rotate(100, 3, [40, 40, 40])"
+        expect: { "app.log": 40, "app.log.1": 80 }
+      - call: "rotate(10, 1, [4, 4, 4])"
+        expect: { "app.log": 4, "app.log.1": 8 }
+      - call: "rotate(5, 2, [2, 2, 2, 2, 2])"
+        expect: { "app.log": 2, "app.log.1": 4, "app.log.2": 4 }
+    hints:
+      - "Keep sizes in a dict from name to size, starting with one empty 'app.log'. Check for rollover before the write, not after."
+      - "Shift backups from higher indices down to lower ones so nothing is overwritten: first drop the oldest beyond backup_count, then raise the indices, and only then does the current file become app.log.1."
+      - "The rollover condition requires both a non-empty current file and that size plus length exceeds max_bytes. When backup_count is 0 there are no backups and the current is just reset to zero."
+    solution: |
+      def rotate(max_bytes, backup_count, writes):
+          base = "app.log"
+          sizes = {base: 0}
+
+          def rollover():
+              if backup_count <= 0:
+                  sizes[base] = 0
+                  return
+              oldest = base + "." + str(backup_count)
+              if oldest in sizes:
+                  del sizes[oldest]
+              for k in range(backup_count - 1, 0, -1):
+                  src = base + "." + str(k)
+                  if src in sizes:
+                      sizes[base + "." + str(k + 1)] = sizes.pop(src)
+              sizes[base + ".1"] = sizes[base]
+              sizes[base] = 0
+
+          for length in writes:
+              if sizes[base] > 0 and sizes[base] + length > max_bytes:
+                  rollover()
+              sizes[base] += length
+          return sizes

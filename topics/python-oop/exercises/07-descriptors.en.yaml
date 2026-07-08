@@ -1,0 +1,262 @@
+exercises:
+  - id: descriptors-data-nondata-quiz
+    concept: descriptors
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What turns a descriptor object into a data descriptor?"
+    choices:
+      - id: a
+        text: "It defines `__set__` or `__delete__`."
+      - id: b
+        text: "It defines only `__get__`."
+      - id: c
+        text: "It lives in the instance `__dict__`."
+      - id: d
+        text: "It inherits from `object`."
+    correct: [a]
+    explanation: "Defining `__set__` or `__delete__` makes a descriptor a data descriptor and gives it priority over the instance dictionary. Only `__get__` makes a non-data descriptor."
+    variants:
+      - prompt: "How does a data descriptor relate to the instance dictionary when reading an attribute?"
+        choices:
+          - id: a
+            text: "The data descriptor takes precedence: the read goes through its `__get__` whatever sits in `obj.__dict__`."
+          - id: b
+            text: "The instance dictionary always outranks any descriptor."
+          - id: c
+            text: "They ignore each other and a random one wins."
+          - id: d
+            text: "The order is decided by the alphabetical attribute name."
+        correct: [a]
+        explanation: "The lookup order places a class data descriptor above the instance dictionary, so its `__get__` is always called."
+      - prompt: "Why is an ordinary function in a class a non-data descriptor?"
+        choices:
+          - id: a
+            text: "A function has only `__get__`, so the instance dictionary can shadow it."
+          - id: b
+            text: "A function has `__set__`, so it outranks the dictionary."
+          - id: c
+            text: "Functions do not take part in attribute lookup at all."
+          - id: d
+            text: "A function is stored on the instance, not the class."
+        correct: [a]
+        explanation: "The `function` type defines `__get__` and no `__set__`, so it is a non-data descriptor, and a same-named key in `obj.__dict__` overrides it."
+
+  - id: descriptors-bound-method-predict
+    concept: descriptors
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? Trace what access to a method turns into through an instance and through the class."
+    snippet: |
+      class Greeter:
+          def hi(self):
+              return "ok"
+
+      g = Greeter()
+      print(type(g.hi).__name__, type(Greeter.hi).__name__, g.hi.__func__ is Greeter.hi)
+    expected:
+      kind: stdout
+      value: "method function True"
+    hints:
+      - "Access through an instance runs the function's `__get__` and produces a bound method; access through the class returns the bare function."
+      - "A bound method's `__func__` is the very function from the class, so the identity check is true."
+    variants:
+      - snippet: |
+          class C:
+              def m(self):
+                  return 1
+
+          a = C()
+          b = C()
+          print(a.m == a.m, a.m is a.m, a.m.__func__ is b.m.__func__)
+        expected:
+          kind: stdout
+          value: "True False True"
+      - snippet: |
+          class C:
+              def m(self):
+                  return 1
+
+          c = C()
+          c.__dict__['m'] = lambda: 99
+          print(c.m(), type(C.__dict__['m']).__name__)
+        expected:
+          kind: stdout
+          value: "99 function"
+
+  - id: descriptors-cache-once
+    concept: descriptors
+    type: python-function
+    difficulty: 3
+    prompt: |
+      Implement a non-data descriptor `Once` (a simplified `cached_property`): on
+      the first read it calls the wrapped function, stores the result in the
+      instance dictionary under its own name, and returns it; on later reads it
+      returns the ready value without calling the function again.
+    hints:
+      - "A descriptor with only `__get__` is non-data - on the next read the instance dictionary beats it. That is exactly what holds the cache."
+      - "In `__set_name__` remember the name. In `__get__` compute `self.func(obj)`, put the result in `obj.__dict__[name]`, and return it."
+    starter: |
+      class Once:
+          def __init__(self, func):
+              self.func = func
+
+          def __set_name__(self, owner, name):
+              ...
+
+          def __get__(self, obj, objtype=None):
+              ...
+    cases:
+      - call: |
+          class Circle:
+              def __init__(self, r):
+                  self.r = r
+                  self.calls = 0
+
+              @Once
+              def area(self):
+                  self.calls += 1
+                  return 3 * self.r * self.r
+
+          c = Circle(10)
+          first = c.area
+          second = c.area
+          [first, second, c.calls]
+        expect: [300, 300, 1]
+      - call: |
+          class Circle:
+              def __init__(self, r):
+                  self.r = r
+                  self.calls = 0
+
+              @Once
+              def area(self):
+                  self.calls += 1
+                  return 3 * self.r * self.r
+
+          a = Circle(1)
+          b = Circle(2)
+          a.area
+          b.area
+          [a.area, b.area, a.calls, b.calls]
+        expect: [3, 12, 1, 1]
+      - call: |
+          class Box:
+              def __init__(self, n):
+                  self.n = n
+                  self.calls = 0
+
+              @Once
+              def doubled(self):
+                  self.calls += 1
+                  return self.n * 2
+
+          x = Box(7)
+          x.doubled
+          x.doubled
+          x.doubled
+          x.calls
+        expect: 1
+    solution: |
+      class Once:
+          def __init__(self, func):
+              self.func = func
+
+          def __set_name__(self, owner, name):
+              self.name = name
+
+          def __get__(self, obj, objtype=None):
+              if obj is None:
+                  return self
+              value = self.func(obj)
+              obj.__dict__[self.name] = value
+              return value
+
+  - id: descriptors-validated-field
+    concept: descriptors
+    type: python-function
+    difficulty: 4
+    prompt: |
+      Implement a reusable descriptor `Field(minimum=None, maximum=None)`. It stores
+      the value in the instance dictionary and checks bounds in the setter: a value
+      below `minimum` or above `maximum` raises ValueError; a bound of `None` means
+      no limit. A failed assignment must not change state, and different instances
+      and several fields of one class must work independently.
+    hints:
+      - "The check lives in `__set__`, storage in `obj.__dict__` under the name from `__set_name__`, reading in `__get__`. Do not keep the value in the descriptor itself, or it becomes shared across all instances."
+      - "`__set_name__(self, owner, name)` gives you the attribute name: save it and use it as the key in `obj.__dict__`."
+      - "In `__set__` compare against `minimum` and `maximum` only when they are not `None`; raise ValueError before writing, so a failed assignment never touches the dictionary."
+    starter: |
+      class Field:
+          def __init__(self, minimum=None, maximum=None):
+              self.minimum = minimum
+              self.maximum = maximum
+
+          def __set_name__(self, owner, name):
+              ...
+
+          def __get__(self, obj, objtype=None):
+              ...
+
+          def __set__(self, obj, value):
+              ...
+    cases:
+      - call: |
+          class Product:
+              price = Field(minimum=0)
+
+          p = Product()
+          p.price = 250
+          p.price
+        expect: 250
+      - call: |
+          class Product:
+              price = Field(minimum=0)
+
+          p = Product()
+          try:
+              p.price = -1
+              outcome = "accepted"
+          except ValueError:
+              outcome = "rejected"
+          [outcome, "price" in p.__dict__]
+        expect: ["rejected", false]
+      - call: |
+          class Account:
+              age = Field(minimum=0, maximum=150)
+              score = Field(minimum=0, maximum=100)
+
+          a = Account()
+          a.age = 40
+          a.score = 90
+          a.age + a.score
+        expect: 130
+      - call: |
+          class Box:
+              n = Field(minimum=0)
+
+          x = Box()
+          y = Box()
+          x.n = 5
+          y.n = 9
+          [x.n, y.n]
+        expect: [5, 9]
+    solution: |
+      class Field:
+          def __init__(self, minimum=None, maximum=None):
+              self.minimum = minimum
+              self.maximum = maximum
+
+          def __set_name__(self, owner, name):
+              self.name = name
+
+          def __get__(self, obj, objtype=None):
+              if obj is None:
+                  return self
+              return obj.__dict__[self.name]
+
+          def __set__(self, obj, value):
+              if self.minimum is not None and value < self.minimum:
+                  raise ValueError(f"{self.name}: below minimum")
+              if self.maximum is not None and value > self.maximum:
+                  raise ValueError(f"{self.name}: above maximum")
+              obj.__dict__[self.name] = value

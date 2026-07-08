@@ -1,0 +1,272 @@
+---
+conceptId: logging-in-production
+title: Логирование в проде
+estimatedMinutes: 50
+---
+
+# Тот же конвейер, но теперь его читают машины и держат сто процессов
+
+На своей машине Вы собрали конвейер из logger, handler и formatter, увидели аккуратные строки и решили, что с логированием покончено. Прод переворачивает картину. Строки теперь читает не человек, а система сбора, которая индексирует их пачками. Пишет в один файл не один процесс, а десяток воркеров одновременно. А каждый лишний вызов на горячем пути стоит миллисекунд, помноженных на миллион запросов. То, что на ноутбуке выглядело решённым, в проде снова становится вопросом.
+
+В этом разделе Вы соберёте прод-настройку целиком: один словарь `dictConfig`, который описывает форматтеры, хендлеры и логгеры разом. Научитесь логировать исключения так, чтобы traceback попадал в запись. Поймёте, почему `f-string` на горячем пути обходится дороже, чем кажется, и как это чинит `isEnabledFor`. Протащите `request_id` через весь запрос без единого лишнего аргумента. И обезопасите запись в файл из множества процессов через очередь. Это разница между «логирование работает» и «на логи можно опереться в три часа ночи во время инцидента».
+
+## Ментальная модель: один словарь описывает весь конвейер
+
+На проде настройку логирования не собирают вызовами вразнобой. Её описывают декларативно, одним словарём, и держат рядом с остальным конфигом приложения. `logging.config.dictConfig` принимает этот словарь и строит из него весь конвейер за раз. У словаря четыре несущих секции: `formatters` задают внешний вид строки, `handlers` определяют, куда она уходит и через какой форматтер, `loggers` расставляют пороги по подсистемам, а `root` ловит всё, что не перехватили именованные логгеры.
+
+<Figure caption="Один словарь описывает четыре секции, они ссылаются друг на друга по имени, и dictConfig собирает из них готовый конвейер.">
+  <Sketch viewBox="0 0 470 240" title="dictConfig как чертёж конвейера">
+    <SketchBox x={20} y={90} width={110} height={50} accent />
+    <SketchLabel x={75} y={112} mono accent>config-словарь</SketchLabel>
+    <SketchLabel x={75} y={128} mono accent>dictConfig()</SketchLabel>
+
+    <SketchArrow from={[130, 100]} to={[210, 40]} accent />
+    <SketchArrow from={[130, 112]} to={[210, 100]} accent />
+    <SketchArrow from={[130, 124]} to={[210, 160]} accent />
+
+    <SketchBox x={210} y={22} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={43} mono>formatters</SketchLabel>
+    <SketchBox x={210} y={84} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={105} mono>handlers</SketchLabel>
+    <SketchBox x={210} y={146} width={130} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={275} y={167} mono>loggers · root</SketchLabel>
+
+    <SketchArrow from={[340, 100]} to={[400, 100]} />
+    <SketchBox x={400} y={82} width={56} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={428} y={104} mono>конвейер</SketchLabel>
+    <SketchLabel x={275} y={210} muted>секции ссылаются по имени: handler → formatter, logger → handlers</SketchLabel>
+  </Sketch>
+</Figure>
+
+Из схемы видно ключевую идею: секции ссылаются друг на друга по имени. Хендлер указывает на форматтер строкой `"formatter": "plain"`, логгер перечисляет свои хендлеры списком имён. Поэтому один форматтер переиспользуют несколько хендлеров, а вся структура остаётся в одном месте, где её удобно менять под окружение.
+
+## dictConfig целиком: рабочий пример
+
+Вот настройка, близкая к боевой. Консоль для человека в разработке, файл с ротацией для системы сбора, отдельный порог для платёжной подсистемы.
+
+```python
+import logging.config
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+        "brief": {"format": "%(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "brief"},
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "plain",
+            "filename": "app.log",
+            "maxBytes": 5_000_000,
+            "backupCount": 3,
+        },
+    },
+    "loggers": {
+        "shop.pay": {"level": "DEBUG", "handlers": ["file"], "propagate": False},
+    },
+    "root": {"level": "INFO", "handlers": ["console"]},
+})
+```
+
+Ключ `"version": 1` фиксирует версию схемы, а не приложения. Значение `disable_existing_loggers: False` здесь принципиально: по умолчанию оно `True`, и тогда логгеры, заведённые модулями при импорте, замолкают (к этому вернёмся в краевом случае). Подсистема `shop.pay` получает собственный файловый хендлер и обрывает `propagate`, чтобы её записи не задвоились в консоли root-а. Всё прочее падает в `root` и уходит в консоль. Такой словарь легко вынести в конфиг и подменять между dev и прод, не трогая код.
+
+Запустите настройку ниже и почитайте её вывод. Форматтер здесь без `asctime`, чтобы строка была предсказуемой. Поменяйте уровень `shop.pay` с `WARNING` на `DEBUG` и посмотрите, как появится ранее отброшенная строка.
+
+<PyDemo
+  title="dictConfig в деле"
+  code={`import logging
+import logging.config
+import sys
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"brief": {"format": "%(name)s %(levelname)s %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler",
+                             "formatter": "brief", "stream": sys.stdout}},
+    "loggers": {"shop.pay": {"level": "WARNING"}},
+    "root": {"level": "INFO", "handlers": ["console"]},
+})
+
+pay = logging.getLogger("shop.pay")
+pay.info("списание начато")
+pay.warning("повторная попытка")`}
+/>
+
+Печатается только `shop.pay WARNING повторная попытка`. Строка `info` не прошла порог `WARNING`, заданный для `shop.pay`, а предупреждение поднялось к консоли root-а по propagation. Подняв уровень до `DEBUG`, Вы увидите обе строки: порог перестанет отбрасывать `info`.
+
+## Исключения: exc_info и logger.exception
+
+Отдельный вызов существует ровно для того, чтобы в записи оказался traceback. Внутри блока `except` берите `logger.exception`.
+
+```python
+import logging
+
+logger = logging.getLogger("shop.pay")
+
+try:
+    charge(order_id)
+except PaymentError:
+    logger.exception("не удалось списать по заказу %s", order_id)
+```
+
+`logger.exception(...)` пишет на уровне `ERROR` и сам прикладывает traceback текущего исключения к записи. Под капотом это то же, что `logger.error("...", exc_info=True)`: флаг `exc_info` велит форматтеру дописать тип исключения, его сообщение и стек. Когда traceback нужен там, где исключения нет (например, чтобы понять, кто позвал функцию), передайте `stack_info=True`: он добавит стек вызовов до точки лога.
+
+<Callout type="warning">
+Не глушите traceback через `logger.error(str(e))`. Так в логе останется одна строка сообщения без стека, и место сбоя придётся угадывать. Внутри `except` информация об исключении уже под рукой, отдайте её логгеру целиком.
+</Callout>
+
+## Цена лога: почему f-string обходится дороже, чем кажется
+
+На горячем пути важно, сколько работы делает вызов лога, который в итоге ничего не выводит. Здесь прячется тонкость, на которой спотыкаются даже опытные разработчики.
+
+```python
+logger.debug("состояние: %s", build_snapshot())
+logger.debug(f"состояние: {build_snapshot()}")
+```
+
+Разница не в форматировании. В обеих строках `build_snapshot()` вычисляется до входа в `debug`, потому что Python считает аргументы раньше, чем передаёт управление функции. Параметрическая форма с `%s` откладывает лишь подстановку, саму склейку строки, и это экономит, когда запись отброшена по уровню. Но дорогой вызов `build_snapshot()` произойдёт в любом случае.
+
+Чтобы не платить за сам аргумент, спрашивают у логгера заранее:
+
+```python
+if logger.isEnabledFor(logging.DEBUG):
+    logger.debug("состояние: %s", build_snapshot())
+```
+
+`isEnabledFor` возвращает, пройдёт ли запись данного уровня фильтр логгера. Если отладка выключена, тело `if` не выполнится, и `build_snapshot()` не позовётся вовсе. Демо ниже это доказывает: счётчик считает, сколько раз реально позвали дорогую функцию.
+
+<PyDemo
+  title="Аргумент считается, даже когда лог отброшен"
+  code={`import logging
+import sys
+
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, force=True)
+logger = logging.getLogger("perf")
+
+calls = {"n": 0}
+
+def snapshot():
+    calls["n"] += 1
+    return "большой объект"
+
+logger.debug("состояние: %s", snapshot())
+print("после debug вызовов snapshot:", calls["n"])
+
+if logger.isEnabledFor(logging.DEBUG):
+    logger.debug("состояние: %s", snapshot())
+print("после isEnabledFor вызовов snapshot:", calls["n"])`}
+/>
+
+Оба раза печатается `1`. Первый `debug` позвал `snapshot()`, хотя запись отброшена порогом `INFO`: аргумент вычислился впустую. Проверка `isEnabledFor(DEBUG)` вернула `False` и не дала позвать функцию второй раз. Уберите проверку и оставьте прямой `logger.debug(...)`, и счётчик станет `2`.
+
+## request_id через весь запрос: contextvars и Filter
+
+Одной строки в логе мало: чтобы собрать историю одного запроса среди тысяч чужих, нужен общий идентификатор во всех его записях. Таскать его аргументом через каждый вызов невозможно. Ответ дают `contextvars`: переменная, своя для каждой асинхронной задачи и каждого запроса, плюс фильтр, который проставляет её значение в любую запись.
+
+```python
+import logging
+from contextvars import ContextVar
+
+current_request: ContextVar[str] = ContextVar("current_request", default="-")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = current_request.get()
+        return True
+
+handler = logging.StreamHandler()
+handler.addFilter(RequestIdFilter())
+handler.setFormatter(logging.Formatter("[%(request_id)s] %(message)s"))
+```
+
+`ContextVar` со значением `default="-"` гарантирует, что поле есть всегда, даже вне запроса, поэтому форматтер не упадёт с `KeyError`. Фильтр возвращает `True`, ведь он ничего не отбрасывает, а только обогащает запись, и кладёт текущее значение в `record.request_id`. На входе в запрос ставят `current_request.set(new_id)`, и дальше любой лог внутри этого запроса несёт нужный идентификатор без лишних аргументов. Тот же приём заворачивают в `LoggerAdapter`, когда контекст удобнее держать рядом с логгером, а не в фильтре хендлера.
+
+## Много процессов, один файл: очередь спасает
+
+`RotatingFileHandler` безопасен для потоков, но не для процессов. Когда несколько воркеров пишут в один файл, их строки перемешиваются, а во время ротации кто-то теряет запись или продолжает писать в уже переименованный файл. Документация предлагает разнести роли: воркеры не пишут в файл сами. Каждый ставит запись в общую очередь через `QueueHandler`, а один `QueueListener` в отдельном потоке разбирает очередь и отдаёт записи настоящим хендлерам.
+
+<Figure caption="Воркеры только кладут запись в очередь через QueueHandler; единственный QueueListener владеет файлом и ротацией, поэтому конфликта за файл нет.">
+  <Sketch viewBox="0 0 480 220" title="QueueHandler и QueueListener">
+    <SketchBox x={20} y={30} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={54} mono>воркер 1 · QueueHandler</SketchLabel>
+    <SketchBox x={20} y={140} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={164} mono>воркер 2 · QueueHandler</SketchLabel>
+
+    <SketchArrow from={[140, 50]} to={[210, 95]} />
+    <SketchArrow from={[140, 160]} to={[210, 115]} />
+
+    <SketchBox x={210} y={85} width={80} height={40} accent />
+    <SketchLabel x={250} y={109} mono accent>очередь</SketchLabel>
+
+    <SketchArrow from={[290, 105]} to={[340, 105]} accent />
+    <SketchBox x={340} y={85} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={400} y={109} mono>QueueListener</SketchLabel>
+
+    <SketchArrow from={[400, 125]} to={[400, 165]} />
+    <SketchBox x={340} y={165} width={120} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={400} y={186} mono>файл · ротация</SketchLabel>
+  </Sketch>
+</Figure>
+
+Схема разносит две роли. Воркеры делают дешёвую операцию: кладут запись в очередь и сразу возвращаются к работе, не дожидаясь диска. Единственный слушатель владеет файловым хендлером и ротацией, поэтому конфликта за файл больше нет. Заодно логирование перестаёт блокировать горячий путь на медленном диске.
+
+```python
+import logging
+import queue
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+
+log_queue = queue.Queue(-1)
+file_handler = RotatingFileHandler("app.log", maxBytes=5_000_000, backupCount=3)
+
+listener = QueueListener(log_queue, file_handler)
+listener.start()
+
+logging.getLogger().addHandler(QueueHandler(log_queue))
+```
+
+Воркеры видят только `QueueHandler`, а тяжёлый `RotatingFileHandler` живёт за `QueueListener`. Вызов `listener.start()` поднимает фоновый поток, а `listener.stop()` при завершении дренирует остаток очереди. Забыть `stop()` значит потерять последние записи при выходе.
+
+## Краевой случай, который Вас удивит: молчащие логгеры после dictConfig
+
+Вы вызвали `dictConfig`, а логгер, заведённый в модуле при импорте, вдруг молчит. Причина в умолчании: `disable_existing_loggers` по умолчанию `True`. Все логгеры, созданные до вызова `dictConfig` и не упомянутые в его словаре, отключаются. Идиома `logger = logging.getLogger(__name__)` на уровне модуля срабатывает при импорте, то есть обычно раньше, чем приложение позовёт `dictConfig`. Сюрприз в том, что настройка логирования способна выключить уже готовые логгеры. Ставьте `disable_existing_loggers: False`, если не хотите глушить их поимённо.
+
+## Типичные ошибки
+
+- **Считать `f-string` в логе бесплатным на горячем пути.** Аргумент вычисляется всегда, даже когда запись отброшена. Дорогую сборку сообщения прячьте за `isEnabledFor` или хотя бы не логируйте тяжёлое на `DEBUG` в цикле.
+- **Настраивать логирование на каждый запрос.** `dictConfig` зовут один раз при старте приложения. Внутри обработчика запроса он пересобирает конвейер заново и плодит дубли.
+- **Писать в один файл из нескольких процессов напрямую.** Строки перемешаются, а ротация начнёт терять записи. Пропускайте всё через `QueueHandler` и один `QueueListener`.
+- **Глушить исключение через `logger.error(str(e))`.** Внутри `except` берите `logger.exception(...)` или флаг `exc_info=True`: без них в логе останется сообщение без traceback, и место сбоя придётся угадывать.
+
+<Detail summary="Как RotatingFileHandler решает, когда крутить файл">
+
+Перед записью сообщения хендлер смотрит, превысит ли текущий размер файла плюс длина сообщения значение `maxBytes`. Если да, он переименовывает `app.log` в `app.log.1`, сдвигает старые копии (`app.log.1` становится `app.log.2` и так далее), удаляет самую старую сверх `backupCount`, открывает свежий пустой `app.log` и пишет уже в него. При `backupCount=0` он не хранит копий, а просто обрезает файл. `TimedRotatingFileHandler` устроен так же, но крутит по времени (`when="midnight"`), а не по размеру. Именно эту механику Вы смоделируете в упражнении-челлендже.
+
+</Detail>
+
+<Detail summary="basicConfig, dictConfig или fileConfig">
+
+`basicConfig` подходит для скриптов и прототипов: одна строка, один хендлер на корне. `dictConfig` берут для приложений: он описывает несколько форматтеров и хендлеров, точечные уровни, `propagate` и очередь целиком, поэтому его хватает почти всегда. `fileConfig` читает те же настройки из INI-файла, но у него нет доступа к части возможностей словаря, и в новых проектах его обычно обходят стороной. Практическое правило простое: прод-приложение настраивают через `dictConfig`, вынесенный в конфиг рядом с остальными параметрами окружения.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "dictConfig описывает весь конвейер одним словарём: секции formatters, handlers, loggers и root ссылаются друг на друга по имени.",
+    "logger.exception внутри except пишет на ERROR и прикладывает traceback; тот же эффект даёт exc_info=True, а stack_info=True добавляет стек без исключения.",
+    "Аргумент лога вычисляется всегда: параметрическая форма откладывает только подстановку, а от дорогого вызова спасает isEnabledFor.",
+    "request_id держат в ContextVar со значением по умолчанию и проставляют в каждую запись через Filter или LoggerAdapter, не таская аргументом.",
+    "Из нескольких процессов пишут через QueueHandler в очередь, а один QueueListener владеет файловым хендлером и ротацией.",
+    "disable_existing_loggers по умолчанию True и глушит логгеры, созданные до dictConfig; на проде обычно ставят False.",
+  ]}
+/>
+
+## Ссылки
+
+- [Документация Python - logging.config](https://docs.python.org/3/library/logging.config.html)
+- [Документация Python - logging.handlers (RotatingFileHandler, QueueHandler, QueueListener)](https://docs.python.org/3/library/logging.handlers.html)
+- [Документация Python - Logging Cookbook: запись из нескольких процессов](https://docs.python.org/3/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes)
+- [Документация Python - contextvars](https://docs.python.org/3/library/contextvars.html)

@@ -1,0 +1,156 @@
+---
+conceptId: queues-pools
+title: "Очереди и пулы потоков"
+estimatedMinutes: 40
+---
+
+# Отдать состояние очереди и перестать держать замки
+
+Ручная возня с замками из прошлого раздела работает, но ошибиться в ней легко: забыл `release`, перепутал порядок захвата, взял не тот объект замка, и программа либо повисла, либо продолжила портить данные. Хорошая новость в том, что в реальном многопоточном Python замки руками почти не пишут. Вместо того чтобы защищать общее изменяемое состояние, его отдают под управление потокобезопасной очереди или пула потоков, и те берут всю синхронизацию на себя. Уровень абстракции выше, а количество способов выстрелить себе в ногу меньше.
+
+Разберём два таких инструмента: `queue.Queue` для передачи работы между потоками и `ThreadPoolExecutor` для параллельного выполнения задач с получением результатов. Попутно увидим, как аккуратно завершать работу, где прячутся проглоченные исключения и почему пул из десяти потоков не ускорит числодробилку.
+
+## Очередь как точка синхронизации
+
+`queue.Queue` это потокобезопасная очередь FIFO. Одни потоки (producers) кладут в неё элементы через `put`, другие (consumers) забирают через `get`. Вся прелесть в том, что внутри у очереди уже есть замок: одновременные `put` и `get` из разных потоков она разруливает сама, вам не нужно ничего блокировать. Более того, `get` на пустой очереди не возвращает мусор и не падает, а блокирует вызывающий поток, пока другой поток не положит элемент. Очередь превращается в аккуратную точку встречи между теми, кто производит работу, и теми, кто её выполняет.
+
+<Figure caption="Очередь это точка синхронизации: producers кладут элементы через put, consumers забирают через get. Внутренний замок очереди берёт синхронизацию на себя.">
+  <Sketch viewBox="0 0 470 185" title="Producer-consumer через очередь">
+    <SketchBox x={20} y={34} width={110} height={40} />
+    <SketchLabel x={75} y={58} weight="bold">Producer</SketchLabel>
+    <SketchBox x={20} y={104} width={110} height={40} />
+    <SketchLabel x={75} y={128} weight="bold">Producer</SketchLabel>
+
+    <SketchBox x={188} y={62} width={96} height={54} accent />
+    <SketchLabel x={236} y={84} weight="bold" accent>Queue</SketchLabel>
+    <SketchLabel x={236} y={102} size={10} muted>потокобезопасна</SketchLabel>
+
+    <SketchBox x={344} y={34} width={110} height={40} />
+    <SketchLabel x={399} y={58} weight="bold">Consumer</SketchLabel>
+    <SketchBox x={344} y={104} width={110} height={40} />
+    <SketchLabel x={399} y={128} weight="bold">Consumer</SketchLabel>
+
+    <SketchArrow from={[130, 56]} to={[188, 80]} />
+    <SketchArrow from={[130, 124]} to={[188, 98]} />
+    <SketchLabel x={158} y={72} size={9} mono>put</SketchLabel>
+    <SketchArrow from={[284, 80]} to={[344, 56]} accent />
+    <SketchArrow from={[284, 98]} to={[344, 124]} accent />
+    <SketchLabel x={312} y={74} size={9} mono>get</SketchLabel>
+  </Sketch>
+</Figure>
+
+Раз `get` блокируется на пустой очереди, возникает вопрос: как сказать consumer'у, что работа кончилась и пора выходить? Ответ это sentinel, специальный элемент-маркер (часто `None`), который producer кладёт последним. Consumer, вынув sentinel, понимает сигнал и выходит из цикла.
+
+```python
+import queue, threading
+
+q = queue.Queue()
+
+def worker():
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        handle(item)
+
+t = threading.Thread(target=worker)
+t.start()
+
+for item in tasks:
+    q.put(item)
+q.put(None)
+t.join()
+```
+
+Здесь один producer (главный поток) кладёт задачи, затем `None` как признак конца, а consumer крутит цикл, пока не встретит `None`. Никаких `Lock` в коде нет, и это не потому, что мы забыли о безопасности, а потому, что очередь уже потокобезопасна изнутри.
+
+## Пул потоков и обещания результата
+
+Очередь хороша, когда работа течёт в одну сторону. Но часто нужен результат каждой задачи обратно, и вот тут удобнее `ThreadPoolExecutor` из `concurrent.futures`. Он держит фиксированное число потоков-работников и раздаёт им задачи. Метод `submit` кладёт задачу в пул и немедленно возвращает `Future`, объект-обещание: сам результат ещё не готов, но за ним можно прийти позже через `future.result()`, и этот вызов подождёт, пока значение не появится.
+
+<Figure caption="submit кладёт задачу в пул и сразу возвращает Future, обещание результата. Worker выполнит задачу, а future.result() отдаст значение, когда оно готово, или перебросит исключение, если задача упала.">
+  <Sketch viewBox="0 0 470 195" title="ThreadPoolExecutor и Future">
+    <SketchBox x={20} y={78} width={92} height={44} />
+    <SketchLabel x={66} y={98} weight="bold">submit</SketchLabel>
+    <SketchLabel x={66} y={116} size={10} muted>задача</SketchLabel>
+
+    <SketchBox x={162} y={34} width={140} height={130} />
+    <SketchLabel x={232} y={54} weight="bold">пул из N потоков</SketchLabel>
+    <SketchBox x={182} y={74} width={100} height={26} accent />
+    <SketchLabel x={232} y={92} size={10} accent>worker</SketchLabel>
+    <SketchBox x={182} y={112} width={100} height={26} accent />
+    <SketchLabel x={232} y={130} size={10} accent>worker</SketchLabel>
+
+    <SketchBox x={352} y={78} width={100} height={44} hatched />
+    <SketchLabel x={402} y={98} weight="bold">Future</SketchLabel>
+    <SketchLabel x={402} y={116} size={10} muted>result()</SketchLabel>
+
+    <SketchArrow from={[112, 100]} to={[162, 100]} />
+    <SketchArrow from={[302, 100]} to={[352, 100]} accent />
+  </Sketch>
+</Figure>
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+with ThreadPoolExecutor(max_workers=5) as pool:
+    future = pool.submit(fetch, url)
+    result = future.result()
+```
+
+Пул как контекстный менеджер сам заботится о завершении: на выходе из `with` вызывается `shutdown(wait=True)`, который дожидается всех начатых задач. Это и есть аккуратная остановка без ручного пересчёта sentinel'ов.
+
+Для пачки однотипных задач есть два стиля сбора результатов. Метод `map` применяет функцию к каждому элементу и отдаёт результаты в порядке входных данных, как встроенный `map`, только конкурентно. А `as_completed` принимает набор `Future` и выдаёт их по мере готовности, в порядке завершения, а не подачи, что удобно, когда хочется обрабатывать быстрые ответы, не дожидаясь медленных.
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+with ThreadPoolExecutor(max_workers=5) as pool:
+    futures = [pool.submit(fetch, u) for u in urls]
+    for done in as_completed(futures):
+        handle(done.result())
+```
+
+## Краевые случаи
+
+Первая мина это потерянный sentinel. Если consumer'ов несколько, а sentinel вы положили один, то выйдет только один consumer, а остальные навсегда зависнут на `get` пустой очереди. Правило: sentinel'ов нужно ровно столько, сколько consumer'ов, по одному на каждого. Именно поэтому контекстный менеджер пула удобнее ручной очереди: он берёт корректное завершение на себя.
+
+Вторая мина тоньше и опаснее. Исключение, вылетевшее внутри задачи пула, не роняет программу и не печатается в консоль. Оно ловится и сохраняется внутри `Future`, а всплывает только в тот момент, когда вы позовёте `result()`. Если вы отправили задачу и не заглянули в её `Future`, исключение проглатывается молча, и вы даже не узнаете, что задача упала.
+
+```python
+future = pool.submit(risky)
+value = future.result()
+```
+
+Строка `future.result()` перебросит то самое исключение в вызывающий поток, здесь его можно поймать и обработать. Без обращения к результату ошибка растворяется бесследно, и это одна из самых частых причин загадочно «недоделанной» работы в пулах.
+
+## Типичные ошибки
+
+- **Забыть sentinel или положить его не столько, сколько нужно.** Consumer навсегда виснет на `get` пустой очереди. Фикс: по одному sentinel на каждого consumer'а, либо используйте пул с его автоматическим `shutdown`.
+- **Не заглянуть в `Future`.** Исключение внутри задачи оседает в `Future` и не всплывает, пока не вызван `result()`. Фикс: всегда забирайте результат (через `result()`, `map` или `as_completed`), чтобы ошибки не терялись.
+- **Гонять CPU-bound работу через ThreadPoolExecutor.** Из-за GIL потоки не ускорят вычисления, пул лишь добавит накладные расходы. Фикс: для нагрузки на процессор берите `ProcessPoolExecutor` с тем же интерфейсом.
+- **Путать порядок результатов у `map` и `as_completed`.** `map` отдаёт в порядке входа, `as_completed` в порядке готовности. Ожидать от `as_completed` исходного порядка это ошибка. Фикс: нужен порядок входа, берите `map`.
+
+<Detail summary="task_done и join: дождаться, пока очередь разгребут">
+
+У `queue.Queue` есть пара методов для другого вида ожидания. Consumer после обработки элемента вызывает `q.task_done()`, отмечая, что задача выполнена. А любой поток может вызвать `q.join()`, который блокируется, пока число `task_done` не сравняется с числом `put`, то есть пока всё положенное не разгребли. Это удобно, когда нужно дождаться завершения всей работы, но не завершать сами потоки: `join` очереди про «вся работа сделана», а sentinel про «пора выходить», и это независимые механизмы.
+
+Помимо обычной FIFO, в модуле есть `LifoQueue` (стек, последним вошёл, первым вышел) и `PriorityQueue` (выдаёт элементы по приоритету, а не по времени добавления). Интерфейс `put`/`get`/`task_done` у них общий, меняется только порядок выдачи.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "queue.Queue потокобезопасна изнутри: producers кладут через put, consumers берут через get, руками синхронизировать не нужно.",
+    "get на пустой очереди блокирует поток; чтобы штатно завершить consumer'а, кладут sentinel (обычно None), по одному на каждого consumer'а.",
+    "ThreadPoolExecutor.submit возвращает Future, обещание результата; future.result() ждёт значение или перебрасывает исключение задачи.",
+    "Исключение внутри задачи оседает в Future и всплывает только на result(); не заглянув в результат, вы молча потеряете ошибку.",
+    "map отдаёт результаты в порядке входных данных, as_completed в порядке готовности; для CPU-bound берите ProcessPoolExecutor, а не потоки.",
+  ]}
+/>
+
+## Ссылки
+
+- [Python docs - queue](https://docs.python.org/3/library/queue.html)
+- [Python docs - concurrent.futures](https://docs.python.org/3/library/concurrent.futures.html)
+- [Python docs - ThreadPoolExecutor](https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor)
