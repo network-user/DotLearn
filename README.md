@@ -11,7 +11,7 @@
 
 <!-- audit:start -->
 <p>
-  <a href="docs/audit/latest.md"><img src="https://img.shields.io/badge/security_audit-passed_with_warnings-dbab09?style=flat" alt="security audit passed with warnings - full, leaks + code" /></a>
+  <a href="docs/audit/latest.md"><img src="https://img.shields.io/badge/security_audit-passed-3fb950?style=flat" alt="security audit passed - full, leaks + code" /></a>
   <a href="docs/audit/2026-07-08-amber-sentinel.md"><img src="https://img.shields.io/badge/date-2026--07--08-555?style=flat" alt="audit date" /></a>
 </p>
 <!-- audit:end -->
