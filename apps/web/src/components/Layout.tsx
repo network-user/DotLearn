@@ -126,7 +126,7 @@ export const Layout = ({ children }: LayoutProps) => {
                     className="transition-transform duration-fast group-open/more:rotate-180"
                   />
                 </summary>
-                <div className="absolute right-0 top-[calc(100%+6px)] z-[var(--z-sheet)] min-w-[180px] rounded-xl border border-border-base glass-strong p-1.5 shadow-float">
+                <div className="absolute right-0 top-[calc(100%+6px)] z-[var(--z-sheet)] min-w-[180px] rounded-xl border border-border-base glass-strong bg-surface/95 p-1.5 shadow-float">
                   {overflowItems.map((item) => {
                     const Icon = item.icon;
                     const active = isActive(item.to);

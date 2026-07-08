@@ -43,7 +43,7 @@ import { FreeRecall } from '@/components/FreeRecall';
 import { ReadingSettingsButton } from '@/components/ReadingSettingsButton';
 import { ReadingPositionTracker, ResumeBanner } from '@/components/ResumeReading';
 import { TheoryContent } from '@/components/TheoryContent';
-import { TheoryHighlighter, TheoryHighlightHint } from '@/components/TheoryHighlighter';
+import { TheoryHighlighter } from '@/components/TheoryHighlighter';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
@@ -1224,8 +1224,6 @@ const ConceptPanel = ({
       </header>
 
       {notesOpen && <NotesEditor key={concept.id} slug={slug} conceptId={concept.id} />}
-
-      {THEORY_HIGHLIGHTS_ENABLED ? <TheoryHighlightHint /> : null}
 
       <div data-toc-root className="theory-root max-w-prose">
         {bodyTheories.map(({ filename, resolved }, sectionIndex) => (
