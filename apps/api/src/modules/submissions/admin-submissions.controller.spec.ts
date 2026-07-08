@@ -6,9 +6,15 @@ import type {
 } from '@dotlearn/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AuthenticatedRequest } from '../auth/guards/admin-auth.guard';
 import type { SubmissionsSearchIndexer } from '../search/submissions-search.indexer';
 import { AdminSubmissionsController } from './admin-submissions.controller';
 import type { SubmissionsService } from './submissions.service';
+
+const adminRequest = {
+  admin: { sub: 'admin', jti: 'jti-1', scope: 'access', epoch: 0, exp: 0, iat: 0 },
+  ip: '203.0.113.5',
+} as unknown as AuthenticatedRequest;
 
 const submissionId = '22222222-2222-4222-8222-222222222222';
 
@@ -88,8 +94,11 @@ describe('AdminSubmissionsController', () => {
     it('reviews the submission, reindexes it, and returns the result', async () => {
       submissions.review.mockResolvedValue(reviewedSubmission);
       const body: ReviewSubmissionInput = { decision: 'approve', reviewerNote: 'ok' };
-      const result = await controller.review(submissionId, body);
-      expect(submissions.review).toHaveBeenCalledWith(submissionId, body);
+      const result = await controller.review(submissionId, body, adminRequest);
+      expect(submissions.review).toHaveBeenCalledWith(submissionId, body, {
+        jti: 'jti-1',
+        ip: '203.0.113.5',
+      });
       expect(indexer.indexOne).toHaveBeenCalledWith(submissionId);
       expect(result).toBe(reviewedSubmission);
     });
@@ -99,8 +108,11 @@ describe('AdminSubmissionsController', () => {
     it('materializes the submission, reindexes it, and returns the result', async () => {
       submissions.markMaterialized.mockResolvedValue(materializedSubmission);
       const body: MarkMaterializedInput = { materializedSlug: 'sql-window-functions' };
-      const result = await controller.materialize(submissionId, body);
-      expect(submissions.markMaterialized).toHaveBeenCalledWith(submissionId, body);
+      const result = await controller.materialize(submissionId, body, adminRequest);
+      expect(submissions.markMaterialized).toHaveBeenCalledWith(submissionId, body, {
+        jti: 'jti-1',
+        ip: '203.0.113.5',
+      });
       expect(indexer.indexOne).toHaveBeenCalledWith(submissionId);
       expect(result).toBe(materializedSubmission);
     });

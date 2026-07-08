@@ -17,6 +17,7 @@ import type {
   SubmissionStatus,
 } from '@dotlearn/contracts';
 
+import type { AdminActor } from '../../common/audit/admin-actor';
 import { SubmissionEntity } from './domain/submission.entity';
 import {
   SUBMISSIONS_REPOSITORY,
@@ -115,7 +116,7 @@ export class SubmissionsService {
     return submissions.map(toPublic);
   }
 
-  async review(id: string, input: ReviewSubmissionInput): Promise<Submission> {
+  async review(id: string, input: ReviewSubmissionInput, actor: AdminActor): Promise<Submission> {
     const entity = await this.repository.findById(id);
     if (!entity) {
       throw new NotFoundException(`Submission ${id} not found`);
@@ -128,11 +129,18 @@ export class SubmissionsService {
     }
 
     await this.repository.save(entity);
-    this.logger.log({ submissionId: id, decision: input.decision }, 'submission_reviewed');
+    this.logger.log(
+      { submissionId: id, decision: input.decision, actorJti: actor.jti, actorIp: actor.ip },
+      'submission_reviewed',
+    );
     return entity.toContract();
   }
 
-  async markMaterialized(id: string, input: MarkMaterializedInput): Promise<Submission> {
+  async markMaterialized(
+    id: string,
+    input: MarkMaterializedInput,
+    actor: AdminActor,
+  ): Promise<Submission> {
     const entity = await this.repository.findById(id);
     if (!entity) {
       throw new NotFoundException(`Submission ${id} not found`);
@@ -140,7 +148,12 @@ export class SubmissionsService {
     entity.markMaterialized(input.materializedSlug, input.reviewerNote);
     await this.repository.save(entity);
     this.logger.log(
-      { submissionId: id, materializedSlug: input.materializedSlug ?? null },
+      {
+        submissionId: id,
+        materializedSlug: input.materializedSlug ?? null,
+        actorJti: actor.jti,
+        actorIp: actor.ip,
+      },
       'submission_materialized',
     );
     return entity.toContract();

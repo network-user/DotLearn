@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Req,
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
@@ -20,12 +21,19 @@ import {
   SubmissionStatus,
 } from '@dotlearn/contracts';
 
+import type { AdminActor } from '../../common/audit/admin-actor';
 import { ZodBodyPipe } from '../../common/zod/zod-body.pipe';
 import { RequireStepUp } from '../auth/decorators/require-step-up.decorator';
+import type { AuthenticatedRequest } from '../auth/guards/admin-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin-auth.guard';
 import { StepUpGuard } from '../auth/guards/step-up.guard';
-import { SubmissionsSearchIndexer } from '../search/submissions-search.indexer';
-import { SubmissionsService } from './submissions.service';
+import type { SubmissionsSearchIndexer } from '../search/submissions-search.indexer';
+import type { SubmissionsService } from './submissions.service';
+
+const actorFrom = (request: AuthenticatedRequest): AdminActor => ({
+  jti: request.admin?.jti ?? 'unknown',
+  ip: request.ip ?? 'unknown',
+});
 
 @ApiTags('admin')
 @Controller('admin/submissions')
@@ -56,8 +64,9 @@ export class AdminSubmissionsController {
   async review(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: ReviewSubmissionInput,
+    @Req() request: AuthenticatedRequest,
   ): Promise<Submission> {
-    const result = await this.submissions.review(id, body);
+    const result = await this.submissions.review(id, body, actorFrom(request));
     await this.indexer.indexOne(id);
     return result;
   }
@@ -70,8 +79,9 @@ export class AdminSubmissionsController {
   async materialize(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: MarkMaterializedInput,
+    @Req() request: AuthenticatedRequest,
   ): Promise<Submission> {
-    const result = await this.submissions.markMaterialized(id, body);
+    const result = await this.submissions.markMaterialized(id, body, actorFrom(request));
     await this.indexer.indexOne(id);
     return result;
   }

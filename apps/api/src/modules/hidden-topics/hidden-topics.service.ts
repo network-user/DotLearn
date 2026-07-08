@@ -2,6 +2,7 @@ import { ConflictException, Inject, Injectable, Logger, NotFoundException } from
 
 import type { HiddenTopic } from '@dotlearn/contracts';
 
+import type { AdminActor } from '../../common/audit/admin-actor';
 import { HiddenTopicEntity } from './domain/hidden-topic.entity';
 import {
   HIDDEN_TOPICS_REPOSITORY,
@@ -27,21 +28,21 @@ export class HiddenTopicsService {
     return entities.map((entity) => entity.slug);
   }
 
-  async hide(slug: string, reason?: string): Promise<HiddenTopic> {
+  async hide(slug: string, reason: string | undefined, actor: AdminActor): Promise<HiddenTopic> {
     if (await this.repository.has(slug)) {
       throw new ConflictException(`Topic "${slug}" is already hidden`);
     }
     const entity = HiddenTopicEntity.create(slug, reason);
     await this.repository.add(entity);
-    this.logger.log({ slug, reason }, 'topic_hidden');
+    this.logger.log({ slug, reason, actorJti: actor.jti, actorIp: actor.ip }, 'topic_hidden');
     return entity.toContract();
   }
 
-  async unhide(slug: string): Promise<void> {
+  async unhide(slug: string, actor: AdminActor): Promise<void> {
     const removed = await this.repository.remove(slug);
     if (!removed) {
       throw new NotFoundException(`Topic "${slug}" is not hidden`);
     }
-    this.logger.log({ slug }, 'topic_unhidden');
+    this.logger.log({ slug, actorJti: actor.jti, actorIp: actor.ip }, 'topic_unhidden');
   }
 }
