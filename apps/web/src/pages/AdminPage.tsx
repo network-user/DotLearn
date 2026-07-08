@@ -102,7 +102,8 @@ export const AdminPage = () => {
       } catch (error) {
         const message =
           error instanceof ApiError
-            ? t('apiUnavailable', { status: error.status })
+            ? t('apiUnavailable', { status: error.status }) +
+              (import.meta.env.DEV ? ` ${t('apiUnavailableDevHint')}` : '')
             : t('networkError');
         setErrorByTab((prev) => ({ ...prev, [status]: message }));
       } finally {
@@ -129,7 +130,8 @@ export const AdminPage = () => {
     } catch (error) {
       const message =
         error instanceof ApiError
-          ? t('apiUnavailable', { status: error.status })
+          ? t('apiUnavailable', { status: error.status }) +
+            (import.meta.env.DEV ? ` ${t('apiUnavailableDevHint')}` : '')
           : t('networkError');
       setErrorByTab((prev) => ({ ...prev, hidden: message }));
     } finally {

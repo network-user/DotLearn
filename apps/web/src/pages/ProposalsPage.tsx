@@ -74,7 +74,8 @@ export const ProposalsPage = () => {
         if (cancelled) return;
         const message =
           error instanceof ApiError
-            ? t('errors.api', { status: error.status })
+            ? t('errors.api', { status: error.status }) +
+              (import.meta.env.DEV ? ` ${t('errors.apiDevHint')}` : '')
             : t('errors.network');
         setState({ kind: 'error', message });
       }

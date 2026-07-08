@@ -1149,7 +1149,7 @@ const Chip = ({
     className={cx(
       'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] tracking-snug transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55',
       active
-        ? 'border-accent/50 bg-accent/[0.08] text-accent font-medium'
+        ? 'border-accent/70 bg-accent/[0.16] text-accent font-medium'
         : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
     )}
   >
