@@ -23,6 +23,9 @@ type FormState = {
   notes: string;
 };
 
+const withHttpsScheme = (value: string): string =>
+  /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`;
+
 const initialState: FormState = {
   title: '',
   outline: '',
@@ -75,7 +78,8 @@ export const SubmitTopicPage = () => {
       sources: form.sources
         .split('\n')
         .map((value) => value.trim())
-        .filter(Boolean),
+        .filter(Boolean)
+        .map(withHttpsScheme),
       ...(form.contactEmail ? { contactEmail: form.contactEmail } : {}),
       ...(form.notes ? { notes: form.notes } : {}),
     };

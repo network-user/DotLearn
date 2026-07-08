@@ -17,7 +17,11 @@ import type { Request, Response } from 'express';
 
 import { ZodBodyPipe } from '../../common/zod/zod-body.pipe';
 import { AUTH_CONFIG, type AuthConfig } from './auth.config';
-import type { AuthService } from './auth.service';
+// Nest DI resolves constructor params by the real class reference (reflect-metadata
+// design:paramtypes); `import type` here silently breaks injection at boot
+// (UnknownDependenciesException) - keep this a value import.
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { AuthService } from './auth.service';
 import { RequireStepUp } from './decorators/require-step-up.decorator';
 import { LoginInput, StepUpInput } from './dto/auth.schemas';
 import { AdminAuthGuard, type AuthenticatedRequest } from './guards/admin-auth.guard';

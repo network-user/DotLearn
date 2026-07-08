@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import mdx from '@mdx-js/rollup';
 import rehypeShiki from '@shikijs/rehype';
@@ -12,6 +11,7 @@ import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+import { resolvePyodideDir, resolvePyodideExtraPackageEntries } from './pyodide-packages.mjs';
 import { remarkConceptLinks } from './remark-concept-links.mjs';
 
 import { searchIndexPlugin } from './vite-plugin-search-index';
@@ -41,34 +41,17 @@ const PYODIDE_RUNTIME_FILES = [
   'pyodide-lock.json',
 ] as const;
 
-// Extra Pyodide packages shipped to the browser beyond the core runtime.
 // sqlite3 is an unvendored stdlib module used by the python-orm topic: the
 // worker calls loadPackagesFromImports, but it can only fetch the package if
 // its .zip is actually served. The core 4 files alone leave `import sqlite3`
 // failing with ModuleNotFoundError in the browser (Node validator is fine
-// because it loads the full distribution straight from node_modules).
-const PYODIDE_EXTRA_PACKAGES = ['sqlite3'] as const;
-
-// Resolve curated packages to their on-disk file names, pulling transitive
-// `depends` from pyodide-lock.json so a package's dependencies ship too.
-const resolvePyodidePackageFiles = (pyodideDir: string): string[] => {
-  const lock = JSON.parse(readFileSync(join(pyodideDir, 'pyodide-lock.json'), 'utf8')) as {
-    packages?: Record<string, { file_name: string; depends?: string[] }>;
-  };
-  const packages = lock.packages ?? {};
-  const seen = new Set<string>();
-  const files = new Set<string>();
-  const visit = (name: string): void => {
-    if (seen.has(name)) return;
-    seen.add(name);
-    const entry = packages[name];
-    if (!entry) return;
-    files.add(entry.file_name);
-    for (const dep of entry.depends ?? []) visit(dep);
-  };
-  for (const name of PYODIDE_EXTRA_PACKAGES) visit(name);
-  return [...files];
-};
+// because it loads the full distribution straight from node_modules). The
+// "prebuild" script (scripts/fetch-pyodide-extra-packages.mjs) downloads it
+// into node_modules/pyodide before this plugin ever runs.
+const resolvePyodidePackageFiles = (pyodideDir: string): string[] =>
+  resolvePyodideExtraPackageEntries(pyodideDir).map(
+    (entry: { file_name: string }) => entry.file_name,
+  );
 
 const pyodideContentType = (name: string): string => {
   if (name.endsWith('.wasm')) return 'application/wasm';
@@ -79,8 +62,7 @@ const pyodideContentType = (name: string): string => {
 };
 
 const pyodideAssetsPlugin = (): Plugin => {
-  const require = createRequire(import.meta.url);
-  const pyodideDir = dirname(require.resolve('pyodide/package.json'));
+  const pyodideDir = resolvePyodideDir(__dirname);
   const filePath = (name: string): string => join(pyodideDir, name);
   const servedFiles = new Set<string>([
     ...PYODIDE_RUNTIME_FILES,
