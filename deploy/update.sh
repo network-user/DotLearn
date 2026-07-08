@@ -24,7 +24,13 @@ cd "$REPO_DIR"
 
 if [ -d .git ]; then
 	echo "==> git pull (конфиги/compose)..."
-	git pull --ff-only || echo "  (pull пропущен: нет апстрима или есть локальные правки)"
+	if ! git pull --ff-only; then
+		echo "Ошибка: git pull --ff-only не смог обновить репозиторий (см. вывод выше)." >&2
+		echo "  Обычно значит - на сервере есть локальные правки поверх origin/main." >&2
+		echo "  Разберись (git status / git diff в $REPO_DIR), иначе автодеплой будет" >&2
+		echo "  молча перезапускать контейнеры на СТАРОМ compose-конфиге." >&2
+		exit 1
+	fi
 fi
 
 # GHCR_OWNER и прочее берутся из .env (docker compose читает его автоматически).
