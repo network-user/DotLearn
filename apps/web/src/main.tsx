@@ -56,6 +56,7 @@ const CommandPaletteHost = () => {
 initSettings();
 watchSystemTheme();
 requestPersistAfterFirstWrite();
+window.history.scrollRestoration = 'manual';
 
 const registerServiceWorker = (): void => {
   const updateServiceWorker = registerSW({

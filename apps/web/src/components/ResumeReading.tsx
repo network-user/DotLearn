@@ -83,27 +83,25 @@ export const ResumeBanner = ({ slug, conceptId, resume, onResumeHandled }: Banne
   const { t } = useTranslation('topic');
   const record = useReadingScroll(slug, conceptId);
   const [hidden, setHidden] = useState(false);
-  const autoHandledRef = useRef<string | null>(null);
+  const entryHandledRef = useRef(false);
   const restoreRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setHidden(false);
-    autoHandledRef.current = null;
   }, [conceptId]);
 
   useEffect(() => () => restoreRef.current?.(), []);
 
   useEffect(() => {
-    if (!resume || record === undefined) return;
-    if (autoHandledRef.current === conceptId) return;
-    autoHandledRef.current = conceptId;
-    if (record && record.ratio > 0) {
+    if (entryHandledRef.current || record === undefined) return;
+    entryHandledRef.current = true;
+    if (record && record.ratio > MEANINGFUL_RATIO) {
       restoreRef.current?.();
       restoreRef.current = runRestore(record);
       setHidden(true);
     }
-    onResumeHandled();
-  }, [resume, record, conceptId, onResumeHandled]);
+    if (resume) onResumeHandled();
+  }, [resume, record, onResumeHandled]);
 
   useEffect(() => {
     if (resume || hidden || !record || record.ratio <= MEANINGFUL_RATIO) return undefined;
