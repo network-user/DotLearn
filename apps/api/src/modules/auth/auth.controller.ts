@@ -17,16 +17,18 @@ import type { Request, Response } from 'express';
 
 import { ZodBodyPipe } from '../../common/zod/zod-body.pipe';
 import { AUTH_CONFIG, type AuthConfig } from './auth.config';
-import { AuthService } from './auth.service';
+import type { AuthService } from './auth.service';
 import { RequireStepUp } from './decorators/require-step-up.decorator';
 import { LoginInput, StepUpInput } from './dto/auth.schemas';
 import { AdminAuthGuard, type AuthenticatedRequest } from './guards/admin-auth.guard';
+import { AuthConfigGuard } from './guards/auth-config.guard';
 import { StepUpGuard } from './guards/step-up.guard';
 
 const REFRESH_COOKIE = 'dotlearn_admin_refresh';
 
 @ApiTags('admin')
 @Controller('admin/auth')
+@UseGuards(AuthConfigGuard)
 export class AuthController {
   constructor(
     private readonly auth: AuthService,

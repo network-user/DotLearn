@@ -91,3 +91,39 @@ export const loadAuthConfig = (): AuthConfig => {
 };
 
 export const AUTH_CONFIG = Symbol('AuthConfig');
+
+export type AuthConfigResult =
+  | { readonly ok: true; readonly config: AuthConfig }
+  | { readonly ok: false; readonly error: string };
+
+// Wraps loadAuthConfig() so a broken ADMIN_* env can't take down the whole process:
+// the caller decides whether to boot degraded instead of crash-looping on every restart.
+export const resolveAuthConfig = (): AuthConfigResult => {
+  try {
+    return { ok: true, config: loadAuthConfig() };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+};
+
+// Every secret is empty, so it can never pass a login/JWT check. Only used so the app
+// can still boot (and serve non-auth routes) when auth config is missing/weak;
+// AuthConfigGuard rejects every admin/auth request before this value is ever read.
+export const UNCONFIGURED_AUTH_CONFIG: AuthConfig = {
+  login: '',
+  passwordHash: '',
+  totpSecret: '',
+  backupCodeHashes: [],
+  accessSecret: '',
+  refreshSecret: '',
+  accessTtlSec: 900,
+  refreshTtlSec: 604800,
+  stepUpTtlSec: 120,
+  lockoutTtlSec: 300,
+  loginWindowSec: 900,
+  maxFailedAttempts: 5,
+  cookieDomain: undefined,
+  cookieSecure: process.env.NODE_ENV === 'production',
+};
+
+export const AUTH_CONFIG_ERROR = Symbol('AuthConfigError');

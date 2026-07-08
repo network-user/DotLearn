@@ -6,9 +6,11 @@ RUN corepack enable
 
 ARG VITE_API_BASE
 ARG VITE_ADMIN_PATH
+ARG VITE_GITHUB_URL
 
 ENV VITE_API_BASE=$VITE_API_BASE
 ENV VITE_ADMIN_PATH=$VITE_ADMIN_PATH
+ENV VITE_GITHUB_URL=$VITE_GITHUB_URL
 
 # .npmrc обязателен: public-hoist-pattern[]=@mdx-js/* поднимает @mdx-js/react в
 # корневой node_modules, иначе MDX-файлы из /interview и /topics (вне apps/web)

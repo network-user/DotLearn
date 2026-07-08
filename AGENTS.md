@@ -163,6 +163,7 @@ Vitest. `pnpm test` (Turborepo), per-package `pnpm --filter @dotlearn/<pkg> test
 | `ES_NODE` / `ES_ENABLED` | адрес Elasticsearch и флаг fuzzy-поиска (`ES_ENABLED=false` по умолчанию → in-memory)     |
 | `VITE_API_BASE`          | базовый URL api для фронта (в проде `https://$DOMAIN`, same-origin)                       |
 | `VITE_ADMIN_PATH`        | путь admin-роута                                                                          |
+| `VITE_GITHUB_URL`        | ссылка на репозиторий для футера (не задана или пустая - ссылка в футере скрыта)          |
 | `WEB_ORIGIN`             | разрешённый origin для CORS api                                                           |
 | `HOST` / `PORT`          | адрес/порт прослушивания api (`127.0.0.1` за прокси)                                      |
 | `TRUSTED_PROXY_HOPS`     | число reverse-прокси перед api (считай все хопы: только Caddy = `1`, Caddy + nginx = `2`) |

@@ -544,6 +544,8 @@ interface CatalogCategorySectionProps {
   onToggleTag: (tag: string) => void;
 }
 
+const CATEGORY_PREVIEW_COUNT = 6;
+
 const CatalogCategorySection = ({
   id,
   rows,
@@ -551,7 +553,11 @@ const CatalogCategorySection = ({
   onToggleTag,
 }: CatalogCategorySectionProps) => {
   const { t } = useTranslation('home');
+  const [expanded, setExpanded] = useState(false);
   const headingId = `catalog-category-${id}`;
+  const listId = `catalog-category-list-${id}`;
+  const collapsible = rows.length > CATEGORY_PREVIEW_COUNT;
+  const visibleRows = collapsible && !expanded ? rows.slice(0, CATEGORY_PREVIEW_COUNT) : rows;
   return (
     <section aria-labelledby={headingId} className="space-y-4">
       <div className="flex items-baseline gap-2.5">
@@ -560,13 +566,24 @@ const CatalogCategorySection = ({
         </h2>
         <span className="text-[13px] tabular-nums text-fg-subtle">{rows.length}</span>
       </div>
-      <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger">
-        {rows.map((row) => (
+      <ul id={listId} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger">
+        {visibleRows.map((row) => (
           <li key={row.manifest.slug} className="relative z-0 hover:z-20 focus-within:z-20">
             <TopicCard row={row} activeTags={activeTags} onToggleTag={onToggleTag} />
           </li>
         ))}
       </ul>
+      {collapsible && (
+        <button
+          type="button"
+          onClick={() => setExpanded((open) => !open)}
+          aria-expanded={expanded}
+          aria-controls={listId}
+          className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border-base px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-fg-muted transition-colors hover:text-fg hover:bg-fg/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55 w-full sm:w-auto"
+        >
+          {expanded ? t('categories.collapse') : t('categories.showAll', { total: rows.length })}
+        </button>
+      )}
     </section>
   );
 };

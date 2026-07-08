@@ -42,6 +42,8 @@ const NavLink = ({ to, active, label }: NavLinkProps) => (
   </Link>
 );
 
+const githubUrl: string = import.meta.env.VITE_GITHUB_URL ?? '';
+
 export const Layout = ({ children }: LayoutProps) => {
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
@@ -204,18 +206,17 @@ export const Layout = ({ children }: LayoutProps) => {
 
       <footer className="mt-12 rule-double-b border-t border-border-base bg-surface/60">
         <div className="mx-auto max-w-layout px-[var(--layout-content-gutter)] py-6 flex items-center justify-between gap-3">
-          <span className="flex items-baseline gap-2">
-            <span className="font-display text-sm text-fg">.learn</span>
-            <span className="text-xs text-fg-subtle">{t('brandTagline')}</span>
-          </span>
-          <a
-            href="https://github.com/your-org/dotlearn"
-            className="text-xs text-fg-subtle hover:text-fg transition-colors"
-            target="_blank"
-            rel="noreferrer"
-          >
-            {tCommon('github')}
-          </a>
+          <span className="text-xs text-fg-subtle">{t('brandTagline')}</span>
+          {githubUrl ? (
+            <a
+              href={githubUrl}
+              className="text-xs text-fg-subtle hover:text-fg transition-colors"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {tCommon('github')}
+            </a>
+          ) : null}
         </div>
       </footer>
 

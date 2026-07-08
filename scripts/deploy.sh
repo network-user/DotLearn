@@ -128,6 +128,7 @@ if [ "$(env_get DATA_DIR)" = "/app/data" ]; then env_set DATA_DIR "$DEFAULT_DATA
 PORT="$(env_get PORT)"
 DATA_DIR="$(env_get DATA_DIR)"
 VITE_ADMIN_PATH="$(env_get VITE_ADMIN_PATH)"; [ -n "$VITE_ADMIN_PATH" ] || { VITE_ADMIN_PATH="/admin"; env_set VITE_ADMIN_PATH "$VITE_ADMIN_PATH"; }
+VITE_GITHUB_URL="$(env_get VITE_GITHUB_URL)"
 ok "domain $DOMAIN · data $DATA_DIR · admin path $VITE_ADMIN_PATH"
 
 # ───────────────────────────────────────────────────────────────
@@ -165,6 +166,7 @@ rm -rf "$REPO_DIR"/apps/*/dist "$REPO_DIR"/packages/*/dist
 export NODE_ENV=production
 export VITE_API_BASE="https://$DOMAIN"
 export VITE_ADMIN_PATH="$VITE_ADMIN_PATH"
+export VITE_GITHUB_URL="$VITE_GITHUB_URL"
 pnpm --filter @dotlearn/contracts build
 pnpm --filter @dotlearn/sandbox build
 pnpm --filter @dotlearn/lesson-engine build

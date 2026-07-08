@@ -85,4 +85,9 @@ const bootstrap = async (): Promise<void> => {
   await app.listen(port, host);
 };
 
-void bootstrap();
+bootstrap().catch((error: unknown) => {
+  // Guaranteed to reach stderr (docker logs) regardless of whether the pino logger
+  // ever got wired up — bootstrap can fail before app.useLogger() runs.
+  console.error('FATAL: API failed to start.', error);
+  process.exit(1);
+});
