@@ -1,0 +1,332 @@
+exercises:
+  - id: drf-query-optimization-select-001
+    concept: drf-query-optimization
+    type: theory-quiz
+    difficulty: 1
+    prompt: "У заказа есть ForeignKey на покупателя. Что уберёт лишние запросы за покупателем в списке?"
+    choices:
+      - id: a
+        text: "select_related(\"customer\"), потому что связь «к одному» тянется одним JOIN."
+      - id: b
+        text: "prefetch_related(\"customer\"): он сделает лишний второй запрос там, где хватило бы JOIN."
+      - id: c
+        text: "Ничего, пагинация сама уберёт повторные запросы."
+      - id: d
+        text: "Оптимизировать нельзя, ForeignKey всегда грузится по одному."
+    correct: [a]
+    explanation: "Связь «к одному» (ForeignKey, OneToOne) со стороны ключа берётся одним JOIN, для этого и нужен select_related. prefetch_related здесь сделал бы лишний отдельный запрос."
+    variants:
+      - prompt: "У заказа много позиций (обратный ForeignKey от Item). Что предзагрузит позиции без N+1?"
+        choices:
+          - id: a
+            text: "prefetch_related(\"items\"), потому что связь «ко многим» берётся отдельным запросом и склейкой в Python."
+          - id: b
+            text: "select_related(\"items\"): один JOIN решит всё."
+          - id: c
+            text: "Ничего, у обратных связей N+1 неизбежен."
+          - id: d
+            text: "only(\"items\") ограничит колонки и уберёт запросы."
+        correct: [a]
+        explanation: "Для связей «ко многим» (обратный ForeignKey, ManyToMany) JOIN размножил бы строки заказа, поэтому Django делает отдельный запрос и склеивает результат. Это prefetch_related; select_related на такой связи падает с ошибкой."
+      - prompt: "Где правильно указывать select_related и prefetch_related?"
+        choices:
+          - id: a
+            text: "В queryset или get_queryset() у ViewSet, там, где рождается выборка."
+          - id: b
+            text: "Внутри SerializerMethodField, ближе к чтению связи."
+          - id: c
+            text: "В методе validate() сериализатора."
+          - id: d
+            text: "В шаблоне ответа, при рендере JSON."
+        correct: [a]
+        explanation: "Предзагрузка это свойство выборки, а не формы данных. Её задают у queryset (или в get_queryset()) во ViewSet; сериализатор работает уже с готовыми объектами и на число запросов не влияет."
+
+  - id: drf-query-optimization-choose-002
+    concept: drf-query-optimization
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Почему постраничная выдача (pagination) сама по себе не убирает N+1?"
+    choices:
+      - id: a
+        text: "Она режет выборку до одной страницы, но на этой странице каждая строка всё равно тянет связь отдельным запросом."
+      - id: b
+        text: "Она убирает N+1, если размер страницы меньше 100."
+      - id: c
+        text: "Она превращает все запросы в один благодаря LIMIT."
+      - id: d
+        text: "Она кэширует связанные объекты между страницами."
+    correct: [a]
+    explanation: "Пагинация ограничивает число строк на странице, но N добавочных запросов происходят именно на этих строках. Двадцать строк на странице дадут двадцать точечных запросов; проблему решает предзагрузка, а не LIMIT."
+    variants:
+      - prompt: "Чем опасен SerializerMethodField с методом, где стоит `return obj.items.count()`?"
+        choices:
+          - id: a
+            text: "Метод вызывается для каждой строки и шлёт отдельный SELECT COUNT(*) на каждый заказ."
+          - id: b
+            text: "Он кэширует результат навсегда и отдаёт устаревшее число."
+          - id: c
+            text: "Он делает поле обязательным на запись."
+          - id: d
+            text: "Ничем, count() всегда бесплатен."
+        correct: [a]
+        explanation: "SerializerMethodField выполняет метод на каждый объект. Обращение к связи (items.count()) внутри него порождает запрос на строку. Дешевле посчитать всё разом аннотацией Count у queryset."
+      - prompt: "Заказ ссылается на город покупателя через цепочку customer.city (ForeignKey за ForeignKey). Как забрать город без лишних запросов?"
+        choices:
+          - id: a
+            text: "select_related(\"customer__city\"): вложенная связь «к одному» тянется одним JOIN."
+          - id: b
+            text: "prefetch_related(\"customer__city\"), иначе город не подтянется."
+          - id: c
+            text: "Двумя вызовами select_related по одному полю за раз, иначе JOIN не сработает."
+          - id: d
+            text: "Никак, вложенные связи ORM не умеет предзагружать."
+        correct: [a]
+        explanation: "Цепочка «к одному» задаётся двойным подчёркиванием: select_related(\"customer__city\") берёт покупателя и его город одним JOIN. Двойное подчёркивание работает на любую глубину связей «к одному»."
+
+  - id: drf-query-optimization-fill-queryset-003
+    concept: drf-query-optimization
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Допишите queryset у ViewSet: покупателя тяните JOIN'ом, а позиции отдельным запросом."
+    template: |
+      class OrderViewSet(viewsets.ModelViewSet):
+          queryset = Order.objects.{{tone}}("customer").{{many}}("items")
+          serializer_class = OrderSerializer
+    blanks:
+      tone:
+        accept: ["select_related"]
+      many:
+        accept: ["prefetch_related"]
+    variants:
+      - prompt: "Допишите оптимизацию связи «к одному» на покупателя одним JOIN."
+        template: |
+          queryset = Order.objects.{{opt}}("customer")
+        blanks:
+          opt:
+            accept: ["select_related"]
+      - prompt: "Допишите оптимизацию связи «ко многим» на позиции отдельным запросом."
+        template: |
+          queryset = Order.objects.{{opt}}("items")
+        blanks:
+          opt:
+            accept: ["prefetch_related"]
+
+  - id: drf-query-optimization-fill-prefetch-004
+    concept: drf-query-optimization
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Допишите метод ViewSet и класс, который предзагрузит отфильтрованный срез позиций в отдельный атрибут."
+    template: |
+      class OrderViewSet(viewsets.ModelViewSet):
+          def {{method}}(self):
+              return Order.objects.prefetch_related(
+                  {{cls}}("items", queryset=Item.objects.filter(price__gt=1000), to_attr="expensive_items")
+              )
+    blanks:
+      method:
+        accept: ["get_queryset"]
+      cls:
+        accept: ["Prefetch"]
+    variants:
+      - prompt: "Допишите аннотацию, чтобы число позиций считалось одним запросом вместе со списком."
+        template: |
+          from django.db.models import Count
+
+          queryset = Order.objects.annotate(item_count={{agg}}("items"))
+        blanks:
+          agg:
+            accept: ["Count"]
+      - prompt: "Допишите вложенную связь «к одному»: покупатель и его город одним JOIN."
+        template: |
+          queryset = Order.objects.select_related("customer__{{attr}}")
+        blanks:
+          attr:
+            accept: ["city"]
+
+  - id: drf-query-optimization-predict-count-005
+    concept: drf-query-optimization
+    type: predict-output
+    difficulty: 2
+    prompt: "Что выведет программа? Она считает запросы к базе: наивная выдача делает 1 запрос за списком плюс по одному на каждую строку, а с предзагрузкой запросов всегда два."
+    snippet: |
+      def naive(rows):
+          queries = 1
+          for _ in range(rows):
+              queries += 1
+          return queries
+
+      def prefetched(rows):
+          return 2
+
+      print(naive(3))
+      print(prefetched(3))
+      print(naive(10))
+      print(prefetched(10))
+    expected:
+      kind: stdout
+      value: |-
+        4
+        2
+        11
+        2
+    hints:
+      - "Наивный счётчик стартует с 1 (запрос за списком) и добавляет по 1 на каждую строку. Предзагрузка не зависит от числа строк."
+      - "naive(rows) равно 1 + rows, prefetched(rows) равно 2 всегда. Подставьте 3 и 10."
+    variants:
+      - snippet: |
+          def naive(rows):
+              queries = 1
+              for _ in range(rows):
+                  queries += 1
+              return queries
+
+          def prefetched(rows):
+              return 2
+
+          print(naive(1))
+          print(naive(5))
+          print(prefetched(5))
+        expected:
+          kind: stdout
+          value: |-
+            2
+            6
+            2
+      - snippet: |
+          def naive(rows):
+              queries = 1
+              for _ in range(rows):
+                  queries += 1
+              return queries
+
+          def prefetched(rows):
+              return 2
+
+          print(naive(0))
+          print(prefetched(0))
+          print(naive(20))
+        expected:
+          kind: stdout
+          value: |-
+            1
+            2
+            21
+
+  - id: drf-query-optimization-predict-filter-006
+    concept: drf-query-optimization
+    type: predict-output
+    difficulty: 3
+    prompt: "Что выведет программа? Она моделирует ответ с предзагрузкой (2 запроса). Флаг означает, что внутри цикла по строкам снова вызывают .filter() по связи, и каждый такой вызов добавляет один запрос."
+    snippet: |
+      def render(rows, filter_in_loop):
+          queries = 2
+          if filter_in_loop:
+              queries += rows
+          return queries
+
+      print(render(5, False))
+      print(render(5, True))
+      print(render(0, True))
+    expected:
+      kind: stdout
+      value: |-
+        2
+        7
+        2
+    hints:
+      - "Предзагрузка даёт 2 запроса. Повторный .filter() по связи в цикле идёт мимо кэша и добавляет по запросу на строку."
+      - "Без флага результат всегда 2. С флагом прибавьте rows к двойке. При rows=0 прибавлять нечего."
+    variants:
+      - snippet: |
+          def render(rows, filter_in_loop):
+              queries = 2
+              if filter_in_loop:
+                  queries += rows
+              return queries
+
+          print(render(3, True))
+          print(render(10, False))
+          print(render(1, True))
+        expected:
+          kind: stdout
+          value: |-
+            5
+            2
+            3
+      - snippet: |
+          def render(rows, filter_in_loop):
+              queries = 2
+              if filter_in_loop:
+                  queries += rows
+              return queries
+
+          print(render(50, False))
+          print(render(50, True))
+          print(render(2, True))
+        expected:
+          kind: stdout
+          value: |-
+            2
+            52
+            4
+
+  - id: drf-query-optimization-predict-tools-007
+    concept: drf-query-optimization
+    type: predict-output
+    difficulty: 4
+    prompt: "Что выведет программа? Она считает суммарное число запросов: 1 за списком; каждая связь в prefetch_related добавляет 1 запрос; каждая связь без предзагрузки (наивная) добавляет по запросу на каждую из rows строк; select_related встраивается в первый запрос и не добавляет ничего."
+    snippet: |
+      def total(select_related, prefetch_related, naive_relations, rows):
+          queries = 1
+          queries += len(prefetch_related)
+          for _ in range(naive_relations):
+              queries += rows
+          return queries
+
+      print(total(["customer"], ["items"], 0, 20))
+      print(total([], [], 2, 20))
+      print(total(["customer"], [], 1, 20))
+    expected:
+      kind: stdout
+      value: |-
+        2
+        41
+        21
+    hints:
+      - "Стартовая единица это запрос за списком. Прибавьте по одному за каждую связь в prefetch_related. Список select_related на счёт не влияет."
+      - "Наивные связи самые дорогие: каждая добавляет rows запросов. Второй вызов имеет 2 наивные связи при rows=20, а третий одну."
+    variants:
+      - snippet: |
+          def total(select_related, prefetch_related, naive_relations, rows):
+              queries = 1
+              queries += len(prefetch_related)
+              for _ in range(naive_relations):
+                  queries += rows
+              return queries
+
+          print(total(["customer", "city"], ["items", "tags"], 0, 10))
+          print(total([], ["items"], 1, 10))
+          print(total(["customer"], [], 0, 10))
+        expected:
+          kind: stdout
+          value: |-
+            3
+            12
+            1
+      - snippet: |
+          def total(select_related, prefetch_related, naive_relations, rows):
+              queries = 1
+              queries += len(prefetch_related)
+              for _ in range(naive_relations):
+                  queries += rows
+              return queries
+
+          print(total([], [], 3, 5))
+          print(total(["a"], ["b", "c"], 0, 5))
+          print(total([], ["b"], 2, 5))
+        expected:
+          kind: stdout
+          value: |-
+            16
+            3
+            12

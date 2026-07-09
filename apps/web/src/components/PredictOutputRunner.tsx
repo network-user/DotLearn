@@ -10,6 +10,7 @@ import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/Exer
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { parseSqlFixture } from '@/components/sandbox/parseSqlFixture';
 import { SqlSchemaPreview } from '@/components/sandbox/SqlSchemaPreview';
+import { StaticCode } from '@/components/sandbox/StaticCode';
 import { Button } from '@/components/ui/Button';
 import { ConfidenceSelector } from '@/components/ui/ConfidenceSelector';
 import { burstConfetti } from '@/components/ui/confetti';
@@ -159,15 +160,19 @@ export const PredictOutputRunner = ({
             {hasSqlTables ? (
               <SqlSchemaPreview fixture={fixture} />
             ) : (
-              <pre className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
-                {fixture}
-              </pre>
+              <StaticCode
+                code={fixture}
+                lang="python"
+                className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg"
+              />
             )}
           </div>
         )}
-        <pre className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg">
-          {exercise.snippet}
-        </pre>
+        <StaticCode
+          code={exercise.snippet}
+          lang={hasSqlTables ? 'sql' : 'python'}
+          className="rounded-lg border border-border-base bg-code-bg p-3.5 text-[12.5px] font-mono overflow-x-auto whitespace-pre leading-relaxed text-fg"
+        />
         {isResultSet ? (
           <div className="space-y-2">
             <p className="text-[12px] text-fg-subtle">{inputHint}</p>

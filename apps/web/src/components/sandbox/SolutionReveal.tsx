@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { Eye, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { StaticCode } from '@/components/sandbox/StaticCode';
 import { cx } from '@/components/ui/cx';
+import type { StaticCodeLang } from '@/lib/shiki';
 
 interface SolutionRevealProps {
   solution: string;
@@ -11,6 +13,10 @@ interface SolutionRevealProps {
   unlocked: boolean;
   onReveal?: () => void;
 }
+
+const STATIC_CODE_LANGS: readonly string[] = ['python', 'sql', 'bash'];
+const toStaticCodeLang = (language: string): StaticCodeLang =>
+  (STATIC_CODE_LANGS.includes(language) ? language : 'python') as StaticCodeLang;
 
 export const SolutionReveal = ({ solution, language, unlocked, onReveal }: SolutionRevealProps) => {
   const { t } = useTranslation('runners');
@@ -30,12 +36,11 @@ export const SolutionReveal = ({ solution, language, unlocked, onReveal }: Solut
           <Eye size={12} className="text-fg-subtle" aria-hidden />
           <span className="eyebrow font-mono">{t('common.solutionLabel')}</span>
         </div>
-        <pre
+        <StaticCode
+          code={solution}
+          lang={toStaticCodeLang(language)}
           className="rounded-lg border border-border-base bg-code-bg p-3 text-[12.5px] font-mono text-fg overflow-x-auto leading-relaxed whitespace-pre-wrap break-words"
-          data-language={language}
-        >
-          {solution}
-        </pre>
+        />
       </div>
     );
   }

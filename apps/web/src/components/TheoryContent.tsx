@@ -473,7 +473,10 @@ const CodeBlock = ({ children, ...rest }: React.HTMLAttributes<HTMLPreElement>) 
       <pre
         ref={preRef}
         {...rest}
-        className="rounded-lg border border-border-base bg-code-bg p-4 overflow-x-auto text-[13px] font-mono leading-relaxed"
+        className={cx(
+          'rounded-lg border border-border-base bg-code-bg p-4 overflow-x-auto text-[13px] font-mono leading-relaxed',
+          rest.className,
+        )}
       >
         {children}
       </pre>

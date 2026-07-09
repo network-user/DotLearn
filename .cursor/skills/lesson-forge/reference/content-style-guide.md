@@ -30,7 +30,7 @@ Every theory file follows this narrative arc. Section headings are yours to writ
 ---
 conceptId: select
 title: SELECT and filtering
-estimatedMinutes: 45
+estimatedMinutes: 12
 ---
 
 # Title (concrete, can be a full sentence)
@@ -102,7 +102,22 @@ Do not pretend to cite books or papers you have not read. If the claim is your o
 
 ## Estimating minutes
 
-`estimatedMinutes` for a concept = `ceil(words / 180)` reading time + ~5 min per live sandbox + ~3 min per figure the reader is expected to study + expected exercise time. Longread concepts typically land at **40-55 minutes**. The manifest's `estimatedHours` must be re-derived from the concept sum in the same change (the validator enforces the ±25% rule).
+`estimatedMinutes` for a concept is content-driven, not a flat guess per topic:
+
+```
+estimatedMinutes = clamp(
+  round(
+      wordCount / 150        // reading, 150 wpm for technical prose with inline code
+    + figureCount   * 0.5    // studying a figure/chart
+    + sandboxCount  * 1.5    // running/editing a live sandbox (PyDemo, SideSql editable/live, GitTerminal, ...)
+    + exerciseCount * 0.8    // one exercise (distinct exercises, not variants)
+  ),
+  6,   // floor
+  20,  // ceiling
+)
+```
+
+`wordCount` is the word count of the concept's theory prose (all its `theoryFiles` for the primary language, code fences/inline code/JSX tags excluded — same method as `report.ts`'s `countWords`). `figureCount` counts `<Figure` occurrences; `sandboxCount` counts live/interactive components; `exerciseCount` is the number of distinct exercises for the concept. Most concepts land at **9-17 minutes**; the clamp only trims the natural extremes (a very short concept, or one stacked with several sandboxes). The manifest's `estimatedHours` must be re-derived from the concept sum in the same change (the validator enforces the ±25% rule) — `estimatedHours = round(sum(concepts[].estimatedMinutes) / 60, 2)`.
 
 ## Avoid
 

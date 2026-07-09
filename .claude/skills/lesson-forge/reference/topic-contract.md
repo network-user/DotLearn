@@ -46,7 +46,7 @@ topics/<slug>/
     {
       "id": "select",
       "title": "SELECT and filtering",
-      "estimatedMinutes": 45,
+      "estimatedMinutes": 12,
       "theoryFiles": ["theory/01-select.en.mdx", "theory/01-select.ru.mdx"],
       "exerciseFiles": ["exercises/01-select.en.yaml", "exercises/01-select.ru.yaml"]
     }

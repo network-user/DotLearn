@@ -13,6 +13,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 import { resolvePyodideDir, resolvePyodideExtraPackageEntries } from './pyodide-packages.mjs';
 import { remarkConceptLinks } from './remark-concept-links.mjs';
+import { INK_THEME, PAPER_THEME } from './src/lib/shiki-themes';
 
 import { searchIndexPlugin } from './vite-plugin-search-index';
 import { topicManifestsPlugin } from './vite-plugin-topic-manifests';
@@ -136,9 +137,10 @@ export default defineConfig({
           [
             rehypeShiki,
             {
-              themes: { light: 'vitesse-light', dark: 'vesper' },
+              themes: { light: PAPER_THEME, dark: INK_THEME },
               defaultColor: false,
               cssVariablePrefix: '--shiki-',
+              addLanguageClass: true,
             },
           ],
         ],

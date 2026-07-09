@@ -3,6 +3,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import type { EditorProps, OnMount } from '@monaco-editor/react';
 
 import { Skeleton } from '@/components/ui/Skeleton';
+import { registerPythonCompletion } from '@/lib/python-completion';
 import { clearSqlSchema, registerSqlCompletion, setSqlSchema } from '@/lib/sql-completion';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
@@ -103,6 +104,9 @@ export const LazyCodeEditor = ({
           defineEditorThemes(monaco);
           if (props.language === 'sql') {
             registerSqlCompletion(monaco);
+          }
+          if (props.language === 'python') {
+            registerPythonCompletion(monaco);
           }
           beforeMount?.(monaco);
         }}
