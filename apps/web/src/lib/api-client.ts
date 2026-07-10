@@ -236,4 +236,39 @@ export const unhideTopic = (slug: string): Promise<void> =>
     method: 'DELETE',
   });
 
+// --- Presence (anonymous online counter, public endpoints) ---
+
+export interface PresenceBeatResult {
+  online: number;
+  uniquesToday: number;
+}
+
+export interface PresenceSeriesPoint {
+  t: number;
+  online: number;
+}
+
+export interface PresenceDailyPoint {
+  day: string;
+  uniques: number;
+  peak: number;
+}
+
+export interface PresenceStats {
+  online: number;
+  uniquesToday: number;
+  series: PresenceSeriesPoint[];
+  daily: PresenceDailyPoint[];
+}
+
+export const sendPresenceBeat = (id: string): Promise<PresenceBeatResult> =>
+  request<PresenceBeatResult>('/api/presence/beat', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+    auth: false,
+  });
+
+export const fetchPresenceStats = (): Promise<PresenceStats> =>
+  request<PresenceStats>('/api/presence/stats', { auth: false });
+
 export { ApiError };

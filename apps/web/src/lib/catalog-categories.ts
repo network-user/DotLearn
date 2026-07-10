@@ -1,5 +1,7 @@
 export type CatalogCategoryId =
+  | 'foundations'
   | 'python-core'
+  | 'frontend'
   | 'algorithms'
   | 'databases'
   | 'web-api'
@@ -11,7 +13,9 @@ export type CatalogCategoryId =
 export const FALLBACK_CATEGORY: CatalogCategoryId = 'other';
 
 export const CATALOG_CATEGORY_ORDER: readonly CatalogCategoryId[] = [
+  'foundations',
   'python-core',
+  'frontend',
   'algorithms',
   'databases',
   'web-api',
@@ -22,6 +26,13 @@ export const CATALOG_CATEGORY_ORDER: readonly CatalogCategoryId[] = [
 ];
 
 const SLUG_TO_CATEGORY: Readonly<Record<string, CatalogCategoryId>> = {
+  'python-basics': 'foundations',
+  'regular-expressions': 'foundations',
+  'javascript-basics': 'frontend',
+  'html-css-basics': 'frontend',
+  'http-fundamentals': 'web-api',
+  'linux-command-line': 'tools',
+  'data-structures': 'algorithms',
   'python-oop': 'python-core',
   'python-mro': 'python-core',
   'python-decorators': 'python-core',

@@ -690,11 +690,12 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
               <Button
                 variant="danger"
                 size="sm"
+                aria-busy={status === 'loading'}
                 leadingIcon={<Square size={13} />}
                 onClick={handleStop}
                 className="h-11 flex-1 sm:h-8 sm:flex-initial"
               >
-                {t('python.stop')}
+                {status === 'loading' ? t('python.initializing') : t('python.stop')}
               </Button>
             ) : (
               <Button

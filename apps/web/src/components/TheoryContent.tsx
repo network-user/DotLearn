@@ -19,7 +19,9 @@ import { useTranslation } from 'react-i18next';
 import { CopyButton } from '@/components/playground/CopyButton';
 import { ConceptContext, type ConceptRenderContext } from '@/lib/concept-context';
 import { stashSandboxIncoming, type PlaygroundTab } from '@/lib/playground';
+import { prewarmPythonRuntime } from '@/lib/python-runtime';
 import { sanitizeHref } from '@/lib/safe-url';
+import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 
 import {
   AreaChart,
@@ -448,11 +450,25 @@ const CodeBlock = ({ children, ...rest }: React.HTMLAttributes<HTMLPreElement>) 
 
   const sandboxTab = sandboxTabForLanguage(languageFromCodeChild(children));
 
+  const warmSandbox = useCallback(() => {
+    if (sandboxTab === 'python') {
+      prewarmPythonRuntime();
+      void import('@/components/playground/PythonPlayground');
+    } else if (sandboxTab === 'sql') {
+      prewarmSqlRuntime();
+      void import('@/components/playground/SqlPlayground');
+    } else {
+      return;
+    }
+    void import('@/pages/SandboxPage');
+  }, [sandboxTab]);
+
   const handleOpenInSandbox = useCallback(() => {
     const code = preRef.current?.textContent ?? codeText;
     if (!sandboxTab || code.length === 0) return;
+    warmSandbox();
     void stashSandboxIncoming({ tab: sandboxTab, code }).then(() => navigate({ to: '/sandbox' }));
-  }, [sandboxTab, codeText, navigate]);
+  }, [sandboxTab, codeText, navigate, warmSandbox]);
 
   return (
     <div className="group relative my-6">
@@ -461,6 +477,8 @@ const CodeBlock = ({ children, ...rest }: React.HTMLAttributes<HTMLPreElement>) 
           <button
             type="button"
             onClick={handleOpenInSandbox}
+            onPointerEnter={warmSandbox}
+            onFocus={warmSandbox}
             title={t('code.openInSandbox', { defaultValue: 'Открыть в песочнице' })}
             className="inline-flex min-h-[var(--tap)] items-center gap-1.5 rounded-md bg-surface-1/80 px-2 text-[11px] font-medium tracking-snug text-fg-subtle backdrop-blur transition-colors duration-fast hover:bg-surface-2/80 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-0 sm:py-1"
           >

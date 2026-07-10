@@ -235,13 +235,35 @@ export const stashSandboxIncoming = async (incoming: SandboxIncoming): Promise<v
   await writeRecord(INCOMING_KEY, JSON.stringify(incoming));
 };
 
-export const takeSandboxIncoming = async (): Promise<SandboxIncoming | undefined> => {
+export interface ConsumedSandboxIncoming {
+  tab: PlaygroundTab;
+  sql: SqlPlaygroundState;
+  python: PythonPlaygroundState;
+}
+
+export const consumeSandboxIncoming = async (base: {
+  sql: SqlPlaygroundState;
+  python: PythonPlaygroundState;
+}): Promise<ConsumedSandboxIncoming | undefined> => {
   const record = await readRecord(INCOMING_KEY);
   if (!record) return undefined;
-  await db.playground.delete(INCOMING_KEY);
+  let incoming: SandboxIncoming;
   try {
-    return parseState(record.value, isSandboxIncoming);
+    incoming = parseState(record.value, isSandboxIncoming);
   } catch {
+    await db.playground.delete(INCOMING_KEY);
     return undefined;
   }
+  let sql = base.sql;
+  let python = base.python;
+  if (incoming.tab === 'sql') {
+    sql = { ...sql, query: incoming.code, view: 'workspace' };
+    await saveSqlState(sql);
+  } else {
+    python = { ...python, code: incoming.code, view: 'workspace' };
+    await savePythonState(python);
+  }
+  await saveActiveTab(incoming.tab);
+  await db.playground.delete(INCOMING_KEY);
+  return { tab: incoming.tab, sql, python };
 };

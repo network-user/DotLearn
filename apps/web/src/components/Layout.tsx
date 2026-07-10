@@ -17,6 +17,7 @@ import { Breadcrumbs } from './Breadcrumbs';
 import { InstallPrompt } from './InstallPrompt';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Onboarding } from './Onboarding';
+import { OnlineIndicator } from './OnlineIndicator';
 import { ShortcutsHost, openShortcuts } from './ShortcutsDialog';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -186,6 +187,7 @@ export const Layout = ({ children }: LayoutProps) => {
               >
                 <Settings size={15} aria-hidden />
               </Link>
+              <OnlineIndicator />
               <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
               <AddTopicButton />
             </div>

@@ -25,7 +25,9 @@ import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 
 import { GitGraph } from './GitGraph';
+import { completeCommand } from './completions';
 import { GitTerminalSetupError } from './errors';
+import { shellTokenClassName, tokenizeShellCommand } from './shellHighlight';
 
 export interface GitTerminalInit {
   files?: Record<string, string>;
@@ -54,7 +56,58 @@ interface LogLine {
   id: number;
   tone: LogTone;
   text: string;
+  promptBranch?: string | null;
+  interrupted?: boolean;
 }
+
+const PROMPT_PATH = '~/repo';
+
+const INIT_PATTERN = /^\s*git\s+init(\s|$)/;
+
+const branchLabel = (snapshot: RepoSnapshot | null): string | null => {
+  if (snapshot === null) {
+    return null;
+  }
+  if (snapshot.head.detached) {
+    return snapshot.head.commit !== undefined ? snapshot.head.commit.slice(0, 7) : 'detached';
+  }
+  return snapshot.head.branch ?? null;
+};
+
+const HELP_LINES = [
+  'Available commands:',
+  '  git <subcommand>  init add rm status commit log diff branch checkout switch',
+  '                    merge reset revert restore stash cherry-pick rebase tag',
+  '                    reflog remote fetch pull push',
+  '  shell             echo cat ls rm touch mkdir pwd',
+  '  clear             clear the terminal (Ctrl+L)',
+  '  help              show this message',
+  'Tab completes, Up/Down recall history, Ctrl+C cancels the line.',
+];
+
+const HighlightedCommand = ({ line }: { line: string }) => (
+  <>
+    {tokenizeShellCommand(line).map((token, index) => (
+      <span key={index} className={shellTokenClassName(token.kind)}>
+        {token.text}
+      </span>
+    ))}
+  </>
+);
+
+const Prompt = ({ branch }: { branch: string | null }) => (
+  <span className="select-none">
+    <span className="text-fg-subtle">{PROMPT_PATH}</span>
+    {branch !== null && (
+      <>
+        <span className="text-fg-subtle"> (</span>
+        <span className="text-accent">{branch}</span>
+        <span className="text-fg-subtle">)</span>
+      </>
+    )}
+    <span className="text-fg-muted"> $ </span>
+  </span>
+);
 
 const buildRepo = (initial: GitTerminalInit | undefined): GitRepo => {
   const init: GitTerminalInit = {};
@@ -116,21 +169,28 @@ export const GitTerminal = ({
   const repoRef = useRef<GitRepo | null>(null);
   const lineCounter = useRef(0);
   const solvedNotified = useRef(false);
-  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const logContainerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const tabArmed = useRef(false);
 
   const [setupError, setSetupError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RepoSnapshot | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [inputCursor, setInputCursor] = useState<number | null>(null);
+  const [acceptedCommands, setAcceptedCommands] = useState<string[]>([]);
+  const [initialized, setInitialized] = useState(false);
   const [draft, setDraft] = useState('');
   const [resetNonce, setResetNonce] = useState(0);
 
   useEffect(() => {
     lineCounter.current = 0;
     solvedNotified.current = false;
-    setHistory([]);
-    setHistoryCursor(null);
+    tabArmed.current = false;
+    setInputHistory([]);
+    setInputCursor(null);
+    setAcceptedCommands([]);
     setDraft('');
     setLog([]);
     onCommandsChange?.([]);
@@ -138,10 +198,12 @@ export const GitTerminal = ({
       const repo = buildRepo(initial);
       repoRef.current = repo;
       setSnapshot(repo.snapshot());
+      setInitialized((initial?.commands ?? []).some((command) => INIT_PATTERN.test(command)));
       setSetupError(null);
     } catch (error) {
       repoRef.current = null;
       setSnapshot(null);
+      setInitialized(false);
       setSetupError(
         error instanceof GitTerminalSetupError
           ? error.message
@@ -159,8 +221,19 @@ export const GitTerminal = ({
   }, []);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ block: 'end' });
+    const container = logContainerRef.current;
+    if (container !== null) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [log]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    const overlay = overlayRef.current;
+    if (input !== null && overlay !== null) {
+      overlay.scrollLeft = input.scrollLeft;
+    }
+  }, [draft]);
 
   const goalEvaluation = useMemo(() => {
     if (goal === undefined || goal.length === 0 || repoRef.current === null || snapshot === null) {
@@ -174,12 +247,21 @@ export const GitTerminal = ({
   useEffect(() => {
     if (solved && !solvedNotified.current) {
       solvedNotified.current = true;
-      onSolved?.(history);
+      onSolved?.(acceptedCommands);
     }
     if (!solved) {
       solvedNotified.current = false;
     }
-  }, [solved, history, onSolved]);
+  }, [solved, acceptedCommands, onSolved]);
+
+  const appendCommandLine = useCallback(
+    (text: string, promptBranch: string | null, interrupted = false): void => {
+      lineCounter.current += 1;
+      const id = lineCounter.current;
+      setLog((prev) => [...prev, { id, tone: 'command', text, promptBranch, interrupted }]);
+    },
+    [],
+  );
 
   const runLine = useCallback(
     (rawLine: string): void => {
@@ -191,7 +273,20 @@ export const GitTerminal = ({
       if (line === '') {
         return;
       }
-      appendLog('command', line);
+      setInputHistory((prev) => (prev[prev.length - 1] === line ? prev : [...prev, line]));
+      setInputCursor(null);
+      if (line === 'clear') {
+        setLog([]);
+        return;
+      }
+      const promptBranch = initialized ? branchLabel(repo.snapshot()) : null;
+      appendCommandLine(line, promptBranch);
+      if (line === 'help') {
+        for (const helpLine of HELP_LINES) {
+          appendLog('system', helpLine);
+        }
+        return;
+      }
       const result = repo.exec(line);
       if (result.stdout !== '') {
         for (const outLine of result.stdout.replace(/\n$/, '').split('\n')) {
@@ -203,17 +298,19 @@ export const GitTerminal = ({
           appendLog('stderr', errLine);
         }
       }
+      if (result.code === 0 && INIT_PATTERN.test(line)) {
+        setInitialized(true);
+      }
       if (result.code !== 0) {
         setSnapshot(repo.snapshot());
         return;
       }
-      const nextHistory = [...history, line];
-      setHistory(nextHistory);
-      setHistoryCursor(null);
-      onCommandsChange?.(nextHistory);
+      const nextCommands = [...acceptedCommands, line];
+      setAcceptedCommands(nextCommands);
+      onCommandsChange?.(nextCommands);
       setSnapshot(repo.snapshot());
     },
-    [appendLog, history, onCommandsChange],
+    [appendCommandLine, appendLog, acceptedCommands, initialized, onCommandsChange],
   );
 
   const handleSubmit = (event: FormEvent): void => {
@@ -225,30 +322,83 @@ export const GitTerminal = ({
     setDraft('');
   };
 
+  const handleTab = (): void => {
+    const result = completeCommand(draft, snapshot);
+    if (result.completed !== undefined) {
+      setDraft(result.completed);
+      tabArmed.current = result.candidates.length > 1;
+      return;
+    }
+    if (result.candidates.length > 1) {
+      if (tabArmed.current) {
+        appendLog('system', result.candidates.join('  '));
+      }
+      tabArmed.current = true;
+    }
+  };
+
+  const interruptLine = (): void => {
+    const repo = repoRef.current;
+    const branch = initialized && repo !== null ? branchLabel(repo.snapshot()) : null;
+    appendCommandLine(draft, branch, true);
+    setDraft('');
+    setInputCursor(null);
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key !== 'Tab') {
+      tabArmed.current = false;
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      handleTab();
+      return;
+    }
+    if (event.ctrlKey && (event.key === 'l' || event.key === 'L')) {
+      event.preventDefault();
+      setLog([]);
+      return;
+    }
+    if (event.ctrlKey && (event.key === 'c' || event.key === 'C')) {
+      const selection = window.getSelection();
+      if (selection !== null && !selection.isCollapsed) {
+        return;
+      }
+      event.preventDefault();
+      interruptLine();
+      return;
+    }
     if (event.key === 'ArrowUp') {
-      if (history.length === 0) {
+      if (inputHistory.length === 0) {
         return;
       }
       event.preventDefault();
       const nextCursor =
-        historyCursor === null ? history.length - 1 : Math.max(0, historyCursor - 1);
-      setHistoryCursor(nextCursor);
-      setDraft(history[nextCursor] ?? '');
+        inputCursor === null ? inputHistory.length - 1 : Math.max(0, inputCursor - 1);
+      setInputCursor(nextCursor);
+      setDraft(inputHistory[nextCursor] ?? '');
     } else if (event.key === 'ArrowDown') {
-      if (historyCursor === null) {
+      if (inputCursor === null) {
         return;
       }
       event.preventDefault();
-      const nextCursor = historyCursor + 1;
-      if (nextCursor >= history.length) {
-        setHistoryCursor(null);
+      const nextCursor = inputCursor + 1;
+      if (nextCursor >= inputHistory.length) {
+        setInputCursor(null);
         setDraft('');
       } else {
-        setHistoryCursor(nextCursor);
-        setDraft(history[nextCursor] ?? '');
+        setInputCursor(nextCursor);
+        setDraft(inputHistory[nextCursor] ?? '');
       }
     }
+  };
+
+  const handleLogClick = (): void => {
+    const selection = window.getSelection();
+    if (selection !== null && !selection.isCollapsed) {
+      return;
+    }
+    inputRef.current?.focus();
   };
 
   const handleReset = (): void => {
@@ -278,25 +428,41 @@ export const GitTerminal = ({
   }
 
   const status = snapshot?.status;
+  const liveBranch = initialized ? branchLabel(snapshot) : null;
+  const terminalTitle = t('git.terminalTitle', { defaultValue: 'learner@dotlearn: ~/repo' });
+  const terminalLabel = t('git.terminalLabel', { defaultValue: 'терминал git' });
 
   return (
     <div className={cx('space-y-3', className)}>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]">
         <div className="min-w-0 space-y-3">
-          <div className="overflow-hidden rounded-lg border border-border-base bg-code-bg">
-            <div className="flex items-center justify-between gap-2 border-b border-border-base bg-surface-2/60 px-3 py-2">
-              <span className="eyebrow font-mono">git</span>
+          <div
+            className="overflow-hidden rounded-lg border border-border-base bg-code-bg"
+            role="group"
+            aria-label={terminalLabel}
+          >
+            <div className="flex items-center gap-2 border-b border-border-base bg-surface-2/60 px-3 py-2">
+              <div className="flex shrink-0 items-center gap-1.5" aria-hidden>
+                <span className="size-2.5 rounded-full bg-err/60" />
+                <span className="size-2.5 rounded-full bg-warn/60" />
+                <span className="size-2.5 rounded-full bg-ok/60" />
+              </div>
+              <span className="min-w-0 flex-1 select-none truncate font-mono text-[12px] text-fg-muted">
+                {terminalTitle}
+              </span>
               <Button
                 variant="ghost"
                 size="sm"
                 leadingIcon={<RotateCcw size={13} />}
                 onClick={handleReset}
-                className="h-8"
+                className="h-8 shrink-0"
               >
                 {resetLabel}
               </Button>
             </div>
             <div
+              ref={logContainerRef}
+              onClick={handleLogClick}
               className="max-h-[280px] min-h-[160px] overflow-y-auto px-3 py-2.5 font-mono text-[13px] leading-relaxed"
               role="log"
               aria-live="polite"
@@ -313,7 +479,6 @@ export const GitTerminal = ({
                     key={line.id}
                     className={cx(
                       'whitespace-pre-wrap break-words',
-                      line.tone === 'command' && 'text-fg',
                       line.tone === 'stdout' && 'text-fg-muted',
                       line.tone === 'stderr' && 'text-err',
                       line.tone === 'system' && 'text-fg-subtle',
@@ -321,8 +486,11 @@ export const GitTerminal = ({
                   >
                     {line.tone === 'command' ? (
                       <span>
-                        <span className="text-accent select-none">$ </span>
-                        {line.text}
+                        <Prompt branch={line.promptBranch ?? null} />
+                        <HighlightedCommand line={line.text} />
+                        {line.interrupted === true && (
+                          <span className="select-none text-fg-muted">^C</span>
+                        )}
                       </span>
                     ) : (
                       line.text
@@ -330,25 +498,45 @@ export const GitTerminal = ({
                   </div>
                 ))
               )}
-              <div ref={logEndRef} />
             </div>
             <form
               onSubmit={handleSubmit}
-              className="flex items-center gap-2 border-t border-border-base bg-surface-2/40 px-3 py-2"
+              className="flex items-center border-t border-border-base bg-surface-2/40 px-3 py-2"
             >
-              <span className="select-none font-mono text-[15px] text-accent">$</span>
-              <input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={placeholder}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                autoComplete="off"
-                aria-label={placeholder}
-                className="min-h-[var(--tap)] flex-1 bg-transparent font-mono text-[16px] text-fg placeholder:text-fg-subtle focus:outline-none sm:min-h-0 sm:text-[13px]"
-              />
+              <span className="shrink-0 font-mono text-[16px] leading-[24px] sm:text-[13px]">
+                <Prompt branch={liveBranch} />
+              </span>
+              <div className="relative min-h-[var(--tap)] min-w-0 flex-1 sm:min-h-0">
+                <div
+                  ref={overlayRef}
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre font-mono text-[16px] leading-[var(--tap)] text-fg-muted sm:text-[13px] sm:leading-[24px]"
+                >
+                  <HighlightedCommand line={draft} />
+                </div>
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  onChange={(event) => {
+                    tabArmed.current = false;
+                    setDraft(event.target.value);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  onScroll={() => {
+                    const overlay = overlayRef.current;
+                    if (overlay !== null && inputRef.current !== null) {
+                      overlay.scrollLeft = inputRef.current.scrollLeft;
+                    }
+                  }}
+                  placeholder={placeholder}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  autoComplete="off"
+                  aria-label={placeholder}
+                  className="relative min-h-[var(--tap)] w-full bg-transparent font-mono text-[16px] leading-[24px] text-transparent caret-fg placeholder:text-fg-subtle focus:outline-none sm:min-h-0 sm:text-[13px]"
+                />
+              </div>
             </form>
           </div>
 

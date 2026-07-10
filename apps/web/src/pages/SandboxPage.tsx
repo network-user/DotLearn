@@ -6,17 +6,19 @@ import { useTranslation } from 'react-i18next';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cx } from '@/components/ui/cx';
 import {
+  consumeSandboxIncoming,
   loadActiveTab,
   loadPythonState,
   loadSqlState,
   saveActiveTab,
-  takeSandboxIncoming,
   type PlaygroundTab,
   type PythonPlaygroundState,
   type SqlPlaygroundState,
 } from '@/lib/playground';
+import { prewarmPythonRuntime } from '@/lib/python-runtime';
 import { defaultPythonTemplate } from '@/lib/sandbox-templates/python';
 import { defaultSqlTemplate } from '@/lib/sandbox-templates/sql';
+import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 
 const SqlPlayground = lazy(() =>
   import('@/components/playground/SqlPlayground').then((module) => ({
@@ -65,25 +67,18 @@ export const SandboxPage = () => {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadActiveTab(), loadSqlState(), loadPythonState(), takeSandboxIncoming()])
-      .then(([tab, sql, python, incoming]) => {
+    Promise.all([loadActiveTab(), loadSqlState(), loadPythonState()])
+      .then(async ([tab, sql, python]) => {
+        const baseSql = sql ?? defaultSqlState();
+        const basePython = python ?? defaultPythonState();
+        const consumed = await consumeSandboxIncoming({ sql: baseSql, python: basePython });
         if (cancelled) return;
-        let resolvedTab = tab ?? 'sql';
-        let sqlState = sql ?? defaultSqlState();
-        let pythonState = python ?? defaultPythonState();
-        if (incoming) {
-          resolvedTab = incoming.tab;
-          if (incoming.tab === 'sql') {
-            sqlState = { ...sqlState, query: incoming.code, view: 'workspace' };
-          } else {
-            pythonState = { ...pythonState, code: incoming.code, view: 'workspace' };
-          }
-        }
+        const resolvedTab = consumed?.tab ?? tab ?? 'sql';
         setActiveTab(resolvedTab);
         setLoaded({
           activeTab: resolvedTab,
-          sql: sqlState,
-          python: pythonState,
+          sql: consumed?.sql ?? baseSql,
+          python: consumed?.python ?? basePython,
         });
       })
       .catch(() => {
@@ -99,6 +94,21 @@ export const SandboxPage = () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (loaded === undefined) return;
+    const prewarm = activeTab === 'python' ? prewarmPythonRuntime : prewarmSqlRuntime;
+    const win = window as typeof window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof win.requestIdleCallback === 'function') {
+      const handle = win.requestIdleCallback(() => prewarm(), { timeout: 3_000 });
+      return () => win.cancelIdleCallback?.(handle);
+    }
+    const timer = window.setTimeout(prewarm, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [loaded, activeTab]);
 
   const selectTab = (tab: PlaygroundTab): void => {
     setActiveTab(tab);

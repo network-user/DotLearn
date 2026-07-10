@@ -21,6 +21,7 @@ import { RequireStepUp } from '../auth/decorators/require-step-up.decorator';
 import type { AuthenticatedRequest } from '../auth/guards/admin-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin-auth.guard';
 import { StepUpGuard } from '../auth/guards/step-up.guard';
+// Value import: emitDecoratorMetadata needs the runtime class for Nest DI
 import type { HiddenTopicsService } from './hidden-topics.service';
 
 const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/;

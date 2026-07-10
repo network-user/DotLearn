@@ -27,6 +27,7 @@ import { RequireStepUp } from '../auth/decorators/require-step-up.decorator';
 import type { AuthenticatedRequest } from '../auth/guards/admin-auth.guard';
 import { AdminAuthGuard } from '../auth/guards/admin-auth.guard';
 import { StepUpGuard } from '../auth/guards/step-up.guard';
+// Value imports: emitDecoratorMetadata needs the runtime class for Nest DI
 import type { SubmissionsSearchIndexer } from '../search/submissions-search.indexer';
 import type { SubmissionsService } from './submissions.service';
 
