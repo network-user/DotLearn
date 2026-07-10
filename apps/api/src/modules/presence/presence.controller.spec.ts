@@ -33,7 +33,7 @@ describe('PresenceController', () => {
   });
 
   it('delegates stats to the service', () => {
-    const stats = { online: 1, uniquesToday: 1, series: [], daily: [] };
+    const stats = { online: 1, uniquesToday: 1, peakToday: 1, series: [], daily: [] };
     presence.getStats.mockReturnValue(stats);
     expect(controller.stats()).toBe(stats);
   });

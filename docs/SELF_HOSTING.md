@@ -116,20 +116,21 @@ codes on stderr (shown once).
 
 ## Key `.env` variables
 
-| Variable                                                    | Purpose                                                                    |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `DOMAIN`                                                    | Public domain. Drives HTTPS (Let's Encrypt) and CORS.                      |
-| `ACME_EMAIL`                                                | Contact email for the ACME/Let's Encrypt account.                          |
-| `VITE_API_BASE`                                             | Where the frontend calls the API. Set to `https://$DOMAIN` (same origin).  |
-| `VITE_ADMIN_PATH`                                           | Admin route on the frontend. Make it hard to guess (`/secret-admin-7f2c`). |
-| `WEB_ORIGIN`                                                | CORS allowlist; must equal `https://$DOMAIN`.                              |
-| `HOST` / `PORT`                                             | API bind address (loopback `127.0.0.1`) and port (Caddy proxies it).       |
-| `TRUSTED_PROXY_HOPS`                                        | Reverse proxies in front of the API (Caddy = `1`).                         |
-| `DATA_DIR`                                                  | API data directory (`/var/lib/dotlearn/data`).                             |
-| `ADMIN_LOGIN` / `ADMIN_PASSWORD_HASH` / `ADMIN_TOTP_SECRET` | The single admin account.                                                  |
-| `ADMIN_BACKUP_CODES_HASHED`                                 | JSON array of SHA-256 hashes of the backup codes.                          |
-| `ADMIN_JWT_SECRET` / `ADMIN_REFRESH_SECRET`                 | Signing keys for access and refresh JWTs (must differ).                    |
-| `ES_ENABLED`                                                | `false` → in-memory search (default). `true` → Elasticsearch at `ES_NODE`. |
+| Variable                                                    | Purpose                                                                                                      |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `DOMAIN`                                                    | Public domain. Drives HTTPS (Let's Encrypt) and CORS.                                                        |
+| `ACME_EMAIL`                                                | Contact email for the ACME/Let's Encrypt account.                                                            |
+| `VITE_API_BASE`                                             | Where the frontend calls the API. Set to `https://$DOMAIN` (same origin).                                    |
+| `VITE_ADMIN_PATH`                                           | Admin route on the frontend. Make it hard to guess (`/secret-admin-7f2c`).                                   |
+| `WEB_ORIGIN`                                                | CORS allowlist; must equal `https://$DOMAIN`.                                                                |
+| `HOST` / `PORT`                                             | API bind address (loopback `127.0.0.1`) and port (Caddy proxies it).                                         |
+| `TRUSTED_PROXY_HOPS`                                        | Reverse proxies in front of the API (Caddy = `1`).                                                           |
+| `DATA_DIR`                                                  | API data directory (`/var/lib/dotlearn/data`).                                                               |
+| `ADMIN_LOGIN` / `ADMIN_PASSWORD_HASH` / `ADMIN_TOTP_SECRET` | The single admin account.                                                                                    |
+| `ADMIN_BACKUP_CODES_HASHED`                                 | JSON array of SHA-256 hashes of the backup codes.                                                            |
+| `ADMIN_JWT_SECRET` / `ADMIN_REFRESH_SECRET`                 | Signing keys for access and refresh JWTs (must differ).                                                      |
+| `ES_ENABLED`                                                | `false` → in-memory search (default). `true` → Elasticsearch at `ES_NODE`.                                   |
+| `PRESENCE_TTL_MS` / `PRESENCE_MAX_TRACKED`                  | Optional online-counter tuning: liveness window (default `90000` ms) and in-memory id cap (default `50000`). |
 
 Other auth timings (`ADMIN_ACCESS_TTL`, `ADMIN_LOCKOUT_TTL`, …) are optional;
 sensible defaults live in `apps/api/src/modules/auth/auth.config.ts`.

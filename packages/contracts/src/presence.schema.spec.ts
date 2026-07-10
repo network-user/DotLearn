@@ -29,16 +29,28 @@ describe('PresenceStats', () => {
     const payload = {
       online: 2,
       uniquesToday: 5,
+      peakToday: 4,
       series: [{ t: 1_700_000_000_000, online: 2 }],
       daily: [{ day: '2026-01-01', uniques: 5, peak: 3 }],
     };
     expect(PresenceStats.parse(payload)).toEqual(payload);
   });
 
+  it('rejects a payload without peakToday', () => {
+    const payload = {
+      online: 0,
+      uniquesToday: 0,
+      series: [],
+      daily: [],
+    };
+    expect(PresenceStats.safeParse(payload).success).toBe(false);
+  });
+
   it('rejects a daily day that is not YYYY-MM-DD', () => {
     const payload = {
       online: 0,
       uniquesToday: 0,
+      peakToday: 0,
       series: [],
       daily: [{ day: '01/01/2026', uniques: 0, peak: 0 }],
     };

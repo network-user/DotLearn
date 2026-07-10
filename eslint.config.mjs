@@ -27,6 +27,9 @@ export default [
       '**/*.config.{js,mjs,cjs,ts}',
       'scripts/**',
       '**/_*.{js,mjs,cjs}',
+      '.smoke/**',
+      '.tmp-*',
+      '.tmp-*/**',
     ],
   },
   js.configs.recommended,
@@ -76,6 +79,9 @@ export default [
     },
     rules: {
       '@typescript-eslint/no-extraneous-class': 'off',
+      // Nest DI reads constructor classes from emitDecoratorMetadata: converting
+      // them to type-only imports erases the metadata and breaks API boot.
+      '@typescript-eslint/consistent-type-imports': 'off',
     },
   },
   {

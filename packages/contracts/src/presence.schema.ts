@@ -43,6 +43,8 @@ export const PresenceStats = z
   .object({
     online: z.number().int().min(0),
     uniquesToday: z.number().int().min(0),
+    // Highest simultaneous online seen today (resets at UTC midnight).
+    peakToday: z.number().int().min(0),
     series: z.array(PresenceSeriesPoint),
     daily: z.array(PresenceDailyPoint),
   })

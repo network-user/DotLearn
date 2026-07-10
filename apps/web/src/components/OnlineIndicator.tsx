@@ -213,7 +213,7 @@ export const OnlineIndicator = () => {
         aria-label={t('trigger', { n: presence.online })}
         title={t('trigger', { n: presence.online })}
         className={cx(
-          'inline-flex h-9 items-center gap-1.5 rounded-full border px-2.5 text-[13px] font-medium tabular-nums transition-colors',
+          'inline-flex h-9 items-center gap-1 rounded-full border px-1.5 text-[13px] font-medium tabular-nums transition-colors sm:gap-1.5 sm:px-2.5',
           open
             ? 'border-accent/50 bg-accent/[0.08] text-fg'
             : 'border-border-base/70 text-fg-muted hover:bg-fg/[0.04] hover:text-fg',
@@ -266,7 +266,12 @@ export const OnlineIndicator = () => {
           {status === 'ready' && stats && (
             <>
               <div className="space-y-1.5">
-                <div className="eyebrow text-fg-subtle">{t('last24h')}</div>
+                <div className="flex items-baseline justify-between">
+                  <div className="eyebrow text-fg-subtle">{t('last24h')}</div>
+                  <div className="text-[11px] tabular-nums text-fg-muted">
+                    {t('peakToday', { n: stats.peakToday })}
+                  </div>
+                </div>
                 <Sparkline series={stats.series} ariaLabel={sparkAria} />
               </div>
               <div className="space-y-1.5">

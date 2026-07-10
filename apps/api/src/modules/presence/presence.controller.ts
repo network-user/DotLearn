@@ -5,7 +5,8 @@ import { Throttle } from '@nestjs/throttler';
 import { PresenceBeatInput, type PresenceCounters, type PresenceStats } from '@dotlearn/contracts';
 
 import { ZodBodyPipe } from '../../common/zod/zod-body.pipe';
-import type { PresenceService } from './presence.service';
+// Value import: emitDecoratorMetadata needs the runtime class for Nest DI
+import { PresenceService } from './presence.service';
 
 // Public, unauthenticated anonymous online counter. No IP or User-Agent is read,
 // stored, or logged; the only identifier is the client-generated random UUID.

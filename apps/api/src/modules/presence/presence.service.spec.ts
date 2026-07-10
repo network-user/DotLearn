@@ -91,6 +91,7 @@ describe('PresenceService', () => {
     service.beat('b'); // peak of 2 concurrent online
     expect(service.getStats().daily).toHaveLength(0);
     expect(service.getStats().uniquesToday).toBe(2);
+    expect(service.getStats().peakToday).toBe(2);
 
     vi.setSystemTime(new Date('2026-01-02T00:01:00.000Z'));
     const counters = service.beat('c');
@@ -99,6 +100,8 @@ describe('PresenceService', () => {
     expect(stats.daily).toEqual([{ day: '2026-01-01', uniques: 2, peak: 2 }]);
     expect(counters.uniquesToday).toBe(1);
     expect(stats.uniquesToday).toBe(1);
+    // Peak resets with the new day: only 'c' has been online so far.
+    expect(stats.peakToday).toBe(1);
     // 'a' and 'b' last beat >90s ago, only 'c' is online.
     expect(stats.online).toBe(1);
   });

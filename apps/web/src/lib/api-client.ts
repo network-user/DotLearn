@@ -257,6 +257,7 @@ export interface PresenceDailyPoint {
 export interface PresenceStats {
   online: number;
   uniquesToday: number;
+  peakToday: number;
   series: PresenceSeriesPoint[];
   daily: PresenceDailyPoint[];
 }

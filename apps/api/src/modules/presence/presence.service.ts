@@ -137,6 +137,7 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     return {
       online: this.countOnline(now),
       uniquesToday: this.todayIds.size,
+      peakToday: this.todayPeak,
       series: this.series.map((point) => ({ ...point })),
       daily: this.daily.map((point) => ({ ...point })),
     };
