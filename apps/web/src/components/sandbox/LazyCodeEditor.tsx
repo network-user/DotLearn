@@ -6,7 +6,14 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { registerPythonCompletion } from '@/lib/python-completion';
 import { clearSqlSchema, registerSqlCompletion, setSqlSchema } from '@/lib/sql-completion';
 
-const MonacoEditor = lazy(() => import('@monaco-editor/react'));
+const MonacoEditor = lazy(async () => {
+  const [monaco, { loader, default: Editor }] = await Promise.all([
+    import('monaco-editor'),
+    import('@monaco-editor/react'),
+  ]);
+  loader.config({ monaco });
+  return { default: Editor };
+});
 
 const PAPER_THEME = 'dotlearn-paper';
 const INK_THEME = 'dotlearn-ink';
