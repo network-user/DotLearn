@@ -11,14 +11,25 @@ export const AnimatedNumber = ({ value, durationMs = 900 }: AnimatedNumberProps)
   const reduceMotion = useReducedMotion();
   const [displayed, setDisplayed] = useState(0);
   const frameRef = useRef<number | null>(null);
+  const previousRef = useRef(0);
+  const mountedRef = useRef(false);
 
   useEffect(() => {
+    const from = mountedRef.current ? previousRef.current : 0;
+    mountedRef.current = true;
+
     if (reduceMotion) {
+      previousRef.current = value;
       setDisplayed(value);
       return;
     }
+
+    if (from === value) {
+      previousRef.current = value;
+      return;
+    }
+
     const start = performance.now();
-    const from = 0;
     const tick = (now: number): void => {
       const progress = Math.min((now - start) / durationMs, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
@@ -28,6 +39,7 @@ export const AnimatedNumber = ({ value, durationMs = 900 }: AnimatedNumberProps)
       }
     };
     frameRef.current = requestAnimationFrame(tick);
+    previousRef.current = value;
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
