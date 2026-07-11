@@ -76,12 +76,6 @@ export const highlightStatic = async (code: string, lang: StaticCodeLang): Promi
   return html;
 };
 
-// Highlights the whole block in a single tokenization pass and returns one HTML
-// string per source line (inline structure separates lines with <br>), instead
-// of tokenizing each line separately. This preserves cross-line grammar context
-// (e.g. triple-quoted strings) and the exact per-token markup Shiki emits, so
-// the existing theme CSS variables apply unchanged. Blank/whitespace-only lines
-// map to null, mirroring the previous per-line skip.
 export const highlightLinesStatic = async (
   code: string,
   lang: StaticCodeLang,

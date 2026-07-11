@@ -53,7 +53,7 @@ export const DeferredCodeEditor = ({ height, ...editorProps }: DeferredCodeEdito
       {active ? (
         <LazyCodeEditor height={height} {...editorProps} />
       ) : (
-        <div style={{ height }} className="overflow-hidden bg-code-bg">
+        <div style={{ height }} className="overflow-hidden bg-[rgb(var(--editor-bg))]">
           <StaticCode
             code={staticValue}
             lang={staticLang}
