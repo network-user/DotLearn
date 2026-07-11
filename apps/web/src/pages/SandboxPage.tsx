@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cx } from '@/components/ui/cx';
+import { isConstrainedConnection } from '@/lib/connection';
 import {
   consumeSandboxIncoming,
   loadActiveTab,
@@ -97,6 +98,7 @@ export const SandboxPage = () => {
 
   useEffect(() => {
     if (loaded === undefined) return;
+    if (isConstrainedConnection()) return;
     const prewarm = activeTab === 'python' ? prewarmPythonRuntime : prewarmSqlRuntime;
     const win = window as typeof window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;

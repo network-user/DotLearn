@@ -47,3 +47,11 @@ export const getTheory = (slug: string, filename: string): ResolvedTheory | unde
   }
   return { filename, Component };
 };
+
+export const prefetchTheory = (slug: string, filename: string): void => {
+  const importer = indexed.get(slug)?.get(filename);
+  if (!importer) {
+    return;
+  }
+  void importer();
+};

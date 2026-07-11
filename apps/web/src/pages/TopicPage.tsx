@@ -58,7 +58,8 @@ import { nextTargetDifficulty, reorderByTargetDifficulty } from '@/lib/learner-m
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db, recordPlace, saveConceptNote, setBookmark, setConceptRead } from '@/lib/progress-db';
 import type { ProgressRecord } from '@/lib/progress-db';
-import { getTheory } from '@/lib/theory';
+import { getTheory, prefetchTheory } from '@/lib/theory';
+import { isConstrainedConnection } from '@/lib/connection';
 import { programmaticScrollTo } from '@/lib/reading-position';
 import { recordRecentVisit } from '@/lib/recent-visits';
 import { prewarmPythonRuntime } from '@/lib/python-runtime';
@@ -410,6 +411,7 @@ export const TopicPage = () => {
   const readyRuntime = state.kind === 'ready' ? state.bundle.manifest.runtime : undefined;
   useEffect(() => {
     if (readyRuntime !== 'pyodide' && readyRuntime !== 'sql.js') return;
+    if (isConstrainedConnection()) return;
     const prewarm = readyRuntime === 'pyodide' ? prewarmPythonRuntime : prewarmSqlRuntime;
     const win = window as typeof window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
@@ -422,6 +424,33 @@ export const TopicPage = () => {
     const timer = window.setTimeout(prewarm, 1_500);
     return () => window.clearTimeout(timer);
   }, [readyRuntime]);
+
+  useEffect(() => {
+    if (state.kind !== 'ready' || !activeConceptId) return;
+    if (isConstrainedConnection()) return;
+    const concepts = state.bundle.manifest.concepts;
+    const index = concepts.findIndex((concept) => concept.id === activeConceptId);
+    const next = concepts[index + 1];
+    if (!next) return;
+    const nextBundle = state.bundle.concepts.find((concept) => concept.conceptId === next.id);
+    const filenames = nextBundle?.theory.map((file) => file.filename) ?? [];
+    if (filenames.length === 0) return;
+    const run = (): void => {
+      for (const filename of filenames) {
+        prefetchTheory(slug, filename);
+      }
+    };
+    const win = window as typeof window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof win.requestIdleCallback === 'function') {
+      const handle = win.requestIdleCallback(run, { timeout: 2_000 });
+      return () => win.cancelIdleCallback?.(handle);
+    }
+    const timer = window.setTimeout(run, 400);
+    return () => window.clearTimeout(timer);
+  }, [state, activeConceptId, slug]);
 
   if (state.kind === 'loading') {
     return <TopicSkeleton />;
@@ -667,7 +696,15 @@ const PREREQ_MASTERY_THRESHOLD = 0.6;
 const PrerequisitesBanner = ({ prerequisites }: { prerequisites: string[] }) => {
   const { t } = useTranslation('topic');
   const language = getCurrentLanguage();
-  const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
+  const prereqKey = prerequisites.join('|');
+  const progressRecords = useLiveQuery(
+    () =>
+      prerequisites.length === 0
+        ? Promise.resolve<ProgressRecord[]>([])
+        : db.progress.where('topicSlug').anyOf(prerequisites).toArray(),
+    [prereqKey],
+    [],
+  );
   const readByTopic = useReadConceptsByTopic();
 
   const prereqs = useMemo<PrerequisiteState[]>(() => {
