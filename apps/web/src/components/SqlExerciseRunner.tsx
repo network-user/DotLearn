@@ -58,6 +58,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
   const [revealed, setRevealed] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const isCoarsePointer = useMediaQuery(coarsePointerQuery);
+  const editorOptions = useMemo(() => buildEditorOptions(isCoarsePointer, 2), [isCoarsePointer]);
 
   const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
@@ -164,7 +165,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
               language="sql"
               sqlSchema={exercise.fixture}
               height={buildEditorHeight(isCoarsePointer, '200px', 'min(40dvh, 280px)')}
-              options={buildEditorOptions(isCoarsePointer, 2)}
+              options={editorOptions}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {
                   if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {

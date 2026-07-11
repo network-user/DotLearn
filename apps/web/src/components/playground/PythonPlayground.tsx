@@ -116,6 +116,10 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
   const { t } = useTranslation('sandbox');
   const isCoarsePointer = useMediaQuery(coarsePointerQuery);
   const editorPrefs = useSettings().editor;
+  const editorOptions = useMemo(
+    () => buildEditorOptions(isCoarsePointer, 4, editorPrefs),
+    [isCoarsePointer, editorPrefs],
+  );
   const reduceMotion = useReducedMotion() ?? false;
   const [templateId, setTemplateId] = useState(initialState.templateId);
   const [code, setCode] = useState(initialState.code);
@@ -644,7 +648,7 @@ export const PythonPlayground = ({ initialState }: PythonPlaygroundProps) => {
                 onChange={(value) => setCode(value ?? '')}
                 language="python"
                 height={buildEditorHeight(isCoarsePointer, '300px', 'min(45dvh, 360px)')}
-                options={buildEditorOptions(isCoarsePointer, 4, editorPrefs)}
+                options={editorOptions}
                 onMount={(editor) => {
                   editor.onKeyDown((event) => {
                     if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {

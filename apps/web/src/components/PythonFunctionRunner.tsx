@@ -74,6 +74,10 @@ export const PythonFunctionRunner = ({
   const [statusMessage, setStatusMessage] = useState('');
   const isCoarsePointer = useMediaQuery(coarsePointerQuery);
   const editorPrefs = useSettings().editor;
+  const editorOptions = useMemo(
+    () => buildEditorOptions(isCoarsePointer, 4, editorPrefs),
+    [isCoarsePointer, editorPrefs],
+  );
 
   const solutionUnlocked = hintsExhausted || failedAttempts >= 3;
 
@@ -274,7 +278,7 @@ export const PythonFunctionRunner = ({
               onChange={(value) => setAnswer(value ?? '')}
               language="python"
               height={buildEditorHeight(isCoarsePointer, '260px', 'min(45dvh, 320px)')}
-              options={buildEditorOptions(isCoarsePointer, 4, editorPrefs)}
+              options={editorOptions}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {
                   if ((event.ctrlKey || event.metaKey) && event.code === 'Enter') {
