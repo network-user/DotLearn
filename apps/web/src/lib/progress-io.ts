@@ -543,7 +543,7 @@ export const clearAllProgress = async (): Promise<void> => {
 };
 
 export const downloadProgressExport = (data: ProgressExport): void => {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
