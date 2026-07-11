@@ -62,6 +62,9 @@ interface LogLine {
 
 const PROMPT_PATH = '~/repo';
 
+const LOG_LINE_LIMIT = 500;
+const INPUT_HISTORY_LIMIT = 100;
+
 const INIT_PATTERN = /^\s*git\s+init(\s|$)/;
 
 const branchLabel = (snapshot: RepoSnapshot | null): string | null => {
@@ -217,7 +220,7 @@ export const GitTerminal = ({
   const appendLog = useCallback((tone: LogTone, text: string): void => {
     lineCounter.current += 1;
     const id = lineCounter.current;
-    setLog((prev) => [...prev, { id, tone, text }]);
+    setLog((prev) => [...prev, { id, tone, text }].slice(-LOG_LINE_LIMIT));
   }, []);
 
   useEffect(() => {
@@ -258,7 +261,8 @@ export const GitTerminal = ({
     (text: string, promptBranch: string | null, interrupted = false): void => {
       lineCounter.current += 1;
       const id = lineCounter.current;
-      setLog((prev) => [...prev, { id, tone: 'command', text, promptBranch, interrupted }]);
+      const nextLine: LogLine = { id, tone: 'command', text, promptBranch, interrupted };
+      setLog((prev) => [...prev, nextLine].slice(-LOG_LINE_LIMIT));
     },
     [],
   );
@@ -273,7 +277,9 @@ export const GitTerminal = ({
       if (line === '') {
         return;
       }
-      setInputHistory((prev) => (prev[prev.length - 1] === line ? prev : [...prev, line]));
+      setInputHistory((prev) =>
+        prev[prev.length - 1] === line ? prev : [...prev, line].slice(-INPUT_HISTORY_LIMIT),
+      );
       setInputCursor(null);
       if (line === 'clear') {
         setLog([]);
