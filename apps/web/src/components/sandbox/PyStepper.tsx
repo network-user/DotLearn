@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { getPythonRuntime, prewarmPythonRuntime } from '@/lib/python-runtime';
-import { highlightStatic } from '@/lib/shiki';
+import { highlightLinesStatic } from '@/lib/shiki';
 
 interface PyStepperProps {
   code: string;
@@ -19,7 +19,7 @@ interface TraceStep {
   event: 'line' | 'return' | 'exception';
   func: string;
   locals: Record<string, string>;
-  stdout: string;
+  stdoutDelta: string;
   error?: string;
 }
 
@@ -31,6 +31,14 @@ _dotlearn_trace = []
 _dotlearn_max = 500
 _dotlearn_out = io.StringIO()
 _dotlearn_prev_stdout = sys.stdout
+_dotlearn_emitted = 0
+
+def _dotlearn_take_stdout():
+    global _dotlearn_emitted
+    visible = _dotlearn_out.getvalue()[:4000]
+    delta = visible[_dotlearn_emitted:]
+    _dotlearn_emitted = len(visible)
+    return delta
 
 def _dotlearn_tracer(frame, event, arg):
     if len(_dotlearn_trace) >= _dotlearn_max:
@@ -56,7 +64,7 @@ def _dotlearn_tracer(frame, event, arg):
         "event": event,
         "func": frame.f_code.co_name,
         "locals": snapshot,
-        "stdout": _dotlearn_out.getvalue()[:4000],
+        "stdoutDelta": _dotlearn_take_stdout(),
     })
     return _dotlearn_tracer
 
@@ -73,7 +81,7 @@ except Exception as _dotlearn_err:
         "func": "<module>",
         "locals": {},
         "error": repr(_dotlearn_err),
-        "stdout": _dotlearn_out.getvalue()[:4000],
+        "stdoutDelta": _dotlearn_take_stdout(),
     })
 finally:
     sys.settrace(None)
@@ -168,23 +176,16 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
     container.scrollTop = Math.max(0, target);
   }, [index]);
 
-  // Highlight each source line independently (rather than the whole block)
-  // so the existing per-line row structure — line numbers, active-line
-  // background — stays untouched; only the <code> content swaps in.
   useEffect(() => {
     let cancelled = false;
     setLineHtml(null);
-    void Promise.all(
-      sourceLines.map((line) =>
-        line.trim().length === 0 ? Promise.resolve(null) : highlightStatic(line, 'python'),
-      ),
-    ).then((results) => {
+    void highlightLinesStatic(trimmed, 'python').then((results) => {
       if (!cancelled) setLineHtml(results);
     });
     return () => {
       cancelled = true;
     };
-  }, [sourceLines]);
+  }, [trimmed]);
 
   const step = trace[index];
   const prevStep = index > 0 ? trace[index - 1] : undefined;
@@ -193,12 +194,19 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
 
   const localsEntries = step ? Object.entries(step.locals) : [];
 
-  const anyOutput = useMemo(() => trace.some((s) => s.stdout.length > 0), [trace]);
-  const currentOut = step?.stdout ?? '';
-  const prevOut = prevStep?.stdout ?? '';
-  const splitAt = currentOut.startsWith(prevOut) ? prevOut.length : currentOut.length;
-  const oldOut = currentOut.slice(0, splitAt);
-  const newOut = currentOut.slice(splitAt);
+  const cumulativeOut = useMemo(() => {
+    const acc: string[] = [];
+    let running = '';
+    for (const s of trace) {
+      running += s.stdoutDelta;
+      acc.push(running);
+    }
+    return acc;
+  }, [trace]);
+  const anyOutput = useMemo(() => trace.some((s) => s.stdoutDelta.length > 0), [trace]);
+  const oldOut = index > 0 ? (cumulativeOut[index - 1] ?? '') : '';
+  const newOut = step?.stdoutDelta ?? '';
+  const currentOut = oldOut + newOut;
 
   const eventLabel =
     step?.event === 'return'
