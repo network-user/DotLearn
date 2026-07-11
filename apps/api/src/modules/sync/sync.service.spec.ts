@@ -161,4 +161,22 @@ describe('SyncService', () => {
     await expect(service.link(idleCode)).rejects.toBeInstanceOf(NotFoundException);
     await expect(service.link(activeCode)).resolves.toBeDefined();
   });
+
+  it('throttles the lastAccessAt bump: a no-op pull inside the window skips the index write, one past it performs it', async () => {
+    const { service, store } = await createService();
+    const { code } = await service.create();
+
+    const setEntry = vi.spyOn(store, 'setEntry');
+
+    // create() just set lastAccessAt, so a poll seconds later is pure GC noise: no
+    // index entry is rewritten and no persist is scheduled.
+    await service.pull(code);
+    expect(setEntry).not.toHaveBeenCalled();
+
+    // Past the 10-minute bump window the same no-op poll refreshes lastAccessAt
+    // with a single index write.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await service.pull(code);
+    expect(setEntry).toHaveBeenCalledTimes(1);
+  });
 });

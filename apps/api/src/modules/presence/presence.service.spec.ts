@@ -196,4 +196,47 @@ describe('PresenceService', () => {
     expect(service.getStats().series.length).toBe(afterDestroy);
     expect(write).toHaveBeenCalled();
   });
+
+  it('throttles pruning: the first beat sweeps stale devices, an immediate second beat does not', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+    const internal = service as unknown as { lastSeen: Map<string, number> };
+
+    // Two devices last seen past the 90s TTL sit in the recency map.
+    internal.lastSeen.set('stale-1', Date.now() - 91_000);
+    internal.lastSeen.set('stale-2', Date.now() - 91_000);
+
+    // The first beat is outside any throttle window (lastPruneAt starts at 0): it
+    // prunes, clearing both stale devices.
+    service.beat('fresh-1');
+    expect(internal.lastSeen.has('stale-1')).toBe(false);
+    expect(internal.lastSeen.has('stale-2')).toBe(false);
+
+    // A stale device seeded now, then another beat in the same instant, survives:
+    // that beat is inside the 5s throttle window, so pruning is skipped.
+    internal.lastSeen.set('stale-3', Date.now() - 91_000);
+    service.beat('fresh-2');
+    expect(internal.lastSeen.has('stale-3')).toBe(true);
+  });
+
+  it('reports online by freshness, so a stale device left un-pruned by the throttle is not counted', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+    const internal = service as unknown as {
+      lastSeen: Map<string, number>;
+      lastPruneAt: number;
+    };
+
+    // A stale device the throttle has not swept yet: a recent lastPruneAt makes the
+    // next beat skip pruning, so the device lingers in the raw map.
+    internal.lastSeen.set('stale', Date.now() - 91_000);
+    internal.lastPruneAt = Date.now();
+
+    const counters = service.beat('fresh');
+
+    // Still present in the map (prune was throttled)...
+    expect(internal.lastSeen.has('stale')).toBe(true);
+    // ...but the reported count comes from countOnline's freshness filter, not map size.
+    expect(counters.online).toBe(1);
+  });
 });

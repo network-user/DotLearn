@@ -20,11 +20,16 @@ import {
   type SyncPushOutput,
 } from '@dotlearn/contracts';
 
-import { SyncStore } from './sync.store';
+import { SyncStore, type SyncIndexEntry } from './sync.store';
 
 const DEFAULT_MAX_BLOB_BYTES = 1_048_576;
 const DEFAULT_MAX_CODES = 2_000;
 const DEFAULT_TTL_DAYS = 90;
+
+// lastAccessAt only feeds the 90-day GC. Refreshing it on every read would rewrite
+// the whole metadata index (PersistentMap.set re-serializes and fsyncs) for no
+// functional gain, so bump it at most once per this window per code.
+const LAST_ACCESS_BUMP_MIN_MS = 10 * 60_000;
 
 // Hourly TTL sweep; also run opportunistically from create() when at capacity.
 const GC_INTERVAL_MS = 60 * 60_000;
@@ -120,8 +125,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const key = hashCode(code);
     const entry = this.store.get(key);
     if (!entry) throw new NotFoundException();
-    const now = Date.now();
-    this.store.setEntry(key, { ...entry, lastAccessAt: now });
+    this.touchAccess(key, entry);
     return { rev: entry.rev, updatedAt: entry.updatedAt, size: entry.size };
   }
 
@@ -129,8 +133,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const key = hashCode(code);
     const entry = this.store.get(key);
     if (!entry) throw new NotFoundException();
-    const now = Date.now();
-    this.store.setEntry(key, { ...entry, lastAccessAt: now });
+    this.touchAccess(key, entry);
 
     if (entry.rev === 0 || sinceRev === entry.rev) {
       return { changed: false, rev: entry.rev };
@@ -181,6 +184,15 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     await this.store.deleteBlob(key);
     this.store.deleteEntry(key);
     return { deleted: true };
+  }
+
+  // lastAccessAt drives the idle GC and nothing a response returns, so a read path
+  // bumps it only after the window has elapsed: the common case (a client polling
+  // every few seconds) then costs zero index writes.
+  private touchAccess(key: string, entry: SyncIndexEntry): void {
+    const now = Date.now();
+    if (now - entry.lastAccessAt < LAST_ACCESS_BUMP_MIN_MS) return;
+    this.store.setEntry(key, { ...entry, lastAccessAt: now });
   }
 
   private async runGc(): Promise<void> {

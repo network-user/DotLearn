@@ -26,6 +26,10 @@ const MAX_SERIES = 288;
 const MAX_DAILY = 30;
 // Never touch the disk more often than this (heartbeats are frequent).
 const PERSIST_MIN_INTERVAL_MS = 30_000;
+// Stale devices are pruned from the recency map at most this often on the beat
+// path; countOnline filters by freshness at read time so an un-pruned stale
+// entry never inflates a reported count.
+const PRUNE_MIN_INTERVAL_MS = 5_000;
 
 const parsePositiveInt = (raw: string | undefined, fallback: number): number => {
   const parsed = raw ? Number.parseInt(raw, 10) : fallback;
@@ -86,6 +90,8 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
 
   private sampleTimer: ReturnType<typeof setInterval> | null = null;
 
+  private lastPruneAt = 0;
+
   async onModuleInit(): Promise<void> {
     const snapshot = await this.loadSnapshot();
     this.applySnapshot(snapshot);
@@ -117,10 +123,12 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
     const now = Date.now();
     this.maybeRollover(now);
     this.lastSeen.set(id, now);
-    this.pruneExpired(now);
+    if (now - this.lastPruneAt >= PRUNE_MIN_INTERVAL_MS) {
+      this.pruneExpired(now);
+    }
     this.enforceCap();
     this.todayIds.add(id);
-    const online = this.lastSeen.size;
+    const online = this.countOnline(now);
     if (online > this.todayPeak) {
       this.todayPeak = online;
     }
@@ -163,6 +171,7 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
   }
 
   private pruneExpired(now: number): void {
+    this.lastPruneAt = now;
     const cutoff = now - this.ttlMs;
     for (const [id, seenAt] of this.lastSeen) {
       if (seenAt <= cutoff) {
