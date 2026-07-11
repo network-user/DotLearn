@@ -48,13 +48,9 @@ const pickLanguage = (files: DeckFile[], requested: string): string => {
   return files[0]?.language ?? 'ru';
 };
 
-export const loadTopicCards = async (
-  slug: string,
-  requestedLanguage: string,
-): Promise<DeckCard[]> => {
-  const files = registry.get(slug);
-  if (!files || files.length === 0) return [];
-  const language = pickLanguage(files, requestedLanguage);
+const parsedCardsCache = new Map<string, Promise<DeckCard[]>>();
+
+const parseTopicCards = async (language: string, files: DeckFile[]): Promise<DeckCard[]> => {
   const chosen = files
     .filter((entry) => entry.language === language)
     .sort((a, b) => a.file.localeCompare(b.file));
@@ -67,4 +63,20 @@ export const loadTopicCards = async (
     }
   }
   return cards;
+};
+
+export const loadTopicCards = async (
+  slug: string,
+  requestedLanguage: string,
+): Promise<DeckCard[]> => {
+  const files = registry.get(slug);
+  if (!files || files.length === 0) return [];
+  const language = pickLanguage(files, requestedLanguage);
+  const cacheKey = `${slug}:${language}`;
+  const cached = parsedCardsCache.get(cacheKey);
+  if (cached) return cached;
+  const pending = parseTopicCards(language, files);
+  parsedCardsCache.set(cacheKey, pending);
+  pending.catch(() => parsedCardsCache.delete(cacheKey));
+  return pending;
 };
