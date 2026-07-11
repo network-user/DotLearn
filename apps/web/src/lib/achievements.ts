@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { summarizeCalibration, type CalibrationSample } from '@dotlearn/lesson-engine';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -676,30 +676,57 @@ export const useAchievements = (
     0,
   );
 
-  const snapshot = ready
-    ? buildSnapshot({
-        progress: progress ?? [],
-        attemptEvents: attemptEvents ?? [],
-        activity: activity ?? [],
-        checkpointResults: checkpointResults ?? [],
-        examResults: examResults ?? [],
-        reExamSchedule: reExamSchedule ?? [],
-        flashcardReviews: flashcardReviews ?? [],
-        lifetimeReviews,
-        interviewStudiedCount: interviewStudiedCount ?? 0,
-        interviewTotalCount: interviewTotal,
-        currentStreak,
-        topics,
-        noteCount: noteCount ?? 0,
-        bookmarkCount: bookmarkCount ?? 0,
-        highlightCount: highlightCount ?? 0,
-        userCardCount: userCardCount ?? 0,
-      })
-    : undefined;
+  const snapshot = useMemo(
+    () =>
+      ready
+        ? buildSnapshot({
+            progress: progress ?? [],
+            attemptEvents: attemptEvents ?? [],
+            activity: activity ?? [],
+            checkpointResults: checkpointResults ?? [],
+            examResults: examResults ?? [],
+            reExamSchedule: reExamSchedule ?? [],
+            flashcardReviews: flashcardReviews ?? [],
+            lifetimeReviews,
+            interviewStudiedCount: interviewStudiedCount ?? 0,
+            interviewTotalCount: interviewTotal,
+            currentStreak,
+            topics,
+            noteCount: noteCount ?? 0,
+            bookmarkCount: bookmarkCount ?? 0,
+            highlightCount: highlightCount ?? 0,
+            userCardCount: userCardCount ?? 0,
+          })
+        : undefined,
+    [
+      ready,
+      progress,
+      attemptEvents,
+      activity,
+      checkpointResults,
+      examResults,
+      reExamSchedule,
+      flashcardReviews,
+      lifetimeReviews,
+      interviewStudiedCount,
+      interviewTotal,
+      currentStreak,
+      topics,
+      noteCount,
+      bookmarkCount,
+      highlightCount,
+      userCardCount,
+    ],
+  );
 
-  const unlockedIds = snapshot ? unlockedIdsForSnapshot(snapshot) : [];
-  const persistedMap = new Map(
-    (persistedRecords ?? []).map((record) => [record.id, record.unlockedAt]),
+  const unlockedIds = useMemo(() => (snapshot ? unlockedIdsForSnapshot(snapshot) : []), [snapshot]);
+  const persistedMap = useMemo(
+    () => new Map((persistedRecords ?? []).map((record) => [record.id, record.unlockedAt])),
+    [persistedRecords],
+  );
+  const views = useMemo(
+    () => buildViews(new Set(unlockedIds), persistedMap),
+    [unlockedIds, persistedMap],
   );
 
   const persistedKey = (persistedRecords ?? [])
@@ -726,7 +753,6 @@ export const useAchievements = (
 
   if (!ready) return EMPTY_STATE;
 
-  const views = buildViews(new Set(unlockedIds), persistedMap);
   return {
     views,
     unlockedCount: views.filter((view) => view.unlocked).length,
