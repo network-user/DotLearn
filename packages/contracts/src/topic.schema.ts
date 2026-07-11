@@ -15,7 +15,13 @@ export type TopicDifficulty = z.infer<typeof TopicDifficulty>;
 export const TopicRuntime = z.enum(['sql.js', 'pyodide', 'javascript', 'git', 'none']);
 export type TopicRuntime = z.infer<typeof TopicRuntime>;
 
-export const TopicLicense = z.enum(['MIT', 'Apache-2.0', 'CC-BY-4.0', 'CC-BY-SA-4.0']);
+export const TopicLicense = z.enum([
+  'MIT',
+  'Apache-2.0',
+  'CC-BY-4.0',
+  'CC-BY-SA-4.0',
+  'CC-BY-NC-4.0',
+]);
 export type TopicLicense = z.infer<typeof TopicLicense>;
 
 export const TopicAuthor = z.object({
@@ -52,6 +58,14 @@ export const TopicManifestObject = z
   .object({
     slug: z.string().regex(SLUG_PATTERN).min(3).max(60),
     title: z.string().min(3).max(80),
+    titleEn: z.string().min(3).max(80).optional(),
+    descriptions: z
+      .object({
+        ru: z.string().min(50).max(200).optional(),
+        en: z.string().min(50).max(200).optional(),
+      })
+      .strict()
+      .optional(),
     version: z.string().regex(SEMVER_PATTERN),
     availableLanguages: z.array(TopicLanguage).min(1),
     primaryLanguage: TopicLanguage,
