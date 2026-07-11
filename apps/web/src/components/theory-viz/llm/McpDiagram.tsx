@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';
 import { VizShell } from '@/components/viz/VizShell';
+import { useInViewport } from '@/hooks/useInViewport';
 
 export type McpCapability = 'tools' | 'resources' | 'prompts';
 
@@ -56,6 +57,7 @@ export const McpDiagram = ({
 }: McpDiagramProps) => {
   const reduceMotion = useReducedMotion();
   const [active, setActive] = useState<number | null>(null);
+  const [viewportRef, visible] = useInViewport<HTMLDivElement>();
 
   const activeServer = active !== null ? servers[active] : null;
 
@@ -78,7 +80,10 @@ export const McpDiagram = ({
         )
       }
     >
-      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
+      <div
+        ref={viewportRef}
+        className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4"
+      >
         <div
           className={cx(
             'shrink-0 rounded-lg border-2 px-4 py-3 transition-colors duration-med',
@@ -97,7 +102,7 @@ export const McpDiagram = ({
         <div className="hidden flex-1 flex-col items-center sm:flex" aria-hidden>
           <motion.div
             className="h-px w-full origin-left bg-gradient-to-r from-accent/60 to-border-strong"
-            animate={reduceMotion ? { opacity: 1 } : { opacity: [0.4, 1, 0.4] }}
+            animate={reduceMotion || !visible ? { opacity: 1 } : { opacity: [0.4, 1, 0.4] }}
             transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
           />
           <span className="mt-1 font-mono text-[10px] uppercase tracking-widest text-fg-subtle">

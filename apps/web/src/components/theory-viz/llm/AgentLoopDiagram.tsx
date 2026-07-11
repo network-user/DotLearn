@@ -5,6 +5,7 @@ import { Pause, Play, RotateCw } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';
 import { VizButton, VizShell } from '@/components/viz/VizShell';
+import { useInViewport } from '@/hooks/useInViewport';
 
 export interface AgentLoopStep {
   title: string;
@@ -56,18 +57,19 @@ export const AgentLoopDiagram = ({
   const [active, setActive] = useState(0);
   const [playing, setPlaying] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const [viewportRef, visible] = useInViewport<HTMLDivElement>();
 
   const total = steps.length;
 
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || !visible) return;
     timerRef.current = window.setInterval(() => {
       setActive((value) => (value + 1) % total);
     }, STEP_MS);
     return () => {
       if (timerRef.current !== null) window.clearInterval(timerRef.current);
     };
-  }, [playing, total]);
+  }, [playing, visible, total]);
 
   const positions: Point[] = steps.map((_, index) => nodePosition(index, total));
   const current = steps[active] ?? fallbackStep;
@@ -107,7 +109,7 @@ export const AgentLoopDiagram = ({
         </span>
       }
     >
-      <div className="mx-auto w-full max-w-[360px]">
+      <div ref={viewportRef} className="mx-auto w-full max-w-[360px]">
         <svg viewBox="0 0 300 300" className="block w-full" role="img" aria-label={label}>
           <defs>
             <marker
@@ -153,6 +155,7 @@ export const AgentLoopDiagram = ({
           {steps.map((step, index) => {
             const { x, y } = positions[index] ?? nodePosition(index, total);
             const isActive = index === active;
+            const pulsing = isActive && playing && !reduceMotion && visible;
             return (
               <g
                 key={`node-${index}`}
@@ -169,9 +172,9 @@ export const AgentLoopDiagram = ({
               >
                 <motion.circle
                   r={NODE}
-                  animate={isActive && !reduceMotion ? { scale: [1, 1.08, 1] } : { scale: 1 }}
+                  animate={pulsing ? { scale: [1, 1.08, 1] } : { scale: 1 }}
                   transition={
-                    isActive && !reduceMotion
+                    pulsing
                       ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' }
                       : { duration: 0.2 }
                   }

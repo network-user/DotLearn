@@ -5,6 +5,7 @@ import { ArrowRight, Pause, Play, SkipForward } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';
 import { VizButton, VizShell } from '@/components/viz/VizShell';
+import { useInViewport } from '@/hooks/useInViewport';
 
 import { bits32, fnv1a, toHex, type VizLang } from './hash-utils';
 
@@ -52,16 +53,17 @@ export const HashLoopDemo = ({
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(!reduceMotion);
   const timerRef = useRef<number | null>(null);
+  const [viewportRef, visible] = useInViewport<HTMLDivElement>();
 
   useEffect(() => {
-    if (!playing || reduceMotion) return;
+    if (!playing || reduceMotion || !visible) return;
     timerRef.current = window.setInterval(() => {
       setIndex((current) => (current + 1) % items.length);
     }, intervalMs);
     return () => {
       if (timerRef.current !== null) window.clearInterval(timerRef.current);
     };
-  }, [playing, reduceMotion, items.length, intervalMs]);
+  }, [playing, reduceMotion, visible, items.length, intervalMs]);
 
   const current = items[index] ?? items[0] ?? '';
   const hash = fnv1a(current);
@@ -87,7 +89,7 @@ export const HashLoopDemo = ({
       }
       footer={<span>{reduceMotion ? t.reduced : t.caption}</span>}
     >
-      <div className="flex min-w-[300px] flex-col gap-4">
+      <div ref={viewportRef} className="flex min-w-[300px] flex-col gap-4">
         <div className="flex items-center justify-center gap-3 sm:gap-5">
           <div className="relative h-9 w-28 sm:w-32">
             <AnimatePresence mode="popLayout">
