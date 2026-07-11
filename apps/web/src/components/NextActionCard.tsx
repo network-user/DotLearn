@@ -17,24 +17,30 @@ import {
   type NextActionKind,
   type NextActionTopicInput,
 } from '@/lib/next-action';
-import { db } from '@/lib/progress-db';
+import { db, type ProgressRecord } from '@/lib/progress-db';
 import { useRecallByTopic } from '@/lib/retention';
 import { effectiveLanguage } from '@/lib/topics';
 import { useLastPlace } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import topicStats from 'virtual:topic-stats';
 
-const useNextAction = (): NextAction | undefined => {
+interface NextActionData {
+  progressRecords: ProgressRecord[];
+  readByTopic: Map<string, Set<string>>;
+}
+
+const useNextActionFromData = (
+  progressRecords: ProgressRecord[],
+  readByTopic: Map<string, Set<string>>,
+): NextAction | undefined => {
   const manifests = useVisibleManifests();
-  const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
-  const readByTopic = useReadConceptsByTopic();
   const recallByTopic = useRecallByTopic();
   const place = useLastPlace();
   const language = getCurrentLanguage();
 
   const topics = useMemo<NextActionTopicInput[]>(() => {
     const passedByTopic = new Map<string, number>();
-    for (const record of progressRecords ?? []) {
+    for (const record of progressRecords) {
       if (record.status === 'pass') {
         passedByTopic.set(record.topicSlug, (passedByTopic.get(record.topicSlug) ?? 0) + 1);
       }
@@ -56,6 +62,12 @@ const useNextAction = (): NextAction | undefined => {
       }),
     [topics, recallByTopic, place],
   );
+};
+
+const useNextAction = (): NextAction | undefined => {
+  const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
+  const readByTopic = useReadConceptsByTopic();
+  return useNextActionFromData(progressRecords, readByTopic);
 };
 
 const ICON_BY_KIND: Record<NextActionKind, typeof Sparkles> = {
@@ -113,9 +125,8 @@ const useActionCopy = (action: NextAction | undefined): ActionCopy | undefined =
   };
 };
 
-export const NextActionBanner = () => {
+const NextActionBannerView = ({ action }: { action: NextAction | undefined }) => {
   const { t } = useTranslation('nextAction');
-  const action = useNextAction();
   const copy = useActionCopy(action);
   if (!action || !copy) return null;
   const Icon = ICON_BY_KIND[action.kind];
@@ -145,6 +156,26 @@ export const NextActionBanner = () => {
       </Surface>
     </Link>
   );
+};
+
+const NextActionBannerConnected = () => {
+  const action = useNextAction();
+  return <NextActionBannerView action={action} />;
+};
+
+const NextActionBannerProvided = ({ progressRecords, readByTopic }: NextActionData) => {
+  const action = useNextActionFromData(progressRecords, readByTopic);
+  return <NextActionBannerView action={action} />;
+};
+
+export const NextActionBanner = ({
+  progressRecords,
+  readByTopic,
+}: Partial<NextActionData> = {}) => {
+  if (progressRecords !== undefined && readByTopic !== undefined) {
+    return <NextActionBannerProvided progressRecords={progressRecords} readByTopic={readByTopic} />;
+  }
+  return <NextActionBannerConnected />;
 };
 
 export const NextActionTopCard = () => {
