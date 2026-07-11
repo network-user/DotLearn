@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix as pathPosix } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distDir = join(here, '..', 'apps', 'web', 'dist');
@@ -30,11 +30,49 @@ for (const m of html.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+)"/
 
 const toDistPath = (href) => join(distDir, href.replace(/^\//, ''));
 
-const jsAssets = [...eager].filter((href) => href.endsWith('.js'));
-if (jsAssets.length === 0) {
+// Rollup emits static imports of already-built chunks as `from"./x.js"` or a
+// side-effect-only `import"./x.js"`. Dynamic imports are `import("./x.js")` and
+// must be excluded — they're what keeps heavy chunks lazy. Walk the graph from
+// each eager entry so chunks reachable only via a static re-export (not linked
+// in index.html as modulepreload) still count against the budget.
+const STATIC_IMPORT_RE = /\b(?:from|import)"(\.[^"]+?\.js)"/g;
+
+const collectStaticImports = (href) => {
+  const path = toDistPath(href);
+  const source = readFileSync(path, 'utf8');
+  const dir = pathPosix.dirname(href);
+  const found = new Set();
+  for (const m of source.matchAll(STATIC_IMPORT_RE)) {
+    found.add(pathPosix.normalize(pathPosix.join(dir, m[1])));
+  }
+  return found;
+};
+
+const eagerEntries = [...eager].filter((href) => href.endsWith('.js'));
+if (eagerEntries.length === 0) {
   console.error('check:bundle — could not find any eager module scripts in index.html.');
   process.exit(1);
 }
+
+const jsAssetSet = new Set(eagerEntries);
+const queue = [...eagerEntries];
+while (queue.length > 0) {
+  const href = queue.shift();
+  let imports;
+  try {
+    imports = collectStaticImports(href);
+  } catch {
+    console.error(`check:bundle — referenced asset missing on disk: ${href}`);
+    process.exit(1);
+  }
+  for (const imported of imports) {
+    if (!jsAssetSet.has(imported)) {
+      jsAssetSet.add(imported);
+      queue.push(imported);
+    }
+  }
+}
+const jsAssets = [...jsAssetSet];
 
 let totalGzip = 0;
 const rows = [];

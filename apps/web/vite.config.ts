@@ -197,8 +197,9 @@ export default defineConfig({
             options: {
               cacheName: 'app-chunks',
               expiration: {
-                maxEntries: 400,
+                maxEntries: 1600,
                 maxAgeSeconds: 60 * 60 * 24 * 30,
+                purgeOnQuotaError: true,
               },
               cacheableResponse: {
                 statuses: [200],
@@ -259,6 +260,12 @@ export default defineConfig({
       output: {
         manualChunks: (id) => {
           const normalized = id.replace(/\\/g, '/');
+          if (
+            normalized.includes('vite/preload-helper') ||
+            normalized.includes('vite/modulepreload-polyfill')
+          ) {
+            return 'react';
+          }
           if (normalized.includes('/packages/contracts/') || id.includes('node_modules/zod')) {
             return 'contracts';
           }
