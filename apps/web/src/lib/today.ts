@@ -108,8 +108,7 @@ export const loadFailedExercises = async (
   language: SupportedLanguage,
 ): Promise<FailedExercise[]> => {
   try {
-    const records = await db.progress.toArray();
-    const failed = records.filter((record) => record.status === 'fail');
+    const failed = await db.progress.where('status').equals('fail').toArray();
     const slugs = [...new Set(failed.map((record) => record.topicSlug))];
     const bundles = await Promise.all(
       slugs.map(async (slug) => {
@@ -205,7 +204,7 @@ export const loadCalibrationReview = async (
   language: SupportedLanguage,
 ): Promise<CalibrationReviewItem[]> => {
   try {
-    const events = await db.attemptEvents.toArray();
+    const events = await db.attemptEvents.orderBy('id').reverse().limit(1000).toArray();
     const withConfidence = events.filter(
       (event): event is ConfidentAttemptEvent => event.confidence !== undefined,
     );
