@@ -6,9 +6,9 @@ import { Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { DeferredCodeEditor } from '@/components/DeferredCodeEditor';
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
-import { LazyCodeEditor } from '@/components/sandbox/LazyCodeEditor';
 import { ResultGrid } from '@/components/sandbox/ResultGrid';
 import { RunnerStatus } from '@/components/sandbox/RunnerStatus';
 import { SolutionReveal } from '@/components/sandbox/SolutionReveal';
@@ -159,7 +159,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
                 <span className="text-[10.5px] text-fg-subtle">ctrl + enter</span>
               )}
             </div>
-            <LazyCodeEditor
+            <DeferredCodeEditor
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="sql"
