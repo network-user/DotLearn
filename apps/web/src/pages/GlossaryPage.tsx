@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Surface } from '@/components/ui/Surface';
 import { GLOSSARY, type GlossaryEntry } from '@/lib/glossary';
 import { getCurrentLanguage } from '@/lib/i18n';
+import { Seo } from '@/lib/seo';
 import { useVisibleManifests } from '@/lib/use-manifests';
 
 interface GlossaryGroup {
@@ -25,6 +26,7 @@ const matches = (query: string, ...values: string[]): boolean => {
 
 export const GlossaryPage = () => {
   const { t } = useTranslation('glossary');
+  const { t: tSeo } = useTranslation('seo');
   const language = getCurrentLanguage();
   const manifests = useVisibleManifests();
   const [query, setQuery] = useState('');
@@ -69,6 +71,7 @@ export const GlossaryPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo title={t('title')} description={tSeo('glossaryDescription')} canonicalPath="/glossary" />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <BookA size={12} className="text-accent" />

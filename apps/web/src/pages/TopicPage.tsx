@@ -53,6 +53,7 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import { THEORY_HIGHLIGHTS_ENABLED } from '@/lib/feature-flags';
+import { useForcedContentLanguage } from '@/lib/forced-language';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { nextTargetDifficulty, reorderByTargetDifficulty } from '@/lib/learner-model';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
@@ -65,7 +66,14 @@ import { recordRecentVisit } from '@/lib/recent-visits';
 import { prewarmPythonRuntime } from '@/lib/python-runtime';
 import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 import { sanitizeHref } from '@/lib/safe-url';
-import { effectiveLanguage, getAllManifests, loadTopic, useContentLanguage } from '@/lib/topics';
+import { Seo } from '@/lib/seo';
+import {
+  effectiveLanguage,
+  getAllManifests,
+  loadTopic,
+  topicHasEn,
+  useContentLanguage,
+} from '@/lib/topics';
 import type { TopicSearch } from '@/router';
 import { useConceptBookmarked, useConceptRead, useTopicReadConceptIds } from '@/lib/use-learning';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
@@ -191,10 +199,11 @@ const ResizeHandle = ({
 };
 
 export const TopicPage = () => {
-  const { slug } = useParams({ from: '/topics/$slug' });
-  const search = useSearch({ from: '/topics/$slug' });
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const search = useSearch({ strict: false });
   const navigate = useNavigate();
   const { t } = useTranslation('topic');
+  const forcedLanguage = useForcedContentLanguage();
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [retryToken, setRetryToken] = useState(0);
   const [activeConceptId, setActiveConceptId] = useState<string | undefined>(undefined);
@@ -238,23 +247,23 @@ export const TopicPage = () => {
     (conceptId: string): void => {
       setActiveConceptId(conceptId);
       void navigate({
-        to: '/topics/$slug',
+        to: forcedLanguage === 'en' ? '/en/topics/$slug' : '/topics/$slug',
         params: { slug },
         search: { concept: conceptId },
         replace: true,
       });
     },
-    [navigate, slug],
+    [navigate, slug, forcedLanguage],
   );
 
   const clearResume = useCallback((): void => {
     void navigate({
-      to: '/topics/$slug',
+      to: forcedLanguage === 'en' ? '/en/topics/$slug' : '/topics/$slug',
       params: { slug },
       search: (prev: TopicSearch) => ({ concept: prev.concept }),
       replace: true,
     });
-  }, [navigate, slug]);
+  }, [navigate, slug, forcedLanguage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -549,6 +558,17 @@ export const TopicPage = () => {
 
   return (
     <div className="space-y-6">
+      <Seo
+        lang={forcedLanguage ?? 'ru'}
+        title={forcedLanguage === 'en' ? (manifest.titleEn ?? manifest.title) : manifest.title}
+        description={manifest.descriptions?.[forcedLanguage ?? 'ru']}
+        canonicalPath={forcedLanguage === 'en' ? `/en/topics/${slug}` : `/topics/${slug}`}
+        alternates={
+          topicHasEn(slug) ? { ru: `/topics/${slug}`, en: `/en/topics/${slug}` } : undefined
+        }
+        ogImagePath={`/og/${slug}.png`}
+        ogType="article"
+      />
       {activeConcept && (
         <ReadingProgress
           slug={slug}
@@ -695,6 +715,7 @@ const PREREQ_MASTERY_THRESHOLD = 0.6;
 
 const PrerequisitesBanner = ({ prerequisites }: { prerequisites: string[] }) => {
   const { t } = useTranslation('topic');
+  const forcedLanguage = useForcedContentLanguage();
   const language = getCurrentLanguage();
   const prereqKey = prerequisites.join('|');
   const progressRecords = useLiveQuery(
@@ -753,7 +774,11 @@ const PrerequisitesBanner = ({ prerequisites }: { prerequisites: string[] }) => 
                 </span>
               )}
               <Link
-                to="/topics/$slug"
+                to={
+                  forcedLanguage === 'en' && topicHasEn(entry.slug)
+                    ? '/en/topics/$slug'
+                    : '/topics/$slug'
+                }
                 params={{ slug: entry.slug }}
                 className={cx(
                   'inline-flex items-center gap-1 underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent',

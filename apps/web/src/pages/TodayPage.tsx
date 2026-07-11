@@ -35,7 +35,7 @@ import {
   type TopicReadInput,
 } from '@/lib/achievements';
 import { reviewFlashcard, type FlashcardRating } from '@/lib/flashcards';
-import { interviewQuestions } from '@/lib/interview';
+import { getInterviewIndex } from '@/lib/interview';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db, localDayKey } from '@/lib/progress-db';
 import {
@@ -44,6 +44,7 @@ import {
   type SparklinePoint,
   type WeeklyComparison,
 } from '@/lib/recap';
+import { Seo } from '@/lib/seo';
 import { useSettings } from '@/lib/settings';
 import {
   loadCalibrationReview,
@@ -164,7 +165,7 @@ export const TodayPage = () => {
     },
     [t, tProgress],
   );
-  useAchievements(achievementTopics, streak, interviewQuestions.length, handleUnlock);
+  useAchievements(achievementTopics, streak, getInterviewIndex().length, handleUnlock);
 
   const [due, setDue] = useState<DueCard[] | null | undefined>(undefined);
   const [failed, setFailed] = useState<FailedExercise[] | null | undefined>(undefined);
@@ -219,6 +220,7 @@ export const TodayPage = () => {
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <Sparkles size={12} className="text-accent" />

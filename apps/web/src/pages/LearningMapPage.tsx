@@ -9,12 +9,14 @@ import { Surface } from '@/components/ui/Surface';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
 import { useRecallByTopic } from '@/lib/retention';
+import { Seo } from '@/lib/seo';
 import { effectiveLanguage, useContentLanguage } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import topicStats from 'virtual:topic-stats';
 
 export const LearningMapPage = () => {
   const { t } = useTranslation('map');
+  const { t: tSeo } = useTranslation('seo');
   const manifests = useVisibleManifests();
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
@@ -44,6 +46,7 @@ export const LearningMapPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo title={t('title')} description={tSeo('mapDescription')} canonicalPath="/map" />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <Waypoints size={12} className="text-accent" />

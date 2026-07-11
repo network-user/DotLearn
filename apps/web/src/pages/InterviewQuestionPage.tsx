@@ -16,14 +16,15 @@ import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
   getInterviewComponentForLocale,
+  getInterviewIndex,
   getInterviewQuestion,
-  interviewQuestions,
   loadQuestionExercises,
   localizedInterviewTitle,
   relatedInterviewQuestions,
   relatedTopicsForQuestion,
 } from '@/lib/interview';
 import { db, INTERVIEW_TOPIC_SLUG, setInterviewStudied } from '@/lib/progress-db';
+import { Seo } from '@/lib/seo';
 import { topicTitleOf } from '@/lib/topics';
 import { useInterviewStudied } from '@/lib/use-interview';
 
@@ -101,12 +102,11 @@ export const InterviewQuestionPage = () => {
     .filter(
       (entry): entry is { slug: string; conceptId?: string; title: string } => entry !== undefined,
     );
-  const position = interviewQuestions.findIndex((item) => item.id === question.id);
-  const previous = position > 0 ? interviewQuestions[position - 1] : undefined;
+  const questions = getInterviewIndex();
+  const position = questions.findIndex((item) => item.id === question.id);
+  const previous = position > 0 ? questions[position - 1] : undefined;
   const next =
-    position >= 0 && position < interviewQuestions.length - 1
-      ? interviewQuestions[position + 1]
-      : undefined;
+    position >= 0 && position < questions.length - 1 ? questions[position + 1] : undefined;
 
   const toggleStudied = (): void => {
     void setInterviewStudied(question.id, !studied);
@@ -114,6 +114,7 @@ export const InterviewQuestionPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <div className="flex items-center justify-between gap-3">
         <Link to="/interview">
           <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />}>

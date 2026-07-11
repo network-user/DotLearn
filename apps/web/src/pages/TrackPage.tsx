@@ -16,6 +16,7 @@ import { Surface } from '@/components/ui/Surface';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
+import { Seo } from '@/lib/seo';
 import { effectiveLanguage, prefetchTopic } from '@/lib/topics';
 import { getTrack, trackMemberSlugs } from '@/lib/tracks';
 import { useVisibleManifests } from '@/lib/use-manifests';
@@ -117,6 +118,7 @@ export const TrackPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <div>
         <Link
           to="/tracks"

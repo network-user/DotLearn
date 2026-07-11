@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { CreateSubmissionInput } from '@dotlearn/contracts';
 
 import { ApiError, submitTopicProposal } from '@/lib/api-client';
+import { Seo } from '@/lib/seo';
 
 type SubmissionLanguage = 'en' | 'ru';
 
@@ -125,6 +126,7 @@ export const SubmitTopicPage = () => {
 
   return (
     <div className="max-w-2xl">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>
       <p className="mt-2 text-sm text-fg-muted">{t('subtitle')}</p>
 

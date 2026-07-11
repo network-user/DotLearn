@@ -31,7 +31,7 @@ import { DualProgressBar } from '@/components/ui/DualProgressBar';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { useAchievements, type AchievementView, type TopicReadInput } from '@/lib/achievements';
-import { interviewQuestions } from '@/lib/interview';
+import { getInterviewIndex } from '@/lib/interview';
 import {
   weakestConcepts,
   type ExerciseAttemptInput,
@@ -48,6 +48,7 @@ import {
   importProgress,
 } from '@/lib/progress-io';
 import { compareWeeks, type WeeklyComparison } from '@/lib/recap';
+import { Seo } from '@/lib/seo';
 import { useSync } from '@/lib/sync/engine';
 import { effectiveLanguage, useContentLanguage } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
@@ -290,7 +291,7 @@ export const ProgressPage = () => {
       (entry.conceptsRead ?? 0) > 0,
   ).length;
   const interviewStudied = studiedIds.size;
-  const interviewTotal = interviewQuestions.length;
+  const interviewTotal = getInterviewIndex().length;
   const hasProgress = totalPassed > 0 || totalAttempted > 0;
   const recommendedTopic = rows[0]?.manifest;
 
@@ -352,6 +353,7 @@ export const ProgressPage = () => {
 
   return (
     <div className="space-y-10">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">{t('title')}</h1>
         <p className="mt-2 text-sm text-fg-muted max-w-2xl">{t('subtitle')}</p>

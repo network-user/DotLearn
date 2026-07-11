@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { loadTopicCards } from '@/lib/flashcard-decks';
 import type { SessionCard } from '@/lib/flashcard-sources';
+import { Seo } from '@/lib/seo';
 import { topicTitleOf, useContentLanguage } from '@/lib/topics';
 
 export const FlashcardReviewPage = () => {
@@ -74,6 +75,7 @@ export const FlashcardReviewPage = () => {
 
   return (
     <div className="space-y-6">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       {header}
       {errored ? (
         <div className="mx-auto max-w-2xl">

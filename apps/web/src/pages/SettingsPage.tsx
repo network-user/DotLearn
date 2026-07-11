@@ -16,6 +16,7 @@ import {
   exportProgress,
   importProgress,
 } from '@/lib/progress-io';
+import { Seo } from '@/lib/seo';
 import {
   ACCENT_IDS,
   DAILY_GOAL_MAX,
@@ -186,6 +187,7 @@ export const SettingsPage = () => {
 
   return (
     <div className="mx-auto max-w-2xl space-y-10">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">{t('title')}</h1>
         <p className="mt-2 text-sm text-fg-muted max-w-prose">{t('intro')}</p>

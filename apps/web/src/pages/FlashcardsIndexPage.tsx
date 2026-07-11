@@ -17,8 +17,9 @@ import {
   loadInterviewCards,
   type InterviewFlashcardCoverage,
 } from '@/lib/interview-flashcards';
-import { interviewCategories } from '@/lib/interview';
+import { getInterviewCategories } from '@/lib/interview';
 import { db } from '@/lib/progress-db';
+import { Seo } from '@/lib/seo';
 import { topicTitleOf, useContentLanguage } from '@/lib/topics';
 
 interface DeckSummary {
@@ -36,6 +37,7 @@ interface InterviewSummary {
 
 export const FlashcardsIndexPage = () => {
   const { t } = useTranslation('flashcards');
+  const { t: tSeo } = useTranslation('seo');
   const language = useContentLanguage();
   const slugs = useMemo(() => flashcardTopicSlugs(), []);
   const [summaries, setSummaries] = useState<DeckSummary[] | undefined>(undefined);
@@ -150,6 +152,11 @@ export const FlashcardsIndexPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo
+        title={t('title')}
+        description={tSeo('flashcardsDescription')}
+        canonicalPath="/flashcards"
+      />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <Sparkles size={12} className="text-accent" />
@@ -304,7 +311,7 @@ export const FlashcardsIndexPage = () => {
               {t('interviewDecksHeading')}
             </h2>
             <span className="text-sm text-fg-subtle">
-              {t('interviewCategoriesCount', { count: interviewCategories.length })}
+              {t('interviewCategoriesCount', { count: getInterviewCategories().length })}
             </span>
           </div>
           <Link to="/flashcards/practice" search={reviewAllInterviewSearch}>

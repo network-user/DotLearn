@@ -19,6 +19,7 @@ import {
 import { prewarmPythonRuntime } from '@/lib/python-runtime';
 import { defaultPythonTemplate } from '@/lib/sandbox-templates/python';
 import { defaultSqlTemplate } from '@/lib/sandbox-templates/sql';
+import { Seo } from '@/lib/seo';
 import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 
 const SqlPlayground = lazy(() =>
@@ -63,6 +64,7 @@ const PanelFallback = () => (
 
 export const SandboxPage = () => {
   const { t } = useTranslation('sandbox');
+  const { t: tSeo } = useTranslation('seo');
   const [loaded, setLoaded] = useState<LoadedState | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<PlaygroundTab>('sql');
 
@@ -124,6 +126,7 @@ export const SandboxPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo title={t('title')} description={tSeo('sandboxDescription')} canonicalPath="/sandbox" />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <FlaskConical size={12} className="text-accent" />

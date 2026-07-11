@@ -23,7 +23,8 @@ import {
   topicsToParam,
   type FlashcardsPracticeSearch,
 } from '@dotlearn/lesson-engine';
-import { interviewCategories, interviewStages } from '@/lib/interview';
+import { getInterviewCategories, getInterviewStages } from '@/lib/interview';
+import { Seo } from '@/lib/seo';
 import { topicTitleOf, useContentLanguage } from '@/lib/topics';
 
 interface Session {
@@ -158,6 +159,7 @@ export const FlashcardsPracticePage = () => {
 
   return (
     <div className="space-y-6">
+      <Seo robots="noindex,nofollow" title={t('practice.title')} />
       <header className="space-y-2 border-y border-border-base py-6 sm:py-8">
         <div className="eyebrow eyebrow-accent mb-3 flex items-center gap-2">
           <GraduationCap size={13} />
@@ -260,7 +262,7 @@ export const FlashcardsPracticePage = () => {
                 className="form-input"
               >
                 <option value="all">{t('practice.allCategories')}</option>
-                {interviewCategories.map((item) => (
+                {getInterviewCategories().map((item) => (
                   <option key={item.slug} value={item.slug}>
                     {item.label} ({item.count})
                   </option>
@@ -278,7 +280,7 @@ export const FlashcardsPracticePage = () => {
                 className="form-input"
               >
                 <option value="all">{t('practice.allStages')}</option>
-                {interviewStages.map((item) => (
+                {getInterviewStages().map((item) => (
                   <option key={item.slug} value={item.slug}>
                     {item.label} ({item.count})
                   </option>

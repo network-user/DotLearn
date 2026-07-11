@@ -18,6 +18,7 @@ import {
   unhideTopic,
 } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { Seo } from '@/lib/seo';
 import { invalidateHiddenTopicsCache, listAllManifestsIgnoringHidden } from '@/lib/topics';
 import { AdminLoginPage } from './AdminLoginPage';
 
@@ -251,6 +252,7 @@ export const AdminPage = () => {
 
   return (
     <div className="space-y-6">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{t('title')}</h1>

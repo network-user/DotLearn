@@ -19,6 +19,7 @@ import {
   searchPublicSubmissions,
   suggestSubmissions,
 } from '@/lib/api-client';
+import { Seo } from '@/lib/seo';
 
 type ViewState =
   | { kind: 'loading' }
@@ -120,6 +121,7 @@ export const ProposalsPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <section>
         <h1 className="text-3xl font-semibold tracking-tight">{t('title')}</h1>
         <p className="mt-3 text-fg-muted max-w-2xl">{t('subtitle')}</p>

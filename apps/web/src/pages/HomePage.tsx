@@ -43,16 +43,18 @@ import {
   type CatalogCategoryId,
 } from '@/lib/catalog-categories';
 import { MIN_SEARCH_QUERY_LENGTH, loadSearchEntries, type SearchEntry } from '@/lib/content-search';
+import { useForcedContentLanguage } from '@/lib/forced-language';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
-import { db } from '@/lib/progress-db';
+import { db, type ProgressRecord } from '@/lib/progress-db';
+import { Seo } from '@/lib/seo';
 import { effectiveLanguage, prefetchTopic, useContentLanguage } from '@/lib/topics';
 import { tracks } from '@/lib/tracks';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
-import { useTrackAggregates } from '@/lib/use-tracks';
-import type { HomeDuration, HomeSortKey } from '@/router';
+import { useTrackAggregatesFromData } from '@/lib/use-tracks';
+import type { HomeDuration, HomeSearch, HomeSortKey } from '@/router';
 import topicStats from 'virtual:topic-stats';
 
 interface TopicRow {
@@ -191,8 +193,10 @@ export const HomePage = () => {
   const progressRecords = useLiveQuery(() => db.progress.toArray(), [], []);
   const readByTopic = useReadConceptsByTopic();
 
-  const search = useSearch({ from: '/' });
+  const search = useSearch({ strict: false }) as unknown as HomeSearch;
   const navigate = useNavigate();
+  const forcedLanguage = useForcedContentLanguage();
+  const { t: tSeo } = useTranslation('seo');
 
   const difficulty: DifficultyFilter = isDifficultyFilter(search.difficulty)
     ? search.difficulty
@@ -218,13 +222,13 @@ export const HomePage = () => {
   const patch = useCallback(
     (next: Partial<HomeSearchPatch>): void => {
       void navigate({
-        to: '/',
+        to: forcedLanguage === 'en' ? '/en' : '/',
         search: (prev) => ({ ...prev, ...next }),
         replace: true,
         resetScroll: false,
       });
     },
-    [navigate],
+    [navigate, forcedLanguage],
   );
 
   useEffect(() => {
@@ -449,15 +453,22 @@ export const HomePage = () => {
 
   return (
     <div className="space-y-14">
+      <Seo
+        title={tSeo('homeTitle')}
+        description={tSeo('homeDescription')}
+        canonicalPath={forcedLanguage === 'en' ? '/en' : '/'}
+        alternates={{ ru: '/', en: '/en' }}
+        lang={forcedLanguage ?? 'ru'}
+      />
       <Hero stats={{ topics: rows.length, concepts: totalConcepts, runtimes: runtimes.size }} />
 
-      <NextActionBanner />
+      <NextActionBanner progressRecords={progressRecords} readByTopic={readByTopic} />
 
       <ContinueCard rows={rows} />
 
       <TodayCard />
 
-      <TracksBand />
+      <TracksBand progressRecords={progressRecords} readByTopic={readByTopic} />
 
       <section className="space-y-5" id="topics">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -719,9 +730,15 @@ const TodayCard = () => {
   );
 };
 
-const TracksBand = () => {
+const TracksBand = ({
+  progressRecords,
+  readByTopic,
+}: {
+  progressRecords: ProgressRecord[];
+  readByTopic: Map<string, Set<string>>;
+}) => {
   const { t } = useTranslation('tracks');
-  const aggregates = useTrackAggregates();
+  const aggregates = useTrackAggregatesFromData(progressRecords, readByTopic);
   const visible = tracks.filter(
     (track) => (aggregates.get(track.id)?.presentSlugs.length ?? 0) > 0,
   );
@@ -1216,6 +1233,7 @@ const TopicCard = memo(function TopicCard({
   conceptMatches,
 }: TopicCardProps) {
   const { t } = useTranslation('home');
+  const forcedLanguage = useForcedContentLanguage();
   const { manifest, total, passed, readConcepts } = row;
   const totalConcepts = manifest.concepts.length;
   const m = computeMastery(readConcepts, totalConcepts, passed, total);
@@ -1225,7 +1243,11 @@ const TopicCard = memo(function TopicCard({
   const taglineKey = `card.tagline.${manifest.runtime}` as const;
   return (
     <Link
-      to="/topics/$slug"
+      to={
+        forcedLanguage === 'en' && availableLanguages.includes('en')
+          ? '/en/topics/$slug'
+          : '/topics/$slug'
+      }
       params={{ slug: manifest.slug }}
       className="group relative z-0 block h-full hover:z-20"
       onMouseEnter={() => prefetchTopic(manifest.slug)}

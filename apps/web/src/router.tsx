@@ -6,6 +6,7 @@ import {
   Route,
   Router,
   createBrowserHistory,
+  redirect,
   useRouterState,
 } from '@tanstack/react-router';
 
@@ -17,6 +18,7 @@ import {
   parseFlashcardsPracticeSearch,
   type FlashcardsPracticeSearch,
 } from '@dotlearn/lesson-engine';
+import { topicHasEn } from './lib/topics';
 import { HomePage } from './pages/HomePage';
 
 const TopicPage = lazy(() =>
@@ -107,6 +109,12 @@ const SearchPage = lazy(() =>
     default: module.SearchPage,
   })),
 );
+const EnLayout = lazy(() =>
+  import('./components/EnLayout').then((module) => ({ default: module.EnLayout })),
+);
+const NotFoundPage = lazy(() =>
+  import('./pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })),
+);
 
 const PageFallback = () => (
   <div className="space-y-6" aria-hidden>
@@ -137,7 +145,7 @@ const RouteFocusManager = ({
     const isInitialMount = previousPathname.current === null;
     previousPathname.current = pathname;
 
-    const isTopicRoute = pathname.startsWith('/topics/');
+    const isTopicRoute = pathname.startsWith('/topics/') || pathname.startsWith('/en/topics/');
     const restoringReadingPosition = isTopicRoute && hasReadingRestore(search);
 
     if (!restoringReadingPosition) {
@@ -229,22 +237,50 @@ export interface TopicSearch {
   resume?: boolean | undefined;
 }
 
+const validateTopicSearch = (search: Record<string, unknown>): TopicSearch => ({
+  concept:
+    typeof search.concept === 'string' && search.concept.length > 0 ? search.concept : undefined,
+  resume:
+    search.resume === '1' ||
+    search.resume === 1 ||
+    search.resume === true ||
+    search.resume === 'true'
+      ? true
+      : undefined,
+});
+
 const topicRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/topics/$slug',
   component: TopicPage,
-  validateSearch: (search: Record<string, unknown>): TopicSearch => ({
-    concept:
-      typeof search.concept === 'string' && search.concept.length > 0 ? search.concept : undefined,
-    resume:
-      search.resume === '1' ||
-      search.resume === 1 ||
-      search.resume === true ||
-      search.resume === 'true'
-        ? true
-        : undefined,
-  }),
+  validateSearch: validateTopicSearch,
 });
+
+const enLayoutRoute = new Route({
+  getParentRoute: () => rootRoute,
+  id: 'en-layout',
+  component: EnLayout,
+});
+
+const enHomeRoute = new Route({
+  getParentRoute: () => enLayoutRoute,
+  path: '/en',
+  component: HomePage,
+});
+
+const enTopicRoute = new Route({
+  getParentRoute: () => enLayoutRoute,
+  path: '/en/topics/$slug',
+  component: TopicPage,
+  validateSearch: validateTopicSearch,
+  beforeLoad: ({ params }) => {
+    if (!topicHasEn(params.slug)) {
+      throw redirect({ to: '/topics/$slug', params });
+    }
+  },
+});
+
+const enRouteTree = enLayoutRoute.addChildren([enHomeRoute, enTopicRoute]);
 
 const submitRoute = new Route({
   getParentRoute: () => rootRoute,
@@ -436,11 +472,13 @@ const routeTree = rootRoute.addChildren([
   searchRoute,
   tracksRoute,
   trackRoute,
+  enRouteTree,
 ]);
 
 export const router = new Router({
   routeTree,
   history: createBrowserHistory(),
+  defaultNotFoundComponent: NotFoundPage,
 });
 
 declare module '@tanstack/react-router' {

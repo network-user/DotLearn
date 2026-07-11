@@ -14,6 +14,7 @@ import {
 } from '@dotlearn/lesson-engine';
 
 import { listHiddenTopics } from './api-client';
+import { useForcedContentLanguage } from './forced-language';
 import i18n, { getCurrentLanguage } from './i18n';
 import { getSettings, useSettings } from './settings';
 import manifestRecord from 'virtual:topic-manifests';
@@ -61,6 +62,18 @@ export const topicTitleOf = (slug: string): string | undefined => {
   return typeof manifest?.title === 'string' ? manifest.title : undefined;
 };
 
+export const topicHasEn = (slug: string): boolean => {
+  const manifest = manifests[`/topics/${slug}/manifest.json`] as
+    | { availableLanguages?: unknown }
+    | undefined;
+  return Array.isArray(manifest?.availableLanguages)
+    ? manifest.availableLanguages.includes('en')
+    : false;
+};
+
+export const topicHref = (slug: string, lang: TopicLanguage): string =>
+  lang === 'en' && topicHasEn(slug) ? `/en/topics/${slug}` : `/topics/${slug}`;
+
 export const listTopicSlugs = async (): Promise<string[]> => {
   if (!cachedSlugs) {
     cachedSlugs = await source.list();
@@ -81,12 +94,14 @@ const subscribeToLocale = (listener: () => void): (() => void) => {
 };
 
 export const useContentLanguage = (): TopicLanguage => {
+  const forced = useForcedContentLanguage();
   const { contentLanguage } = useSettings();
   const locale = useSyncExternalStore<TopicLanguage>(
     subscribeToLocale,
     () => getCurrentLanguage(),
     () => 'ru',
   );
+  if (forced) return forced;
   return contentLanguage === 'follow-ui' ? locale : contentLanguage;
 };
 

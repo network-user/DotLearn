@@ -13,13 +13,14 @@ import { Surface } from '@/components/ui/Surface';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
-  interviewCategories,
-  interviewQuestions,
-  interviewStages,
+  getInterviewCategories,
+  getInterviewIndex,
+  getInterviewStages,
   localizedInterviewTitle,
   topicSlugsForCategory,
 } from '@/lib/interview';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
+import { Seo } from '@/lib/seo';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
 
@@ -96,6 +97,7 @@ const normalize = (value: string): string => value.toLowerCase().trim();
 
 export const InterviewListPage = () => {
   const { t } = useTranslation('interview');
+  const { t: tSeo } = useTranslation('seo');
   const studiedIds = useInterviewStudiedIds();
   const search = useSearch({ from: '/interview' });
   const navigate = useNavigate();
@@ -128,7 +130,6 @@ export const InterviewListPage = () => {
 
   useEffect(() => {
     setQueryInput(query);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   const setCategory = (value: string): void =>
@@ -147,7 +148,7 @@ export const InterviewListPage = () => {
     const title = (question: InterviewQuestionMeta): string =>
       localizedInterviewTitle(question, locale);
     const needle = normalize(query);
-    const filtered = interviewQuestions.filter((question) => {
+    const filtered = getInterviewIndex().filter((question) => {
       if (category !== 'all' && question.category !== category) return false;
       if (stage !== 'all' && question.stage !== stage) return false;
       if (status === 'studied' && !studiedIds.has(question.id)) return false;
@@ -181,7 +182,7 @@ export const InterviewListPage = () => {
 
   const readiness = useMemo<CategoryReadiness[]>(() => {
     const manifestBySlug = new Map(manifests.map((manifest) => [manifest.slug, manifest]));
-    return interviewCategories.map((info) => {
+    return getInterviewCategories().map((info) => {
       let read = 0;
       let total = 0;
       for (const slug of topicSlugsForCategory(info.slug)) {
@@ -198,7 +199,7 @@ export const InterviewListPage = () => {
   }, [manifests, readByTopic]);
 
   const goRandom = (): void => {
-    const pool = visible.length > 0 ? visible : interviewQuestions;
+    const pool = visible.length > 0 ? visible : getInterviewIndex();
     const pick = pool[Math.floor(Math.random() * pool.length)];
     if (pick) {
       void navigate({ to: '/interview/$id', params: { id: String(pick.id) } });
@@ -207,6 +208,11 @@ export const InterviewListPage = () => {
 
   return (
     <div className="space-y-6">
+      <Seo
+        title={t('title')}
+        description={tSeo('interviewDescription')}
+        canonicalPath="/interview"
+      />
       <header className="border-y border-border-base py-6 sm:py-8">
         <div className="eyebrow eyebrow-accent mb-3">{t('eyebrow')}</div>
         <h1 className="font-display font-medium text-[clamp(30px,5vw,48px)] leading-[1.1] tracking-tightish text-balance">
@@ -214,9 +220,9 @@ export const InterviewListPage = () => {
         </h1>
         <p className="mt-3 max-w-prose text-fg-muted leading-relaxed">{t('subtitle')}</p>
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 eyebrow text-fg-subtle">
-          <span>{t('totalQuestions', { count: interviewQuestions.length })}</span>
+          <span>{t('totalQuestions', { count: getInterviewIndex().length })}</span>
           <span aria-hidden>·</span>
-          <span>{t('categoriesCount', { count: interviewCategories.length })}</span>
+          <span>{t('categoriesCount', { count: getInterviewCategories().length })}</span>
           {studiedCount > 0 && (
             <>
               <span aria-hidden>·</span>
@@ -273,7 +279,7 @@ export const InterviewListPage = () => {
                 className="form-input"
               >
                 <option value="all">{t('allTopics')}</option>
-                {interviewCategories.map((item) => (
+                {getInterviewCategories().map((item) => (
                   <option key={item.slug} value={item.slug}>
                     {item.label} ({item.count})
                   </option>
@@ -287,7 +293,7 @@ export const InterviewListPage = () => {
                 className="form-input"
               >
                 <option value="all">{t('allStages')}</option>
-                {interviewStages.map((item) => (
+                {getInterviewStages().map((item) => (
                   <option key={item.slug} value={item.slug}>
                     {item.label} ({item.count})
                   </option>

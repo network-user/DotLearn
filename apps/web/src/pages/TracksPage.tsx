@@ -4,15 +4,18 @@ import { useTranslation } from 'react-i18next';
 
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { Surface } from '@/components/ui/Surface';
+import { Seo } from '@/lib/seo';
 import { tracks, type Track } from '@/lib/tracks';
 import { useTrackAggregates, type TrackAggregate } from '@/lib/use-tracks';
 
 export const TracksPage = () => {
   const { t } = useTranslation('tracks');
+  const { t: tSeo } = useTranslation('seo');
   const aggregates = useTrackAggregates();
 
   return (
     <div className="space-y-8">
+      <Seo title={t('title')} description={tSeo('tracksDescription')} canonicalPath="/tracks" />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <RouteIcon size={12} className="text-accent" />

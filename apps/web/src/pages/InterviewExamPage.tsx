@@ -22,10 +22,10 @@ import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
 import {
+  getInterviewDifficulties,
+  getInterviewExerciseTypes,
+  getInterviewExercisesIndex,
   getInterviewQuestion,
-  interviewExercises,
-  interviewExerciseTypes,
-  interviewDifficulties,
   loadExerciseById,
   localizedInterviewTitle,
   relatedTopicsForQuestion,
@@ -38,6 +38,7 @@ import {
   type ExamResultRecord,
   type ExamScoreBucket,
 } from '@/lib/progress-db';
+import { Seo } from '@/lib/seo';
 import { topicTitleOf } from '@/lib/topics';
 import { useExamResults, useInterviewStudiedIds } from '@/lib/use-interview';
 
@@ -53,7 +54,7 @@ const buildFacet = (
   pick: (meta: InterviewExerciseMeta) => { slug: string; label: string },
 ): Facet[] => {
   const map = new Map<string, Facet>();
-  for (const meta of interviewExercises) {
+  for (const meta of getInterviewExercisesIndex()) {
     const { slug, label } = pick(meta);
     const existing = map.get(slug);
     if (existing) existing.count += 1;
@@ -103,7 +104,7 @@ export const InterviewExamPage = () => {
 
   const matching = useMemo(
     () =>
-      interviewExercises.filter((meta) => {
+      getInterviewExercisesIndex().filter((meta) => {
         if (category !== 'all' && meta.category !== category) return false;
         if (stage !== 'all' && meta.stage !== stage) return false;
         if (difficulty !== 'all' && String(meta.difficulty) !== difficulty) return false;
@@ -138,6 +139,7 @@ export const InterviewExamPage = () => {
 
   return (
     <div className="space-y-6">
+      <Seo robots="noindex,nofollow" title={t('exam.title')} />
       <header className="border-y border-border-base py-6 sm:py-8">
         <div className="eyebrow eyebrow-accent mb-3 flex items-center gap-2">
           <GraduationCap size={13} />
@@ -178,7 +180,7 @@ export const InterviewExamPage = () => {
           <ExamField label={t('exam.filterType')}>
             <select value={type} onChange={(e) => setType(e.target.value)} className="form-input">
               <option value="all">{t('exam.allTypes')}</option>
-              {interviewExerciseTypes.map((value) => (
+              {getInterviewExerciseTypes().map((value) => (
                 <option key={value} value={value}>
                   {t(`exam.types.${value}`, { defaultValue: value })}
                 </option>
@@ -192,7 +194,7 @@ export const InterviewExamPage = () => {
               className="form-input"
             >
               <option value="all">{t('exam.allDifficulties')}</option>
-              {interviewDifficulties.map((value) => (
+              {getInterviewDifficulties().map((value) => (
                 <option key={value} value={String(value)}>
                   {t('exam.difficulty', { level: value })}
                 </option>

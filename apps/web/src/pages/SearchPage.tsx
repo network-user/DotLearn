@@ -17,6 +17,7 @@ import {
   type SearchEntry,
   type SearchSnippet,
 } from '@/lib/content-search';
+import { Seo } from '@/lib/seo';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useVisibleManifests } from '@/lib/use-manifests';
 
@@ -94,7 +95,7 @@ export const SearchPage = () => {
       if (!cancelled) setEntries(loaded);
     });
     void import('@/lib/interview').then((module) => {
-      if (!cancelled) setInterview(module.interviewQuestions);
+      if (!cancelled) setInterview(module.getInterviewIndex());
     });
     return () => {
       cancelled = true;
@@ -248,6 +249,7 @@ export const SearchPage = () => {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
+      <Seo robots="noindex,nofollow" title={t('title')} />
       <header>
         <h1 className="text-3xl font-semibold tracking-tight">{t('title')}</h1>
         <p className="mt-2 text-sm text-fg-muted">{t('subtitle')}</p>

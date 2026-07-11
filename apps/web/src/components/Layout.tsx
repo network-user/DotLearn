@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode } from 'react';
 
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import { ChevronDown, Keyboard, Search, Settings } from 'lucide-react';
@@ -8,7 +8,7 @@ import { cx } from '@/components/ui/cx';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { openCommandPalette } from '@/lib/command-palette';
 import { isNavPathActive } from '@/lib/navigation';
-import { navItems, primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
+import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
 import { adminPath } from '@/router';
 
 import { AddTopicButton } from './AddTopicButton';
@@ -46,7 +46,7 @@ const NavLink = ({ to, active, label }: NavLinkProps) => (
 const githubUrl: string = import.meta.env.VITE_GITHUB_URL ?? '';
 
 export const Layout = ({ children }: LayoutProps) => {
-  const { t, i18n } = useTranslation('nav');
+  const { t } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const navigate = useNavigate();
@@ -65,15 +65,6 @@ export const Layout = ({ children }: LayoutProps) => {
 
   const overflowItems = secondaryNavItems.filter((item) => item.to !== '/settings');
   const overflowActive = overflowItems.some((item) => isActive(item.to));
-
-  useEffect(() => {
-    if (pathname.startsWith(adminPath)) {
-      document.title = `.learn · ${t('admin')}`;
-      return;
-    }
-    const activeItem = navItems.find((item) => isNavPathActive(pathname, item.to));
-    document.title = activeItem ? `.learn · ${t(activeItem.labelKey)}` : '.learn';
-  }, [pathname, t, i18n.language]);
 
   return (
     <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
