@@ -18,12 +18,27 @@ const indexModules = import.meta.glob<{ default: unknown }>('../../../../intervi
 
 const rawIndex = Object.values(indexModules)[0]?.default ?? [];
 
-export const interviewQuestions: InterviewQuestionMeta[] = parseInterviewIndex(rawIndex);
+let interviewIndexCache: InterviewQuestionMeta[] | undefined;
 
-const byId = new Map<number, InterviewQuestionMeta>();
-for (const question of interviewQuestions) {
-  byId.set(question.id, question);
-}
+export const getInterviewIndex = (): InterviewQuestionMeta[] => {
+  if (!interviewIndexCache) {
+    interviewIndexCache = parseInterviewIndex(rawIndex);
+  }
+  return interviewIndexCache;
+};
+
+let interviewByIdCache: Map<number, InterviewQuestionMeta> | undefined;
+
+const getInterviewByIdMap = (): Map<number, InterviewQuestionMeta> => {
+  if (!interviewByIdCache) {
+    const map = new Map<number, InterviewQuestionMeta>();
+    for (const question of getInterviewIndex()) {
+      map.set(question.id, question);
+    }
+    interviewByIdCache = map;
+  }
+  return interviewByIdCache;
+};
 
 export interface CategoryInfo {
   slug: InterviewCategory;
@@ -41,7 +56,7 @@ const buildFacets = <T extends string>(
   pick: (q: InterviewQuestionMeta) => { slug: T; label: string },
 ): { slug: T; label: string; count: number }[] => {
   const map = new Map<T, { slug: T; label: string; count: number }>();
-  for (const question of interviewQuestions) {
+  for (const question of getInterviewIndex()) {
     const { slug, label } = pick(question);
     const existing = map.get(slug);
     if (existing) {
@@ -53,21 +68,37 @@ const buildFacets = <T extends string>(
   return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, 'ru'));
 };
 
-export const interviewCategories: CategoryInfo[] = buildFacets((q) => ({
-  slug: q.category,
-  label: q.categoryLabel,
-}));
+let interviewCategoriesCache: CategoryInfo[] | undefined;
+
+export const getInterviewCategories = (): CategoryInfo[] => {
+  if (!interviewCategoriesCache) {
+    interviewCategoriesCache = buildFacets((q) => ({
+      slug: q.category,
+      label: q.categoryLabel,
+    }));
+  }
+  return interviewCategoriesCache;
+};
 
 const STAGE_ORDER: InterviewStage[] = ['hr', 'tech', 'system-design'];
 
-export const interviewStages: StageInfo[] = buildFacets((q) => ({
-  slug: q.stage,
-  label: q.stageLabel,
-})).sort((a, b) => STAGE_ORDER.indexOf(a.slug) - STAGE_ORDER.indexOf(b.slug));
+let interviewStagesCache: StageInfo[] | undefined;
 
-export const getInterviewQuestion = (id: number): InterviewQuestionMeta | undefined => byId.get(id);
+export const getInterviewStages = (): StageInfo[] => {
+  if (!interviewStagesCache) {
+    interviewStagesCache = buildFacets((q) => ({
+      slug: q.stage,
+      label: q.stageLabel,
+    })).sort((a, b) => STAGE_ORDER.indexOf(a.slug) - STAGE_ORDER.indexOf(b.slug));
+  }
+  return interviewStagesCache;
+};
 
-export const interviewTitleOf = (id: number): string | undefined => byId.get(id)?.title;
+export const getInterviewQuestion = (id: number): InterviewQuestionMeta | undefined =>
+  getInterviewByIdMap().get(id);
+
+export const interviewTitleOf = (id: number): string | undefined =>
+  getInterviewByIdMap().get(id)?.title;
 
 const STOP_WORDS = new Set([
   'и',
@@ -114,7 +145,7 @@ export const relatedInterviewQuestions = (
   limit = 6,
 ): InterviewQuestionMeta[] => {
   const keywords = titleKeywords(question.title);
-  const candidates = interviewQuestions.filter(
+  const candidates = getInterviewIndex().filter(
     (other) => other.category === question.category && other.id !== question.id,
   );
   const scored = candidates.map((other) => {
@@ -215,8 +246,14 @@ const exerciseIndexModules = import.meta.glob<{ default: unknown }>(
 
 const rawExerciseIndex = Object.values(exerciseIndexModules)[0]?.default ?? [];
 
-export const interviewExercises: InterviewExerciseMeta[] =
-  parseInterviewExercisesIndex(rawExerciseIndex);
+let interviewExercisesCache: InterviewExerciseMeta[] | undefined;
+
+export const getInterviewExercisesIndex = (): InterviewExerciseMeta[] => {
+  if (!interviewExercisesCache) {
+    interviewExercisesCache = parseInterviewExercisesIndex(rawExerciseIndex);
+  }
+  return interviewExercisesCache;
+};
 
 const exerciseFileImporters = import.meta.glob<{ default: unknown }>(
   '../../../../interview/*/*.exercises.json',
@@ -259,10 +296,24 @@ export const loadExerciseById = async (
   return list.find((exercise) => exercise.id === meta.exerciseId);
 };
 
-export const interviewExerciseTypes: string[] = [
-  ...new Set(interviewExercises.map((meta) => meta.type)),
-].sort();
+let interviewExerciseTypesCache: string[] | undefined;
 
-export const interviewDifficulties: number[] = [
-  ...new Set(interviewExercises.map((meta) => meta.difficulty)),
-].sort((a, b) => a - b);
+export const getInterviewExerciseTypes = (): string[] => {
+  if (!interviewExerciseTypesCache) {
+    interviewExerciseTypesCache = [
+      ...new Set(getInterviewExercisesIndex().map((meta) => meta.type)),
+    ].sort();
+  }
+  return interviewExerciseTypesCache;
+};
+
+let interviewDifficultiesCache: number[] | undefined;
+
+export const getInterviewDifficulties = (): number[] => {
+  if (!interviewDifficultiesCache) {
+    interviewDifficultiesCache = [
+      ...new Set(getInterviewExercisesIndex().map((meta) => meta.difficulty)),
+    ].sort((a, b) => a - b);
+  }
+  return interviewDifficultiesCache;
+};

@@ -98,7 +98,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     setQuery('');
     let cancelled = false;
     void import('@/lib/interview').then((module) => {
-      if (!cancelled) setInterview(module.interviewQuestions);
+      if (!cancelled) setInterview(module.getInterviewIndex());
     });
     void loadSearchEntries(searchLanguage).then((entries) => {
       if (!cancelled) setSearchEntries(entries);
