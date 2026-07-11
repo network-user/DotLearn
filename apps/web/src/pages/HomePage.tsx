@@ -28,7 +28,6 @@ import {
   X,
 } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
-import type { SearchEntry } from 'virtual:search-index';
 
 import { NextActionBanner } from '@/components/NextActionCard';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
@@ -43,6 +42,7 @@ import {
   groupByCatalogCategory,
   type CatalogCategoryId,
 } from '@/lib/catalog-categories';
+import { MIN_SEARCH_QUERY_LENGTH, loadSearchEntries, type SearchEntry } from '@/lib/content-search';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
@@ -166,15 +166,8 @@ const useContentSearchIndex = (enabled: boolean, language: 'en' | 'ru'): SearchE
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const loadIndex =
-      language === 'en' ? import('virtual:search-index/en') : import('virtual:search-index/ru');
-    void loadIndex.then((module) => {
-      if (cancelled) return;
-      try {
-        setEntries(JSON.parse(module.default) as SearchEntry[]);
-      } catch {
-        setEntries([]);
-      }
+    void loadSearchEntries(language).then((loaded) => {
+      if (!cancelled) setEntries(loaded);
     });
     return () => {
       cancelled = true;
@@ -215,10 +208,12 @@ export const HomePage = () => {
 
   const trimmedQuery = debouncedQuery.trim();
   const hasQuery = trimmedQuery.length > 0;
+  const searchIndexReady = trimmedQuery.length >= MIN_SEARCH_QUERY_LENGTH;
   const sort: HomeSortKey = search.sort ?? (hasQuery ? 'relevance' : 'difficulty');
 
   const language = useContentLanguage();
-  const contentEntries = useContentSearchIndex(hasQuery, effectiveSearchLanguage(language));
+  const searchLanguage = effectiveSearchLanguage(language);
+  const contentEntries = useContentSearchIndex(searchIndexReady, searchLanguage);
 
   const patch = useCallback(
     (next: Partial<HomeSearchPatch>): void => {
@@ -481,6 +476,7 @@ export const HomePage = () => {
         <CatalogToolbar
           queryInput={queryInput}
           onQueryChange={setQueryInput}
+          onQueryFocus={() => void loadSearchEntries(searchLanguage)}
           status={status}
           onStatusChange={(value) => patch({ status: value === 'all' ? undefined : value })}
           availableRuntimes={availableRuntimes}
@@ -936,6 +932,7 @@ const FilterBar = ({
 interface CatalogToolbarProps {
   queryInput: string;
   onQueryChange: (value: string) => void;
+  onQueryFocus: () => void;
   status: StatusFilter;
   onStatusChange: (value: StatusFilter) => void;
   availableRuntimes: string[];
@@ -956,6 +953,7 @@ interface CatalogToolbarProps {
 const CatalogToolbar = ({
   queryInput,
   onQueryChange,
+  onQueryFocus,
   status,
   onStatusChange,
   availableRuntimes,
@@ -1043,6 +1041,7 @@ const CatalogToolbar = ({
               type="search"
               value={queryInput}
               onChange={(event) => onQueryChange(event.target.value)}
+              onFocus={onQueryFocus}
               placeholder={t('searchPlaceholder')}
               aria-label={t('searchPlaceholder')}
               className="form-input pl-10"

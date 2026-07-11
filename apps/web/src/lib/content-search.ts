@@ -10,16 +10,29 @@ export const SNIPPET_RADIUS = 60;
 export const searchLanguageOf = (resolvedLanguage: string | undefined): SearchLanguage =>
   resolvedLanguage === 'en' ? 'en' : 'ru';
 
+const searchEntriesCache = new Map<SearchLanguage, Promise<SearchEntry[]>>();
+
 export const loadSearchEntries = async (language: SearchLanguage): Promise<SearchEntry[]> => {
-  const module =
-    language === 'en'
-      ? await import('virtual:search-index/en')
-      : await import('virtual:search-index/ru');
-  try {
-    return JSON.parse(module.default) as SearchEntry[];
-  } catch {
-    return [];
-  }
+  const cached = searchEntriesCache.get(language);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    const module =
+      language === 'en'
+        ? await import('virtual:search-index/en')
+        : await import('virtual:search-index/ru');
+    try {
+      return JSON.parse(module.default) as SearchEntry[];
+    } catch {
+      return [];
+    }
+  })();
+
+  searchEntriesCache.set(language, promise);
+  promise.catch(() => {
+    searchEntriesCache.delete(language);
+  });
+  return promise;
 };
 
 export interface SearchSnippet {
