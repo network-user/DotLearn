@@ -22,10 +22,10 @@ interface TrackerProps {
 }
 
 export const ReadingPositionTracker = ({ slug, conceptId }: TrackerProps) => {
-  const lastRef = useRef<CapturedPosition>({ kind: 'none' });
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
-    lastRef.current = { kind: 'none' };
+    dirtyRef.current = false;
     let timer: number | undefined;
 
     const persist = (pos: CapturedPosition): void => {
@@ -40,18 +40,23 @@ export const ReadingPositionTracker = ({ slug, conceptId }: TrackerProps) => {
       }
     };
 
-    const onScroll = (): void => {
-      if (isSavingSuppressed()) return;
+    const computeAndPersist = (): void => {
+      dirtyRef.current = false;
       const pos = computePosition();
       if (pos.kind === 'none') return;
-      lastRef.current = pos;
+      persist(pos);
+    };
+
+    const onScroll = (): void => {
+      if (isSavingSuppressed()) return;
+      dirtyRef.current = true;
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => persist(pos), SAVE_DEBOUNCE);
+      timer = window.setTimeout(computeAndPersist, SAVE_DEBOUNCE);
     };
 
     const flush = (): void => {
       if (timer) window.clearTimeout(timer);
-      persist(lastRef.current);
+      if (dirtyRef.current && !isSavingSuppressed()) computeAndPersist();
     };
 
     const onVisibility = (): void => {
