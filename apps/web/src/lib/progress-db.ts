@@ -7,6 +7,8 @@ import {
   type ReExamState,
 } from '@dotlearn/lesson-engine';
 
+import { base64ByteLength } from './sync/codec';
+
 export type { ConfidenceLevel };
 
 export type ProgressStatus = 'pass' | 'fail';
@@ -200,6 +202,20 @@ export interface ReExamScheduleRecord {
   updatedAt: string;
 }
 
+// Local backups of the full progress snapshot, taken before cross-device sync applies a merged
+// snapshot that would change records (see apps/web/src/lib/sync/). `payload` is base64(gzip) of a
+// ProgressExport, produced by the sync engine via codec.ts.
+export type SyncBackupReason = 'link' | 'pre-apply' | 'manual';
+
+export interface SyncBackupRecord {
+  id?: number;
+  createdAt: number;
+  reason: SyncBackupReason;
+  hash: string;
+  sizeBytes: number;
+  payload: string;
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -219,6 +235,7 @@ class ProgressDb extends Dexie {
   userCards!: Table<UserCardRecord, string>;
   playgroundSnippets!: Table<PlaygroundSnippetRecord, string>;
   reExamSchedule!: Table<ReExamScheduleRecord, string>;
+  syncBackups!: Table<SyncBackupRecord, number>;
 
   constructor() {
     super('dotlearn-progress');
@@ -401,6 +418,15 @@ class ProgressDb extends Dexie {
     // Confidence calibration + spaced re-exam scheduling data.
     this.version(15).stores({
       reExamSchedule: 'id, topicSlug, conceptId, due, [topicSlug+conceptId]',
+    });
+    // Index conceptNotes by updatedAt so the Library page can list notes newest-first
+    // (db.conceptNotes.orderBy('updatedAt') threw "KeyPath updatedAt ... is not indexed").
+    this.version(16).stores({
+      conceptNotes: 'id, topicSlug, updatedAt',
+    });
+    // Cross-device sync: local pre-apply/manual backups of the full progress snapshot.
+    this.version(17).stores({
+      syncBackups: '++id, createdAt',
     });
   }
 }
@@ -913,3 +939,44 @@ export const deleteUserCard = async (id: string): Promise<void> => {
     await db.flashcardReviews.delete(`${USER_CARDS_DECK_SLUG}:${id}`);
   });
 };
+
+// --- Cross-device sync backups ---
+//
+// Local safety net taken before the sync engine applies a merged remote snapshot: link-time and
+// pre-apply snapshots let a user recover if a merge ever looks wrong. Keep only the newest few;
+// dedup by hash so an idle device pushing/pulling identical state doesn't pile up duplicates.
+const SYNC_BACKUP_KEEP = 3;
+
+export const saveSyncBackup = async (
+  reason: SyncBackupReason,
+  hash: string,
+  payload: string,
+): Promise<void> => {
+  await db.transaction('rw', db.syncBackups, async () => {
+    const newest = await db.syncBackups.orderBy('createdAt').last();
+    if (newest?.hash === hash) return;
+
+    await db.syncBackups.add({
+      createdAt: Date.now(),
+      reason,
+      hash,
+      sizeBytes: base64ByteLength(payload),
+      payload,
+    });
+
+    const count = await db.syncBackups.count();
+    if (count > SYNC_BACKUP_KEEP) {
+      const stale = await db.syncBackups
+        .orderBy('createdAt')
+        .limit(count - SYNC_BACKUP_KEEP)
+        .primaryKeys();
+      if (stale.length > 0) await db.syncBackups.bulkDelete(stale);
+    }
+  });
+};
+
+export const listSyncBackups = async (): Promise<SyncBackupRecord[]> =>
+  db.syncBackups.orderBy('createdAt').reverse().toArray();
+
+export const getSyncBackup = async (id: number): Promise<SyncBackupRecord | undefined> =>
+  db.syncBackups.get(id);

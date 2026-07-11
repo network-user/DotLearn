@@ -362,10 +362,19 @@ const todayRoute = new Route({
   component: TodayPage,
 });
 
+export interface SettingsSearch {
+  // Deep-link linking: /settings?sync=<code> (raw, possibly formatted/lowercase). SyncPanel
+  // strips this from the URL as soon as it reads it and opens a confirm dialog.
+  sync?: string | undefined;
+}
+
 const settingsRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/settings',
   component: SettingsPage,
+  validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
+    sync: typeof search.sync === 'string' && search.sync.length > 0 ? search.sync : undefined,
+  }),
 });
 
 const libraryRoute = new Route({

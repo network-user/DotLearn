@@ -79,6 +79,11 @@ const registerServiceWorker = (): void => {
 
 registerServiceWorker();
 
+// Cross-device sync: no-op unless a code is already linked. Dynamic import keeps the engine (and
+// its merge/codec dependencies) out of the eager entry chunk; fire-and-forget so it never delays
+// first paint, and a failed chunk load is swallowed like the other boot helpers.
+void import('./lib/sync/engine').then((engine) => engine.startSyncEngine()).catch(() => {});
+
 // A redeploy rotates hashed chunk names; a client on a stale index.html then 404s
 // on `import()`. Vite fires `vite:preloadError` — recover by dropping the stale
 // service worker/caches and reloading once so the fresh bundle loads.

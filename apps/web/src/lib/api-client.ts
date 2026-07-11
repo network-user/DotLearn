@@ -8,6 +8,11 @@ import type {
   SubmissionPublic,
   SubmissionStatus,
   SubmissionSuggestion,
+  SyncCreateOutput,
+  SyncDeleteOutput,
+  SyncLinkOutput,
+  SyncPullOutput,
+  SyncPushOutput,
 } from '@dotlearn/contracts';
 
 import { refresh as refreshTokens } from './auth/auth-api';
@@ -19,6 +24,7 @@ class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -40,7 +46,11 @@ interface SuccessEnvelope<T> {
 
 interface ErrorEnvelope {
   ok: false;
-  error?: { message?: string | { message?: string; action?: string }; action?: string };
+  error?: {
+    message?: string | { message?: string; action?: string };
+    action?: string;
+    details?: unknown;
+  };
 }
 
 const isStepUpEnvelope = (
@@ -86,12 +96,13 @@ const unwrap = async <T>(response: Response): Promise<T> => {
         throw new StepUpRequiredError(action);
       }
     }
-    const errorMessage =
-      typeof parsed === 'object' && parsed !== null && 'error' in parsed
-        ? (extractErrorMessage((parsed as ErrorEnvelope).error) ??
-          `${response.status} ${response.statusText}`)
-        : `${response.status} ${response.statusText}`;
-    throw new ApiError(response.status, errorMessage);
+    const isErrorEnvelope = typeof parsed === 'object' && parsed !== null && 'error' in parsed;
+    const errorMessage = isErrorEnvelope
+      ? (extractErrorMessage((parsed as ErrorEnvelope).error) ??
+        `${response.status} ${response.statusText}`)
+      : `${response.status} ${response.statusText}`;
+    const details = isErrorEnvelope ? (parsed as ErrorEnvelope).error?.details : undefined;
+    throw new ApiError(response.status, errorMessage, details);
   }
   if (
     typeof parsed === 'object' &&
@@ -271,5 +282,51 @@ export const sendPresenceBeat = (id: string): Promise<PresenceBeatResult> =>
 
 export const fetchPresenceStats = (): Promise<PresenceStats> =>
   request<PresenceStats>('/api/presence/stats', { auth: false });
+
+// --- Cross-device sync (anonymous code, public endpoints) ---
+//
+// The sync code is the bearer secret for a device group; it always travels in the POST body
+// (never the URL, so it can't leak into access logs) and these calls carry no auth token.
+
+export const createSyncCode = (): Promise<SyncCreateOutput> =>
+  request<SyncCreateOutput>('/api/sync/create', {
+    method: 'POST',
+    body: JSON.stringify({}),
+    auth: false,
+  });
+
+export const linkSyncCode = (code: string): Promise<SyncLinkOutput> =>
+  request<SyncLinkOutput>('/api/sync/link', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+    auth: false,
+  });
+
+export const pullSync = (code: string, sinceRev?: number): Promise<SyncPullOutput> =>
+  request<SyncPullOutput>('/api/sync/pull', {
+    method: 'POST',
+    body: JSON.stringify(sinceRev === undefined ? { code } : { code, sinceRev }),
+    auth: false,
+  });
+
+export const pushSync = (
+  code: string,
+  baseRev: number,
+  blob: string,
+  opts?: { keepalive?: boolean },
+): Promise<SyncPushOutput> =>
+  request<SyncPushOutput>('/api/sync/push', {
+    method: 'POST',
+    body: JSON.stringify({ code, baseRev, blob }),
+    auth: false,
+    ...(opts?.keepalive ? { keepalive: true } : {}),
+  });
+
+export const deleteSyncCode = (code: string): Promise<SyncDeleteOutput> =>
+  request<SyncDeleteOutput>('/api/sync/delete', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+    auth: false,
+  });
 
 export { ApiError };

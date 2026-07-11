@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import { json, urlencoded } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { Logger } from 'nestjs-pino';
 
@@ -12,6 +13,13 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 
 const DEFAULT_PORT = 3000;
 const isProduction = process.env.NODE_ENV === 'production';
+
+const DEFAULT_SYNC_BODY_LIMIT_BYTES = 2_097_152;
+
+const parseSyncBodyLimitBytes = (): number => {
+  const parsed = Number.parseInt(process.env.SYNC_BODY_LIMIT_BYTES ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SYNC_BODY_LIMIT_BYTES;
+};
 
 const securityHeaders = (_request: Request, response: Response, next: NextFunction): void => {
   response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -35,7 +43,10 @@ const parseAllowedOrigins = (): string[] => {
 };
 
 const bootstrap = async (): Promise<void> => {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    bodyParser: false,
+  });
   const logger = app.get(Logger);
   app.useLogger(logger);
 
@@ -55,6 +66,13 @@ const bootstrap = async (): Promise<void> => {
 
   app.setGlobalPrefix('api');
   app.use(cookieParser());
+  // Blobs carry a base64-inflated gzip snapshot, so /api/sync gets a higher body
+  // cap than the rest of the (JSON-only) API. The second, global json() parser
+  // skips bodies express.json() already parsed, so this only widens the limit
+  // for the one route that needs it.
+  app.use('/api/sync', json({ limit: parseSyncBodyLimitBytes() }));
+  app.use(json({ limit: '100kb' }));
+  app.use(urlencoded({ extended: true, limit: '100kb' }));
   app.use(securityHeaders);
   app.enableCors({
     origin: parseAllowedOrigins(),

@@ -22,6 +22,22 @@ describe('runFillInBlanks', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts an answer that differs from accept only in quotes or spacing', () => {
+    expect(
+      runFillInBlanks(exercise({ 1: { accept: ["['a', 'b']"] } }), { 1: "['a','b']" }).ok,
+    ).toBe(true);
+    expect(runFillInBlanks(exercise({ 1: { accept: ['{"k": 1}'] } }), { 1: "{'k':1}" }).ok).toBe(
+      true,
+    );
+  });
+
+  it('still rejects an answer that differs in more than quotes or spacing', () => {
+    const result = runFillInBlanks(exercise({ 1: { accept: ["['a', 'b']"] } }), { 1: "['a','c']" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.code).toBe('blanks-incorrect');
+  });
+
   it('passes when a blank matches accept_regex', () => {
     expect(runFillInBlanks(exercise({ 1: { accept_regex: '^[0-9]+$' } }), { 1: '42' }).ok).toBe(
       true,

@@ -4,5 +4,6 @@ export * from './flashcard.schema';
 export * from './interview.schema';
 export * from './submission.schema';
 export * from './presence.schema';
+export * from './sync.schema';
 export * from './admin-topics.schema';
 export * from './errors';

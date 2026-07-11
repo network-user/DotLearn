@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Loader2, Play, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +8,7 @@ import { LineChart } from '@/components/article/charts/LineChart';
 import { cx } from '@/components/ui/cx';
 import { formatReplValue } from '@/lib/python-repl';
 import { getPythonRuntime, prewarmPythonRuntime } from '@/lib/python-runtime';
+import { highlightStatic } from '@/lib/shiki';
 
 import { PythonConsole, type ConsoleLine } from './PythonConsole';
 
@@ -66,6 +67,41 @@ export const PyDemo = ({ code, title, call, autoRun = false, chart }: PyDemoProp
   ]);
   const [session, setSession] = useState(0);
   const [autoRunDone, setAutoRunDone] = useState(false);
+  const [highlight, setHighlight] = useState<{ code: string; html: string } | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const overlayRef = useRef<HTMLPreElement | null>(null);
+
+  // Debounced Shiki highlight for the editable source. Only swap the
+  // textarea's text to transparent (revealing the overlay) once the
+  // highlight is up to date with `source` — otherwise the plain, always-
+  // in-sync textarea text stays visible so nothing ever misaligns while typing.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void highlightStatic(source, 'python').then((html) => {
+        if (!cancelled) setHighlight({ code: source, html });
+      });
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [source]);
+
+  const highlightReady = highlight !== null && highlight.code === source;
+
+  const syncOverlayScroll = useCallback(() => {
+    const overlay = overlayRef.current;
+    const textarea = textareaRef.current;
+    if (overlay !== null && textarea !== null) {
+      overlay.scrollTop = textarea.scrollTop;
+      overlay.scrollLeft = textarea.scrollLeft;
+    }
+  }, []);
+
+  useEffect(() => {
+    syncOverlayScroll();
+  }, [highlightReady, syncOverlayScroll]);
 
   const run = useCallback(async () => {
     setStatus('loading');
@@ -177,14 +213,30 @@ export const PyDemo = ({ code, title, call, autoRun = false, chart }: PyDemoProp
           </button>
         </div>
       </header>
-      <textarea
-        value={source}
-        onChange={(event) => setSource(event.target.value)}
-        spellCheck={false}
-        aria-label={title ?? 'Python'}
-        className="block w-full bg-code-bg text-fg font-mono text-[16px] sm:text-[12.5px] leading-relaxed px-3.5 py-2.5 outline-none resize-y min-h-[80px]"
-        rows={Math.max(3, Math.min(12, initialCode.split('\n').length + 1))}
-      />
+      <div className="relative bg-code-bg">
+        {highlightReady && (
+          <pre
+            ref={overlayRef}
+            aria-hidden
+            className="shiki pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words bg-transparent px-3.5 py-2.5 font-mono text-[16px] leading-relaxed sm:text-[12.5px]"
+          >
+            <code dangerouslySetInnerHTML={{ __html: highlight!.html }} />
+          </pre>
+        )}
+        <textarea
+          ref={textareaRef}
+          value={source}
+          onChange={(event) => setSource(event.target.value)}
+          onScroll={syncOverlayScroll}
+          spellCheck={false}
+          aria-label={title ?? 'Python'}
+          className={cx(
+            'relative block w-full bg-transparent font-mono text-[16px] sm:text-[12.5px] leading-relaxed px-3.5 py-2.5 outline-none resize-y min-h-[80px] caret-fg',
+            highlightReady ? 'text-transparent' : 'text-fg',
+          )}
+          rows={Math.max(3, Math.min(12, initialCode.split('\n').length + 1))}
+        />
+      </div>
       {status === 'loading' && (
         <div className="px-3.5 py-1.5 border-t border-border-base/60 text-[11px] text-fg-subtle flex items-center gap-1.5">
           <Loader2 size={11} className="animate-spin" />

@@ -6,6 +6,7 @@ import { HealthModule } from './modules/health/health.module';
 import { HiddenTopicsModule } from './modules/hidden-topics/hidden-topics.module';
 import { PresenceModule } from './modules/presence/presence.module';
 import { SubmissionsModule } from './modules/submissions/submissions.module';
+import { SyncModule } from './modules/sync/sync.module';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -30,6 +31,7 @@ const isProduction = process.env.NODE_ENV === 'production';
     SubmissionsModule,
     HiddenTopicsModule,
     PresenceModule,
+    SyncModule,
   ],
 })
 export class AppModule {}

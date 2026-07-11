@@ -53,7 +53,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (exception instanceof ZodError) {
       return HttpStatus.BAD_REQUEST;
     }
+    const rawStatus = this.rawHttpStatus(exception);
+    if (rawStatus !== undefined) {
+      return rawStatus;
+    }
     return HttpStatus.INTERNAL_SERVER_ERROR;
+  }
+
+  // Body-parser and other raw Express/Connect middleware (not routed through Nest's
+  // pipes/guards) throw plain http-errors instances rather than HttpException - e.g.
+  // a >100kb JSON body throws a PayloadTooLargeError with status 413 on its prototype.
+  // Without this they'd otherwise fall through to a bare 500.
+  private rawHttpStatus(exception: unknown): number | undefined {
+    if (typeof exception !== 'object' || exception === null) return undefined;
+    const candidate =
+      (exception as { status?: unknown }).status ??
+      (exception as { statusCode?: unknown }).statusCode;
+    return typeof candidate === 'number' && candidate >= 400 && candidate < 600
+      ? candidate
+      : undefined;
   }
 
   private toEnvelope(exception: unknown, request: Request): ErrorEnvelope {
@@ -97,6 +115,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
           code: 'ZodValidationError',
           message: 'Validation failed',
           details: exception.issues,
+        },
+        ...base,
+      };
+    }
+
+    if (this.rawHttpStatus(exception) !== undefined && exception instanceof Error) {
+      return {
+        ok: false,
+        error: {
+          code: exception.name,
+          message: exception.message,
         },
         ...base,
       };

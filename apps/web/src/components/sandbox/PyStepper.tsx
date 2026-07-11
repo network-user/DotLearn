@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { getPythonRuntime, prewarmPythonRuntime } from '@/lib/python-runtime';
+import { highlightStatic } from '@/lib/shiki';
 
 interface PyStepperProps {
   code: string;
@@ -92,13 +93,14 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
   const { t } = useTranslation('viz');
   const trimmed = code.trim();
   const sourceLines = useMemo(() => trimmed.split('\n'), [trimmed]);
+  const [lineHtml, setLineHtml] = useState<(string | null)[] | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'tracing' | 'ready' | 'error'>('idle');
   const [trace, setTrace] = useState<TraceStep[]>([]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
-  const codeScrollRef = useRef<HTMLPreElement | null>(null);
+  const codeScrollRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLDivElement | null>(null);
 
   const run = useCallback(async (): Promise<void> => {
@@ -165,6 +167,24 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
     const target = active.offsetTop - container.clientHeight / 2 + active.clientHeight / 2;
     container.scrollTop = Math.max(0, target);
   }, [index]);
+
+  // Highlight each source line independently (rather than the whole block)
+  // so the existing per-line row structure — line numbers, active-line
+  // background — stays untouched; only the <code> content swaps in.
+  useEffect(() => {
+    let cancelled = false;
+    setLineHtml(null);
+    void Promise.all(
+      sourceLines.map((line) =>
+        line.trim().length === 0 ? Promise.resolve(null) : highlightStatic(line, 'python'),
+      ),
+    ).then((results) => {
+      if (!cancelled) setLineHtml(results);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceLines]);
 
   const step = trace[index];
   const prevStep = index > 0 ? trace[index - 1] : undefined;
@@ -234,13 +254,14 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <pre
+        <div
           ref={codeScrollRef}
-          className="relative font-mono text-[13px] leading-[1.75] py-2 overflow-x-auto bg-code-bg m-0 max-h-[420px] overflow-y-auto [scrollbar-width:thin]"
+          className="relative font-mono text-[13px] leading-[1.75] py-2 overflow-x-auto bg-code-bg max-h-[420px] overflow-y-auto [scrollbar-width:thin]"
         >
           {sourceLines.map((line, lineIndex) => {
             const lineNo = lineIndex + 1;
             const active = step !== undefined && step.line === lineNo;
+            const highlighted = lineHtml?.[lineIndex] ?? null;
             return (
               <div
                 key={lineIndex}
@@ -255,11 +276,17 @@ export const PyStepper = ({ code, title, speed = 700 }: PyStepperProps) => {
                 <span className="text-fg-subtle/70 text-right select-none tabular-nums pr-1 border-r border-border-base/60">
                   {active ? <span className="text-accent">▸</span> : lineNo}
                 </span>
-                <code className="whitespace-pre text-fg">{line || ' '}</code>
+                {highlighted ? (
+                  <pre className="shiki whitespace-pre m-0 p-0 bg-transparent font-mono">
+                    <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+                  </pre>
+                ) : (
+                  <code className="whitespace-pre text-fg">{line || ' '}</code>
+                )}
               </div>
             );
           })}
-        </pre>
+        </div>
 
         <div className="border-t md:border-t-0 md:border-l border-border-base bg-surface flex flex-col">
           <div className="px-3 py-2 border-b border-border-base/60 flex items-center justify-between gap-2">

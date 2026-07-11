@@ -2,7 +2,6 @@ import {
   Suspense,
   isValidElement,
   lazy,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,16 +11,13 @@ import {
 } from 'react';
 
 import { MDXProvider } from '@mdx-js/react';
-import { useNavigate } from '@tanstack/react-router';
-import { ChevronRight, FlaskConical, Info, Lightbulb, Sparkles, TriangleAlert } from 'lucide-react';
+import { ChevronRight, Info, Lightbulb, Play, Sparkles, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { CopyButton } from '@/components/playground/CopyButton';
 import { ConceptContext, type ConceptRenderContext } from '@/lib/concept-context';
-import { stashSandboxIncoming, type PlaygroundTab } from '@/lib/playground';
-import { prewarmPythonRuntime } from '@/lib/python-runtime';
+import { demoOutputForCode } from '@/lib/demo-outputs';
 import { sanitizeHref } from '@/lib/safe-url';
-import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 
 import {
   AreaChart,
@@ -432,58 +428,41 @@ const languageFromCodeChild = (children: ReactNode): string | undefined => {
   return match?.[1]?.toLowerCase();
 };
 
-const sandboxTabForLanguage = (language: string | undefined): PlaygroundTab | undefined => {
-  if (language === 'python' || language === 'py') return 'python';
-  if (language === 'sql') return 'sql';
-  return undefined;
-};
-
 const CodeBlock = ({ children, ...rest }: React.HTMLAttributes<HTMLPreElement>) => {
   const { t } = useTranslation('viz');
-  const navigate = useNavigate();
   const preRef = useRef<HTMLPreElement>(null);
   const [codeText, setCodeText] = useState('');
+  const [showOutput, setShowOutput] = useState(false);
 
   useEffect(() => {
     setCodeText(preRef.current?.textContent ?? '');
   }, [children]);
 
-  const sandboxTab = sandboxTabForLanguage(languageFromCodeChild(children));
-
-  const warmSandbox = useCallback(() => {
-    if (sandboxTab === 'python') {
-      prewarmPythonRuntime();
-      void import('@/components/playground/PythonPlayground');
-    } else if (sandboxTab === 'sql') {
-      prewarmSqlRuntime();
-      void import('@/components/playground/SqlPlayground');
-    } else {
-      return;
-    }
-    void import('@/pages/SandboxPage');
-  }, [sandboxTab]);
-
-  const handleOpenInSandbox = useCallback(() => {
-    const code = preRef.current?.textContent ?? codeText;
-    if (!sandboxTab || code.length === 0) return;
-    warmSandbox();
-    void stashSandboxIncoming({ tab: sandboxTab, code }).then(() => navigate({ to: '/sandbox' }));
-  }, [sandboxTab, codeText, navigate, warmSandbox]);
+  const language = languageFromCodeChild(children);
+  // Pre-computed stdout for runnable python demos (see lib/demo-outputs + the
+  // precompute CLI). Non-python or non-runnable blocks get no entry -> stay static.
+  const output = useMemo(() => {
+    if (language !== 'python' && language !== 'py') return undefined;
+    return demoOutputForCode(codeText);
+  }, [language, codeText]);
 
   return (
     <div className="group relative my-6">
       <div className="absolute right-2 top-2 z-10 flex items-center gap-1 opacity-100 transition-opacity duration-fast md:opacity-0 md:focus-within:opacity-100 md:group-hover:opacity-100">
-        {sandboxTab ? (
+        {output ? (
           <button
             type="button"
-            onClick={handleOpenInSandbox}
-            onPointerEnter={warmSandbox}
-            onFocus={warmSandbox}
-            title={t('code.openInSandbox', { defaultValue: 'Открыть в песочнице' })}
+            onClick={() => setShowOutput((value) => !value)}
+            aria-expanded={showOutput}
+            title={t('code.showOutput', { defaultValue: 'Показать результат' })}
             className="inline-flex min-h-[var(--tap)] items-center gap-1.5 rounded-md bg-surface-1/80 px-2 text-[11px] font-medium tracking-snug text-fg-subtle backdrop-blur transition-colors duration-fast hover:bg-surface-2/80 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-0 sm:py-1"
           >
-            <FlaskConical size={13} aria-hidden />
-            <span>{t('code.openInSandbox', { defaultValue: 'В песочницу' })}</span>
+            <Play size={13} aria-hidden />
+            <span>
+              {showOutput
+                ? t('code.hideOutput', { defaultValue: 'Скрыть результат' })
+                : t('code.showOutput', { defaultValue: 'Показать результат' })}
+            </span>
           </button>
         ) : null}
         <CopyButton text={codeText} className="bg-surface-1/80 backdrop-blur" />
@@ -498,6 +477,17 @@ const CodeBlock = ({ children, ...rest }: React.HTMLAttributes<HTMLPreElement>) 
       >
         {children}
       </pre>
+      {output && showOutput ? (
+        <div className="mt-1.5 overflow-hidden rounded-lg border border-border-base bg-surface-1/60">
+          <div className="flex items-center gap-1.5 border-b border-border-base/70 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
+            <ChevronRight size={12} aria-hidden />
+            {t('code.outputLabel', { defaultValue: 'Вывод' })}
+          </div>
+          <pre className="overflow-x-auto px-4 py-3 text-[13px] font-mono leading-relaxed text-fg whitespace-pre">
+            {output}
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
 };

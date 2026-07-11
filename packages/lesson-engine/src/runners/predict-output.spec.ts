@@ -45,6 +45,36 @@ describe('runPredictOutput', () => {
       if (result.ok) throw new Error('expected failure');
       expect(result.code).toBe('predict-stdout-differs');
     });
+
+    describe('code-ish leniency', () => {
+      const listExercise: PredictOutputExercise = {
+        ...base,
+        expected: { kind: 'stdout', value: "['a', 'b']\n" },
+      };
+
+      it('accepts differing quote style and intra-line spacing', () => {
+        expect(runPredictOutput(listExercise, "['a','b']\n").ok).toBe(true);
+        expect(runPredictOutput(listExercise, '[ "a" , "b" ]\n').ok).toBe(true);
+      });
+
+      it('still fails a genuinely different value', () => {
+        const result = runPredictOutput(listExercise, "['a','c']\n");
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error('expected failure');
+        expect(result.code).toBe('predict-stdout-differs');
+      });
+
+      it('still fails when the line count differs', () => {
+        const multiline: PredictOutputExercise = {
+          ...base,
+          expected: { kind: 'stdout', value: '1\n2\n' },
+        };
+        const result = runPredictOutput(multiline, '1 2\n');
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error('expected failure');
+        expect(result.code).toBe('predict-stdout-differs');
+      });
+    });
   });
 
   describe('result-set', () => {

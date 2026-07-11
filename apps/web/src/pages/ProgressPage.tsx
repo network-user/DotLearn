@@ -48,6 +48,7 @@ import {
   importProgress,
 } from '@/lib/progress-io';
 import { compareWeeks, type WeeklyComparison } from '@/lib/recap';
+import { useSync } from '@/lib/sync/engine';
 import { effectiveLanguage, useContentLanguage } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useBookmarks } from '@/lib/use-learning';
@@ -84,6 +85,42 @@ const useRelativeFormatter = () => {
     const months = Math.floor(days / 30);
     return t('ago.months', { count: months });
   };
+};
+
+const SyncStatusLine = () => {
+  const { t } = useTranslation('progress');
+  const sync = useSync();
+  const formatRelative = useRelativeFormatter();
+
+  if (!sync.linked) {
+    return (
+      <p className="mt-1 text-xs">
+        <Link to="/settings" className="text-accent hover:underline">
+          {t('sync.notLinked')}
+        </Link>
+      </p>
+    );
+  }
+
+  const when =
+    sync.lastSyncAt !== null ? formatRelative(new Date(sync.lastSyncAt).toISOString()) : '—';
+  const dotClass =
+    sync.phase === 'error' || sync.phase === 'too-large'
+      ? 'bg-err'
+      : sync.phase === 'syncing'
+        ? 'bg-accent animate-pulse'
+        : 'bg-ok';
+
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-xs text-fg-subtle">
+      <span aria-hidden className={'size-1.5 rounded-full ' + dotClass} />
+      {t('sync.linked', { when })}
+      {' · '}
+      <Link to="/settings" className="text-accent hover:underline">
+        {t('sync.manage')}
+      </Link>
+    </p>
+  );
 };
 
 export const ProgressPage = () => {
@@ -687,7 +724,10 @@ export const ProgressPage = () => {
       <section className="space-y-3">
         <h2 className="eyebrow border-b border-border-base pb-2">{t('data.heading')}</h2>
         <div className="rounded-lg border border-border-base bg-surface p-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-fg-muted max-w-prose">{t('data.hint')}</p>
+          <div className="min-w-0">
+            <p className="text-sm text-fg-muted max-w-prose">{t('data.hint')}</p>
+            <SyncStatusLine />
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"

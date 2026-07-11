@@ -1148,11 +1148,21 @@ const recentResultsForExercises = (
     .sort((a, b) => a.lastAttemptAt.localeCompare(b.lastAttemptAt))
     .map((record) => record.status);
 
-const ADAPTIVE_ORDER_KEY = 'dotlearn:adaptive-order';
+const orderExercisesByTarget = (
+  exercises: Exercise[],
+  progressByExercise: Map<string, ProgressRecord>,
+): Exercise[] => {
+  if (exercises.length < 2) return exercises;
+  const recentResults = recentResultsForExercises(exercises, progressByExercise);
+  const target = nextTargetDifficulty({ recentResults, baseDifficulty: 2 });
+  return reorderByTargetDifficulty(exercises, target);
+};
 
-const readAdaptiveOrder = (): boolean => {
+const adaptiveOrderKey = (slug: string): string => `dotlearn:adaptive-order:${slug}`;
+
+const readAdaptiveOrder = (slug: string): boolean => {
   if (typeof window === 'undefined') return false;
-  return window.localStorage.getItem(ADAPTIVE_ORDER_KEY) === 'on';
+  return window.localStorage.getItem(adaptiveOrderKey(slug)) === 'on';
 };
 
 const ConceptPanel = ({
@@ -1169,20 +1179,41 @@ const ConceptPanel = ({
 }: ConceptPanelProps) => {
   const { t } = useTranslation('topic');
   const [notesOpen, setNotesOpen] = useState(false);
-  const [adaptiveOrder, setAdaptiveOrder] = useState(readAdaptiveOrder);
+  const [adaptiveOrder, setAdaptiveOrder] = useState(() => readAdaptiveOrder(slug));
   useEffect(() => {
     setNotesOpen(false);
   }, [concept.id]);
   useEffect(() => {
-    window.localStorage.setItem(ADAPTIVE_ORDER_KEY, adaptiveOrder ? 'on' : 'off');
-  }, [adaptiveOrder]);
+    window.localStorage.setItem(adaptiveOrderKey(slug), adaptiveOrder ? 'on' : 'off');
+  }, [slug, adaptiveOrder]);
 
-  const orderedExercises = useMemo(() => {
-    if (!adaptiveOrder || exercises.length < 2) return exercises;
-    const recentResults = recentResultsForExercises(exercises, progressByExercise);
-    const target = nextTargetDifficulty({ recentResults, baseDifficulty: 2 });
-    return reorderByTargetDifficulty(exercises, target);
-  }, [adaptiveOrder, exercises, progressByExercise]);
+  // Read the freshest exercises/progress at snapshot time without making the
+  // visible order depend on their identity. The parent rebuilds the exercises
+  // array (via flatMap) and the progress map on every answer, so depending on
+  // them is what reshuffled blocks mid-answer.
+  const exercisesRef = useRef(exercises);
+  exercisesRef.current = exercises;
+  const progressRef = useRef(progressByExercise);
+  progressRef.current = progressByExercise;
+
+  // Stable signature of the exercise set: changes only when navigating to a
+  // different concept, not when the parent re-renders on a progress write.
+  const exerciseSetKey = exercises.map((exercise) => exercise.id).join(',');
+
+  // The practice order is a snapshot. It recomputes only when the exercise set
+  // changes or when the adaptive toggle flips, never on a progress write, so
+  // answering keeps blocks in place. The next visit/remount takes a fresh
+  // snapshot from the updated progress.
+  const [orderedExercises, setOrderedExercises] = useState<Exercise[]>(() =>
+    readAdaptiveOrder(slug) ? orderExercisesByTarget(exercises, progressByExercise) : exercises,
+  );
+  useEffect(() => {
+    setOrderedExercises(
+      adaptiveOrder
+        ? orderExercisesByTarget(exercisesRef.current, progressRef.current)
+        : exercisesRef.current,
+    );
+  }, [adaptiveOrder, exerciseSetKey]);
   const theories = useMemo(
     () => theoryFiles.map((filename) => ({ filename, resolved: getTheory(slug, filename) })),
     [slug, theoryFiles],

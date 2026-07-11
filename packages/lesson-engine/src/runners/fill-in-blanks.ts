@@ -1,5 +1,6 @@
 import type { FillInBlanksExercise } from '@dotlearn/contracts';
 
+import { normalizeCodeish } from '../compare/normalize';
 import { failCoded, pass, type RunResult } from './result';
 
 // Defense-in-depth against ReDoS: never run a topic-supplied accept_regex against an
@@ -26,7 +27,9 @@ export const runFillInBlanks = (
     }
     let matched = false;
     if (spec.accept && spec.accept.length > 0) {
-      matched = spec.accept.includes(got);
+      matched =
+        spec.accept.includes(got) ||
+        spec.accept.some((candidate) => normalizeCodeish(candidate) === normalizeCodeish(got));
     }
     if (!matched && spec.accept_regex && got.length <= MAX_BLANK_ANSWER_LENGTH) {
       try {

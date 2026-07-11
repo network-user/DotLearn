@@ -12,7 +12,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/**/*.spec.ts'],
+    // *.spec.ts are the jsdom/Dexie-backed suites; *.test.ts is the pure sync-merge suite,
+    // which opts into the node environment via a per-file @vitest-environment docblock.
+    include: ['src/**/*.spec.ts', 'src/**/*.test.ts'],
     environment: 'jsdom',
     globals: false,
     setupFiles: ['fake-indexeddb/auto'],

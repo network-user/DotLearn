@@ -10,7 +10,7 @@
 - **Runtime:** Node.js 20+, pnpm 9
 - **Монорепо:** да (pnpm workspaces + Turborepo)
 
-`.learn` - локальный learning-плеер. Каждая тема под `topics/<slug>/` - самодостаточный модуль: теория в MDX, упражнения в YAML, всё валидируется Zod-схемами из `packages/contracts`. Фронт (`apps/web`) работает без бэкенда; опциональный `apps/api` даёт submission/admin-эндпоинты и анонимный счётчик онлайна (presence).
+`.learn` - локальный learning-плеер. Каждая тема под `topics/<slug>/` - самодостаточный модуль: теория в MDX, упражнения в YAML, всё валидируется Zod-схемами из `packages/contracts`. Фронт (`apps/web`) работает без бэкенда; опциональный `apps/api` даёт submission/admin-эндпоинты, анонимный счётчик онлайна (presence) и кросс-девайс синхронизацию прогресса по коду (sync: снапшот-blob на сервере, merge на клиенте в `apps/web/src/lib/sync/`).
 
 ## Скиллы
 
@@ -60,7 +60,7 @@ pnpm dev:api      # NestJS API (опционально)
 .learn/
 ├── apps/
 │   ├── web/        # Vite + React SPA, local-first
-│   └── api/        # NestJS (DDD): submissions, admin, search, presence
+│   └── api/        # NestJS (DDD): submissions, admin, search, presence, sync
 ├── packages/
 │   ├── contracts/      # Zod-схемы, общие типы (единственный общий слой)
 │   ├── lesson-engine/  # загрузчик тем, раннеры упражнений, CLI-валидатор
@@ -156,18 +156,19 @@ Vitest. `pnpm test` (Turborepo), per-package `pnpm --filter @dotlearn/<pkg> test
 
 ## Переменные окружения
 
-| Переменная                                 | Назначение                                                                                |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `DOMAIN` / `ACME_EMAIL`                    | домен и email для авто-HTTPS (Caddy/Let's Encrypt) при деплое                             |
-| `DATA_DIR`                                 | путь тома данных api (json-file-store)                                                    |
-| `ES_NODE` / `ES_ENABLED`                   | адрес Elasticsearch и флаг fuzzy-поиска (`ES_ENABLED=false` по умолчанию → in-memory)     |
-| `VITE_API_BASE`                            | базовый URL api для фронта (в проде `https://$DOMAIN`, same-origin)                       |
-| `VITE_ADMIN_PATH`                          | путь admin-роута                                                                          |
-| `VITE_GITHUB_URL`                          | ссылка на репозиторий для футера (не задана или пустая - ссылка в футере скрыта)          |
-| `WEB_ORIGIN`                               | разрешённый origin для CORS api                                                           |
-| `HOST` / `PORT`                            | адрес/порт прослушивания api (`127.0.0.1` за прокси)                                      |
-| `TRUSTED_PROXY_HOPS`                       | число reverse-прокси перед api (считай все хопы: только Caddy = `1`, Caddy + nginx = `2`) |
-| `PRESENCE_TTL_MS` / `PRESENCE_MAX_TRACKED` | окно «онлайна» heartbeat-счётчика (90с) и потолок трекаемых id (50000)                    |
+| Переменная                                                                           | Назначение                                                                                                                                       |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DOMAIN` / `ACME_EMAIL`                                                              | домен и email для авто-HTTPS (Caddy/Let's Encrypt) при деплое                                                                                    |
+| `DATA_DIR`                                                                           | путь тома данных api (json-file-store)                                                                                                           |
+| `ES_NODE` / `ES_ENABLED`                                                             | адрес Elasticsearch и флаг fuzzy-поиска (`ES_ENABLED=false` по умолчанию → in-memory)                                                            |
+| `VITE_API_BASE`                                                                      | базовый URL api для фронта (в проде `https://$DOMAIN`, same-origin)                                                                              |
+| `VITE_ADMIN_PATH`                                                                    | путь admin-роута                                                                                                                                 |
+| `VITE_GITHUB_URL`                                                                    | ссылка на репозиторий для футера (не задана или пустая - ссылка в футере скрыта)                                                                 |
+| `WEB_ORIGIN`                                                                         | разрешённый origin для CORS api                                                                                                                  |
+| `HOST` / `PORT`                                                                      | адрес/порт прослушивания api (`127.0.0.1` за прокси)                                                                                             |
+| `TRUSTED_PROXY_HOPS`                                                                 | число reverse-прокси перед api (считай все хопы: только Caddy = `1`, Caddy + nginx = `2`)                                                        |
+| `PRESENCE_TTL_MS` / `PRESENCE_MAX_TRACKED`                                           | окно «онлайна» heartbeat-счётчика (90с) и потолок трекаемых id (50000)                                                                           |
+| `SYNC_MAX_BLOB_BYTES` / `SYNC_MAX_CODES` / `SYNC_TTL_DAYS` / `SYNC_BODY_LIMIT_BYTES` | кросс-девайс синк по коду: потолок decoded-blob'а (1 МиБ), максимум кодов (2000), TTL простоя (90д), лимит тела `/api/sync` (2 МиБ, опционально) |
 
 Admin-секреты api (логин, JWT, TOTP) читаются из `.env`; имена и ротация - в [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). **Не читай `.env`, не коммить секреты.**
 

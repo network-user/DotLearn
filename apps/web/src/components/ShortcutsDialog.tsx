@@ -50,7 +50,7 @@ export const ShortcutsHost = () => {
   }, []);
 
   const rows: ShortcutRow[] = [
-    { id: 'search', keys: ['⌘', 'K'], label: t('shortcuts.rows.search') },
+    { id: 'search', keys: ['Ctrl', 'K'], label: t('shortcuts.rows.search') },
     { id: 'nextConcept', keys: ['j'], label: t('shortcuts.rows.nextConcept') },
     { id: 'prevConcept', keys: ['k'], label: t('shortcuts.rows.prevConcept') },
     { id: 'focus', keys: ['f'], label: t('shortcuts.rows.focus') },

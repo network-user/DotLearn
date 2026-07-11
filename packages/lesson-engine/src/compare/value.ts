@@ -1,3 +1,5 @@
+import { normalizeCodeish } from './normalize';
+
 export type ValueComparison =
   | { ok: true }
   | { ok: false; reason: 'type' | 'value' | 'length' | 'key'; path: string };
@@ -20,6 +22,16 @@ export const compareValues = (actual: unknown, expected: unknown, path = '$'): V
     return { ok: true };
   }
   if (actual === expected) {
+    return { ok: true };
+  }
+  // Quote style and structural spacing should not decide correctness for code-ish
+  // string answers (python/js return values, predict scalars, SQL cells). Case and
+  // line breaks stay significant because normalizeCodeish preserves them.
+  if (
+    typeof actual === 'string' &&
+    typeof expected === 'string' &&
+    normalizeCodeish(actual) === normalizeCodeish(expected)
+  ) {
     return { ok: true };
   }
   if (typeof actual !== typeof expected) {

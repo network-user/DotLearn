@@ -13,3 +13,18 @@ export const dataFile = (name: string): string => {
 export const ensureDataDir = async (): Promise<void> => {
   await mkdir(dataDir(), { recursive: true });
 };
+
+const SYNC_KEY_PATTERN = /^[0-9a-f]{64}$/;
+
+export const syncDir = (): string => resolve(dataDir(), 'sync');
+
+export const syncFile = (key: string): string => {
+  if (!SYNC_KEY_PATTERN.test(key)) {
+    throw new Error(`Unsafe sync key: ${JSON.stringify(key)}`);
+  }
+  return resolve(syncDir(), `${key}.json`);
+};
+
+export const ensureSyncDir = async (): Promise<void> => {
+  await mkdir(syncDir(), { recursive: true });
+};

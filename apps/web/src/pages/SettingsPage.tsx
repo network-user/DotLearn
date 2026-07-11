@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 
 import { Check, Download, Minus, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -26,8 +26,13 @@ import {
   type AccentId,
   type ReadingSize,
 } from '@/lib/settings';
+import { useSync } from '@/lib/sync/engine';
 import { applyTheme, persistTheme, readStoredTheme, type Theme } from '@/lib/theme';
 import { useStorageHealth } from '@/lib/storage-health';
+
+const SyncPanel = lazy(() =>
+  import('@/components/SyncPanel').then((module) => ({ default: module.SyncPanel })),
+);
 
 const formatBytes = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -125,6 +130,7 @@ export const SettingsPage = () => {
   const { t } = useTranslation('settings');
   const storage = useStorageHealth();
   const settings = useSettings();
+  const sync = useSync();
   const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
   const [confirmReset, setConfirmReset] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -397,6 +403,9 @@ export const SettingsPage = () => {
             onChange={(event) => void handleImportFile(event)}
           />
         </div>
+        <Suspense fallback={null}>
+          <SyncPanel />
+        </Suspense>
       </Section>
 
       <Dialog
@@ -422,6 +431,7 @@ export const SettingsPage = () => {
         }
       >
         <p className="text-sm text-fg-muted">{t('resetConfirmHint')}</p>
+        {sync.linked && <p className="mt-2 text-sm text-warn">{t('resetConfirmSyncWarning')}</p>}
       </Dialog>
     </div>
   );

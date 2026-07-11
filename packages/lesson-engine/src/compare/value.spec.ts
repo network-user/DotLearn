@@ -27,6 +27,39 @@ describe('compareValues', () => {
     expect(compareValues(1, 2)).toEqual({ ok: false, reason: 'value', path: '$' });
   });
 
+  describe('code-ish string leniency', () => {
+    it('ignores spacing around structural punctuation', () => {
+      expect(compareValues("['apple','banana']", "['apple', 'banana']").ok).toBe(true);
+      expect(compareValues('[ 1 , 2 ]', '[1,2]').ok).toBe(true);
+    });
+
+    it('ignores quote style', () => {
+      expect(compareValues("'a'", '"a"').ok).toBe(true);
+      expect(compareValues("{'x': 1}", '{"x":1}').ok).toBe(true);
+    });
+
+    it('still distinguishes letter case', () => {
+      expect(compareValues('Apple', 'apple')).toEqual({ ok: false, reason: 'value', path: '$' });
+    });
+
+    it('still distinguishes newline structure', () => {
+      expect(compareValues('1\n2', '1 2')).toEqual({ ok: false, reason: 'value', path: '$' });
+    });
+
+    it('still fails a genuinely different value', () => {
+      expect(compareValues("['a','b']", "['a','c']")).toEqual({
+        ok: false,
+        reason: 'value',
+        path: '$',
+      });
+    });
+
+    it('applies leniency to string cells nested in arrays and objects', () => {
+      expect(compareValues(["['a', 'b']"], ["['a','b']"]).ok).toBe(true);
+      expect(compareValues({ out: "{'k': 1}" }, { out: '{"k":1}' }).ok).toBe(true);
+    });
+  });
+
   describe('arrays', () => {
     it('passes equal arrays', () => {
       expect(compareValues([1, 2, 3], [1, 2, 3]).ok).toBe(true);
