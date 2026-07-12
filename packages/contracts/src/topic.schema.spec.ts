@@ -29,6 +29,7 @@ const valid = () => ({
     {
       id: 'intro',
       title: 'Intro concept',
+      titleEn: 'Intro concept (en)',
       estimatedMinutes: 60,
       theoryFiles: ['theory/01-intro.ru.mdx', 'theory/01-intro.en.mdx'],
       exerciseFiles: ['exercises/01-intro.ru.yaml', 'exercises/01-intro.en.yaml'],
@@ -210,7 +211,9 @@ describe('TopicManifest', () => {
       descriptions: { ru: m.descriptions.ru },
       concepts: [
         {
-          ...m.concepts[0],
+          id: m.concepts[0].id,
+          title: m.concepts[0].title,
+          estimatedMinutes: m.concepts[0].estimatedMinutes,
           theoryFiles: ['theory/01-intro.ru.mdx'],
           exerciseFiles: ['exercises/01-intro.ru.yaml'],
         },
