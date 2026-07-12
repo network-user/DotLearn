@@ -109,6 +109,11 @@ const SearchPage = lazy(() =>
     default: module.SearchPage,
   })),
 );
+const AnalyticsPage = lazy(() =>
+  import('./pages/AnalyticsPage').then((module) => ({
+    default: module.AnalyticsPage,
+  })),
+);
 const EnLayout = lazy(() =>
   import('./components/EnLayout').then((module) => ({ default: module.EnLayout })),
 );
@@ -286,7 +291,18 @@ const enGlossaryRoute = new Route({
   component: GlossaryPage,
 });
 
-const enRouteTree = enLayoutRoute.addChildren([enHomeRoute, enTopicRoute, enGlossaryRoute]);
+const enAnalyticsRoute = new Route({
+  getParentRoute: () => enLayoutRoute,
+  path: '/en/analytics',
+  component: AnalyticsPage,
+});
+
+const enRouteTree = enLayoutRoute.addChildren([
+  enHomeRoute,
+  enTopicRoute,
+  enGlossaryRoute,
+  enAnalyticsRoute,
+]);
 
 const submitRoute = new Route({
   getParentRoute: () => rootRoute,
@@ -444,6 +460,12 @@ const searchRoute = new Route({
   }),
 });
 
+const analyticsRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/analytics',
+  component: AnalyticsPage,
+});
+
 const tracksRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/tracks',
@@ -476,6 +498,7 @@ const routeTree = rootRoute.addChildren([
   libraryRoute,
   glossaryRoute,
   searchRoute,
+  analyticsRoute,
   tracksRoute,
   trackRoute,
   enRouteTree,

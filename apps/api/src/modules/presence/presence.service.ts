@@ -426,18 +426,29 @@ export class PresenceService implements OnModuleInit, OnModuleDestroy {
       todayPeak: this.todayPeak,
       series: this.series,
       daily: this.daily,
-      allTimeHll: this.allTimeHll.toBase64(),
-      dailyHll: this.dailyHll.toBase64(),
-      dailyHllRing: this.dailyHllRing.map((hll) => hll.toBase64()),
-      peakAllTime: this.peakAllTime,
-      totalVisitorDays: this.totalVisitorDays,
     };
-    const topics: Record<string, TopicSnapshot> = {};
+    // Only persist the analytics blob when analytics is on or real data exists —
+    // a disabled/local instance keeps a lean file and never overwrites data it
+    // loaded (prod state opened locally round-trips untouched).
     const slugs = new Set<string>([
       ...this.topicHll.keys(),
       ...this.topicToday.keys(),
       ...this.topicDaily.keys(),
     ]);
+    const hasAnalyticsData =
+      this.analyticsEnabled ||
+      !this.allTimeHll.isEmpty() ||
+      !this.dailyHll.isEmpty() ||
+      this.dailyHllRing.length > 0 ||
+      slugs.size > 0;
+    if (!hasAnalyticsData) return snapshot;
+
+    snapshot.allTimeHll = this.allTimeHll.toBase64();
+    snapshot.dailyHll = this.dailyHll.toBase64();
+    snapshot.dailyHllRing = this.dailyHllRing.map((hll) => hll.toBase64());
+    snapshot.peakAllTime = this.peakAllTime;
+    snapshot.totalVisitorDays = this.totalVisitorDays;
+    const topics: Record<string, TopicSnapshot> = {};
     for (const slug of slugs) {
       const entry: TopicSnapshot = {};
       const hll = this.topicHll.get(slug);

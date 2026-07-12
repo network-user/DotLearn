@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { useReducedMotion } from 'framer-motion';
+import { Link } from '@tanstack/react-router';
+import { ArrowUpRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
@@ -12,11 +14,15 @@ import {
   type PresenceStats,
 } from '@/lib/api-client';
 import { usePresence } from '@/lib/presence';
+import { topicTitleOf } from '@/lib/topics';
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+const POLL_INTERVAL_MS = 30_000;
+
 type LoadStatus = 'loading' | 'ready' | 'error';
+type Range = '24h' | '7d' | '30d';
 
 interface SparklineProps {
   series: PresenceSeriesPoint[];
@@ -92,35 +98,48 @@ const Sparkline = ({ series, ariaLabel }: SparklineProps) => {
 
 interface DailyBarsProps {
   daily: PresenceDailyPoint[];
+  count: number;
   label: string;
 }
 
-const DailyBars = ({ daily, label }: DailyBarsProps) => {
-  const last7 = (daily ?? []).slice(-7);
-  if (last7.length === 0) {
+const DailyBars = ({ daily, count, label }: DailyBarsProps) => {
+  const window = (daily ?? []).slice(-count);
+  if (window.length === 0) {
     return <div className="text-[11px] text-fg-subtle">—</div>;
   }
-  const max = Math.max(1, ...last7.map((day) => (Number.isFinite(day.uniques) ? day.uniques : 0)));
+  const max = Math.max(1, ...window.map((day) => (Number.isFinite(day.uniques) ? day.uniques : 0)));
   return (
-    <div className="flex h-12 items-end gap-1.5" role="img" aria-label={label}>
-      {last7.map((day) => {
+    <div className="flex h-12 items-end gap-1" role="img" aria-label={label}>
+      {window.map((day) => {
         const value = Number.isFinite(day.uniques) ? Math.max(0, day.uniques) : 0;
         const heightPct = Math.max(6, Math.round((value / max) * 100));
         return (
-          <div key={day.day} className="flex flex-1 flex-col items-center gap-1">
-            <div className="flex h-full w-full items-end">
-              <div
-                className="w-full rounded-sm bg-accent/70"
-                style={{ height: `${heightPct}%` }}
-                title={`${day.day}: ${value}`}
-              />
-            </div>
+          <div key={day.day} className="flex h-full flex-1 items-end">
+            <div
+              className="w-full rounded-sm bg-accent/70 transition-[height]"
+              style={{ height: `${heightPct}%` }}
+              title={`${day.day}: ${value}`}
+            />
           </div>
         );
       })}
     </div>
   );
 };
+
+interface MiniStatProps {
+  label: string;
+  value: number;
+}
+
+const MiniStat = ({ label, value }: MiniStatProps) => (
+  <div className="rounded-lg bg-surface-2/60 px-2 py-1.5">
+    <div className="text-[13px] font-semibold tabular-nums text-fg">
+      <AnimatedNumber value={value} />
+    </div>
+    <div className="text-[10px] leading-tight text-fg-subtle">{label}</div>
+  </div>
+);
 
 export const OnlineIndicator = () => {
   const { t } = useTranslation('presence');
@@ -129,29 +148,38 @@ export const OnlineIndicator = () => {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<LoadStatus>('loading');
   const [stats, setStats] = useState<PresenceStats | null>(null);
+  const [range, setRange] = useState<Range>('24h');
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch full stats each time the popover opens.
+  // Fetch full stats when the popover opens, then poll gently while it stays open.
+  // The pill's own counts keep ticking from the heartbeat, so this only refreshes
+  // the charts and analytics — no requests once the popover is closed.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setStatus('loading');
-    fetchPresenceStats()
-      .then((data) => {
-        if (cancelled) return;
-        setStats(data);
-        setStatus('ready');
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setStatus('error');
-      });
+    setStatus((prev) => (stats ? prev : 'loading'));
+    const load = (): void => {
+      fetchPresenceStats()
+        .then((data) => {
+          if (cancelled) return;
+          setStats(data);
+          setStatus('ready');
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setStatus((prev) => (prev === 'ready' ? 'ready' : 'error'));
+        });
+    };
+    load();
+    const timer = setInterval(load, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Click-outside, Escape, and focus management for the popover.
@@ -201,6 +229,15 @@ export const OnlineIndicator = () => {
   const liveUniques = status === 'ready' && stats ? stats.uniquesToday : presence.uniquesToday;
 
   const sparkAria = t('sparklineAria', { n: liveOnline });
+  // Extended metrics arrive only when the server has analytics enabled.
+  const extended = stats?.uniquesAllTime !== undefined;
+  const reading = stats?.reading ?? [];
+
+  const rangeOptions: { key: Range; label: string }[] = [
+    { key: '24h', label: t('range24h') },
+    { key: '7d', label: t('range7d') },
+    { key: '30d', label: t('range30d') },
+  ];
 
   return (
     <div ref={rootRef} className="relative">
@@ -234,9 +271,21 @@ export const OnlineIndicator = () => {
           role="dialog"
           aria-modal="false"
           aria-label={t('title')}
-          className="absolute right-0 top-full z-[var(--z-sheet)] mt-2 w-72 space-y-3 rounded-xl border border-border-base glass-strong bg-surface/95 p-3.5 shadow-float"
+          className="absolute right-0 top-full z-[var(--z-sheet)] mt-2 w-80 space-y-3 rounded-xl border border-border-base glass-strong bg-surface/95 p-3.5 shadow-float"
         >
-          <div className="eyebrow text-fg-subtle">{t('title')}</div>
+          <div className="flex items-center justify-between">
+            <div className="eyebrow text-fg-subtle">{t('title')}</div>
+            {extended && (
+              <Link
+                to="/analytics"
+                onClick={() => setOpen(false)}
+                className="inline-flex items-center gap-0.5 text-[11px] font-medium text-accent hover:underline"
+              >
+                {t('moreAnalytics')}
+                <ArrowUpRight size={12} aria-hidden />
+              </Link>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -265,18 +314,74 @@ export const OnlineIndicator = () => {
 
           {status === 'ready' && stats && (
             <>
+              {extended && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  <MiniStat label={t('allTime')} value={stats.uniquesAllTime ?? 0} />
+                  <MiniStat label={t('last7days')} value={stats.uniques7d ?? 0} />
+                  <MiniStat label={t('peakAllTime')} value={stats.peakAllTime ?? 0} />
+                  <MiniStat label={t('totalVisits')} value={stats.totalVisitorDays ?? 0} />
+                </div>
+              )}
+
               <div className="space-y-1.5">
-                <div className="flex items-baseline justify-between">
-                  <div className="eyebrow text-fg-subtle">{t('last24h')}</div>
-                  <div className="text-[11px] tabular-nums text-fg-muted">
-                    {t('peakToday', { n: stats.peakToday })}
+                <div className="flex items-center justify-between">
+                  <div className="eyebrow text-fg-subtle">
+                    {range === '24h' ? t('chartOnline') : t('chartVisitors')}
+                  </div>
+                  <div className="flex gap-0.5 rounded-md bg-surface-2/60 p-0.5">
+                    {rangeOptions.map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setRange(option.key)}
+                        aria-pressed={range === option.key}
+                        className={cx(
+                          'rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums transition-colors',
+                          range === option.key
+                            ? 'bg-surface text-fg shadow-sm'
+                            : 'text-fg-subtle hover:text-fg',
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <Sparkline series={stats.series} ariaLabel={sparkAria} />
+                {range === '24h' ? (
+                  <>
+                    <Sparkline series={stats.series} ariaLabel={sparkAria} />
+                    <div className="text-right text-[11px] tabular-nums text-fg-muted">
+                      {t('peakToday', { n: stats.peakToday })}
+                    </div>
+                  </>
+                ) : (
+                  <DailyBars
+                    daily={stats.daily}
+                    count={range === '7d' ? 7 : 30}
+                    label={t('barsAria')}
+                  />
+                )}
               </div>
-              <div className="space-y-1.5">
-                <div className="eyebrow text-fg-subtle">{t('last7days')}</div>
-                <DailyBars daily={stats.daily} label={t('last7days')} />
+
+              {extended && reading.length > 0 && (
+                <div className="space-y-1">
+                  <div className="eyebrow text-fg-subtle">{t('readingNow')}</div>
+                  <ul className="space-y-0.5">
+                    {reading.slice(0, 3).map((item) => (
+                      <li
+                        key={item.topic}
+                        className="flex items-center justify-between text-[12px] text-fg-muted"
+                      >
+                        <span className="truncate">{topicTitleOf(item.topic) ?? item.topic}</span>
+                        <span className="ml-2 tabular-nums text-fg">{item.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="border-t border-border-base/60 pt-2 text-[10px] leading-snug text-fg-subtle">
+                {t('privacy')}
               </div>
             </>
           )}

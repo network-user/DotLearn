@@ -124,6 +124,9 @@ env_set TRUSTED_PROXY_HOPS "1"
 if [ "$(env_get DATA_DIR)" = "/app/data" ]; then env_set DATA_DIR "$DEFAULT_DATA_DIR"; fi
 [ -n "$(env_get ADMIN_LOGIN)" ] || env_set ADMIN_LOGIN "admin"
 [ -n "$(env_get PORT)" ] || env_set PORT "3000"
+# Extended anonymous analytics (all-time unique, per-topic, /analytics page).
+# On by default for a real deploy; set to 0 to run with just the basic counter.
+[ -n "$(env_get PRESENCE_ANALYTICS)" ] || env_set PRESENCE_ANALYTICS "1"
 
 PORT="$(env_get PORT)"
 DATA_DIR="$(env_get DATA_DIR)"
