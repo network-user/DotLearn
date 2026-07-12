@@ -122,9 +122,50 @@ const cspPlugin = (): Plugin => ({
   },
 });
 
+// Трекер аналитики Umami (self-hosted). Тег добавляется в <head> собранного
+// shell (prerender размножает его по всем страницам). Включается ТОЛЬКО когда
+// задан VITE_UMAMI_WEBSITE_ID (в проде - build-arg через Dockerfile ENV); без
+// него скрипт не рендерится - локальная сборка/CI ничего не шлют.
+//
+// Отдаётся first-party через nginx (/stats/script.js, /stats/api/send -> umami),
+// поэтому CSP менять не нужно: script-src/connect-src остаются 'self'. host-url
+// указывает на каталог трекера на нашем домене, чтобы события уходили на тот же
+// проксируемый путь (…/api/send), а не на голый origin. domains ограничивает
+// отправку продакшн-хостом. Origin берём из VITE_SITE_URL, иначе VITE_API_BASE
+// (публичный адрес сайта, api живёт с ним на одном домене за nginx).
+const umamiPlugin = (): Plugin => {
+  const websiteId = (process.env.VITE_UMAMI_WEBSITE_ID ?? '').trim();
+  const src = (process.env.VITE_UMAMI_SRC ?? '').trim() || '/stats/script.js';
+  const origin = (process.env.VITE_SITE_URL ?? process.env.VITE_API_BASE ?? '').trim();
+  return {
+    name: 'dotlearn-umami',
+    apply: 'build',
+    transformIndexHtml(html) {
+      if (!websiteId) return html;
+      const attrs: Record<string, string | boolean> = {
+        defer: true,
+        src,
+        'data-website-id': websiteId,
+      };
+      const dir = src.replace(/\/[^/]*$/, '') || '/stats';
+      if (origin) {
+        try {
+          attrs['data-host-url'] = new URL(dir, origin).toString().replace(/\/$/, '');
+          attrs['data-domains'] = new URL(origin).host;
+        } catch {
+          // Кривой origin - оставляем без host-url/domains; трекер возьмёт
+          // origin самого скрипта (тот же домен), это тоже first-party.
+        }
+      }
+      return { html, tags: [{ tag: 'script', attrs, injectTo: 'head' }] };
+    },
+  };
+};
+
 export default defineConfig({
   plugins: [
     cspPlugin(),
+    umamiPlugin(),
     pyodideAssetsPlugin(),
     topicManifestsPlugin(),
     topicStatsPlugin(),

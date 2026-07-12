@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /workspace
 
@@ -7,10 +7,14 @@ RUN corepack enable
 ARG VITE_API_BASE
 ARG VITE_ADMIN_PATH
 ARG VITE_GITHUB_URL
+ARG VITE_UMAMI_WEBSITE_ID
+ARG VITE_UMAMI_SRC
 
 ENV VITE_API_BASE=$VITE_API_BASE
 ENV VITE_ADMIN_PATH=$VITE_ADMIN_PATH
 ENV VITE_GITHUB_URL=$VITE_GITHUB_URL
+ENV VITE_UMAMI_WEBSITE_ID=$VITE_UMAMI_WEBSITE_ID
+ENV VITE_UMAMI_SRC=$VITE_UMAMI_SRC
 
 # .npmrc обязателен: public-hoist-pattern[]=@mdx-js/* поднимает @mdx-js/react в
 # корневой node_modules, иначе MDX-файлы из /interview и /topics (вне apps/web)
@@ -36,7 +40,7 @@ RUN pnpm --filter @dotlearn/lesson-engine build
 RUN pnpm --filter @dotlearn/web build
 
 # Unprivileged nginx: runs as the non-root `nginx` user and listens on 8080.
-# Pin the minor line (like node:20-alpine / elasticsearch:8.13.4) for reproducible builds.
+# Pin the minor line (like node:22-alpine / elasticsearch:8.13.4) for reproducible builds.
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
