@@ -766,7 +766,11 @@ function buildSitemap(siteUrl, topics) {
     urls.push(urlEntry(`${siteUrl}${enPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
   }
 
-  for (const hub of HUB_ORDER) urls.push(urlEntry(`${siteUrl}/${hub}`, []));
+  const glossaryAlternates = alternatesFor(siteUrl, { ru: '/glossary', en: '/en/glossary' });
+  for (const hub of HUB_ORDER) {
+    urls.push(urlEntry(`${siteUrl}/${hub}`, hub === 'glossary' ? glossaryAlternates : []));
+  }
+  urls.push(urlEntry(`${siteUrl}/en/glossary`, glossaryAlternates));
 
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -839,7 +843,7 @@ function buildLlmsTxt({ siteUrl, topics, catalogData }) {
     '## Разделы',
     `- [Каталог тем](${siteUrl}/)`,
     `- [Флеш-карточки](${siteUrl}/flashcards)`,
-    `- [Глоссарий](${siteUrl}/glossary)`,
+    `- [Глоссарий](${siteUrl}/glossary.md): термины и определения с привязкой к темам`,
     `- [Вопросы с собеседований](${siteUrl}/interview)`,
     `- [Треки обучения](${siteUrl}/tracks)`,
     '',
@@ -852,6 +856,69 @@ function buildLlmsTxt({ siteUrl, topics, catalogData }) {
     );
   }
   lines.push(`- [sitemap.xml](${siteUrl}/sitemap.xml)`, '');
+  return lines.join('\n');
+}
+
+// --- glossary markdown mirror ----------------------------------------------
+
+const GLOSSARY_MD_STRINGS = {
+  ru: {
+    title: 'Глоссарий',
+    intro: 'Термины и определения из курсов .learn.',
+    general: 'Общие термины',
+    web: 'Веб-версия',
+    topic: 'Тема',
+  },
+  en: {
+    title: 'Glossary',
+    intro: 'Terms and definitions from the .learn courses.',
+    general: 'General terms',
+    web: 'Web version',
+    topic: 'Topic',
+  },
+};
+
+function buildGlossaryMarkdown({ lang, siteUrl, topics, glossary }) {
+  const s = GLOSSARY_MD_STRINGS[lang];
+  const pagePath = lang === 'en' ? '/en/glossary' : '/glossary';
+  const topicBySlug = new Map(topics.map((topic) => [topic.slug, topic]));
+  const collator = new Intl.Collator(lang);
+  const byTopic = new Map();
+  for (const entry of glossary) {
+    const key = entry.topicSlug || '';
+    if (!byTopic.has(key)) byTopic.set(key, []);
+    byTopic.get(key).push(entry);
+  }
+  const groups = [...byTopic.entries()]
+    .map(([slug, entries]) => {
+      const topic = slug ? topicBySlug.get(slug) : undefined;
+      return {
+        slug,
+        topic,
+        title: topic ? topicTitle(topic.manifest, lang) : s.general,
+        entries: entries.slice().sort((a, b) => collator.compare(a.term[lang], b.term[lang])),
+      };
+    })
+    .sort((a, b) => {
+      if (!a.slug) return 1;
+      if (!b.slug) return -1;
+      return collator.compare(a.title, b.title);
+    });
+  const lines = [`# ${s.title}`, '', `> ${s.intro}`, '', `${s.web}: ${siteUrl}${pagePath}`, ''];
+  for (const group of groups) {
+    lines.push(`## ${group.title}`, '');
+    if (group.topic) {
+      const path =
+        lang === 'en' && topicHasEn(group.topic)
+          ? `/en/topics/${group.slug}`
+          : `/topics/${group.slug}`;
+      lines.push(`${s.topic}: ${siteUrl}${path}`, '');
+    }
+    for (const entry of group.entries) {
+      lines.push(`- **${entry.term[lang]}**: ${entry.def[lang]}`);
+    }
+    lines.push('');
+  }
   return lines.join('\n');
 }
 
@@ -875,6 +942,18 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
   const urlCount = (sitemapXml.match(/<url>/g) ?? []).length;
 
   const robotsSize = writeTextFile(join(distDir, 'robots.txt'), buildRobots(siteUrl));
+
+  const glossary = JSON.parse(
+    readFileSync(join(WEB_ROOT, 'src', 'lib', 'glossary.data.json'), 'utf8'),
+  );
+  writeTextFile(
+    join(distDir, 'glossary.md'),
+    buildGlossaryMarkdown({ lang: 'ru', siteUrl, topics, glossary }),
+  );
+  writeTextFile(
+    join(distDir, 'en', 'glossary.md'),
+    buildGlossaryMarkdown({ lang: 'en', siteUrl, topics, glossary }),
+  );
 
   const ruMarkdowns = [];
   const enMarkdowns = [];

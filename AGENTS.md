@@ -99,7 +99,7 @@ NestJS, Layered DDD:
 - Sandbox в `packages/sandbox`, в Web Workers. AI в рантайме нет.
 - SEO-мета страниц: компонент `<Seo>` из `apps/web/src/lib/seo.tsx` (title/description/canonical/robots/OG/hreflang). Каждая новая страница ставит свой `<Seo>`; приватные и утилитарные - с `robots="noindex,nofollow"`. Layout заголовок вкладки не трогает.
 - EN-версии тем: `/en` и `/en/topics/<slug>` (layout-роут форсит язык контента через `ForcedContentLanguageContext` и клон i18n-инстанса, localStorage пользователя не мутируется). Тема без en редиректится на ru в `beforeLoad`.
-- Build-time SEO-слой: `apps/web/scripts/{prerender,seo-artifacts,og}.mjs` вызываются из web `pnpm build` и пишут в `dist/` пререндер ~84 страниц (ru+en, без гидрации), sitemap/robots/llms.txt, markdown-зеркала и OG-PNG. Пререндер и артефакты не должны попадать в SW-прекэш (`workbox.globIgnores` в `vite.config.ts`) и в eager-бандл.
+- Build-time SEO-слой: `apps/web/scripts/{prerender,seo-artifacts,og}.mjs` вызываются из web `pnpm build` и пишут в `dist/` пререндер ~102 страниц (темы ru+en, главные, глоссарий с DefinedTermSet, хабы; без гидрации), sitemap/robots/llms.txt, markdown-зеркала и OG-PNG. Пререндер и артефакты не должны попадать в SW-прекэш (`workbox.globIgnores` в `vite.config.ts`) и в eager-бандл. Данные для Node-скриптов лежат в json-файлах рядом с ts (`catalog-categories.data.json`, `glossary.data.json`): меняешь данные - меняй json, ts их импортирует.
 
 ### Адаптивность (мобайл + десктоп, обязательно)
 

@@ -6,9 +6,11 @@ import { useTranslation } from 'react-i18next';
 
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Surface } from '@/components/ui/Surface';
+import { useForcedContentLanguage } from '@/lib/forced-language';
 import { GLOSSARY, type GlossaryEntry } from '@/lib/glossary';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { Seo } from '@/lib/seo';
+import { topicHasEn } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 
 interface GlossaryGroup {
@@ -27,7 +29,8 @@ const matches = (query: string, ...values: string[]): boolean => {
 export const GlossaryPage = () => {
   const { t } = useTranslation('glossary');
   const { t: tSeo } = useTranslation('seo');
-  const language = getCurrentLanguage();
+  const forcedLanguage = useForcedContentLanguage();
+  const language = forcedLanguage ?? getCurrentLanguage();
   const manifests = useVisibleManifests();
   const [query, setQuery] = useState('');
 
@@ -71,7 +74,13 @@ export const GlossaryPage = () => {
 
   return (
     <div className="space-y-8">
-      <Seo title={t('title')} description={tSeo('glossaryDescription')} canonicalPath="/glossary" />
+      <Seo
+        title={t('title')}
+        description={tSeo('glossaryDescription')}
+        canonicalPath={forcedLanguage === 'en' ? '/en/glossary' : '/glossary'}
+        lang={forcedLanguage ?? 'ru'}
+        alternates={{ ru: '/glossary', en: '/en/glossary' }}
+      />
       <header className="space-y-2">
         <div className="inline-flex items-center gap-2 eyebrow text-fg-subtle">
           <BookA size={12} className="text-accent" />
@@ -111,7 +120,11 @@ export const GlossaryPage = () => {
                 <h2 className="font-display text-lg tracking-tightish text-fg">{group.title}</h2>
                 {group.topicSlug ? (
                   <Link
-                    to="/topics/$slug"
+                    to={
+                      forcedLanguage === 'en' && topicHasEn(group.topicSlug)
+                        ? '/en/topics/$slug'
+                        : '/topics/$slug'
+                    }
                     params={{ slug: group.topicSlug }}
                     className="inline-flex items-center gap-1 text-[12px] text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent"
                   >
@@ -123,13 +136,17 @@ export const GlossaryPage = () => {
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {group.entries.map((entry) => (
                   <Surface key={entry.id} variant="chrome" className="p-4">
-                    <dt className="flex items-baseline justify-between gap-2">
+                    <dt id={entry.id} className="flex items-baseline justify-between gap-2">
                       <span className="font-display text-[15px] font-semibold text-fg">
                         {entry.term[language]}
                       </span>
                       {entry.topicSlug ? (
                         <Link
-                          to="/topics/$slug"
+                          to={
+                            forcedLanguage === 'en' && topicHasEn(entry.topicSlug)
+                              ? '/en/topics/$slug'
+                              : '/topics/$slug'
+                          }
                           params={{ slug: entry.topicSlug }}
                           aria-label={t('openSource', { term: entry.term[language] })}
                           className="shrink-0 text-fg-subtle transition-colors hover:text-accent"

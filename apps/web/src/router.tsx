@@ -280,7 +280,13 @@ const enTopicRoute = new Route({
   },
 });
 
-const enRouteTree = enLayoutRoute.addChildren([enHomeRoute, enTopicRoute]);
+const enGlossaryRoute = new Route({
+  getParentRoute: () => enLayoutRoute,
+  path: '/en/glossary',
+  component: GlossaryPage,
+});
+
+const enRouteTree = enLayoutRoute.addChildren([enHomeRoute, enTopicRoute, enGlossaryRoute]);
 
 const submitRoute = new Route({
   getParentRoute: () => rootRoute,

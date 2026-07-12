@@ -39,6 +39,9 @@ const locales = { ru: loadLocale('ru'), en: loadLocale('en') };
 const catalogData = JSON.parse(
   readFileSync(join(WEB_ROOT, 'src', 'lib', 'catalog-categories.data.json'), 'utf8'),
 );
+const glossary = JSON.parse(
+  readFileSync(join(WEB_ROOT, 'src', 'lib', 'glossary.data.json'), 'utf8'),
+);
 
 const LABELS = {
   ru: {
@@ -71,7 +74,6 @@ const fallbackHomeDescription = (lang, count) =>
 
 const HUBS = {
   flashcards: { title: 'Карточки', description: 'Интервальное повторение по всем темам .learn.' },
-  glossary: { title: 'Глоссарий', description: 'Термины и определения из курсов .learn.' },
   interview: {
     title: 'Подготовка к собеседованию',
     description: 'Вопросы для технических интервью по Python, SQL и вебу.',
@@ -688,6 +690,123 @@ for (const topic of topics) {
       body: en.html,
     }),
   );
+}
+
+// Glossary (ru + en): full term list with DefinedTermSet JSON-LD.
+{
+  const GLOSSARY_FALLBACK = {
+    ru: {
+      title: 'Глоссарий',
+      general: 'Общие термины',
+      open: 'Открыть тему',
+      description: 'Термины и определения из курсов .learn.',
+    },
+    en: {
+      title: 'Glossary',
+      general: 'General terms',
+      open: 'Open the topic',
+      description: 'A programming glossary with definitions linked to the course topics.',
+    },
+  };
+  const topicBySlug = new Map(topics.map((topic) => [topic.slug, topic]));
+
+  const renderGlossaryBody = (lang) => {
+    const loc = (locales[lang] && locales[lang].glossary) || {};
+    const fallback = GLOSSARY_FALLBACK[lang];
+    const title = loc.title || fallback.title;
+    const subtitle = loc.subtitle || '';
+    const description =
+      (locales[lang] && locales[lang].seo && locales[lang].seo.glossaryDescription) ||
+      fallback.description;
+    const collator = new Intl.Collator(lang);
+    const byTopic = new Map();
+    for (const entry of glossary) {
+      const key = entry.topicSlug || '';
+      if (!byTopic.has(key)) byTopic.set(key, []);
+      byTopic.get(key).push(entry);
+    }
+    const groups = [...byTopic.entries()]
+      .map(([slug, entries]) => {
+        const topic = slug ? topicBySlug.get(slug) : undefined;
+        const groupTitle = topic
+          ? lang === 'en'
+            ? topic.manifest.titleEn || topic.manifest.title
+            : topic.manifest.title
+          : loc.generalGroup || fallback.general;
+        return {
+          slug,
+          topic,
+          title: groupTitle,
+          entries: entries.slice().sort((a, b) => collator.compare(a.term[lang], b.term[lang])),
+        };
+      })
+      .sort((a, b) => {
+        if (!a.slug) return 1;
+        if (!b.slug) return -1;
+        return collator.compare(a.title, b.title);
+      });
+    const sections = groups
+      .map((group) => {
+        const href = group.topic
+          ? lang === 'en' && topicHasEn(group.topic)
+            ? `/en/topics/${group.slug}`
+            : `/topics/${group.slug}`
+          : undefined;
+        const link = href
+          ? ` <a href="${escapeAttr(href)}">${escapeHtml(loc.openTopic || fallback.open)}</a>`
+          : '';
+        const terms = group.entries
+          .map(
+            (entry) =>
+              `<div id="${escapeAttr(entry.id)}"><dt>${escapeHtml(entry.term[lang])}</dt><dd>${escapeHtml(entry.def[lang])}</dd></div>`,
+          )
+          .join('');
+        return `<section><h2>${escapeHtml(group.title)}</h2>${link}<dl>${terms}</dl></section>`;
+      })
+      .join('\n');
+    const html = `<h1>${escapeHtml(title)}</h1>${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ''}\n${sections}`;
+    return { html, title, description };
+  };
+
+  const glossaryJsonLd = (lang, pageUrl, name) => ({
+    '@context': 'https://schema.org',
+    '@type': 'DefinedTermSet',
+    '@id': pageUrl,
+    url: pageUrl,
+    name,
+    inLanguage: lang,
+    hasDefinedTerm: glossary.map((entry) => ({
+      '@type': 'DefinedTerm',
+      name: entry.term[lang],
+      description: entry.def[lang],
+      url: `${pageUrl}#${entry.id}`,
+      inDefinedTermSet: pageUrl,
+    })),
+  });
+
+  const glossaryAlternates = alternatesFor(SITE, { ru: '/glossary', en: '/en/glossary' });
+  for (const lang of ['ru', 'en']) {
+    const canonical = lang === 'en' ? `${SITE}/en/glossary` : `${SITE}/glossary`;
+    const page = renderGlossaryBody(lang);
+    writePage(
+      lang === 'en' ? 'en/glossary/index.html' : 'glossary/index.html',
+      applyShell({
+        lang,
+        title: `${page.title} · .learn`,
+        head: buildHead({
+          lang,
+          canonical,
+          alternates: glossaryAlternates,
+          description: page.description,
+          ogType: 'website',
+          ogTitle: page.title,
+          ogImage: `${SITE}/og/default.png`,
+          jsonLd: [glossaryJsonLd(lang, canonical, page.title)],
+        }),
+        body: page.html,
+      }),
+    );
+  }
 }
 
 // Head-only hubs (empty #root, like the source shell).
