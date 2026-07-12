@@ -24,6 +24,7 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  Wand2,
   Waypoints,
   X,
 } from 'lucide-react';
@@ -39,6 +40,7 @@ import { EmptyState as EmptyStateCard } from '@/components/ui/EmptyState';
 import { Surface } from '@/components/ui/Surface';
 import {
   categoryLabelKey,
+  categoryOfSlug,
   groupByCatalogCategory,
   type CatalogCategoryId,
 } from '@/lib/catalog-categories';
@@ -47,6 +49,8 @@ import { useForcedContentLanguage } from '@/lib/forced-language';
 import { fuzzyScore } from '@/lib/fuzzy';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
+import { LEVEL_RANK, isPersonalized, usePersonalization } from '@/lib/personalization';
+import { openPersonalizeWizard } from '@/lib/personalize-wizard';
 import { db, type ProgressRecord } from '@/lib/progress-db';
 import { Seo } from '@/lib/seo';
 import {
@@ -213,6 +217,9 @@ export const HomePage = () => {
   const tagFilter = useMemo(() => search.tags ?? [], [search.tags]);
   const duration = search.duration;
   const query = search.q ?? '';
+  const forMe = search.forMe === true;
+  const profile = usePersonalization();
+  const profileReady = isPersonalized(profile);
 
   const [queryInput, setQueryInput] = useState(query);
   const debouncedQuery = useDebouncedValue(queryInput, 300);
@@ -329,6 +336,15 @@ export const HomePage = () => {
         if (status !== 'all' && statusOfRow(row) !== status) return false;
         if (duration !== undefined && durationOfMinutes(row.totalMinutes) !== duration)
           return false;
+        if (forMe) {
+          if (
+            profile.interests.length > 0 &&
+            !profile.interests.includes(categoryOfSlug(manifest.slug))
+          )
+            return false;
+          if (profile.level && DIFFICULTY_RANK[manifest.difficulty] > LEVEL_RANK[profile.level])
+            return false;
+        }
         return true;
       })
       .map((row) => {
@@ -351,6 +367,8 @@ export const HomePage = () => {
     tagFilter,
     status,
     duration,
+    forMe,
+    profile,
     hasQuery,
     trimmedQuery,
     contentBySlug,
@@ -411,6 +429,7 @@ export const HomePage = () => {
     runtimeFilter.length > 0 ||
     tagFilter.length > 0 ||
     duration !== undefined ||
+    forMe ||
     search.sort !== undefined;
 
   const categoryGroups = useMemo(
@@ -428,8 +447,17 @@ export const HomePage = () => {
       tags: undefined,
       duration: undefined,
       sort: undefined,
+      forMe: undefined,
     });
   }, [patch]);
+
+  const toggleForMe = useCallback((): void => {
+    if (!profileReady) {
+      openPersonalizeWizard();
+      return;
+    }
+    patch({ forMe: forMe ? undefined : true });
+  }, [profileReady, forMe, patch]);
 
   const setSort = useCallback(
     (value: HomeSortKey): void => {
@@ -511,6 +539,9 @@ export const HomePage = () => {
           hasQuery={hasQuery}
           filtersActive={filtersActive}
           onReset={resetFilters}
+          forMe={forMe}
+          forMeReady={profileReady}
+          onToggleForMe={toggleForMe}
         />
 
         {hasQuery && contentResults.length > 0 && (
@@ -977,6 +1008,9 @@ interface CatalogToolbarProps {
   hasQuery: boolean;
   filtersActive: boolean;
   onReset: () => void;
+  forMe: boolean;
+  forMeReady: boolean;
+  onToggleForMe: () => void;
 }
 
 const CatalogToolbar = ({
@@ -998,6 +1032,9 @@ const CatalogToolbar = ({
   hasQuery,
   filtersActive,
   onReset,
+  forMe,
+  forMeReady,
+  onToggleForMe,
 }: CatalogToolbarProps) => {
   const { t } = useTranslation('home');
   const reduceMotion = useReducedMotion() ?? false;
@@ -1096,6 +1133,22 @@ const CatalogToolbar = ({
               className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-subtle"
             />
           </label>
+          <button
+            type="button"
+            onClick={onToggleForMe}
+            aria-pressed={forMe}
+            title={forMeReady ? undefined : t('forMe.needsSetup')}
+            aria-label={forMeReady ? t('forMe.aria') : t('forMe.needsSetup')}
+            className={cx(
+              'inline-flex items-center justify-center gap-1.5 rounded-full border px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55 w-full sm:w-auto shrink-0',
+              forMe
+                ? 'border-accent/70 bg-accent/[0.16] text-accent'
+                : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+            )}
+          >
+            <Wand2 size={14} />
+            {t('forMe.toggle')}
+          </button>
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}
