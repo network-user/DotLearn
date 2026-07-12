@@ -31,6 +31,7 @@ import {
   topicHasEn,
   loadLocale,
 } from './seo-lib.mjs';
+import { emitSeoArtifacts } from './seo-artifacts.mjs';
 
 const SITE = resolveSiteUrl();
 const topics = loadTopics();
@@ -744,3 +745,6 @@ console.log(
     (healedComponents ? ` · healed ${healedComponents} component refs` : '') +
     (healedGlobals ? ` · healed ${healedGlobals} global refs` : ''),
 );
+
+// --- SEO artifacts: sitemap.xml, robots.txt, llms(.full).txt, markdown mirrors
+await emitSeoArtifacts({ distDir: DIST_ROOT, siteUrl: SITE });
