@@ -1,4 +1,12 @@
-import { lazy, StrictMode, Suspense, useEffect, useState } from 'react';
+import {
+  lazy,
+  StrictMode,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { registerSW } from 'virtual:pwa-register';
 
@@ -113,6 +121,13 @@ const AppRoot = () => {
   );
 };
 
+const BootReveal = ({ children }: { children: ReactNode }) => {
+  useLayoutEffect(() => {
+    document.documentElement.classList.add('app-ready');
+  }, []);
+  return children;
+};
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Root element missing in index.html');
@@ -120,10 +135,12 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <ErrorBoundary>
-      <AuthProvider>
-        <AppRoot />
-      </AuthProvider>
-    </ErrorBoundary>
+    <BootReveal>
+      <ErrorBoundary>
+        <AuthProvider>
+          <AppRoot />
+        </AuthProvider>
+      </ErrorBoundary>
+    </BootReveal>
   </StrictMode>,
 );
