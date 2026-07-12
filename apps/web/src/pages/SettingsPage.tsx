@@ -1,6 +1,6 @@
 import { lazy, Suspense, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 
-import { Check, Download, Minus, Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { Check, Download, Minus, Plus, RotateCcw, Trash2, Upload, Wand2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -8,6 +8,9 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
+import { categoryLabelKey } from '@/lib/catalog-categories';
+import { isPersonalized, resetPersonalization, usePersonalization } from '@/lib/personalization';
+import { openPersonalizeWizard } from '@/lib/personalize-wizard';
 import {
   MAX_IMPORT_FILE_BYTES,
   ProgressImportError,
@@ -129,8 +132,10 @@ function Segmented<T extends string>({ value, options, onChange, ariaLabel }: Se
 
 export const SettingsPage = () => {
   const { t } = useTranslation('settings');
+  const { t: tHome } = useTranslation('home');
   const storage = useStorageHealth();
   const settings = useSettings();
+  const profile = usePersonalization();
   const sync = useSync();
   const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
   const [confirmReset, setConfirmReset] = useState(false);
@@ -334,6 +339,67 @@ export const SettingsPage = () => {
             />
           }
         />
+      </Section>
+
+      <Section title={t('personalize.sectionTitle')} description={t('personalize.sectionDesc')}>
+        {isPersonalized(profile) ? (
+          <>
+            <Row
+              label={t('personalize.levelLabel')}
+              control={
+                <span className="text-sm text-fg">
+                  {profile.level
+                    ? t(`personalize.levelNames.${profile.level}`)
+                    : t('personalize.levelUnset')}
+                </span>
+              }
+            />
+            <Row
+              label={t('personalize.interestsLabel')}
+              control={
+                profile.interests.length > 0 ? (
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    {profile.interests.map((id) => (
+                      <span
+                        key={id}
+                        className="rounded-full border border-border-base px-2.5 py-1 text-[12px] text-fg-muted"
+                      >
+                        {tHome(categoryLabelKey(id))}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-sm text-fg-subtle">{t('personalize.interestsUnset')}</span>
+                )
+              }
+            />
+          </>
+        ) : (
+          <p className="text-sm text-fg-subtle">{t('personalize.notConfigured')}</p>
+        )}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <Button
+            variant="outline"
+            leadingIcon={<Wand2 size={15} />}
+            className="w-full sm:w-auto"
+            onClick={openPersonalizeWizard}
+          >
+            {isPersonalized(profile) ? t('personalize.editButton') : t('personalize.setupButton')}
+          </Button>
+          {isPersonalized(profile) && (
+            <Button
+              variant="ghost"
+              leadingIcon={<RotateCcw size={15} />}
+              className="w-full sm:w-auto"
+              onClick={() => {
+                resetPersonalization();
+                toast.success(t('personalize.resetToast'));
+              }}
+            >
+              {t('personalize.resetButton')}
+            </Button>
+          )}
+        </div>
       </Section>
 
       <Section title={t('dataLabel')} description={t('dataDesc')}>
