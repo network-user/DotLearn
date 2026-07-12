@@ -19,6 +19,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import i18n from './lib/i18n';
 import { AuthProvider } from './lib/auth/AuthContext';
 import { COMMAND_PALETTE_EVENT } from './lib/command-palette';
+import { initPersonalization } from './lib/personalization';
 import { initSettings, useSettings } from './lib/settings';
 import { recoverFromStaleChunk } from './lib/stale-deploy-recovery';
 import { requestPersistAfterFirstWrite } from './lib/storage-health';
@@ -62,6 +63,7 @@ const CommandPaletteHost = () => {
 };
 
 initSettings();
+initPersonalization();
 watchSystemTheme();
 requestPersistAfterFirstWrite();
 window.history.scrollRestoration = 'manual';
