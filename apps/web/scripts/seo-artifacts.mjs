@@ -28,6 +28,7 @@ import remarkFrontmatter from 'remark-frontmatter';
 import { remarkConceptLinks } from '../remark-concept-links.mjs';
 import {
   WEB_ROOT,
+  REPO_ROOT,
   loadTopics,
   alternatesFor,
   theoryFilesFor,
@@ -724,6 +725,46 @@ async function buildTopicMarkdown(topic, lang, siteUrl) {
   return stringifier.stringify(tree);
 }
 
+// --- interview markdown mirror -------------------------------------------
+// Interview bodies already carry a single `#` (question) + `##` sections, so
+// unlike topic bodies they are NOT heading-demoted: the standalone md file
+// keeps its own h1. Same JSX->markdown transform otherwise.
+const interviewProcessor = unified()
+  .use(remarkParse)
+  .use(remarkMdx)
+  .use(remarkGfm)
+  .use(remarkFrontmatter)
+  .use(remarkConceptLinks)
+  .use(() => (tree) => {
+    tree.children = transformChildren(tree.children ?? []);
+  });
+
+async function interviewBodyNodes(absPath, body) {
+  const file = { value: body, path: absPath };
+  const tree = interviewProcessor.parse(file);
+  const transformed = await interviewProcessor.run(tree, file);
+  return transformed.children ?? [];
+}
+
+async function buildInterviewMarkdown(question, lang, siteUrl) {
+  const rel = lang === 'en' ? question.path.replace(/\.ru\.mdx$/, '.en.mdx') : question.path;
+  const { body, abs } = loadTheoryFile(join(REPO_ROOT, 'interview'), rel);
+  const url =
+    lang === 'en'
+      ? `${siteUrl}/en/interview/${question.id}`
+      : `${siteUrl}/interview/${question.id}`;
+  const children = [...(await interviewBodyNodes(abs, body))];
+  const webLabel = lang === 'en' ? 'Web version' : 'Веб-версия';
+  const linkPara = {
+    type: 'paragraph',
+    children: [textNode(`${webLabel}: `), { type: 'link', url, children: [textNode(url)] }],
+  };
+  const h1Index = children.findIndex((n) => n.type === 'heading' && n.depth === 1);
+  if (h1Index >= 0) children.splice(h1Index + 1, 0, linkPara);
+  else children.unshift(linkPara);
+  return stringifier.stringify({ type: 'root', children });
+}
+
 // --- sitemap.xml ---------------------------------------------------------
 
 const xmlEscape = (value) =>
@@ -745,7 +786,7 @@ const urlEntry = (loc, alternates) => {
   return lines.join('\n');
 };
 
-function buildSitemap(siteUrl, topics) {
+function buildSitemap(siteUrl, topics, interviewIndex) {
   const urls = [];
   const homeAlternates = alternatesFor(siteUrl, { ru: '/', en: '/en' });
   urls.push(urlEntry(`${siteUrl}/`, homeAlternates));
@@ -766,11 +807,26 @@ function buildSitemap(siteUrl, topics) {
     urls.push(urlEntry(`${siteUrl}${enPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
   }
 
+  for (const q of interviewIndex) {
+    const ruPath = `/interview/${q.id}`;
+    const enPath = `/en/interview/${q.id}`;
+    urls.push(urlEntry(`${siteUrl}${ruPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
+  }
+  for (const q of interviewIndex) {
+    const ruPath = `/interview/${q.id}`;
+    const enPath = `/en/interview/${q.id}`;
+    urls.push(urlEntry(`${siteUrl}${enPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
+  }
+
   const glossaryAlternates = alternatesFor(siteUrl, { ru: '/glossary', en: '/en/glossary' });
+  const interviewAlternates = alternatesFor(siteUrl, { ru: '/interview', en: '/en/interview' });
   for (const hub of HUB_ORDER) {
-    urls.push(urlEntry(`${siteUrl}/${hub}`, hub === 'glossary' ? glossaryAlternates : []));
+    const alt =
+      hub === 'glossary' ? glossaryAlternates : hub === 'interview' ? interviewAlternates : [];
+    urls.push(urlEntry(`${siteUrl}/${hub}`, alt));
   }
   urls.push(urlEntry(`${siteUrl}/en/glossary`, glossaryAlternates));
+  urls.push(urlEntry(`${siteUrl}/en/interview`, interviewAlternates));
 
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -818,7 +874,7 @@ Sitemap: ${siteUrl}/sitemap.xml
 
 // --- llms.txt ----------------------------------------------------------------
 
-function buildLlmsTxt({ siteUrl, topics, catalogData }) {
+function buildLlmsTxt({ siteUrl, topics, catalogData, interviewIndex }) {
   const enTopics = topics.filter(topicHasEn);
   const lines = [
     '# .learn',
@@ -844,8 +900,11 @@ function buildLlmsTxt({ siteUrl, topics, catalogData }) {
     `- [Каталог тем](${siteUrl}/)`,
     `- [Флеш-карточки](${siteUrl}/flashcards)`,
     `- [Глоссарий](${siteUrl}/glossary.md): термины и определения с привязкой к темам`,
-    `- [Вопросы с собеседований](${siteUrl}/interview)`,
     `- [Треки обучения](${siteUrl}/tracks)`,
+    '',
+    '## Собеседования',
+    `- [Вопросы для собеседований](${siteUrl}/interview): ${interviewIndex.length} вопросов с ответами; markdown-зеркало каждого вопроса — ${siteUrl}/interview/<id>.md`,
+    `- [Interview questions (English)](${siteUrl}/en/interview): the same bank in English; mirrors at ${siteUrl}/en/interview/<id>.md`,
     '',
     '## Optional',
     `- [llms-full.txt](${siteUrl}/llms-full.txt): вся русская теория одним файлом`,
@@ -936,8 +995,11 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
   const catalogData = JSON.parse(
     readFileSync(join(WEB_ROOT, 'src', 'lib', 'catalog-categories.data.json'), 'utf8'),
   );
+  const interviewIndex = JSON.parse(
+    readFileSync(join(REPO_ROOT, 'interview', 'index.json'), 'utf8'),
+  );
 
-  const sitemapXml = buildSitemap(siteUrl, topics);
+  const sitemapXml = buildSitemap(siteUrl, topics, interviewIndex);
   const sitemapSize = writeTextFile(join(distDir, 'sitemap.xml'), sitemapXml);
   const urlCount = (sitemapXml.match(/<url>/g) ?? []).length;
 
@@ -970,7 +1032,18 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
     }
   }
 
-  const llmsTxt = buildLlmsTxt({ siteUrl, topics, catalogData });
+  for (const q of interviewIndex) {
+    writeTextFile(
+      join(distDir, 'interview', `${q.id}.md`),
+      await buildInterviewMarkdown(q, 'ru', siteUrl),
+    );
+    writeTextFile(
+      join(distDir, 'en', 'interview', `${q.id}.md`),
+      await buildInterviewMarkdown(q, 'en', siteUrl),
+    );
+  }
+
+  const llmsTxt = buildLlmsTxt({ siteUrl, topics, catalogData, interviewIndex });
   const llmsSize = writeTextFile(join(distDir, 'llms.txt'), llmsTxt);
 
   const llmsFull = `# .learn: полная теория (ru)\n\n${ruMarkdowns.map((m) => m.trim()).join('\n\n---\n\n')}\n`;
