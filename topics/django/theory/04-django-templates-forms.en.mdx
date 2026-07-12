@@ -1,0 +1,220 @@
+---
+conceptId: django-templates-forms
+title: "Templates and forms: rendering and validation"
+estimatedMinutes: 13
+---
+
+# Where data becomes HTML, and input becomes trusted data
+
+A view has gathered data and now has to show it to a person, then take input back from them. Two sides of one coin: on the way out, values need to be inserted into HTML without breaking the markup or letting a stray script through; on the way in, whatever a person typed into a field needs to be accepted and checked for at least basic plausibility. Django covers both sides: templates draw the page, forms accept and validate input.
+
+The temptation is strong to build HTML with string concatenation right in the view, and to check fields by hand through a pile of `if`s. That works fine right up until the first user-supplied string contains `<script>`, or is empty where a number was expected. The template language deliberately separates output from logic, and forms turn scattered checks into one predictable pass with clear errors. By the end of this section you'll understand the template language and inheritance, the difference between a bound and an unbound form, how validation runs, and why every form needs a CSRF token.
+
+## The template language: output, not programming
+
+A Django template is HTML with three things mixed in. Variables insert a value from the context and are written in double curly braces. Tags control structure (loops, conditionals, inheritance) and are written as a keyword inside curly braces with percent signs. Filters transform a value before it's output and are written with a pipe after the variable.
+
+```django
+<h1>{{ order.customer }}</h1>
+<p>Total: ${{ order.amount|floatformat:2 }}</p>
+{% if order.is_paid %}
+  <span>paid</span>
+{% endif %}
+<ul>
+{% for item in order.items %}
+  <li>{{ item.title }}</li>
+{% endfor %}
+</ul>
+```
+
+Here the `order.customer` variable comes from the **context** - a dictionary the view passes to the template. Dot access is smart: Django tries a dict key, then an attribute, then even a no-argument method call. The `floatformat:2` filter rounds to two decimal places. The `if` and `for` tags control what gets output and how many times.
+
+An important constraint: the template language is **deliberately limited**. You can't assign a variable like in Python, can't call a function with arbitrary arguments, can't write a complex expression. That's not a shortcoming, it's a boundary: computation is the view's job, the template only displays the finished result. When a template feels like it's "missing" a feature, that's almost always a signal to move the logic into the view.
+
+## Template inheritance: a shared frame with swappable blocks
+
+Pages on a site look alike: the same header, footer, menu. Duplicating them in every template invites drift. Django solves this with inheritance. A base template sets up the frame and declares **blocks** - holes that children fill in with their own content.
+
+```django
+<!DOCTYPE html>
+<html>
+<body>
+  <header>Shop</header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer>2024</footer>
+</body>
+</html>
+```
+
+A child template declares which base template it extends and overrides the blocks it needs. Everything outside the blocks it inherits from the parent as-is.
+
+```django
+{% extends "base.html" %}
+
+{% block content %}
+  <h1>Order {{ order.pk }}</h1>
+{% endblock %}
+```
+
+<Figure caption="A child template inherits the base's frame and drops its own content only into the declared blocks; everything outside the blocks comes from the parent.">
+  <Sketch viewBox="0 0 480 220" title="Template inheritance">
+    <SketchBox x={24} y={30} width={160} height={170} />
+    <SketchLabel x={104} y={22} mono size={11}>base.html</SketchLabel>
+    <SketchLabel x={104} y={56} muted size={10}>header</SketchLabel>
+    <SketchBox x={44} y={78} width={120} height={56} accent />
+    <SketchLabel x={104} y={110} mono accent size={10}>block content</SketchLabel>
+    <SketchLabel x={104} y={178} muted size={10}>footer</SketchLabel>
+
+    <SketchBox x={300} y={30} width={160} height={170} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={380} y={22} mono size={11}>order.html</SketchLabel>
+    <SketchLabel x={380} y={56} muted size={9}>header (from base)</SketchLabel>
+    <SketchHighlight x={320} y={78} width={120} height={56} />
+    <SketchLabel x={380} y={102} mono size={9}>Order #pk</SketchLabel>
+    <SketchLabel x={380} y={120} muted size={8}>its own content</SketchLabel>
+    <SketchLabel x={380} y={178} muted size={9}>footer (from base)</SketchLabel>
+
+    <SketchArrow from={[184, 106]} to={[300, 106]} accent />
+    <SketchLabel x={242} y={94} muted size={9}>extends</SketchLabel>
+  </Sketch>
+</Figure>
+
+The point of this diagram: the child doesn't rewrite the page from scratch, it just fills in the holes the parent left open. Change the header in `base.html`, and it changes on every page at once.
+
+## Form: an object that knows its fields and can validate itself
+
+Now the other side: accepting input. A `Form` is a class where each attribute describes an input field, with its type and rules. A form does three things: render itself as HTML, accept submitted data, and validate it.
+
+```python
+from django import forms
+
+class OrderForm(forms.Form):
+    customer = forms.CharField(max_length=100)
+    amount = forms.DecimalField(min_value=0)
+    comment = forms.CharField(required=False)
+```
+
+When a form maps almost one-to-one to a model, writing fields by hand is unnecessary - that's what `ModelForm` is for. It builds fields automatically from the model; you just specify the model and the list of fields.
+
+```python
+from django import forms
+from .models import Order
+
+class OrderModelForm(forms.ModelForm):
+    class Meta:
+        model = Order
+        fields = ["customer", "amount"]
+```
+
+## Bound and unbound forms
+
+This is the distinction people mix up most often. A form created **without data** (`OrderForm()`) is **unbound**: there's nothing to validate, it's only good for rendering empty fields. A form created **with data** (`OrderForm(request.POST)`) is **bound**: it holds the submitted values and can be validated.
+
+<Compare
+  leftTitle="Unbound"
+  rightTitle="Bound"
+  left={<>
+    <p>Created without data: <code>OrderForm()</code>.</p>
+    <p>No data - nothing to validate.</p>
+    <p>Good for rendering an empty form on GET.</p>
+  </>}
+  right={<>
+    <p>Created with data: <code>OrderForm(request.POST)</code>.</p>
+    <p>Holds the submitted values.</p>
+    <p>Can call <code>is_valid()</code> and read <code>cleaned_data</code>.</p>
+  </>}
+  verdict="Whether a form is bound depends on whether it was given data, not on the request method. GET typically renders an unbound form, POST creates and validates a bound one."
+/>
+
+A typical form-handling view covers both cases: on GET it shows an empty form, on POST it binds the form to data and validates it.
+
+```python
+def create_order(request):
+    if request.method == "POST":
+        form = OrderForm(request.POST)
+        if form.is_valid():
+            data = form.cleaned_data
+            return HttpResponse("created", status=201)
+    else:
+        form = OrderForm()
+    return render(request, "order_form.html", {"form": form})
+```
+
+## Validation: is_valid, cleaned_data, clean methods
+
+The heart of a form is validation. Calling `form.is_valid()` runs validation and returns `True`/`False`. After that call, two results appear: the `form.cleaned_data` dict, holding type-cast, validated values (only when validation succeeded), and `form.errors`, holding error messages per field.
+
+Under the hood `is_valid()` runs a cascade. First, each field casts its input to the right type and checks basic rules (`required`, `max_length`, `min_value`). Then, if the form has a `clean_<field name>` method, it's called - the place for checking one field against its own rules. Finally, the `clean` method (no suffix) sees all fields at once - that's where checks spanning several fields go.
+
+```python
+class OrderForm(forms.Form):
+    customer = forms.CharField(max_length=100)
+    amount = forms.DecimalField(min_value=0)
+
+    def clean_customer(self):
+        name = self.cleaned_data["customer"]
+        if name.strip().lower() == "test":
+            raise forms.ValidationError("The name 'test' is not allowed")
+        return name
+```
+
+To flag an invalid value, a clean method raises `ValidationError` - Django catches it and adds the message to `form.errors`, and the form becomes invalid. A `clean_<field>` method must **return** the value (usually from `cleaned_data`), or the field disappears from the cleaned data.
+
+<Callout type="warning">
+Reading `form.cleaned_data` before a successful `is_valid()` doesn't work: there's no cleaned data until validation runs. Always `if form.is_valid():` first, and only read `form.cleaned_data` inside that branch.
+</Callout>
+
+## The CSRF token: why every form needs one
+
+Every form submitted with POST needs to carry a **CSRF token** - a hidden field with a unique value. It protects against cross-site request forgery: another site can trick a user's browser into sending a POST to your site (the browser attaches cookies automatically), but it can't know the secret token tied to the session. Django checks the token and rejects a POST without one with a `403`.
+
+In a template, the token is inserted with one tag inside the form.
+
+```django
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit">Submit</button>
+</form>
+```
+
+You can also see how a form renders itself here: `form.as_p` outputs the fields wrapped in paragraphs. There are other output options, but the idea is the same - the form generates its own field HTML.
+
+## Edge cases
+
+**An unbound form can't be meaningfully validated.** `OrderForm().is_valid()` returns `False`, but not because the data is bad - there simply isn't any. Only validate bound forms (created with data).
+
+**A `clean_<field>` method without `return` silently drops the value.** If a method checks a field but forgets to return it, the value disappears from `cleaned_data` even when there was no error. The method must return the cleaned value.
+
+**`required=False` and empty input aren't an error.** A field with `required=False` left empty passes validation; it lands in `cleaned_data` as an empty string (or `None`). Don't confuse "field is optional" with "field is invalid."
+
+## Common mistakes
+
+- **Building HTML with string concatenation in the view.** Concatenating tags in Python bypasses auto-escaping and opens the door to XSS: a user's input containing a script lands on the page as-is. Render through a template - it escapes inserted values by default.
+- **Logic in the template.** The template language is deliberately limited. If you want an assignment or a complex expression in a template, move the computation to the view and pass a ready-made result into the context.
+- **Forgetting `{% csrf_token %}` in a POST form.** Django then rejects the submission with `403`. The tag is mandatory inside every form submitted with POST.
+- **Reading `cleaned_data` without `is_valid()`.** There's no cleaned data before a successful check; accessing it outside the `if form.is_valid()` branch is a bug.
+
+<Detail summary="Why template auto-escaping is a security feature">
+
+By default, Django's template engine escapes inserted values: the characters `<`, `>`, `&`, and quotes turn into HTML entities. So if a user typed `<script>alert(1)</script>` into a name field, the page shows that text literally, and the browser doesn't execute it as a script. This is "safe by default" protection against XSS: to output a value as raw HTML you have to ask for it explicitly (the `safe` filter), and at that point the responsibility for safety is on you. That's exactly why building HTML with strings in a view is dangerous - it bypasses this mechanism entirely.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A template is HTML with three things mixed in: variables (double curly braces), tags (with percent signs, for loops/conditionals/inheritance), and filters (via a pipe); values come from the context the view passes in.",
+    "The template language is deliberately limited: no assignments, no complex expressions - the view computes, the template only displays.",
+    "Inheritance: a base template sets up the frame and declares blocks, a child fills only those in via extends; the shared header/footer isn't duplicated.",
+    "An unbound form is created without data (renders empty fields), a bound one is created with data (request.POST) and can be validated; bound status depends on data, not the request method.",
+    "Validation: is_valid() runs a cascade (fields -> clean_<field> -> clean), fills cleaned_data and errors; an invalid value is reported via raise ValidationError; cleaned_data is read only after a successful is_valid().",
+    "A CSRF token is mandatory in every POST form: it protects against cross-site request forgery; without it Django rejects the POST with a 403.",
+  ]}
+/>
+
+## References
+
+- [Django - The Django template language](https://docs.djangoproject.com/en/stable/ref/templates/language/)
+- [Django - Template inheritance](https://docs.djangoproject.com/en/stable/ref/templates/language/#template-inheritance)
+- [Django - Working with forms](https://docs.djangoproject.com/en/stable/topics/forms/)
+- [Django - Form and field validation](https://docs.djangoproject.com/en/stable/ref/forms/validation/)
+- [Django - Cross Site Request Forgery protection](https://docs.djangoproject.com/en/stable/ref/csrf/)

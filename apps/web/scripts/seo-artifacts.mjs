@@ -6,6 +6,7 @@
 // - dist/en/topics/<slug>.md    (en markdown mirror, topics with an en edition)
 // - dist/llms.txt               (llmstxt.org index)
 // - dist/llms-full.txt          (all ru theory concatenated)
+// - dist/en/llms-full.txt       (theory concatenated for topics with an en edition)
 //
 // The markdown mirrors are produced by converting each theory MDX file with a
 // standalone unified/remark pipeline (parse -> mdx -> gfm -> frontmatter ->
@@ -844,9 +845,13 @@ function buildLlmsTxt({ siteUrl, topics, catalogData }) {
     '',
     '## Optional',
     `- [llms-full.txt](${siteUrl}/llms-full.txt): вся русская теория одним файлом`,
-    `- [sitemap.xml](${siteUrl}/sitemap.xml)`,
-    '',
   );
+  if (enTopics.length) {
+    lines.push(
+      `- [en/llms-full.txt](${siteUrl}/en/llms-full.txt): all English-translated theory in one file`,
+    );
+  }
+  lines.push(`- [sitemap.xml](${siteUrl}/sitemap.xml)`, '');
   return lines.join('\n');
 }
 
@@ -872,6 +877,7 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
   const robotsSize = writeTextFile(join(distDir, 'robots.txt'), buildRobots(siteUrl));
 
   const ruMarkdowns = [];
+  const enMarkdowns = [];
   let enCount = 0;
   for (const topic of topics) {
     const ruMd = await buildTopicMarkdown(topic, 'ru', siteUrl);
@@ -880,6 +886,7 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
     if (topicHasEn(topic)) {
       const enMd = await buildTopicMarkdown(topic, 'en', siteUrl);
       writeTextFile(join(distDir, 'en', 'topics', `${topic.slug}.md`), enMd);
+      enMarkdowns.push(enMd);
       enCount += 1;
     }
   }
@@ -890,12 +897,21 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
   const llmsFull = `# .learn: полная теория (ru)\n\n${ruMarkdowns.map((m) => m.trim()).join('\n\n---\n\n')}\n`;
   const llmsFullSize = writeTextFile(join(distDir, 'llms-full.txt'), llmsFull);
 
+  // EN counterpart: same shape as llms-full.txt, but only the topics that
+  // actually have an en edition (symmetric with dist/en/topics/<slug>.md above).
+  let llmsFullEnSize = 0;
+  if (enMarkdowns.length) {
+    const llmsFullEn = `# .learn: full theory (en)\n\n${enMarkdowns.map((m) => m.trim()).join('\n\n---\n\n')}\n`;
+    llmsFullEnSize = writeTextFile(join(distDir, 'en', 'llms-full.txt'), llmsFullEn);
+  }
+
   const durationMs = performance.now() - start;
   const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
   console.log(
     `[seo-artifacts] sitemap ${urlCount} urls (${kb(sitemapSize)}) · robots.txt (${kb(robotsSize)}) · ` +
       `${topics.length} ru + ${enCount} en markdown mirrors · llms.txt (${kb(llmsSize)}) · ` +
-      `llms-full.txt (${kb(llmsFullSize)}) · ${(durationMs / 1000).toFixed(1)}s`,
+      `llms-full.txt (${kb(llmsFullSize)}) · en/llms-full.txt (${kb(llmsFullEnSize)}) · ` +
+      `${(durationMs / 1000).toFixed(1)}s`,
   );
 
   return {
@@ -904,5 +920,6 @@ export async function emitSeoArtifacts({ distDir, siteUrl }) {
     enTopicCount: enCount,
     llmsTxtSize: llmsSize,
     llmsFullSize,
+    llmsFullEnSize,
   };
 }

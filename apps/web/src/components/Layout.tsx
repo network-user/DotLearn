@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
 import { ChevronDown, Keyboard, Search, Settings } from 'lucide-react';
@@ -20,6 +20,13 @@ import { Onboarding } from './Onboarding';
 import { OnlineIndicator } from './OnlineIndicator';
 import { ShortcutsHost, openShortcuts } from './ShortcutsDialog';
 import { ThemeToggle } from './ThemeToggle';
+
+// The sync engine (+merge+codec) lives in an async chunk; a static import here would drag it into
+// Layout's eager entry chunk and blow the check:bundle budget. Lazy-load so it only loads for the
+// (rare) linked-device case — see SyncIndicator.tsx, which itself imports `useSync` statically.
+const SyncIndicator = lazy(() =>
+  import('./SyncIndicator').then((module) => ({ default: module.SyncIndicator })),
+);
 
 type LayoutProps = {
   children: ReactNode;
@@ -179,6 +186,9 @@ export const Layout = ({ children }: LayoutProps) => {
                 <Settings size={15} aria-hidden />
               </Link>
               <OnlineIndicator />
+              <Suspense fallback={null}>
+                <SyncIndicator />
+              </Suspense>
               <span className="hidden lg:block h-5 w-px bg-border-base mx-1" aria-hidden />
               <AddTopicButton />
             </div>

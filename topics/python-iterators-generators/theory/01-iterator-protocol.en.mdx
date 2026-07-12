@@ -1,0 +1,129 @@
+---
+conceptId: iterator-protocol
+title: "The iterator protocol: __iter__ and __next__"
+estimatedMinutes: 12
+---
+
+# How a single for loop walks lists, files, and dictionaries
+
+You write `for x in ...` over a list, dictionary keys, file lines, string characters, a `range` object, and dozens of otherwise unrelated types. Same operator every time, yet the objects underneath share no common base class and no common memory layout. The trick rests on a tiny two-method contract. Learn it once and `for` stops looking like magic: you will know how to make your own objects iterable, understand why some things can be walked any number of times while others exactly once, and read `itertools` and generators without being surprised.
+
+By the end of this section you will be able to manually unroll any `for` loop into calls to `iter()` and `next()`, tell an iterable apart from an iterator, write a class you can loop over, and predict up front when a second pass over something will come up empty.
+
+## Two roles: who hands out the iterator, who hands out the items
+
+Iteration involves two distinct roles, and mixing them up is an expensive mistake. An **iterable** knows the `__iter__` method, which hands back a fresh iterator on request. An **iterator** knows the `__next__` method, which returns the next item on every call and, once items run out, raises `StopIteration`. An iterator also has `__iter__`, and it returns the object itself (`self`), which is why you can drop an iterator straight into a `for` loop.
+
+<Figure caption="The for statement asks the object for an iterator once, then calls next() until it gets a StopIteration signal.">
+  <PipelineFigure
+    title="How for walks an object"
+    stages={[
+      { label: 'iter(x)', note: 'get the iterator once' },
+      { label: '__next__()', note: 'next item', active: true },
+      { label: 'StopIteration', note: 'items ran out' },
+    ]}
+  />
+</Figure>
+
+This split explains a familiar asymmetry: you can loop over a list again and again, because every `for` fetches a brand-new iterator from it through `__iter__`. The iterator itself, though, is single-use: it keeps its position inside itself, and once it reaches the end it never rewinds.
+
+## What for actually does
+
+Python executes `for value in data:` roughly the way it is spelled out below. It is worth keeping this breakdown in mind whenever a loop's behavior looks strange.
+
+```python
+iterator = iter(data)
+while True:
+    try:
+        value = next(iterator)
+    except StopIteration:
+        break
+    # loop body
+    print(value)
+```
+
+`iter(data)` calls `data.__iter__()` and gets back an iterator. Then `next(iterator)` calls `iterator.__next__()` repeatedly until it raises `StopIteration`; that exception is not an error but an ordinary "the stream is done" signal, and `for` silently swallows it. One important consequence follows: if your own code accidentally swallows a `StopIteration` inside the loop body, the loop can end somewhere you did not expect.
+
+## Walking it by hand: iter() and next()
+
+Run the code and pull the iterator by hand. The second argument to `next` supplies a default: instead of raising `StopIteration`, it returns that value. Swap the list for the string `"abc"` and confirm the characters come out one at a time; then add one extra `next(it)` at the end and catch the exception it raises.
+
+<PyDemo
+  title="next() step by step"
+  code={`it = iter([10, 20, 30])
+print(next(it))
+print(next(it))
+print(next(it))
+print(next(it, "stream exhausted"))`}
+/>
+
+The functions `iter()` and `next()` simply wrap the dunder methods: `iter(x)` calls `x.__iter__()`, `next(x)` calls `x.__next__()`. The form `next(it, default)` catches `StopIteration` for you and substitutes a fallback value, which is handy when running out of items is expected rather than a reason to crash.
+
+## Your own iterator: a class you can loop over
+
+To make an object work in `for`, give it `__iter__` and `__next__`. Below is a countdown. `__iter__` returns `self`, so the object is its own iterator; `__next__` yields numbers from the start down to one, and raises `StopIteration` once it hits zero.
+
+<PyDemo
+  title="A countdown as an iterator"
+  code={`class Countdown:
+    def __init__(self, start):
+        self.current = start
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.current <= 0:
+            raise StopIteration
+        value = self.current
+        self.current -= 1
+        return value
+
+print(list(Countdown(4)))
+print(sum(Countdown(4)))`}
+/>
+
+Notice that `list()` and `sum()` also work through this same protocol: both call `iter()` internally and drive `next()` until `StopIteration`. So writing one contract opens the object up to everything that knows how to iterate: unpacking, `in`, `min`/`max`, `sorted`, generator expressions.
+
+<Callout type="warning">
+Because `Countdown.__iter__` returns `self`, an instance is single-use: after `sum(c)`, that same `c` is already exhausted. If you need an object you can loop over more than once, make `__iter__` return a fresh iterator and keep the counting state there instead of on the container itself.
+</Callout>
+
+## Where this surprises people
+
+- **You cannot pull a list with `next()`.** `next([1, 2, 3])` fails with `TypeError`: a list has `__iter__` but no `__next__`. You can loop over it, but you cannot poke it directly. Grab an iterator first: `next(iter([1, 2, 3]))`.
+- **`iter()` on a list is new every time; on an iterator it is the same object.** `iter(data)` on a list hands back a fresh, independent iterator on every call, so two loops over the same list never interfere with each other. But `iter(it)` on an iterator returns that same iterator (`self`), so there is no way to "copy" its position this way.
+- **Built-in iterators are single-use.** `zip`, `map`, `enumerate`, `filter`, `reversed`, and generators all return iterators, not lists. You cannot walk the result of `zip(...)` twice: the first pass consumes everything, the second sees nothing.
+
+## Common mistakes
+
+- **Walking a `zip`/`map` result twice.** A classic trap: you save `pairs = zip(a, b)`, sum something over it, then try to print it and find it empty. If you need the data more than once, freeze it into a list: `pairs = list(zip(a, b))`.
+- **Returning something other than an iterator from `__iter__`.** If `__iter__` returns an object without `__next__`, the loop fails with `TypeError`. For an iterator class, `__iter__` is almost always just `return self`.
+- **Forgetting to raise `StopIteration`.** An iterator with no stopping condition spins forever; a `for` over it never finishes. There must always be a branch that raises `StopIteration`.
+- **Catching `StopIteration` too broadly.** A wide `except StopIteration` wrapped around a call that itself walks a nested iterator can swallow someone else's end-of-stream signal and cut off the wrong loop.
+
+<Detail summary="The old protocol: __getitem__ and the two-argument iter()">
+
+Before `__iter__` existed (PEP 234), an object counted as iterable if it had `__getitem__` accepting zero-based integer indices. Python still supports this as a fallback today: if there is no `__iter__`, `iter()` builds an iterator that pulls `obj[0]`, `obj[1]`, ... until it catches an `IndexError`. That is why old-style sequence classes still work in `for` without a single iteration dunder.
+
+There is also a rare two-argument form, `iter(callable, sentinel)`: it builds an iterator that calls `callable()` on every step and stops once the result equals `sentinel`. The idiom `for block in iter(lambda: f.read(4096), ""):` reads a file in chunks until a read returns an empty string.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "for walks an object in three beats: iter() once, then next() until StopIteration.",
+    "An iterable knows __iter__ and hands out an iterator; an iterator knows __next__ and hands out items.",
+    "An iterator's __iter__ returns self, which is why you can drop an iterator straight into a for loop.",
+    "iter() on a list gives a new iterator every call, but an iterator itself is single-use and never rewinds.",
+    "zip, map, enumerate, filter, and generators all return iterators: a second pass over them is empty.",
+    "Your own class becomes loopable as soon as you give it __iter__ and __next__.",
+  ]}
+/>
+
+## References
+
+- [Python docs · Iterator Types](https://docs.python.org/3/library/stdtypes.html#iterator-types)
+- [Python glossary · iterable and iterator](https://docs.python.org/3/glossary.html#term-iterable)
+- [PEP 234 · Iterators](https://peps.python.org/pep-0234/)
+- [Python docs · functions: iter() and next()](https://docs.python.org/3/library/functions.html#iter)

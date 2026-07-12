@@ -1,0 +1,111 @@
+---
+conceptId: anchors-and-boundaries
+title: "Anchors and Word Boundaries"
+estimatedMinutes: 14
+---
+
+# Matching the Right Spot, Not Just Anywhere
+
+A form asks for a postal code, and a user types "building 101000, apt. 5" ("дом 101000, кв 5"). Your pattern `\d{6}` happily finds six digits buried in the noise, validation passes, and an address ends up in the database instead of a postal code. The pattern was correct - the location of the match was not. A regular expression needs to say not only "what to look for" but also "where it's allowed to be": at the start of a string, at the end, at a word boundary.
+
+By the end of this section you'll anchor patterns with `^`, `$`, `\A`, `\Z`, find whole words with `\b`, and know why the check `^\d{6}$` lets through a string with a trailing newline.
+
+## Anchors: Zero-Width Positions
+
+An anchor doesn't match a character. It matches a position between characters, and consumes nothing. `^` requires the start of the string, `$` its end, so `^\d{6}$` reads as "start, six digits, end" - only a string made entirely of six digits can match. Figure 1 shows which strings pass that filter.
+
+<Figure caption="Anchors lock the pattern down on both sides: only a string with nothing but six digits between the start and the end matches.">
+  <RowFilterFigure
+    title="Postal code validation"
+    columns={['string']}
+    rows={[
+      { cells: ['101000'], kept: true },
+      { cells: ['дом 101000'], kept: false },
+      { cells: ['101000 Москва'], kept: false },
+      { cells: ['1010001'], kept: false },
+    ]}
+    condition={'^\\d{6}$'}
+  />
+</Figure>
+
+`^` and `$` have stricter siblings: `\A` matches only the start of the entire text, `\Z` only its end. For single-line text there's almost no difference, but two distinctions matter. First, the multiline flag (covered in the concept on flags) retrains `^` and `$` to trigger at every newline, but leaves `\A` and `\Z` alone. Second, `$` additionally matches right before a trailing newline, and that regularly bites people in validation.
+
+Run the check below and look at the third string: `"101000\n"` passes the `^...$` pattern, even though it's clearly not a clean postal code. Swap the anchors for `\A` and `\Z` and watch the hole close.
+
+<PyDemo
+  title="A validation gap: the trailing newline"
+  code={`import re
+
+candidates = ["101000", "дом 101000", "101000\\n"]
+for s in candidates:
+    print(repr(s), bool(re.search(r"^\\d{6}$", s)))`}
+/>
+
+## Word Boundary: \b
+
+The second common need is "find the word, not just the substring." The pattern `кот` ("cat") matches inside "котлета" ("cutlet") and "скот" ("cattle") too, because the engine has no notion of where a word starts or ends. `\b` marks the position "here is a word boundary": the point where `\w` meets a non-`\w` character or the edge of the string. Like an anchor, `\b` has zero width and consumes no characters.
+
+```python
+import re
+
+text = "кот, котлета, скот"
+print(re.findall(r"\bкот\b", text))
+print(re.findall(r"кот", text))
+```
+
+The first call prints `['кот']`: in "котлета" a letter follows the "т" so there's no boundary on the right, and in "скот" there's no boundary on the left. The second prints `['кот', 'кот', 'кот']`, one hit per occurrence regardless of word edges. The inverse notation `\B` means "not a boundary": `\Bкот` matches "кот" only inside a word, for example inside "скот".
+
+Keep in mind that `\b`'s meaning is tied to the `\w` class. A hyphen is not part of `\w`, so in a hyphenated word like "self-driving" there's a word boundary on both sides of the hyphen, and `\bdriving\b` matches right there. For hyphenated text that's usually the behavior you want, but don't rely on intuition here - check it against real examples.
+
+## Validation vs. Search
+
+Anchors split regex work into two modes. Search answers "does this appear somewhere in the text", and anchors usually aren't needed there. Validation answers "is the whole string this", and there a pattern without anchors on both sides is almost always a bug: `^\d{6}` lets "101000abc" through, `\d{6}$` lets "abc101000" through. The rule is simple: when validating, lock the pattern down on both ends, ideally with `\A` and `\Z`.
+
+## Where Anchors Surprise You
+
+The first surprise you already saw in the sandbox: `$` matches not only at the very end of a string but also right before a trailing `\n`. The reason is historical - it's convenient when processing lines read from a file, which almost always end in a newline. For strict validation of user input, use `\Z` instead.
+
+The second surprise: the character `^` has two unrelated meanings. Outside a class it's the start-of-string anchor; as the first character inside a class it's negation. `^[0-9]` means "a digit at the start of the string", while `[^0-9]` means "any character except a digit". Mixing them up produces patterns that look alike and behave oppositely.
+
+The third surprise: zero-width anchors combine badly with quantifiers. Something like `^*` will either throw an error or do nothing meaningful - repeating a position makes no sense.
+
+## Common Mistakes
+
+- **Validating with a single anchor.** `^\d{6}` only checks the start, and "101000, кв 5" ("101000, apt. 5") passes. Why: `search` finds a match anywhere, and without a right-hand anchor nobody checks the tail. Lock down both sides.
+- **`$` in strict validation.** The string "101000\n" passes `^\d{6}$`. For form and API input, use `\A...\Z` or `re.fullmatch`.
+- **`\b` where there's no `\w` nearby.** Word boundaries are defined through `\w`, so near punctuation and spaces `\b` may not sit where your eyes tell you the boundary is. If in doubt, check with `findall` on a real example.
+- **Searching for a word without boundaries.** `кот` in a paragraph about livestock ("скот") gives false positives. Search for words as `\bслово\b` (`\bword\b`).
+
+<Detail summary="A formal definition of \b, and the re.fullmatch trick">
+
+The engine treats a position as a word boundary if exactly one side of it is a `\w` character. That gives three cases: the start of the text before a `\w`, the end of the text after a `\w`, and a `\w`-to-non-`\w` seam in the middle. An empty string has no boundaries at all.
+
+For the task "does the whole string match the pattern," Python has a dedicated function, `re.fullmatch`: it behaves as if invisible `\A` and `\Z` wrapped the pattern, and it makes the intent obvious. The module's functions get a full rundown in the topic's last concept.
+
+```python
+import re
+
+print(bool(re.fullmatch(r"\d{6}", "101000")))
+print(bool(re.fullmatch(r"\d{6}", "101000\n")))
+```
+
+This prints `True`, then `False`: the trailing newline is one character too many for `fullmatch`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'Anchors and boundaries match positions, have zero width, and consume no characters.',
+    '^ requires the start of the string, $ the end; validating a whole string means locking the pattern down on both sides.',
+    '$ also matches right before a trailing newline; strict validation should use \\A and \\Z or re.fullmatch.',
+    '\\b is a word boundary, the seam between \\w and non-\\w; whole words are searched as \\bword\\b.',
+    'The character ^ outside a class is an anchor, but as the first character inside a class it means negation.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Regular expression operations](https://docs.python.org/3/library/re.html#regular-expression-syntax)
+- [Python docs · re.fullmatch](https://docs.python.org/3/library/re.html#re.fullmatch)
+- [regular-expressions.info · Anchors](https://www.regular-expressions.info/anchors.html)
+- [regular-expressions.info · Word Boundaries](https://www.regular-expressions.info/wordboundaries.html)

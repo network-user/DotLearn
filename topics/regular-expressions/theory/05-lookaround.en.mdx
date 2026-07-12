@@ -1,0 +1,129 @@
+---
+conceptId: lookaround
+title: "Lookahead and Lookbehind"
+estimatedMinutes: 15
+---
+
+# Checking Context Without Consuming It
+
+A signup form requires a password of at least 8 characters, with at least one digit and one letter, in any order: "password1" and "1password" are equally valid. An ordinary pattern is awkward for this, because the digit and the letter can be anywhere, not at a fixed position. You need something that can ask "is there a digit somewhere ahead?" and separately "is there a letter somewhere ahead?", without moving the search position and without consuming any characters. That something is called lookaround: it checks the context around the current position and consumes nothing.
+
+By the end of this section you'll write positive and negative lookahead and lookbehind, stack several checks at one position, and work around the main limitation of the `re` module: in Python, lookbehind must have a fixed length.
+
+## Positive Lookahead: (?=...)
+
+Like the anchors from the previous concept, lookahead is a zero-width assertion: it looks forward from the current position, confirms the text you want is there, and consumes nothing. The position after the check is exactly what it was before. That's the key difference from ordinary pattern continuation: `a(?=b)` and `ab` find different things in a text - the second consumes "b", the first doesn't.
+
+That property gives rise to the main trick: several lookaheads in a row check independent conditions from the same starting point, and the order in the actual text doesn't matter at all.
+
+```python
+import re
+
+pattern = r"(?=.*\d)(?=.*[a-zA-Zа-яёА-ЯЁ]).{8,}"
+print(bool(re.fullmatch(pattern, "password1")))
+print(bool(re.fullmatch(pattern, "12345678")))
+```
+
+This prints `True`, then `False`. Both `(?=...)` sit at the very start of the pattern and evaluate the string from position 0 without moving: the first requires "a digit somewhere ahead", the second "a letter somewhere ahead". Only once both checks pass does `.{8,}` come into play, which actually consumes characters and handles the length. "12345678" has digits but no letters - the second check fails, and `fullmatch` returns `False` even though the length is fine.
+
+A second common case: pull a number out without grabbing the neighboring text into the match. The pattern `\d+(?=\s?USD)` finds digits only if "USD" follows (with an optional space), but the letters "USD" themselves never enter the match.
+
+<Figure caption="The positive lookahead (?=\s?USD) checks that a number is followed by 'USD', without including those letters in the match.">
+  <RowFilterFigure
+    title="A number before 'USD'"
+    columns={['fragment']}
+    rows={[
+      { cells: ['1500 USD'], kept: true },
+      { cells: ['1500 kg'], kept: false },
+      { cells: ['300USD'], kept: true },
+      { cells: ['300 kg'], kept: false },
+    ]}
+    condition={'\\d+(?=\\s?USD)'}
+  />
+</Figure>
+
+## Negative Lookahead: (?!...)
+
+The negative version reads as "this text must NOT follow." Take a staff roster where some entries are flagged "(terminated)" ("(уволен)"), and you need the surnames without that flag.
+
+<PyDemo
+  title="Surnames without the termination flag"
+  code={`import re
+
+text = "Сотрудники: Иванов (уволен), Петров, Иванов, Сидоров (уволен)"
+print(re.findall(r"Иванов(?! \\(уволен\\))", text))`}
+/>
+
+The result is `['Иванов']`, and only one: the engine finds the first "Иванов", checks whether " (уволен)" follows, sees that it does, and drops the whole match without trying another length - the surname is a literal here, not a quantifier, so there's nothing to shrink. The second "Иванов" has no flag, the check passes, and it stays in the result.
+
+## Lookbehind: `(?<=...)` and `(?<!...)`
+
+Lookbehind does the same thing but looks backward. `(?<=\$)\d+` finds digits only when a `$` immediately precedes them, and the `$` itself never enters the match - it's the cleanest way to pull a number out without its currency sign, with no separate capturing group needed.
+
+```python
+import re
+
+text = "Итого: $100, скидка -$20"
+print(re.findall(r"(?<=\$)\d+", text))
+```
+
+This prints `['100', '20']` (from "Итого: $100, скидка -$20" - "Total: $100, discount -$20"). The negative form `(?<!...)` works symmetrically to negative lookahead: `(?<!s)cat` matches "cat" only where it isn't immediately preceded by the letter "s", so in the text "cat and scat" it filters out "scat" - not because of a word boundary, but because of that one forbidden character on the left.
+
+Lookbehind has a restriction that lookahead doesn't: in the `re` module, its contents must have a fixed length. `(?<=\d+)` won't compile - the engine needs to know in advance exactly how many characters to look back, and `+` doesn't guarantee that. The error says exactly that: `look-behind requires fixed-width pattern`. Alternation with `|` is allowed, but only if every option has the same length: `(?<=USD|EUR)` compiles, `(?<=USD|dollar)` does not, because "USD" and "dollar" have different lengths.
+
+## Where Lookaround Surprises You
+
+The first surprise is what happens with a naive attempt to separate whole numbers from decimals using `\d+(?!\.\d)`. It seems like this should give "100" and "42", skipping the decimal "12.5" entirely. In practice:
+
+<PyDemo
+  title="Negative lookahead and a greedy quantifier"
+  code={`import re
+
+text = "цена 100, скидка 12.5, вес 42"
+print(re.findall(r"\\d+(?!\\.\\d)", text))`}
+/>
+
+This prints `['100', '1', '5', '42']` (from "цена 100, скидка 12.5, вес 42" - "price 100, discount 12.5, weight 42"). "100" is fine: nothing like ".digit" follows it, so the match is complete. But "12.5" breaks apart from the inside: the greedy `\d+` first grabs "12", the check `(?!\.\d)` fails, the engine backtracks the quantifier down to "1" - and suddenly the check passes, because right after "1" comes "2", not a dot. That produces the broken match "1". The search continues from position "2", where the lone digit "2" fails the check again (a dot and digit follow it), while the next digit, "5", passes with nothing left to compete against. The fix is a boundary: `\d+\b(?!\.\d)` keeps the quantifier from stopping in the middle of a number, because `\b` requires an actual word edge, not just any position where the negation happened to succeed.
+
+The second surprise is the fixed-width limit on lookbehind covered above: it catches not just `+` and `*`, but also `{2,5}` and any alternation whose options differ in length.
+
+The third surprise: lookahead and lookbehind combine freely with each other at one position, but not endlessly nested inside one another - each one is still zero-width, so `(?=(?<=\d)\w)` compiles and works, it just gets hard to read fast. If you're tempted to nest lookaround inside lookaround, it's usually simpler to split the check into two separate conditions.
+
+## Common Mistakes
+
+- **Expecting lookaround content to appear in the result.** `(?=\s?USD)` doesn't add "USD" to the match, and it will never show up in `group()`. If you need that text in the result, that's not lookaround - it's an ordinary (possibly non-capturing) part of the pattern.
+- **Variable length inside lookbehind.** `(?<=\d+)` doesn't compile in `re`. Replace it with an exact repeat count, `(?<=\d{3})`, or, if the length is genuinely variable, move the check to a lookahead from the other side, or handle it in Python after the fact.
+- **A negative lookahead with no boundary after a greedy quantifier.** `\d+(?!\.\d)` can backtrack into the middle of a number, as shown above. Add `\b` wherever the quantifier must not be allowed to stop early.
+- **Confusing the direction of `=` and `<=`.** The `<` in `(?<=...)` and `(?<!...)` means "look backward"; without it, "look forward". Easy to mix up, especially on autopilot after hours of working with the `^` and `$` anchors.
+
+<Detail summary="Several independent lookaheads at one position is a template, not a single match">
+
+The password from the motivating example is a special case of a general technique: any number of "somewhere ahead there's X" conditions can be written as a chain, `(?=.*X1)(?=.*X2)(?=.*X3)`, at the start of the pattern, and the order of X1, X2, X3 in the actual text doesn't matter, because each check restarts from that same position 0. The same trick works for "must not contain": `(?!.*X)` at the start forbids X anywhere in the rest of the string.
+
+```python
+import re
+
+pattern = r"(?!.*\s)(?=.*[A-Z])(?=.*[a-z]).{4,}"
+print(bool(re.fullmatch(pattern, "MixedCase")))
+print(bool(re.fullmatch(pattern, "with space")))
+```
+
+The first string has no spaces, has an uppercase and a lowercase letter, and is at least 4 characters long - all three conditions hold, `True`. The second contains a space, so `(?!.*\s)` fails on the very first check - `False`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'Lookahead (?=...) and (?!...) look forward from the current position and consume nothing; the text under them never enters the match.',
+    'Lookbehind (?<=...) and (?<!...) look backward with the same zero-width property, but in re must have a fixed length.',
+    'Several lookaheads chained at the start of a pattern check independent conditions from the same position - the way to write "has both X and Y, in any order".',
+    'A negative lookahead after a greedy quantifier can succeed on a shortened match because of backtracking; a \\b boundary often fixes it.',
+    'The compile error "look-behind requires fixed-width pattern" means (?<=...) needs an exact quantifier or same-length alternatives.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Regular expression syntax (lookaround)](https://docs.python.org/3/library/re.html#regular-expression-syntax)
+- [Python docs · re.error](https://docs.python.org/3/library/re.html#re.error)
+- [regular-expressions.info · Lookarounds](https://www.regular-expressions.info/lookaround.html)

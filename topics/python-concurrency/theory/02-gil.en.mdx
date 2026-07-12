@@ -1,0 +1,144 @@
+---
+conceptId: gil
+title: "The GIL: what it guarantees and what it doesn't"
+estimatedMinutes: 13
+---
+
+# One lock for the whole interpreter
+
+You take a heavy pure-Python number-crunching function, spread it across four threads, and expect it to run four times faster on an eight-core machine. You measure it and can't believe your eyes: the time is the same, sometimes slightly worse than with one thread. The same trick with four threads downloading files over the network, on the other hand, genuinely speeds the program up several times over. The difference between these two cases comes down to a single CPython mechanism that has more myths attached to it than any other: the Global Interpreter Lock, or GIL.
+
+Let's work out what the GIL actually guarantees and what it doesn't: why it exists at all, how the interpreter hands it between threads, why `counter += 1` over a shared counter isn't atomic even with the GIL alive and well, and why threads speed up network work but not computation. By the end of this section you'll be able to answer the most common question about Python multithreading with confidence, and stop expecting threads to deliver something they never promised.
+
+## What the GIL is and why it exists
+
+The GIL (Global Interpreter Lock) is a single lock for the entire interpreter. The rule is simple: at any given moment, only the thread holding this lock may execute Python bytecode. Every other thread, no matter how many there are or how many cores the machine has, waits. Two threads never execute Python instructions simultaneously on different cores; the GIL forbids it outright.
+
+<Figure caption="One pass at a time. The thread holding the GIL runs bytecode; the rest wait in line. There's no parallel Python execution across cores.">
+  <Sketch viewBox="0 0 470 220" title="The GIL as the single pass">
+    <SketchBox x={24} y={30} width={130} height={48} accent />
+    <SketchLabel x={89} y={50} weight="bold" accent>Thread 1</SketchLabel>
+    <SketchLabel x={89} y={68} size={10}>holds the GIL, runs</SketchLabel>
+
+    <SketchBox x={24} y={92} width={130} height={44} />
+    <SketchLabel x={89} y={112} weight="bold">Thread 2</SketchLabel>
+    <SketchLabel x={89} y={128} size={10} muted>waits</SketchLabel>
+
+    <SketchBox x={24} y={150} width={130} height={44} />
+    <SketchLabel x={89} y={170} weight="bold">Thread 3</SketchLabel>
+    <SketchLabel x={89} y={186} size={10} muted>waits</SketchLabel>
+
+    <SketchBox x={220} y={78} width={84} height={56} hatched />
+    <SketchLabel x={262} y={110} mono weight="bold">GIL</SketchLabel>
+
+    <SketchArrow from={[154, 54]} to={[220, 100]} accent />
+
+    <SketchBox x={350} y={76} width={104} height={60} />
+    <SketchLabel x={402} y={100} size={11}>interpreter</SketchLabel>
+    <SketchLabel x={402} y={118} size={10} muted>one thread at a time</SketchLabel>
+
+    <SketchArrow from={[304, 106]} to={[350, 106]} />
+  </Sketch>
+</Figure>
+
+This lock wasn't born out of laziness; it exists to protect one specific thing, covered in depth in the `python-storage-internals` topic: reference counting. Every object in CPython carries a counter of how many names point to it; the interpreter constantly bumps this counter up and down on every assignment and deletion, and once the counter hits zero, the object is freed. If two threads changed the same object's counter at once without protection, the value would get corrupted: the object could be freed too early (a use-after-free crash) or never freed at all (a leak). The GIL closes that hole the cheapest way possible: since only one thread ever executes bytecode, reference counts stay safe without needing a separate lock on every single object.
+
+## How the GIL travels between threads
+
+No thread can hold the lock forever, or the rest would never run. The interpreter passes the GIL around, and it's worth knowing the rule it follows. In ancient versions (before 3.2), a thread counted a fixed number of bytecode instructions and handed off the lock after a hundred "ticks". Modern CPython switches by time: a running thread holds the GIL for roughly 5 milliseconds, after which another waiting thread is entitled to request it. You can inspect and change this interval through `sys.getswitchinterval()`; the default is `0.005` seconds.
+
+The key consequence: the GIL changes hands at a boundary between bytecode instructions, not between lines of your source code. A single source line is almost always several bytecode instructions, and the lock can drift off to another thread in the middle of a line, between its individual steps. This is exactly where the best-known gotcha comes from.
+
+## Why `counter += 1` isn't atomic
+
+The line `counter += 1` looks like one indivisible action, but to the interpreter it's a "read, add, write" operation spread across several bytecodes. Run it through `dis.dis` and you'll see roughly this sequence (exact opcode names depend on the Python version):
+
+```text
+LOAD_GLOBAL   counter
+LOAD_CONST    1
+BINARY_OP     +=
+STORE_GLOBAL  counter
+```
+
+Reading the current value and writing the new one are separate instructions, and there's a gap between them. The GIL genuinely stops two threads from executing bytecode at the same instant, but it does nothing to stop a switch from landing in that gap. If two threads are incrementing a shared `counter`, their steps can interleave so that one increment gets lost.
+
+<Figure caption="Both threads read 41 before either one writes. Each writes 42, so the second write just repeats the first. One increment is lost: expected 43, got 42.">
+  <Sketch viewBox="0 0 470 250" title="Race on counter += 1">
+    <SketchLabel x={105} y={22} weight="bold">Thread A</SketchLabel>
+    <SketchLabel x={325} y={22} weight="bold">Thread B</SketchLabel>
+
+    <SketchBox x={30} y={38} width={150} height={40} />
+    <SketchLabel x={105} y={62} mono size={11}>reads counter → 41</SketchLabel>
+
+    <SketchBox x={250} y={95} width={150} height={40} />
+    <SketchLabel x={325} y={119} mono size={11}>reads counter → 41</SketchLabel>
+
+    <SketchBox x={250} y={152} width={150} height={40} accent />
+    <SketchLabel x={325} y={176} mono size={11} accent>counter = 42</SketchLabel>
+
+    <SketchBox x={30} y={205} width={150} height={40} accent />
+    <SketchLabel x={105} y={229} mono size={11} accent>counter = 42</SketchLabel>
+
+    <SketchArrow from={[105, 78]} to={[325, 95]} dashed />
+    <SketchArrow from={[325, 192]} to={[105, 205]} dashed />
+  </Sketch>
+</Figure>
+
+The takeaway worth keeping: the GIL serializes bytecode execution, but it does not make your compound operations atomic. "One line" and "one indivisible action" are still two different things, and a shared counter still needs a lock to protect it, which we'll get to in the section on synchronization primitives.
+
+## Why network work speeds up and computation doesn't
+
+Now it's clear why a CPU-bound task doesn't get faster with threads: while a thread is spinning through a pure-Python number-crunching loop, it holds the GIL and only lets go of it once every 5 milliseconds. Other threads just sit there in the meantime. Four threads on eight cores don't run in parallel; they take turns sharing one core and additionally burn time on the switching itself. Hence "the same or slightly worse."
+
+With network work, it's the opposite story. When a thread hits blocking I/O (reading a socket, waiting on a database response, sleeping in `time.sleep`), CPython releases the GIL for the duration of that wait. While one thread waits on the network, the lock is free, and another thread genuinely runs. Threads overlap not computation but waiting, which is why a hundred downloads, each of which spends nearly all its time just waiting, fit into roughly the time of one or two, not a hundred.
+
+<Figure caption="Speedup versus thread count: IO-bound work wins because the GIL is released while waiting on the network; CPU-bound work hits the GIL and goes nowhere.">
+  <LineChart
+    title="Speedup vs. thread count"
+    xLabel="threads"
+    yLabel="speedup"
+    series={[
+      { name: 'IO-bound', points: [ { x: 1, y: 1 }, { x: 2, y: 1.9 }, { x: 4, y: 3.6 }, { x: 8, y: 6.4 } ] },
+      { name: 'CPU-bound', points: [ { x: 1, y: 1 }, { x: 2, y: 0.98 }, { x: 4, y: 0.95 }, { x: 8, y: 0.9 } ] },
+    ]}
+  />
+</Figure>
+
+That gives us a practical rule for picking a tool. A task that spends almost all its time waiting for something (network, disk, database) gets faster with threads. A task that's bound by the CPU doesn't get faster with threads in CPython; that needs separate processes with their own interpreters and their own GILs, i.e. `multiprocessing`. We'll walk through that choice in detail in the last section.
+
+## Edge cases
+
+Not everything in CPython holds the GIL in a death grip. Heavy operations inside C extensions can release the lock for the duration of their internal work; for instance, large numpy operations release the GIL while crunching numbers in C, so threads genuinely speed up that kind of computation. So "threads don't help CPU-bound work" holds specifically for pure Python code, not for every kind of workload.
+
+There's also a pleasant surprise going the other way. A single bytecode instruction under the GIL is never interrupted halfway through, and that's what underlies the atomicity of a few operations. `some_list.append(x)` is thread-safe with no lock at all, but not because it "compiles down to one instruction": it's actually several bytecodes (load the list, fetch its `append` attribute, load the argument, call, pop the result off the stack). The real reason is subtler: `list.append` itself is implemented in C and performs its mutation in one call without releasing the GIL midway, and that call as a whole fits inside a single `CALL` bytecode instruction, which can't be interrupted partway through. `counter += 1`, on the other hand, is already several bytecodes at the Python level (read, add, write), and a thread can be switched out in the gap between them, which is why it isn't atomic. You shouldn't rely on this nuance in your code (it's fragile and version-dependent), but it's worth knowing, since it's exactly why some operations on shared structures "happen to work" while others break.
+
+## Common mistakes
+
+- **Expecting threads to speed up CPU-bound code.** A heavy pure-Python loop split across four threads won't run any faster because of the GIL. Fix: for CPU-bound workloads, reach for `multiprocessing` or `ProcessPoolExecutor`, where each process gets its own GIL.
+- **Assuming the GIL makes your code thread-safe.** The GIL serializes bytecode, but it doesn't protect compound operations. `counter += 1`, `d[k] = d.get(k, 0) + 1`, check-then-act, none of these are saved by it. Fix: guard shared mutable state with a lock.
+- **Confusing "one line" with "one instruction".** A single bytecode instruction is atomic, a source line isn't. Most interesting operations unfold into several instructions, and a switch can land anywhere between them.
+
+<Detail summary="Free-threading: Python without the GIL (PEP 703, 3.13)">
+
+Starting with version 3.13, CPython has an experimental free-threaded build (built separately; the binary is usually named something like `python3.13t`). It's described in PEP 703 and replaces the single global lock with a finer-grained scheme: per-object locking plus reworked reference counting (biased and deferred reference counting) so counters stay correct without one global lock. The payoff is direct: threads can finally execute Python bytecode in parallel across cores, and CPU-bound threaded code gets a real speedup.
+
+There's a cost too. Single-threaded code runs a bit slower on this build because of the extra bookkeeping around atomic counters, and C extensions need to explicitly declare compatibility and often need rebuilding. So for now this is an option for enthusiasts and library authors, not the default behavior; the regular CPython build still ships with the GIL. Stabilization is spread across several releases, so for an interview it's enough to know that this direction exists and where it's headed.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "The GIL is a single lock for the whole interpreter: at any instant only one thread executes Python bytecode, with no parallel execution across cores.",
+    "It exists to protect object reference counts cheaply from corruption when accessed concurrently from multiple threads.",
+    "The GIL switches at bytecode boundaries (on a timer around 5ms), not between lines, which is why `counter += 1`, built from several instructions, isn't atomic.",
+    "Threads speed up IO-bound code: the GIL is released during blocking I/O, so threads wait in parallel. They don't speed up CPU-bound pure Python.",
+    "Real computational parallelism needs multiprocessing; the experimental 3.13 free-threaded build (PEP 703) removes the GIL, with caveats.",
+  ]}
+/>
+
+## References
+
+- [Python docs - GIL](https://docs.python.org/3/glossary.html#term-global-interpreter-lock)
+- [Python docs - sys.setswitchinterval](https://docs.python.org/3/library/sys.html#sys.setswitchinterval)
+- [PEP 703 - Making the GIL Optional](https://peps.python.org/pep-0703/)
+- [David Beazley - Understanding the Python GIL](https://www.dabeaz.com/GIL/)

@@ -1,0 +1,124 @@
+---
+conceptId: choosing-strategy
+title: Choosing a Scaling Strategy by Scenario
+estimatedMinutes: 14
+---
+
+# Choosing a strategy: from load profile to architecture
+
+There's almost always someone in an architecture review who says "let's just shard everything." It sounds bold, and it's almost always the wrong first move. By this point you're holding five tools: vertical growth, replicas, partitions, sharding, and consistent hashing. The beginner's mistake is picking a favorite tool and dragging it into every problem. An experienced engineer does the opposite: look at the load profile first, and let it show which move is cheaper and in what order to stack the layers. This section pulls the whole topic together into one working skill: given a description of a system, name the strategy and explain why that one and not its neighbor.
+
+## The load profile decides for you
+
+Almost the whole answer comes down to three questions. Which dominates, reads or writes? What shape are the queries: point lookups by key, or ranges and aggregates over many rows? Along which axis does the data grow: number of users, time, or the volume of one large customer? The answers immediately rule out half the options. Reads scale cheaply with copies, writes scale expensively by splitting data, so the first move almost always climbs the ladder of cheap techniques, and only a specific wall, never the urge to try a trendy technology, pushes you further up it.
+
+<Figure caption="The ladder of moves as load grows · you climb it out of necessity, not straight to sharding; the load profile decides how high you need to go.">
+  <Sketch viewBox="0 0 660 210" title="Ladder of moves">
+    <SketchBox x={36} y={132} width={132} height={34} />
+    <SketchLabel x={102} y={153} mono muted>indexes · cache</SketchLabel>
+    <SketchBox x={186} y={106} width={132} height={34} />
+    <SketchLabel x={252} y={127} mono>read replicas</SketchLabel>
+    <SketchBox x={336} y={80} width={146} height={34} />
+    <SketchLabel x={409} y={101} mono>partitions by time</SketchLabel>
+    <SketchBox x={500} y={50} width={132} height={36} accent />
+    <SketchLabel x={566} y={72} mono accent>sharding</SketchLabel>
+    <SketchArrow from={[168, 140]} to={[186, 124]} />
+    <SketchArrow from={[318, 114]} to={[336, 98]} />
+    <SketchArrow from={[482, 88]} to={[500, 70]} accent />
+    <SketchLabel x={330} y={196} muted>cheaper and simpler on the left · pricier and harder on the right</SketchLabel>
+  </Sketch>
+</Figure>
+
+Below, three typical profiles are worked through in order, from most common to most awkward. Keep the ladder from the figure in mind: each scenario is an answer to how high up it you actually need to go today.
+
+One caveat that gets forgotten in the excitement over new tools: the most common correct answer to "how do we scale this" is "not yet, it's too early." Large products run for years on a single leader with replicas, and that's not technical debt, it's a sober calculation: every rung on the ladder adds failure modes, operational work, and eventual consistency. So you climb exactly as far as a measured wall pushes you, never as far as a competitor's conference-talk roadmap.
+
+## Read-heavy: replicas and cache, leave writes alone
+
+Content systems (a product catalog, a media library, a social feed, a pricing page) read tens or hundreds of times more often than they write. In a system like that it's not even worth thinking about sharding: the ceiling is on reads, and reads come off cheap. The first move is caching hot reads: a CDN for static assets, Redis or Memcached for popular keys and aggregates. The cache absorbs most of the requests that never even reach the database. The second move is read replicas: the remaining reads get spread across them, while writes stay on the leader. A third move usually isn't needed.
+
+CQRS naturally comes up here: the read path and write path get separated enough that they end up with different data models. Feeds, dashboards, and reports get built as separate denormalized views and read from replicas, without interfering with normalized writes on the leader. There's one cost, and you already know it from the replication section: lag. A user's own fresh write gets read from the leader to avoid a read-your-writes bug, while everything else safely goes to replicas.
+
+## Time-based write-heavy: partitions first, sharding second
+
+Metrics, logs, events, device readings. Here everything flips: writes dominate, data grows along the time axis, and queries are almost always about a recent range ("the last hour," "today"). Replicas barely help here, because it's writes that hurt, not reads. The first move is partitioning by time and turning on TTL or archival. Pruning by time speeds up queries about recent data, and cheap rotation ("keep 90 days, archive the rest") stops the table from growing forever. A single node running this scheme survives surprisingly long, as long as old data leaves on schedule.
+
+When the write stream eventually outgrows one node, sharding's turn comes, and the order is exactly this: partitions before shards. You typically shard by source (`device_id`, `service`) using a hash for even load, and within each shard you slice by time again. That's how a typical production layer comes together: hash sharding by device plus range partitions by time inside each shard.
+
+<Compare
+  leftTitle="Read-heavy (content)"
+  rightTitle="Write-heavy (time-series metrics)"
+  left={"Reads hurt. Moves: cache hot keys, then read replicas, read a user's own fresh data from the leader. CQRS and denormalized views. Sharding usually never comes up."}
+  right={"Writes and volume hurt. Moves: partitions by time plus TTL, then hash sharding by source once one node isn't enough, with partitions by time again inside each shard."}
+  verdict="The read-to-write ratio sets the first move: send reads to copies, slice writes by time first and only later by node."
+/>
+
+## Multi-tenant SaaS: sharding by tenant_id and its traps
+
+A product where each customer's (tenant's) data lives on its own almost begs to be sharded by `tenant_id`. That's convenient for several reasons at once: most queries know the tenant, so they land on one shard; one customer's data naturally sits together (co-location); and isolation between customers comes almost for free. But this tidy picture hides a few traps that trip people up in interviews.
+
+<Figure caption="Multi-tenant SaaS: a router keyed on tenant_id sends a request to one shard · ordinary tenants share common shards, a large tenant (a whale) gets a dedicated one so it doesn't drown its neighbors.">
+  <Sketch viewBox="0 0 620 200" title="Sharding a multi-tenant system by tenant_id">
+    <SketchLabel x={28} y={70} muted anchor="start">tenant request</SketchLabel>
+    <SketchArrow from={[24, 82]} to={[26, 100]} accent />
+    <SketchBox x={26} y={78} width={122} height={48} accent />
+    <SketchLabel x={87} y={98} mono accent>router</SketchLabel>
+    <SketchLabel x={87} y={116} mono muted>shard(tenant_id)</SketchLabel>
+    <SketchArrow from={[148, 92]} to={[372, 46]} />
+    <SketchArrow from={[148, 102]} to={[372, 108]} />
+    <SketchArrow from={[148, 112]} to={[372, 170]} />
+    <SketchBox x={374} y={24} width={216} height={44} />
+    <SketchLabel x={482} y={51} mono>shard 0 · tenants 1..1000</SketchLabel>
+    <SketchBox x={374} y={86} width={216} height={44} />
+    <SketchLabel x={482} y={113} mono>shard 1 · tenants 1001..2000</SketchLabel>
+    <SketchBox x={374} y={148} width={216} height={44} accent />
+    <SketchLabel x={482} y={175} mono accent>dedicated shard · whale (tenant 42)</SketchLabel>
+  </Sketch>
+</Figure>
+
+The first and best-known trap is the whale. One large tenant eats up 40% of all load, and its shard overheats while the neighbors sit idle. That's exactly the hot-key problem from the sharding section, just with a tenant as the key. It gets fixed the same way: move the whale to a dedicated shard (as in the figure), or split its data with a secondary key so one customer spans several shards. The second trap is cross-tenant analytics: a "revenue across all customers" report isn't tied to a single `tenant_id` and so runs as scatter-gather across every shard, which is why it gets moved to a separate analytics store. The third trap runs the other way: if there are tens of thousands of tenants and most are tiny, a separate logical database per tenant is expensive to run, so many small tenants get placed together on a shared shard. And the fourth, the one people forget to plan for: a tenant grows and eventually has to move to a different shard, so the tenant-migration mechanism belongs in the design from day one, not something invented during an outage.
+
+## A checklist before you add complexity
+
+Before rolling out any of these strategies, honestly work through a short list of questions. It saves months of effort spent in the wrong direction.
+
+<Steps>
+  <li>What actually ran out? Measure a specific resource (CPU, disk IOPS, memory, network, locks). "The database is slow" isn't a diagnosis.</li>
+  <li>Have you exhausted the cheap options? Missing indexes, caching, offloading reports to a replica, and moving sessions and queues out of the primary database often solve the problem without any distribution at all.</li>
+  <li>Is it reads or writes that hurt? Reads get sent to replicas and cache. Writes and volume get treated with partitions, and with sharding once you outgrow a single node.</li>
+  <li>Is there a key that almost every query knows? If so, it's a candidate shard key, and queries will stay inside one shard with it.</li>
+  <li>Do you need ranges and aggregates? Then be careful with hash-based layouts: they scatter that kind of query across every node.</li>
+  <li>How will you add nodes? If the node count changes often, build in consistent hashing instead of hash modulo N.</li>
+</Steps>
+
+<Detail summary="CQRS in two paragraphs: why reads and writes get different models">
+
+CQRS (Command Query Responsibility Segregation) is the idea that the write model and the read model don't have to be the same thing. The command path accepts changes into a normalized model on the leader, where integrity and transactions matter. The query path reads from separate denormalized views, pre-built for specific screens, and lives on replicas or in a separate store (a search index or a cache, say). It's not a specific technology and it doesn't require standing up two databases: in its simplest form CQRS is just reading reports from a replica instead of the leader.
+
+CQRS fits the read-heavy scenario particularly well. Dashboards, feeds, and aggregates get built once on write and then handed out cheaply on read, without recomputing on every request or interfering with writes. The cost is the same eventual consistency: there's a lag between a change and the view catching up, so anywhere strict freshness matters you read from the write path instead. Standing up full CQRS with a separate read store is worth it when views are genuinely expensive to build; otherwise a replica is enough.
+
+</Detail>
+
+## Common mistakes
+
+- **Sharding in response to a read problem.** A classic mix-up: reads hit a wall, and the team splits data across nodes anyway. Reads get fixed with replicas and caching; sharding here is an expensive swing that misses the target.
+- **Choosing a strategy by hype instead of by profile.** "Everyone's using Cassandra, let's use it too" isn't an argument. Start with the load profile, then pick the tool that fits it.
+- **Skipping the cheap moves.** An index, a cache, or a bit more memory often solves the exact problem a distributed system was about to be built for. Check them first.
+- **Sharding by a key that's absent from your queries.** Then a routine query goes cross-shard, and sharding's whole benefit gets eaten up. Pick the key to match the shape of frequent queries.
+- **Forgetting the whale in a multi-tenant system.** One large customer drowns its own shard. Whales get isolated or split, and the tenant-migration mechanism gets planned in advance.
+
+<KeyTakeaways
+  items={[
+    "You pick a strategy by load profile, not by taste: the read-to-write ratio, the shape of queries, and the axis data grows along rule out the wrong options.",
+    "Read-heavy content gets fixed with caching and read replicas (often in a CQRS style), and sharding usually never comes up.",
+    "Time-based write-heavy data gets partitioned with TTL first, and only sharded once a single node isn't enough, typically hashed by source plus partitioned by time inside each shard.",
+    "Multi-tenant SaaS naturally shards by tenant_id, but needs a plan for whales, for cross-tenant analytics, and for moving tenants between shards.",
+    "Before scaling, work through a checklist: measure the resource, exhaust the cheap options, figure out whether it's reads or writes, find a key your queries share, and plan how you'll add nodes.",
+  ]}
+/>
+
+## References
+
+- [Martin Kleppmann, Designing Data-Intensive Applications, chapters 5, 6, and 12](https://dataintensive.net/)
+- [Martin Fowler: CQRS](https://martinfowler.com/bliki/CQRS.html)
+- [Microsoft: Multi-tenant SaaS database tenancy patterns](https://learn.microsoft.com/azure/azure-sql/database/saas-tenancy-app-design-patterns)

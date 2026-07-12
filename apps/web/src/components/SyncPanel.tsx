@@ -9,6 +9,7 @@ import {
   KeyRound,
   Link2,
   QrCode,
+  RefreshCcw,
   RefreshCw,
   Unlink,
   X as CloseIcon,
@@ -25,6 +26,7 @@ import { listSyncBackups, type SyncBackupRecord } from '@/lib/progress-db';
 import {
   createAndLink,
   linkWithCode,
+  reissueCode,
   restoreBackup,
   syncNow,
   unlink,
@@ -139,6 +141,7 @@ const HelpDisclosure = ({ open, onToggle }: HelpDisclosureProps) => {
           <p>{t('sync.help.p3')}</p>
           <p>{t('sync.help.p4')}</p>
           <p>{t('sync.help.p5')}</p>
+          <p>{t('sync.help.p6')}</p>
         </div>
       )}
     </>
@@ -381,7 +384,13 @@ const RestoreDialog = ({ open, onOpenChange }: RestoreDialogProps) => {
   );
 };
 
-const LinkedSection = ({ status }: { status: SyncStatus }) => {
+const LinkedSection = ({
+  status,
+  onReissued,
+}: {
+  status: SyncStatus;
+  onReissued: (formattedCode: string) => void;
+}) => {
   const { t } = useTranslation('settings');
   const [revealed, setRevealed] = useState(false);
   const [unlinkOpen, setUnlinkOpen] = useState(false);
@@ -389,6 +398,8 @@ const LinkedSection = ({ status }: { status: SyncStatus }) => {
   const [unlinking, setUnlinking] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [reissueOpen, setReissueOpen] = useState(false);
+  const [reissuing, setReissuing] = useState(false);
 
   const formatted = status.code ? formatSyncCode(normalizeSyncCode(status.code)) : '';
 
@@ -451,6 +462,20 @@ const LinkedSection = ({ status }: { status: SyncStatus }) => {
     }
   };
 
+  const handleReissue = async (): Promise<void> => {
+    setReissuing(true);
+    try {
+      const next = await reissueCode();
+      setReissueOpen(false);
+      toast.success(t('sync.reissue.success'));
+      onReissued(formatSyncCode(normalizeSyncCode(next)));
+    } catch {
+      toast.error(t('sync.reissue.error'));
+    } finally {
+      setReissuing(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -491,6 +516,14 @@ const LinkedSection = ({ status }: { status: SyncStatus }) => {
           onClick={() => setQrOpen(true)}
         >
           {t('sync.qr.button')}
+        </Button>
+        <Button
+          variant="ghost"
+          leadingIcon={<RefreshCcw size={15} />}
+          className="w-full sm:w-auto"
+          onClick={() => setReissueOpen(true)}
+        >
+          {t('sync.reissue.button')}
         </Button>
         <Button
           variant="ghost"
@@ -540,6 +573,31 @@ const LinkedSection = ({ status }: { status: SyncStatus }) => {
           />
           {t('sync.unlinkDeleteRemote')}
         </label>
+      </Dialog>
+
+      <Dialog
+        open={reissueOpen}
+        onOpenChange={setReissueOpen}
+        title={t('sync.reissue.confirmTitle')}
+        placement="center"
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setReissueOpen(false)}>
+              {t('sync.reissue.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              leadingIcon={<RefreshCcw size={15} />}
+              loading={reissuing}
+              onClick={() => void handleReissue()}
+            >
+              {t('sync.reissue.confirm')}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-fg-muted">{t('sync.reissue.confirmBody')}</p>
       </Dialog>
 
       <RestoreDialog open={restoreOpen} onOpenChange={setRestoreOpen} />
@@ -685,7 +743,7 @@ export const SyncPanel = () => {
           <CodeReveal code={justCreatedCode} onDismiss={() => setJustCreatedCode(null)} />
         )}
         {status.linked ? (
-          <LinkedSection status={status} />
+          <LinkedSection status={status} onReissued={setJustCreatedCode} />
         ) : (
           <NotLinkedSection
             onCreated={setJustCreatedCode}

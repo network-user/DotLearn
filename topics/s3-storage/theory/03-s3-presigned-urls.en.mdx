@@ -1,0 +1,149 @@
+---
+conceptId: s3-presigned-urls
+title: "Presigned URLs: temporary direct access to S3 objects"
+estimatedMinutes: 14
+---
+
+# How to let a client download a private file without handing out your keys
+
+A customer just ordered something and wants to download the PDF receipt. The file sits in a private bucket - you can't make receipts public, they shouldn't be visible to anyone else. The obvious fix: have the browser ask your backend for the file, the backend fetches it from S3 and forwards it to the user. That works fine when there are a dozen receipts an hour. During a sale there are tens of thousands, and all that traffic of gigabyte-sized archives and videos flows through your server: its bandwidth gets clogged shipping files it isn't even processing, just proxying.
+
+There's a way to take the server out of the data path without opening the bucket to the whole internet. The backend hands the client a special link - a **presigned URL** - that lets it download the file directly from S3, bypassing your server, but strictly within whatever the link allows. By the end of this section you'll know exactly what's encoded in such a link, how a presigned GET differs from a presigned PUT and a presigned POST, how the expiration is set, and what risk you're taking on by issuing one.
+
+## Mental model: a signature instead of standing access
+
+A presigned URL is just a regular HTTPS address for an object with query parameters carrying a cryptographic signature tacked on. The signature is computed from your access keys, the bucket name, the object key, the allowed operation, and an expiration time. When S3 receives such a URL, it checks the signature, and if it's valid and hasn't expired, it performs the operation - as if the request had come from the key owner itself. The keys themselves never end up in the link; all it carries is a signature, and you can't recover a secret from a signature.
+
+<Figure caption="The backend holds the keys and signs the URL without touching the data. The client hits S3 directly with that link; bytes flow between the client and S3, bypassing the server.">
+  <Sketch viewBox="0 0 460 210" title="Backend signs, client talks to S3 directly">
+    <SketchBox x={20} y={70} width={90} height={50} />
+    <SketchLabel x={65} y={92} mono size={11}>client</SketchLabel>
+    <SketchLabel x={65} y={108} muted size={9}>browser</SketchLabel>
+
+    <SketchBox x={185} y={20} width={100} height={50} accent />
+    <SketchLabel x={235} y={42} mono accent size={11}>backend</SketchLabel>
+    <SketchLabel x={235} y={58} muted size={9}>holds the keys</SketchLabel>
+
+    <SketchBox x={360} y={70} width={90} height={50} />
+    <SketchLabel x={405} y={92} mono size={11}>S3</SketchLabel>
+    <SketchLabel x={405} y={108} muted size={9}>bucket</SketchLabel>
+
+    <SketchArrow from={[110, 80]} to={[185, 55]} />
+    <SketchLabel x={120} y={45} muted size={9}>1. give me a link</SketchLabel>
+    <SketchArrow from={[185, 60]} to={[110, 90]} accent />
+    <SketchLabel x={120} y={132} accent size={9}>2. presigned URL</SketchLabel>
+
+    <SketchArrow from={[110, 100]} to={[360, 100]} />
+    <SketchLabel x={235} y={120} muted size={9}>3. GET/PUT directly, bytes skip the backend</SketchLabel>
+  </Sketch>
+</Figure>
+
+The important part of this picture is the bottom arrow: data flows directly between the client and S3. The backend only takes part in the short signing step (arrows 1-2), where not a single byte of the file appears. The server hands out lightweight signatures, and S3 absorbs the heavy traffic.
+
+## Presigned GET: a temporary download link
+
+The most common case is letting someone download a private object. `generate_presigned_url` with the `get_object` operation returns a URL string.
+
+```python
+url = client.generate_presigned_url(
+    "get_object",
+    Params={"Bucket": "ozon-media", "Key": "receipts/42.pdf"},
+    ExpiresIn=300,
+)
+```
+
+This URL is valid for five minutes (`ExpiresIn` is in seconds). Anyone who has it can download `receipts/42.pdf` without any further authorization - the signature already vouches for them. Five minutes later, the same link returns `AccessDenied`: the expiration has passed and the signature is no longer valid. The backend hands out such a link in response to a "let me download my receipt" request, and from there the browser fetches the file on its own.
+
+<Callout type="info">
+A presigned URL works even on a private bucket with Block Public Access turned on. It's not publishing the object: access is granted by a signature for one specific operation and one specific key, not by opening up the bucket. The object stays private to anyone without a signed link.
+</Callout>
+
+## Presigned PUT: letting a client upload without routing the file through you
+
+The reverse problem has a symmetric solution: accepting a file from a client. If a user is uploading an avatar or a video, proxying that upload through your backend is just as wasteful. A presigned URL for `put_object` lets the client write an object directly into S3.
+
+```python
+url = client.generate_presigned_url(
+    "put_object",
+    Params={"Bucket": "ozon-media", "Key": "uploads/42/avatar.png"},
+    ExpiresIn=600,
+)
+```
+
+The client makes an HTTP `PUT` to this URL, sending the file body, and the object appears in the bucket under the given key. The backend sets the key ahead of time (say, based on the user's id), so the client doesn't get to choose where it writes: it writes exactly where the signature allows.
+
+## Presigned POST: uploads straight from an HTML form
+
+Presigned PUT has one limitation: it's awkward to use from a plain browser form, and hard to constrain by size or type. That's what `generate_presigned_post` is for - instead of a string, it returns a pair of "form URL + a set of hidden fields" that you drop into an HTML form with `enctype="multipart/form-data"`.
+
+```python
+data = client.generate_presigned_post(
+    Bucket="ozon-media",
+    Key="uploads/42/avatar.png",
+    Fields={"Content-Type": "image/png"},
+    Conditions=[["content-length-range", 0, 5_000_000]],
+    ExpiresIn=600,
+)
+```
+
+The returned dict contains `url` and `fields`, which the browser sends along with the file. The key advantage here is **conditions** (`Conditions`): the signature above only allows the upload if the body size falls between 0 and 5 MB. The client physically can't upload anything larger - S3 rejects any request that doesn't match the conditions. That way a user uploads a file straight into S3 from a form, and you've already constrained exactly what they're allowed to send.
+
+## Expiration: shorter is safer
+
+The `ExpiresIn` parameter sets how many seconds the link stays valid. This is your main security lever: the shorter the lifetime, the smaller the window in which a leaked link is dangerous. A few minutes is usually plenty for a click-to-download link; a background upload of a large file needs more, but still within reason. Presigned URLs are never unlimited: the upper bound depends on how the URL is signed (up to 7 days for signatures made with IAM user keys), but relying on that maximum is a bad habit.
+
+<Figure caption="The danger window equals the link's lifetime. A short ExpiresIn closes off access almost as soon as it's used; a long one leaves a leaked link working for hours.">
+  <SortLimitFigure
+    items={[
+      { label: "ExpiresIn=60 (1 min)", value: 60 },
+      { label: "ExpiresIn=300 (5 min)", value: 300 },
+      { label: "ExpiresIn=3600 (1 hr)", value: 3600 },
+      { label: "ExpiresIn=86400 (1 day)", value: 86400 },
+    ]}
+    orderLabel="seconds the link stays valid"
+  />
+</Figure>
+
+## The whole point: taking load off the backend
+
+Put the payoff together. Without presigned URLs, your server is the middleman for every single byte: it downloads from S3 and serves the client, or it receives from the client and uploads to S3. Its CPU, memory, and bandwidth all get spent shuttling data it never actually processes. With presigned URLs, the server only does the cheap signing operation (no file body involved), and S3 - the service built for exactly this - absorbs the heavy traffic. On large files and high traffic, that's the difference between "the server's bandwidth is the bottleneck" and "the server isn't even in the data path."
+
+## Surprise: the link itself is the access, and you can't revoke it
+
+Here's where the main risk hides. A presigned URL is self-contained: everything needed for access lives right inside it. So whoever gets hold of the link has exactly the access it grants, until it expires. It leaks into proxy logs, into browser history, into a forwarded message, into a screenshot - and until the expiration, anyone can use it to download (or write) the object, whether or not they're the person it was issued to.
+
+Worse, you can't revoke one specific link: the signature has already been computed and lives on its own, with no "revoke" button. The only way to kill every issued link at once is to rotate or disable the access key they were signed with - but that breaks every other signature too. That's why a short `ExpiresIn` isn't overcaution, it's the primary defense: it limits how long a leak actually matters.
+
+<Callout type="warning">
+Don't pass presigned URLs through channels where they linger: don't put them in a URL that ends up in a proxy's access logs, don't save them anywhere public. And don't set the expiration "generously, just in case" - you're only widening the window in which a leaked link still works.
+</Callout>
+
+## Common mistakes
+
+- **Treating a presigned URL as publishing the object.** It's not "making the file public": access is scoped to one operation, one key, and one expiration. Opening up the whole bucket "to hand out links" grants far more than a presigned URL was ever meant to.
+- **Setting a huge `ExpiresIn`.** A long-lived link is convenient right up until it leaks. The expiration is your attack window - keep it as short as the use case allows.
+- **Mixing up who signs and who uses the link.** The backend, which holds the keys, signs the link; the client, which has no keys, uses it. If the client ever has to "sign" something itself, the design is wrong - a secret would be leaking to the client.
+
+<Detail summary="What's actually inside the signature, and why it can't be forged">
+
+Under the current scheme (AWS Signature Version 4), a presigned URL carries in its query parameters: an access key identifier (`X-Amz-Credential`), a creation timestamp (`X-Amz-Date`), a lifetime (`X-Amz-Expires`), a list of signed headers, and the signature itself (`X-Amz-Signature`). The signature is an HMAC-SHA256 over the canonicalized request (method, path, parameters, headers), computed with a key derived from your secret access key. On its side, S3 repeats the same computation over the incoming request and compares signatures. If they match, the request is genuine; if they don't, or the expiration has passed, it's `AccessDenied`. You can't forge the signature without the secret key - that's the whole point of HMAC. And since verification needs no database lookup or prior registration of the link, S3 validates a presigned URL instantly and statelessly - which is exactly why revoking one link at a time is impossible.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A presigned URL is an object's address plus a cryptographic signature; the client hits S3 directly through it, and the access keys themselves never appear in the link.",
+    "generate_presigned_url with get_object gives a temporary download link, with put_object an upload link; the object stays private the whole time.",
+    "generate_presigned_post returns a URL and fields for an HTML form and lets you attach conditions - for instance, capping the size of the uploaded file.",
+    "ExpiresIn sets the lifetime in seconds and is your main defense: the shorter it is, the smaller the window in which a leaked link is dangerous.",
+    "The point of a presigned URL is to remove the backend from the data path: the server signs cheaply, and S3 absorbs the heavy traffic.",
+    "The link is self-contained: whoever holds it has access until it expires, and you can't revoke a single link - which is why you keep the expiration short.",
+  ]}
+/>
+
+## References
+
+- [Amazon S3 - Using presigned URLs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)
+- [boto3 - Presigned URLs](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/s3-presigned-urls.html)
+- [boto3 - Presigned POST](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/s3-presigned-urls.html#generating-a-presigned-url-to-upload-a-file)
+- [AWS - Signature Version 4 signing process](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_aws-signing.html)

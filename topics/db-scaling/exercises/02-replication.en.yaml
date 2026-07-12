@@ -1,0 +1,219 @@
+exercises:
+  - id: replication-leader-role-001
+    concept: replication
+    type: theory-quiz
+    difficulty: 1
+    prompt: "In a \"leader and replicas\" setup, what can only the leader do?"
+    choices:
+      - id: a
+        text: "Accept writes."
+      - id: b
+        text: "Serve reads."
+      - id: c
+        text: "Store data on disk."
+      - id: d
+        text: "Answer network requests."
+    correct: [a]
+    explanation: "Only the leader accepts writes: it serializes changes and puts them into a change stream. Reads can be served from replicas too. Storage and networking exist on every node."
+    variants:
+      - prompt: "Where does a replica get its changes from?"
+        choices:
+          - id: a
+            text: "From the leader's change stream (WAL, binlog), applying it in the same order."
+          - id: b
+            text: "It generates them itself from users' read requests."
+          - id: c
+            text: "It copies the entire database file on every request."
+          - id: d
+            text: "It makes them up randomly."
+        correct: [a]
+        explanation: "A replica reads the leader's change stream and applies exactly the changes that happened on the leader, arriving at the same state. Reads can go to a replica, but it has no right to change data on its own."
+      - prompt: "Can you read from a replica?"
+        choices:
+          - id: a
+            text: "Yes, reads are spread across replicas; writes can only go to the leader."
+          - id: b
+            text: "No, a replica exists only as a cold backup."
+          - id: c
+            text: "Only if the leader is disabled."
+          - id: d
+            text: "Only writes, not reads."
+        correct: [a]
+        explanation: "The whole point of replicas is to spread reads onto them and take that load off the leader. Writes stay on the leader, because every piece of data needs a single owner."
+
+  - id: replication-async-tradeoff-001
+    concept: replication
+    type: theory-quiz
+    difficulty: 2
+    prompt: "What does asynchronous replication trade away for speed?"
+    choices:
+      - id: a
+        text: "The possible loss of changes that haven't arrived yet, if the leader dies before replicating them."
+      - id: b
+        text: "Nothing: it's the best mode in every case."
+      - id: c
+        text: "The speed of reading from replicas."
+      - id: d
+        text: "The ability to keep more than one replica."
+    correct: [a]
+    explanation: "An asynchronous leader confirms the write to the client immediately, without waiting for replicas. If it dies while some changes are still in flight, those changes are lost: the client was told \"saved,\" but the data isn't there."
+    variants:
+      - prompt: "What's the price of synchronous replication?"
+        choices:
+          - id: a
+            text: "Speed: writes go at the speed of the slowest replica, and a stuck synchronous replica blocks writes entirely."
+          - id: b
+            text: "Reliability: synchronous replication loses data more often than asynchronous."
+          - id: c
+            text: "The ability to read from replicas."
+          - id: d
+            text: "Nothing, it has no downsides."
+        correct: [a]
+        explanation: "Synchronous replication waits for a replica's ack before answering the client, so there's no data loss, but writes slow down to the pace of the slowest replica, and a stuck synchronous replica halts writes entirely."
+      - prompt: "What does semi-synchronous replication give you?"
+        choices:
+          - id: a
+            text: "A guarantee that a confirmed change exists on at least two nodes, without halting writes because of one slow replica."
+          - id: b
+            text: "A complete absence of lag on all replicas."
+          - id: c
+            text: "Writing to several leaders at once."
+          - id: d
+            text: "Reading strictly from the leader."
+        correct: [a]
+        explanation: "Semi-synchronous replication waits for confirmation from at least one replica, while the rest catch up asynchronously. That way a confirmed change lives on at least two nodes, but one slow replica doesn't block writes."
+
+  - id: replication-lag-blanks-001
+    concept: replication
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks about the effects of replication lag."
+    template: |
+      A user doesn't see the comment they just posted, having read it from a lagging replica. This is the {{ryw}} effect, fixed by reading fresh data from the {{leader}}.
+      When a second request lands on a replica with more lag and the data seems to roll back, this is the {{mono}} effect.
+      With {{async}} replication, a leader crash loses changes that haven't arrived yet.
+    blanks:
+      ryw:
+        accept: ["read-your-writes", "read your writes"]
+      leader:
+        accept: ["leader", "the leader", "the primary node"]
+      mono:
+        accept: ["monotonic reads", "monotonic-reads"]
+      async:
+        accept: ["asynchronous"]
+    variants:
+      - template: |
+          To stop a returning old leader from causing {{split}}, a new leader is elected by {{quorum}}, and the old one is blocked from writing via {{fence}}.
+        blanks:
+          split:
+            accept: ["split-brain", "split brain"]
+          quorum:
+            accept: ["quorum", "a majority"]
+          fence:
+            accept: ["fencing"]
+      - template: |
+          Synchronous replication doesn't lose data, but writes go at the speed of the {{slow}} replica.
+          Semi-synchronous waits for confirmation from at least {{one}} replica.
+        blanks:
+          slow:
+            accept: ["slowest", "slowest replica"]
+          one:
+            accept: ["one", "one replica", "1"]
+
+  - id: replication-lag-predict-001
+    concept: replication
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models replica lag: the leader applies a write immediately, and the replica replays the change stream with a delay."
+    snippet: |
+      leader = {}
+      replica = {}
+      log = []
+
+      def write(key, value):
+          leader[key] = value
+          log.append((key, value))
+
+      def replicate(n):
+          for _ in range(n):
+              if log:
+                  key, value = log.pop(0)
+                  replica[key] = value
+
+      write("balance", 100)
+      write("balance", 150)
+      replicate(1)
+
+      print(leader["balance"], replica["balance"])
+    expected:
+      kind: stdout
+      value: "150 100"
+    hints:
+      - "The leader changes on every write immediately. The replica only catches up as many steps as it's given in replicate. How many changes are queued, and how many of them get replayed?"
+      - "The log has two entries in order: 100, then 150. replicate(1) applies only the first (100), so the replica shows 100 while the leader is already at 150."
+    variants:
+      - snippet: |
+          leader = {}
+          replica = {}
+          log = []
+
+          def write(key, value):
+              leader[key] = value
+              log.append((key, value))
+
+          def replicate(n):
+              for _ in range(n):
+                  if log:
+                      key, value = log.pop(0)
+                      replica[key] = value
+
+          write("x", 100)
+          write("x", 150)
+          write("x", 175)
+          replicate(2)
+
+          print(leader["x"], replica["x"])
+        expected:
+          kind: stdout
+          value: "175 150"
+      - snippet: |
+          log = []
+
+          def write(key, value):
+              log.append((key, value))
+
+          def replicate(n):
+              for _ in range(n):
+                  if log:
+                      log.pop(0)
+
+          write("a", 1)
+          write("b", 2)
+          write("c", 3)
+          write("d", 4)
+          replicate(1)
+
+          print(len(log))
+        expected:
+          kind: stdout
+          value: "3"
+
+  - id: replication-split-brain-001
+    concept: replication
+    type: theory-quiz
+    difficulty: 3
+    prompt: "The leader disappeared from the network for a minute, the system promoted a replica to leader, then the old leader came back and started accepting writes again. What happened, and what does this prevent?"
+    choices:
+      - id: a
+        text: "Split-brain: two nodes accept writes and the data diverges; prevented by electing via quorum and fencing the old leader."
+      - id: b
+        text: "Nothing bad: two leaders simply doubled the write throughput."
+      - id: c
+        text: "The new replica will automatically roll back to the old leader's version."
+      - id: d
+        text: "The data merges on its own by last-change timestamp with no loss."
+    correct: [a]
+    explanation: "This is a classic split-brain: the old leader didn't die, it only lost network connectivity, and after returning it still considers itself in charge. While both accept writes, the data diverges, and merging it back is manual pain. The protection is electing a new leader by majority (quorum) and forbidding the returning old one from writing (fencing)."
+    hints:
+      - "How many nodes currently consider themselves entitled to accept writes? What happens to the same key if it's changed on both independently?"
+      - "The problem isn't speed, it's that nobody reconciles two write owners. What should decide who the real leader is, and what happens to the old one when it comes back?"

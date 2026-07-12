@@ -1,0 +1,149 @@
+---
+conceptId: s3-security-policies
+title: "S3 access control: IAM, bucket policies, ACLs, and encryption"
+estimatedMinutes: 14
+---
+
+# One request, three rulebooks, and one word that overrides them all
+
+A developer adds an IAM policy giving the application read access to a bucket. Tests are green. A week later, a security engineer attaches a rule to the same bucket denying anything that doesn't come from the corporate network, and the app, running from the office, keeps reading just fine - while the nightly report job running from a third-party cloud suddenly gets `AccessDenied`, even though nobody touched its IAM permissions. Who won? And why did an allow rule lose to a deny rule that doesn't even mention it?
+
+Access to an S3 object isn't decided by a single rule but by several mechanisms at once, and their collisions follow a strict order. By the end of this section you'll know how an identity-based policy differs from a resource-based one, why the legacy ACL mechanism still exists and why people avoid it today, what Block Public Access does, and - most importantly - why one explicit "denied" outweighs any number of "alloweds."
+
+## Mental model: a request runs a gauntlet where Deny is a veto
+
+When a request for an object comes in, S3 gathers every applicable rule from every mechanism and reaches a verdict through a simple algorithm. By default there's no access - everything is implicitly denied. Then it looks for at least one explicit allow (`Allow`); if there isn't one, the request is rejected. But before that, it checks for an explicit deny (`Deny`): if even one rule explicitly forbids the operation, it's rejected **regardless** of any allows. An explicit `Deny` is a veto nothing can override.
+
+<Figure caption="How a request is decided: first look for an explicit Deny (it rejects immediately), then an explicit Allow; with no Allow, the default deny kicks in.">
+  <Sketch viewBox="0 0 470 200" title="Access evaluation order: Deny wins">
+    <SketchBox x={15} y={80} width={80} height={40} />
+    <SketchLabel x={55} y={104} mono size={11}>request</SketchLabel>
+
+    <SketchBox x={140} y={75} width={110} height={50} accent />
+    <SketchLabel x={195} y={96} size={12} accent>explicit Deny?</SketchLabel>
+    <SketchLabel x={195} y={113} muted size={9}>in any mechanism</SketchLabel>
+
+    <SketchBox x={300} y={75} width={110} height={50} />
+    <SketchLabel x={355} y={96} size={12}>explicit Allow?</SketchLabel>
+    <SketchLabel x={355} y={113} muted size={9}>otherwise, deny</SketchLabel>
+
+    <SketchBox x={300} y={155} width={110} height={32} />
+    <SketchLabel x={355} y={175} mono size={10}>allow</SketchLabel>
+    <SketchBox x={140} y={155} width={110} height={32} />
+    <SketchLabel x={195} y={175} mono size={10}>deny</SketchLabel>
+
+    <SketchArrow from={[95, 100]} to={[140, 100]} />
+    <SketchArrow from={[250, 100]} to={[300, 100]} />
+    <SketchLabel x={275} y={92} muted size={9}>no</SketchLabel>
+    <SketchArrow from={[195, 125]} to={[195, 155]} />
+    <SketchLabel x={210} y={142} size={9}>Deny found</SketchLabel>
+    <SketchArrow from={[355, 125]} to={[355, 155]} />
+    <SketchLabel x={370} y={142} size={9}>Allow found</SketchLabel>
+  </Sketch>
+</Figure>
+
+This is exactly what settles the dispute from the intro: the new resource-based rule, "deny everything not from the corporate network," added an explicit `Deny` for requests from outside. The app's IAM permission is still there as an allow, but `Deny` is evaluated first and overrides it for traffic coming from the third-party cloud. Nobody took the permission away - it just got outweighed.
+
+## Identity-based vs. resource-based
+
+The first two mechanisms are two different angles on the same access decision.
+
+An **IAM policy** (identity-based) is attached to an identity: a user, a role, or a group. It answers "what is this subject allowed to do?" and lists actions (`s3:GetObject`, `s3:PutObject`) against resources (specific buckets and keys). This is convenient when you have many subjects and you're reasoning from "who's allowed to do what."
+
+A **bucket policy** (resource-based) is attached to the bucket itself. It answers "who's allowed to touch this resource?" and, unlike IAM, can address subjects from other accounts and set conditions on the request itself - the source IP, whether TLS was used, the encryption method. This is convenient when a rule logically belongs with the resource: "this bucket, HTTPS only," "this bucket, only from our network."
+
+<Compare
+  leftTitle="IAM policy (identity-based)"
+  rightTitle="Bucket policy (resource-based)"
+  left={<>
+
+- Attached to a user, role, or group
+- Question: what is the subject allowed to do?
+- Lives in IAM, next to the identity
+- Governs a subject's access across many resources
+
+  </>}
+  right={<>
+
+- Attached to the bucket itself
+- Question: who's allowed to touch the resource?
+- Lives with the resource, in its settings
+- Can admit other accounts and set conditions (IP, TLS)
+
+  </>}
+  verdict="Both feed into the same verdict: access is usually granted through an IAM policy, while a bucket policy fences off the resource itself - for example, 'TLS only' or an explicit outside Deny."
+/>
+
+## ACLs: the legacy mechanism you're better off leaving alone
+
+The third mechanism, **ACL** (access control list), is historically the first one: a list of "who can do what" attached directly to a bucket or object, separate from policies. It can do very little (a handful of fixed access levels), scales poorly, and makes it easy to accidentally go public - ACLs are exactly what was behind the headline-grabbing leaks where a bucket got left open to the whole internet by oversight.
+
+So AWS's current recommendation is unambiguous: manage access with policies, and turn ACLs off. New buckets now default to a mode where ACLs don't apply at all (Object Ownership = Bucket owner enforced), and the bucket owner is treated as the owner of every object in it. If a guide you're reading shows `acl="public-read"`, that's a sign it's outdated.
+
+## Block Public Access: a kill switch against accidental exposure
+
+On top of all three mechanisms sits a separate safeguard: **Block Public Access**. It's a set of switches at the account and bucket level that overrides any attempt to make objects public, even if some policy or ACL would otherwise allow it. With Block Public Access on, the stance is "whatever the rules say, nothing gets exposed."
+
+<Callout type="info">
+Block Public Access doesn't interfere with presigned URLs or access by authorized subjects - it specifically blocks anonymous public access. That's why it's kept on almost everywhere: it catches a misconfiguration before it turns into a leak, without breaking normal application behavior.
+</Callout>
+
+## The principle of least privilege
+
+The core rule when writing policies is to grant exactly what a task needs, and not a bit more. A service that only puts receipts into one prefix doesn't need `s3:*` on the whole bucket - it needs `s3:PutObject` on `receipts/*`. A narrow policy caps the damage from a leaked key: whoever steals it can only do what was allowed, not "everything, everywhere."
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:PutObject"],
+  "Resource": "arn:aws:s3:::ozon-media/receipts/*"
+}
+```
+
+The temptation to just grant `*` "so you don't have to come back to it" is strong, but it's exactly those broad permissions that turn a small leak into a disaster. Least privilege isn't bureaucracy - it's limiting the blast radius.
+
+## Encryption: at rest and in transit
+
+Access is about who's allowed; encryption is about what form the bytes take while they sit and while they travel. These are two separate axes, and you need to cover both.
+
+Encryption **at rest** means the object sits on S3's disks in encrypted form. There are three ways to manage the keys. **SSE-S3**: S3 manages the keys entirely, you don't have to do anything - this is now on by default for new objects. **SSE-KMS**: the key is managed by a separate key management service (KMS), which gives you an access log for the key and fine-grained control over who can decrypt - at the cost of a KMS call on every operation. **SSE-C**: the client supplies the key itself with every request, and S3 never stores it - maximum control and maximum responsibility (lose the key, lose the data).
+
+Encryption **in transit** is TLS (HTTPS) on the path between the client and S3. It isn't something you "turn on" in storage settings - the client just talks over `https://`. But you can make it mandatory: a bucket policy with the condition `aws:SecureTransport: false` and a `Deny` effect will reject any request that isn't over TLS.
+
+<Callout type="warning">
+"The object is encrypted at rest" and "the connection is encrypted" are different guarantees. SSE protects data on the provider's disks, TLS protects it in transit over the network. Encryption at rest doesn't save you from traffic interception, and TLS doesn't save you from someone who's gained access to the object itself. You need both axes, plus correct access policies - which answer the third, independent question of "who's allowed at all."
+</Callout>
+
+## Surprise: "private by default," and leaks still happen
+
+A new bucket is private: without explicit permission, nobody but the owner can read anything. You'd think there'd be nothing to leak. And yet public S3 buckets have been, for years, one of the most common sources of data breaches. The reason isn't the default - it's that people change it by hand: someone sets `acl="public-read"` for quick sharing, someone writes a bucket policy with `Principal: "*"`, someone disables Block Public Access "just for a minute" and forgets about it. The default is safe - it's the follow-up tweaks, made for convenience, that aren't. Block Public Access exists precisely as insurance against those tweaks: it won't let a stray `Allow` turn into public exposure.
+
+## Common mistakes
+
+- **Expecting `Allow` to just work.** If a request is being rejected, look not for a missing permission but for a stray `Deny`: an explicit deny in any mechanism overrides every allow. Check for a veto first.
+- **Opening a bucket via ACL for "quick sharing."** For a one-off share, use a presigned URL - targeted and temporary. `acl="public-read"` opens the object to everyone, indefinitely, and it's a textbook path to a leak.
+- **Treating SSE as a substitute for access control.** Encryption at rest doesn't answer "who's allowed to read this" - S3 decrypts transparently for anyone with permission. Granting access is still the job of policies.
+
+<Detail summary="How IAM, bucket policy, and ACL actually combine into one verdict">
+
+For a request within a single account, S3 combines the applicable IAM policies of the subject with the bucket policy of the resource. The rule is: access is granted only if there's at least one explicit `Allow` and no explicit `Deny`; an explicit `Deny` in any document immediately rejects the request. So it's enough for any one mechanism to grant permission, but a deny from even one of them overrides everything. Cross-account access sets a higher bar: permission is needed from both sides - the resource owner's account policy and the subject's account policy. ACL (where it's still enabled) is added as an extra source of permissions, but it can't override a `Deny` from a policy. Block Public Access sits even higher: it cuts off public access before the request even reaches this arithmetic. The practical takeaway: "allowed" accumulates from any source, "denied" is a veto - so an explicit `Deny` is the most reliable way to lock something down for sure.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Access is decided by several mechanisms at once; everything is denied by default, permission has to be granted explicitly, but an explicit Deny overrides any Allow.",
+    "An IAM policy (identity-based) is tied to a subject - \"what can they do\"; a bucket policy (resource-based) is tied to a resource - \"who can touch it\" - with conditions like source IP and TLS.",
+    "ACL is a legacy mechanism and a common cause of accidental public exposure; current practice is to manage access with policies and turn ACLs off.",
+    "Block Public Access is a safeguard layered on top of every rule: it blocks anonymous public access without interfering with presigned URLs or authorized subjects.",
+    "Least privilege: grant exactly the action needed on exactly the prefix needed - it caps the damage from a leaked key.",
+    "Encryption at rest (SSE-S3/KMS/C) and in transit (TLS) are separate axes, and neither replaces access control: \"what form it's stored/sent in\" and \"who's allowed\" are independent questions.",
+  ]}
+/>
+
+## References
+
+- [Amazon S3 - Identity and access management](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-access-control.html)
+- [Amazon S3 - Blocking public access](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html)
+- [AWS - Policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
+- [Amazon S3 - Protecting data with encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingEncryption.html)

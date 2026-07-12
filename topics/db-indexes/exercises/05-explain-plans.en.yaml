@@ -1,0 +1,219 @@
+exercises:
+  - id: explain-read-quiz
+    concept: explain-plans
+    type: theory-quiz
+    difficulty: 1
+    prompt: "In the EXPLAIN QUERY PLAN output you see the line SCAN orders. What does that mean?"
+    choices:
+      - id: a
+        text: "The engine reads the whole orders table row by row; no index is used."
+      - id: b
+        text: "The engine found the needed rows via an index and did not read the rest."
+      - id: c
+        text: "The orders table is empty."
+      - id: d
+        text: "The query failed with an error."
+    correct: [a]
+    explanation: "SCAN means a full table scan. Point access via an index would show up as a SEARCH line naming the index."
+    variants:
+      - prompt: "The plan line SEARCH orders USING INDEX idx_orders_user (user_id=?) means that..."
+        choices:
+          - id: a
+            text: "the engine walks index idx_orders_user straight to the matching rows, without reading the whole table."
+          - id: b
+            text: "the engine reads the whole orders table, and the index only checks the condition."
+          - id: c
+            text: "index idx_orders_user is corrupted and needs to be recreated."
+          - id: d
+            text: "the engine had to sort the result separately."
+        correct: [a]
+        explanation: "SEARCH is point or range access via an index. The parentheses show the column and the kind of condition the engine used to enter the index."
+      - prompt: "The plan line SEARCH ... USING COVERING INDEX means that..."
+        choices:
+          - id: a
+            text: "all needed columns live in the index, so the engine never touches the table at all."
+          - id: b
+            text: "the index covers only part of the table's rows."
+          - id: c
+            text: "the engine is joining two tables through the index."
+          - id: d
+            text: "the index is used only for sorting, not for lookup."
+        correct: [a]
+        explanation: "COVERING means an index-only scan: both the condition and the returned columns come from the index, with no access to the table."
+
+  - id: explain-predict-join
+    concept: explain-plans
+    type: predict-output
+    difficulty: 2
+    prompt: "A join is a nested loop. How many rows will this query return?"
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Moscow'),
+        (2, 'boris@mail.ru', 'Kazan'),
+        (3, 'vera@mail.ru', 'Moscow'),
+        (4, 'grigori@mail.ru', 'Kazan'),
+        (5, 'dmitry@mail.ru', 'Moscow');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    snippet: |
+      SELECT COUNT(*) FROM users u
+      JOIN orders o ON o.user_id = u.id
+      WHERE o.status = 'paid';
+    expected:
+      kind: scalar
+      value: 5
+    variants:
+      - prompt: "How many rows will the query return if you change the status to cancelled?"
+        snippet: |
+          SELECT COUNT(*) FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE o.status = 'cancelled';
+        expected:
+          kind: scalar
+          value: 2
+      - prompt: "How many rows does the join give for all orders of users from Moscow (any status)?"
+        snippet: |
+          SELECT COUNT(*) FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE u.city = 'Moscow';
+        expected:
+          kind: scalar
+          value: 7
+
+  - id: explain-join-query
+    concept: explain-plans
+    type: sql-query
+    difficulty: 2
+    prompt: "Join users and orders and return email and amount for paid (status = 'paid') orders of users from Moscow. Sort by amount descending."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Moscow'),
+        (2, 'boris@mail.ru', 'Kazan'),
+        (3, 'vera@mail.ru', 'Moscow'),
+        (4, 'grigori@mail.ru', 'Kazan'),
+        (5, 'dmitry@mail.ru', 'Moscow');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'vera@mail.ru', amount: 2000 }
+        - { email: 'dmitry@mail.ru', amount: 1500 }
+        - { email: 'anna@mail.ru', amount: 1200 }
+        - { email: 'anna@mail.ru', amount: 800 }
+        - { email: 'dmitry@mail.ru', amount: 450 }
+    solution: |
+      SELECT u.email AS email, o.amount AS amount
+      FROM users u
+      JOIN orders o ON o.user_id = u.id
+      WHERE u.city = 'Moscow' AND o.status = 'paid'
+      ORDER BY o.amount DESC;
+    variants:
+      - prompt: "Same, but for users from Kazan and any status. Return email and amount, sorted by amount descending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'boris@mail.ru', amount: 500 }
+        solution: |
+          SELECT u.email AS email, o.amount AS amount
+          FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE u.city = 'Kazan'
+          ORDER BY o.amount DESC;
+      - prompt: "Same for Moscow, but only unpaid orders (status not equal to 'paid'). email and amount, sorted by amount descending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'dmitry@mail.ru', amount: 900 }
+            - { email: 'vera@mail.ru', amount: 300 }
+        solution: |
+          SELECT u.email AS email, o.amount AS amount
+          FROM users u
+          JOIN orders o ON o.user_id = u.id
+          WHERE u.city = 'Moscow' AND o.status <> 'paid'
+          ORDER BY o.amount DESC;
+
+  - id: explain-nplusone-query
+    concept: explain-plans
+    type: sql-query
+    difficulty: 3
+    prompt: "Instead of N+1 (a separate query for each user's order count), get everything in one query: return email and the order count for every user, including those with no orders (0). Columns: email and orders_count. Sort by email ascending."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Moscow'),
+        (2, 'boris@mail.ru', 'Kazan'),
+        (3, 'vera@mail.ru', 'Moscow'),
+        (4, 'grigori@mail.ru', 'Kazan'),
+        (5, 'dmitry@mail.ru', 'Moscow');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'anna@mail.ru', orders_count: 2 }
+        - { email: 'boris@mail.ru', orders_count: 1 }
+        - { email: 'dmitry@mail.ru', orders_count: 3 }
+        - { email: 'grigori@mail.ru', orders_count: 0 }
+        - { email: 'vera@mail.ru', orders_count: 2 }
+    hints:
+      - "N+1 is one query per parent. The cure is a single query where children are grouped under parents. Which join keeps a user with no orders?"
+      - "Join users to orders with LEFT JOIN, group by user, and count COUNT(o.id), not COUNT(*): otherwise a user with no orders would get 1 instead of 0."
+    solution: |
+      SELECT u.email AS email, COUNT(o.id) AS orders_count
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      GROUP BY u.id, u.email
+      ORDER BY u.email;
+
+  - id: explain-city-revenue-challenge
+    concept: explain-plans
+    type: sql-query
+    difficulty: 5
+    prompt: "For every city, return: the city, the number of users from it, and the total revenue from their paid (status = 'paid') orders. Cities with no revenue should show 0, not disappear. Keep only cities with at least two users. Columns: city, users, revenue. Sort by revenue descending, ties by city ascending."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Moscow'),
+        (2, 'boris@mail.ru', 'Kazan'),
+        (3, 'vera@mail.ru', 'Moscow'),
+        (4, 'grigori@mail.ru', 'Kazan'),
+        (5, 'dmitry@mail.ru', 'Moscow');
+      CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+      INSERT INTO orders VALUES
+        (1, 1, 'paid', 1200), (2, 1, 'paid', 800), (3, 2, 'cancelled', 500),
+        (4, 3, 'paid', 2000), (5, 3, 'pending', 300), (6, 5, 'paid', 1500),
+        (7, 5, 'paid', 450), (8, 5, 'cancelled', 900);
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { city: 'Moscow', users: 3, revenue: 5950 }
+        - { city: 'Kazan', users: 2, revenue: 0 }
+    hints:
+      - "If you filter WHERE status = 'paid', cities where nobody paid disappear, but they need to show up with zero. Keep everyone with LEFT JOIN, and hide the 'paid' check inside the aggregate."
+      - "After the LEFT JOIN, group by city. The number of people is a count of distinct users, not of joined rows, otherwise one person with several orders would be counted several times. Revenue is a conditional aggregate: the status check lives inside the aggregate function itself, not in WHERE, and a group with not a single paid order needs to be guarded against NULL. The threshold on user count and the output order apply after grouping."
+    solution: |
+      SELECT u.city AS city,
+             COUNT(DISTINCT u.id) AS users,
+             COALESCE(SUM(CASE WHEN o.status = 'paid' THEN o.amount END), 0) AS revenue
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.id
+      GROUP BY u.city
+      HAVING COUNT(DISTINCT u.id) >= 2
+      ORDER BY revenue DESC, u.city;

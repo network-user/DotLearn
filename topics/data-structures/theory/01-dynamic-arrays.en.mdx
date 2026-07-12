@@ -1,0 +1,219 @@
+---
+conceptId: dynamic-arrays
+title: Arrays and dynamic arrays
+estimatedMinutes: 17
+---
+
+# The Python list: an array pretending to be elastic
+
+Take a list of ten elements and a list of a hundred million. Ask each one for the element at index seven. The response time will match: Python does not scan for the right element, it already knows exactly where it lives. Now run a second experiment: swap appending to the end of the list, inside a loop, for inserting at the front. A script that chewed through a log file in a couple of seconds now hangs for long minutes, even though the amount of data has not changed by a single byte.
+
+Both stories come down to one picture: how a list lays out its elements in memory. Without that picture in your head, the cost of each operation looks like a lottery. With it, every line in a complexity table turns into a predictable consequence.
+
+## Mental model: a shelf of cells and address arithmetic
+
+Picture a shelf of numbered cells, all the same width, packed edge to edge with no gaps. To reach cell number `i` you never walk along the shelf: the address is computed with one multiplication and one addition, the start plus the index times the cell width. The processor just jumps straight to that address. That is why indexed access is O(1), equally fast no matter how long the list is.
+
+A Python list works exactly like that, with one twist: the cells hold not the values themselves but pointers to objects. Each cell takes 8 bytes on a 64-bit system, so a number, a string, and a dict can happily sit in the same list - from the array's point of view they are all just addresses of identical size. The objects themselves are scattered across the heap; only the array of pointers is contiguous.
+
+<Figure caption="A list of four elements at capacity 6: a contiguous array of pointers, two free slots held in reserve, while the objects themselves live separately on the heap.">
+  <Sketch viewBox="0 0 480 260" title="How a Python list sits in memory">
+    <SketchLabel x={40} y={26} anchor="start" muted>array of pointers: one contiguous block of memory</SketchLabel>
+    <SketchLabel x={70} y={52} mono muted>0</SketchLabel>
+    <SketchLabel x={134} y={52} mono muted>1</SketchLabel>
+    <SketchLabel x={198} y={52} mono muted>2</SketchLabel>
+    <SketchLabel x={262} y={52} mono muted>3</SketchLabel>
+    <SketchLabel x={326} y={52} mono muted>4</SketchLabel>
+    <SketchLabel x={390} y={52} mono muted>5</SketchLabel>
+    <SketchBox x={40} y={60} width={60} height={36} accent />
+    <SketchBox x={104} y={60} width={60} height={36} accent />
+    <SketchBox x={168} y={60} width={60} height={36} accent />
+    <SketchBox x={232} y={60} width={60} height={36} accent />
+    <SketchBox x={296} y={60} width={60} height={36} hatched />
+    <SketchBox x={360} y={60} width={60} height={36} hatched />
+    <SketchHighlight x={296} y={56} width={128} height={44} />
+    <SketchLabel x={310} y={150} anchor="start" accent>size = 4 (used)</SketchLabel>
+    <SketchLabel x={310} y={172} anchor="start" muted>capacity = 6 (allocated)</SketchLabel>
+    <SketchArrow from={[70, 98]} to={[70, 174]} />
+    <SketchArrow from={[134, 98]} to={[134, 174]} />
+    <SketchArrow from={[198, 98]} to={[198, 174]} />
+    <SketchArrow from={[262, 98]} to={[262, 174]} />
+    <SketchBox x={42} y={178} width={56} height={34} radius={8} />
+    <SketchBox x={106} y={178} width={56} height={34} radius={8} />
+    <SketchBox x={170} y={178} width={56} height={34} radius={8} />
+    <SketchBox x={234} y={178} width={56} height={34} radius={8} />
+    <SketchLabel x={70} y={200} mono>10</SketchLabel>
+    <SketchLabel x={134} y={200} mono>20</SketchLabel>
+    <SketchLabel x={198} y={200} mono>"ok"</SketchLabel>
+    <SketchLabel x={262} y={200} mono>30</SketchLabel>
+    <SketchLabel x={40} y={244} anchor="start" muted>objects on the heap, each with its own address</SketchLabel>
+  </Sketch>
+</Figure>
+
+The figure shows a second key detail: more cells are allocated than are used. The count of used cells lives in the size field, and that is exactly what `len` returns. Everything allocated is called the capacity. That reserve at the tail is what makes the array "dynamic": the next `append` just writes a pointer into a free cell and bumps the size, and that's it.
+
+<PullQuote>A Python list does not store your objects. It stores the addresses where you can find them.</PullQuote>
+
+## Operation costs follow straight from the picture
+
+Reading and replacing by index: O(1), pure address arithmetic. Appending to the end: almost always O(1), a write into a reserved free cell. But anything that touches the front or the middle has to keep the array contiguous. Inserting at position zero shifts every one of the n pointers one cell to the right; removing from the front shifts them all one cell to the left. Both operations cost O(n), no matter how "small" the element you are inserting.
+
+```python
+a = [10, 20, 30]
+a.insert(0, 99)
+print(a)
+a.pop(0)
+print(a)
+```
+
+Both calls here finish instantly because there are only three elements. But run `insert(0, ...)` in a loop over a million-element list and you are looking at minutes: every call reshuffles the entire array from scratch.
+
+Searching by value is not free either. The array of pointers has no ordering by content, so the `in` operator walks the cells one by one, dereferences each pointer, and compares objects until it finds a match or runs out: O(n).
+
+```python
+names = ["Anya", "Boris", "Vera"]
+print("Vera" in names)
+print("Gleb" in names)
+```
+
+For occasional checks that is fine. If membership checks run into the thousands, you need a `set` with its hash table underneath, but that is a topic of its own.
+
+## Capacity growth: why append is almost always cheap
+
+Sooner or later the reserve runs out: size catches up with capacity. The list then allocates a bigger block, copies every pointer into it, and releases the old one. That is a genuine O(n) operation. So why is `append` considered cheap?
+
+The secret is in the size of the new block. Capacity grows multiplicatively, with room to spare for the future. In the textbook model it doubles: 4, 8, 16, 32, 64. Reallocations happen on the fifth, ninth, seventeenth, thirty-third addition, and then ever more rarely. Growing to a million elements takes only about twenty relocations. Across n additions the total number of copied pointers works out to roughly n, a constant on average per operation. That averaged cost is called amortized: `append` costs O(1) amortized.
+
+<PyStepper
+  title="Growth model: doubling on overflow"
+  code={`capacity = 4
+size = 0
+for step in range(1, 10):
+    if size == capacity:
+        capacity = capacity * 2
+    size = size + 1
+    print(step, size, capacity)`}
+/>
+
+Step through the simulation: growth only fires at the moments when size hits capacity; in between, every addition is just a write into a cell that is already there.
+
+<Figure caption="Size grows by one with every append; capacity jumps in rare, generous steps, so most additions land in cells that are already allocated.">
+  <LineChart
+    series={[
+      { name: "capacity (doubling model)", points: [{ x: 0, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 8 }, { x: 8, y: 8 }, { x: 9, y: 16 }, { x: 16, y: 16 }, { x: 17, y: 32 }, { x: 32, y: 32 }, { x: 33, y: 64 }, { x: 48, y: 64 }] },
+      { name: "size (used)", points: [{ x: 0, y: 0 }, { x: 48, y: 48 }] },
+    ]}
+    xLabel="number of appends"
+    yLabel="cells"
+  />
+</Figure>
+
+In practice CPython is more conservative than the textbook model: it grows capacity by roughly 1.125x, adding an eighth of the current size plus a small constant. The principle stays the same: the increase is proportional to size, so the longer the list, the less often it relocates. For complexity reasoning you can safely keep the doubling model in your head; the conclusions match.
+
+<Detail summary="What CPython actually does on overflow">
+
+In the CPython source (the file `listobject.c`) the new capacity is computed by a formula equivalent to `size + size // 8 + 6`, rounded up to a multiple of four. For short lists the constant term dominates; for long lists the roughly 1.125x multiplier takes over. The reverse mechanism lives in the same place: if size drops below half of capacity after deletions, the array shrinks back. The capacity field is called `allocated`, the pointer array `ob_item`, and the size `ob_size`, all three visible in the `PyListObject` structure.
+
+</Detail>
+
+See the reserve for yourself. `sys.getsizeof` reports the memory of the list itself, meaning the array of pointers, not the objects it points to. The script below prints only the additions where memory actually changed. Bump the step count to 50 or 100 and watch the steps get longer and the jumps get rarer.
+
+<PyDemo
+  title="Capacity jumps under append"
+  code={`import sys
+
+a = []
+prev = sys.getsizeof(a)
+print("empty list:", prev, "bytes")
+for i in range(20):
+    a.append(i)
+    cur = sys.getsizeof(a)
+    if cur != prev:
+        print("len =", len(a), "->", cur, "bytes")
+        prev = cur`}
+/>
+
+<Checkpoint
+  q="A list holds a million elements. Which operation will run noticeably slower than the rest?"
+  choices={["a[500000]", "a.append(7)", "a.insert(0, 7)", "a.pop()"]}
+  answer={2}
+  explain="Inserting at the front shifts a million pointers to the right: O(n). Indexed access computes the address in O(1), append writes into the reserve, and pop() from the end just decrements the size."
+/>
+
+## Aliasing: two names for one array
+
+Assignment in Python never copies data. The line `b = a` does not create a second list, it hangs a second label on the same array of pointers. Any change made through one name shows up through the other, because there is only one object.
+
+```python
+a = [1, 2, 3]
+b = a
+b.append(4)
+print(a)
+print(a is b)
+```
+
+A real copy has to be requested explicitly: `list(a)`, the slice `a[:]`, or `copy.copy(a)`. All three build a new array of pointers of the same length, and from then on the lists live independently.
+
+```python
+a = [1, 2, 3, 4]
+c = list(a)
+c.append(5)
+print(a)
+print(c)
+```
+
+<Callout type="warning" title="The copy is shallow">
+What gets copied is pointers, not objects. If the list contains nested lists, the copy and the original keep sharing their content: `c[0].append(9)` will change `a[0]` too. Full independence requires `copy.deepcopy`.
+</Callout>
+
+## Edge cases
+
+- **A literal is allocated exactly.** A list built from the literal `[1, 2, 3]` or from `list(range(n))` is created with no reserve: the length is known up front, so CPython does not reserve any extra tail. The very first `append` to such a list triggers a reallocation.
+- **`a += [x]` and `a = a + [x]` behave differently.** The first appends to the existing array, and every alias sees the change. The second builds a brand-new list and rebinds the name, leaving aliases with the old content.
+- **`pop()` with no argument shifts nothing.** Removing from the end just decrements the size; the cell goes back into the reserve. The symmetry is deceptive: `pop()` costs O(1), `pop(0)` costs O(n).
+
+The difference between `+=` and `+` in action:
+
+```python
+a = [1, 2]
+b = a
+a += [3]
+print(b)
+a = a + [4]
+print(a)
+print(b)
+```
+
+The second operation detached the name `a` from the shared list, so `b` stopped seeing new elements. Once aliasing is in play, these "synonyms" can make the whole program behave differently.
+
+## Common mistakes
+
+- **Expecting `b = a` to make a copy.** Data then "mysteriously" corrupts itself somewhere else in the program. Fix: `list(a)`, `a[:]`, or `copy.copy(a)`; for nested structures, `copy.deepcopy(a)`.
+- **Calling `insert(0, x)` or `pop(0)` in a loop.** Every call reshuffles the whole array, turning the loop into O(n²). Fix: `collections.deque`, which is cheap at both ends - the next concept covers it.
+- **Checking `x in big_list` inside a hot loop.** Every check scans the whole list. Fix: build a `set` once and check membership against that.
+- **Multiplying to "duplicate" nested lists.** The expression `[[0] * 3] * 2` copies the pointer to one and the same inner row, so editing `grid[0][0]` "corrupts" both rows at once. Fix: use a list comprehension.
+
+```python
+bad = [[0] * 3] * 2
+bad[0][0] = 9
+print(bad)
+good = [[0] * 3 for _ in range(2)]
+good[0][0] = 9
+print(good)
+```
+
+<KeyTakeaways
+  items={[
+    "A Python list stores a contiguous array of pointers; indexed access computes an address and costs O(1) at any length.",
+    "append writes into a pre-allocated reserve and costs O(1) amortized; the rare reallocations copy the entire array.",
+    "insert(0, x), pop(0), and searching with the in operator all cost O(n): the first two shift every pointer, the third scans linearly.",
+    "Capacity grows multiplicatively: doubling in the textbook model, roughly 1.125x in CPython, so relocations grow rarer as the list grows.",
+    "b = a creates a second name for the same list; list(a), a[:], or copy.copy produce a copy, and that copy is shallow.",
+  ]}
+/>
+
+## References
+
+- [Python tutorial: data structures](https://docs.python.org/3/tutorial/datastructures.html)
+- [CPython built-in type time complexity](https://wiki.python.org/moin/TimeComplexity)
+- [Python FAQ: why did changing list y also change list x](https://docs.python.org/3/faq/programming.html#why-did-changing-list-y-also-change-list-x)

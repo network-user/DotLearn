@@ -20,6 +20,8 @@
 
 import { useEffect, useSyncExternalStore } from 'react';
 
+import { type Table } from 'dexie';
+
 import {
   normalizeSyncCode,
   SyncCode,
@@ -42,11 +44,20 @@ import {
   saveSyncBackup,
   type AttemptEventRecord,
   type CheckpointResultRecord,
+  type SyncTombstoneRecord,
 } from '../progress-db';
 import { clearAllProgress, exportProgress, importProgress } from '../progress-io';
 import { importSettings } from '../settings';
 
-import { CodecError, decodeSnapshot, encodeSnapshot } from './codec';
+import {
+  CodecError,
+  decodeSnapshot,
+  decodeSyncBlob,
+  encodeSnapshot,
+  encryptSnapshot,
+  supportsCompression,
+} from './codec';
+import { deriveSyncKey } from './crypto';
 import { canonicalStringify, mergeSnapshots, snapshotHash, type SyncSnapshot } from './merge';
 
 // --- public types (pinned — a parallel UI agent builds against this exact shape) ---------------
@@ -107,6 +118,23 @@ const SYNCED_TABLE_NAMES = [
   'userCards',
   'reExamSchedule',
 ] as const;
+
+// Tables with genuine per-record USER deletion flows: a deletion in one of these is recorded as a
+// tombstone (progress-db syncTombstones) so it propagates to other devices instead of being
+// resurrected by the additive merge. All are keyed by `id`. Excludes conceptScroll (auto-reset
+// reading position, not a user delete), flashcardReviews (only ever cascade-deleted alongside its
+// own user card), attemptEvents (prune cap) and every bulk clear (clearAllProgress / restore).
+const TOMBSTONE_TABLE_NAMES = [
+  'bookmarks',
+  'highlights',
+  'conceptNotes',
+  'userCards',
+  'interviewStudied',
+  'conceptRead',
+] as const;
+
+const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000; // prune deletions older than 90 days
+const TOMBSTONE_CAP = 2000; // and keep at most the newest 2000 locally
 
 // --- meta (localStorage, synchronous) ----------------------------------------------------------
 
@@ -259,6 +287,7 @@ let running = false;
 let isLeader = false;
 let hooksAttached = false;
 let suppressed = false; // true while applyMerged writes, so our own hooks don't self-trigger
+let resetSuppressed = false; // true during a local-only reset so clearAllProgress makes no tombstones
 let mutationSeq = 0; // bumps on every not-yet-pushed mutation this tab knows about
 
 let leaderAbort: AbortController | null = null;
@@ -288,6 +317,15 @@ const attachDirtyDetection = (): void => {
     table.hook('creating', onWrite);
     table.hook('updating', onWrite);
     table.hook('deleting', onWrite);
+  }
+  // Tombstone recording: on a genuine per-record delete of a tracked table, queue a tombstone so
+  // the deletion propagates. Skipped while suppressed (applyMerged / restore) or reset-suppressed
+  // (clearAllProgress), and while the engine is stopped (post-unlink deletes shouldn't accrue).
+  for (const name of TOMBSTONE_TABLE_NAMES) {
+    db.table(name).hook('deleting', (primKey: unknown) => {
+      if (!running || suppressed || resetSuppressed) return;
+      queueTombstone(name, primKey);
+    });
   }
 };
 
@@ -496,11 +534,100 @@ const stopTimersOnly = (): void => {
   clearRetryTimer();
 };
 
+// --- end-to-end encryption key (session cache) -------------------------------------------------
+
+// The AES key is derived once per session from the linked code and cached in memory only — never
+// persisted (the code in localStorage is already the secret). Re-derived when the linked code
+// changes (link / reissue / unlink clear the cache).
+let syncKey: CryptoKey | null = null;
+let syncKeyCode: string | null = null;
+
+const getSyncKey = async (): Promise<CryptoKey | null> => {
+  const code = meta.code;
+  if (!code) return null;
+  if (syncKey && syncKeyCode === code) return syncKey;
+  try {
+    const key = await deriveSyncKey(code);
+    syncKey = key;
+    syncKeyCode = code;
+    return key;
+  } catch {
+    return null; // no WebCrypto — fall back to the legacy plaintext codec path
+  }
+};
+
+const clearSyncKey = (): void => {
+  syncKey = null;
+  syncKeyCode = null;
+};
+
+// Encode a snapshot for a server push: end-to-end-encrypted (DLS1) when a key is derivable and
+// compression is available, otherwise the legacy plaintext blob (older clients / no WebCrypto).
+const encodeForPush = async (json: string): Promise<string> => {
+  const key = await getSyncKey();
+  if (key && supportsCompression()) return encryptSnapshot(json, key);
+  return encodeSnapshot(json);
+};
+
+// --- deletion tombstones -----------------------------------------------------------------------
+
+// In-memory queue of deletions observed since the last flush. Persisted by flushPendingTombstones,
+// which every push path awaits via buildLocalSnapshot (and flushOnHidden on tab close), so a
+// deletion is durable before it can be pushed — no separate timer needed.
+let pendingTombstones: SyncTombstoneRecord[] = [];
+
+const queueTombstone = (table: string, primKey: unknown): void => {
+  const recordKey = String(primKey);
+  pendingTombstones.push({
+    id: `${table}:${recordKey}`,
+    table,
+    recordKey,
+    deletedAt: new Date().toISOString(),
+  });
+};
+
+// Local housekeeping of the tombstone table: drop anything past the TTL, then cap to the newest N.
+// Uses the wall clock (this is local storage reclamation, not the pure merge). Must run inside a
+// syncTombstones rw transaction.
+const pruneTombstoneTable = async (): Promise<void> => {
+  const cutoff = Date.now() - TOMBSTONE_TTL_MS;
+  const all = await db.syncTombstones.toArray();
+  const stale = all.filter((t) => Date.parse(t.deletedAt) < cutoff).map((t) => t.id);
+  if (stale.length > 0) await db.syncTombstones.bulkDelete(stale);
+  const survivors = all.filter((t) => Date.parse(t.deletedAt) >= cutoff);
+  if (survivors.length > TOMBSTONE_CAP) {
+    survivors.sort((x, y) => Date.parse(x.deletedAt) - Date.parse(y.deletedAt)); // oldest first
+    const overflow = survivors.slice(0, survivors.length - TOMBSTONE_CAP).map((t) => t.id);
+    if (overflow.length > 0) await db.syncTombstones.bulkDelete(overflow);
+  }
+};
+
+// Persists queued tombstones (upsert by id) and prunes. Best-effort: on failure the batch is
+// re-queued for the next attempt. buildLocalSnapshot awaits this so a push never races a pending
+// deletion.
+const flushPendingTombstones = async (): Promise<void> => {
+  if (pendingTombstones.length === 0) return;
+  const batch = pendingTombstones;
+  pendingTombstones = [];
+  try {
+    await db.transaction('rw', db.syncTombstones, async () => {
+      await db.syncTombstones.bulkPut(batch);
+      await pruneTombstoneTable();
+    });
+  } catch {
+    pendingTombstones = batch.concat(pendingTombstones);
+  }
+};
+
 // --- snapshot helpers --------------------------------------------------------------------------
 
 const buildLocalSnapshot = async (): Promise<SyncSnapshot> => {
+  await flushPendingTombstones();
   const exported = await exportProgress();
-  return { ...exported, syncDeviceId: meta.deviceId };
+  const tombstones = await db.syncTombstones.toArray();
+  const snapshot: SyncSnapshot = { ...exported, syncDeviceId: meta.deviceId };
+  if (tombstones.length > 0) snapshot.tombstones = tombstones;
+  return snapshot;
 };
 
 // Fingerprint of the *information* in a snapshot: the raw hash with the volatile top-level
@@ -510,6 +637,20 @@ const buildLocalSnapshot = async (): Promise<SyncSnapshot> => {
 const dataFingerprint = (snapshot: SyncSnapshot): string => {
   const { syncDeviceId: _device, exportedAt: _exportedAt, ...rest } = snapshot;
   return snapshotHash({ ...rest, exportedAt: '' });
+};
+
+// snapshotHash's digest over an already-canonical string: lets a caller that holds the canonical
+// serialization hash it without re-serializing (hashCanonical(canonicalStringify(x)) === snapshotHash(x)).
+const hashCanonical = (json: string): string => {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x1000193b | 0;
+  for (let i = 0; i < json.length; i++) {
+    const c = json.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca77);
+  }
+  const hex = (n: number): string => (n >>> 0).toString(16).padStart(8, '0');
+  return hex(h1) + hex(h2);
 };
 
 const stripAttemptId = (rec: AttemptEventRecord): AttemptEventRecord => {
@@ -524,12 +665,32 @@ const stripCheckpointId = (rec: CheckpointResultRecord): CheckpointResultRecord 
 const byAtAsc = <T extends { at: string }>(a: T, b: T): number =>
   a.at < b.at ? -1 : a.at > b.at ? 1 : 0;
 
+// Additively bulkPut a tombstone-tracked table, then delete the local rows the merge dropped: any
+// local key absent from the merged output is a record a tombstone killed (the merge is otherwise a
+// union, so a non-tombstoned local record is always present in `rows`). Runs while suppressed, so
+// these deletes never queue new tombstones.
+const applyTrackedTable = async <T extends { id: K }, K>(
+  table: Table<T, K>,
+  rows: readonly T[],
+): Promise<void> => {
+  const mergedKeys = new Set<K>(rows.map((r) => r.id));
+  const localKeys = await table.toCollection().primaryKeys();
+  const toDelete = localKeys.filter((k) => !mergedKeys.has(k));
+  await table.bulkPut(rows as T[]);
+  if (toDelete.length > 0) await table.bulkDelete(toDelete);
+};
+
 /**
- * Applies a merged snapshot to the local Dexie store in a single rw transaction. The 14
- * stable-key tables are bulkPut (last write wins by key); the two auto-increment tables
- * (attemptEvents, checkpointResults) are cleared and re-added *without* an id in ascending `at`
- * order, so freshly assigned ++ids follow chronological order. Hook-based dirty detection is
- * suppressed for the duration so applying a remote merge never re-triggers a local push.
+ * Applies a merged snapshot to the local Dexie store in a single rw transaction.
+ *   - Additive stable-key tables are bulkPut (last write wins by key).
+ *   - Tombstone-tracked tables are bulkPut *and* have local rows the merge dropped deleted, so a
+ *     propagated deletion actually removes the record here.
+ *   - The two auto-increment tables (attemptEvents, checkpointResults) are cleared and re-added
+ *     without an id in ascending `at` order, so freshly assigned ++ids follow chronological order.
+ *   - The merged tombstone set is upserted locally (union) and pruned, so this device keeps
+ *     propagating deletions and doesn't resurrect them on its next export.
+ * Hook-based dirty/tombstone detection is suppressed for the duration so applying a remote merge
+ * never re-triggers a local push or a spurious tombstone.
  *
  * Exported for the focused unit test; the engine also calls it internally.
  */
@@ -537,6 +698,7 @@ export const applyMerged = async (merged: SyncSnapshot): Promise<void> => {
   const d = merged.data;
   const attempts = [...(d.attemptEvents ?? [])].sort(byAtAsc).map(stripAttemptId);
   const checkpoints = [...(d.checkpointResults ?? [])].sort(byAtAsc).map(stripCheckpointId);
+  const tombstones = merged.tombstones ?? [];
   suppressed = true;
   try {
     await db.transaction(
@@ -558,26 +720,30 @@ export const applyMerged = async (merged: SyncSnapshot): Promise<void> => {
         db.examResults,
         db.userCards,
         db.reExamSchedule,
+        db.syncTombstones,
       ],
       async () => {
         await db.progress.bulkPut(d.progress ?? []);
         await db.activity.bulkPut(d.activity ?? []);
         await db.flashcardReviews.bulkPut(d.flashcardReviews ?? []);
-        await db.interviewStudied.bulkPut(d.interviewStudied ?? []);
         await db.topicPlace.bulkPut(d.topicPlace ?? []);
-        await db.conceptNotes.bulkPut(d.conceptNotes ?? []);
-        await db.bookmarks.bulkPut(d.bookmarks ?? []);
-        await db.conceptRead.bulkPut(d.conceptRead ?? []);
         await db.conceptScroll.bulkPut(d.conceptScroll ?? []);
-        await db.highlights.bulkPut(d.highlights ?? []);
         await db.achievements.bulkPut(d.achievements ?? []);
         await db.examResults.bulkPut(d.examResults ?? []);
-        await db.userCards.bulkPut(d.userCards ?? []);
         await db.reExamSchedule.bulkPut(d.reExamSchedule ?? []);
+        // Tombstone-tracked tables: additive put + delete locals the merge dropped.
+        await applyTrackedTable(db.interviewStudied, d.interviewStudied ?? []);
+        await applyTrackedTable(db.conceptNotes, d.conceptNotes ?? []);
+        await applyTrackedTable(db.bookmarks, d.bookmarks ?? []);
+        await applyTrackedTable(db.conceptRead, d.conceptRead ?? []);
+        await applyTrackedTable(db.highlights, d.highlights ?? []);
+        await applyTrackedTable(db.userCards, d.userCards ?? []);
         await db.attemptEvents.clear();
         if (attempts.length > 0) await db.attemptEvents.bulkAdd(attempts);
         await db.checkpointResults.clear();
         if (checkpoints.length > 0) await db.checkpointResults.bulkAdd(checkpoints);
+        if (tombstones.length > 0) await db.syncTombstones.bulkPut(tombstones);
+        await pruneTombstoneTable();
       },
     );
   } finally {
@@ -711,8 +877,10 @@ const conflictBackoffMs = (): number =>
 
 // --- core cycle --------------------------------------------------------------------------------
 
-const decodeRemote = async (blob: string): Promise<SyncSnapshot> =>
-  JSON.parse(await decodeSnapshot(blob)) as SyncSnapshot;
+const decodeRemote = async (blob: string): Promise<SyncSnapshot> => {
+  const key = await getSyncKey();
+  return JSON.parse(await decodeSyncBlob(blob, key)) as SyncSnapshot;
+};
 
 /**
  * Reconciles local state against a known server position.
@@ -729,6 +897,15 @@ const reconcile = async (
   attempt: number,
 ): Promise<void> => {
   const token = mutationSeq;
+
+  // Rev-unchanged pull with no local mutation: !dirty means the local fingerprint still equals
+  // lastPushedHash, so there is nothing to build, merge, encode or push. Reuse it and finalize.
+  const pushedHash = meta.lastPushedHash;
+  if (remote === null && !dirty && pushedHash !== null) {
+    finalizeSynced(serverRev, pushedHash, token);
+    return;
+  }
+
   const local = await buildLocalSnapshot();
   const localFp = dataFingerprint(local);
 
@@ -737,11 +914,8 @@ const reconcile = async (
   const remoteFp = remote ? dataFingerprint(remote) : null;
 
   if (mergedFp !== localFp) {
-    await saveSyncBackup(
-      'pre-apply',
-      snapshotHash(local),
-      await encodeSnapshot(canonicalStringify(local)),
-    );
+    const localJson = canonicalStringify(local);
+    await saveSyncBackup('pre-apply', hashCanonical(localJson), await encodeSnapshot(localJson));
     await applyMerged(merged);
     applyMergedSettings(local, merged);
   }
@@ -754,7 +928,7 @@ const reconcile = async (
     return;
   }
 
-  const blob = await encodeSnapshot(canonicalStringify(merged));
+  const blob = await encodeForPush(canonicalStringify(merged));
   if (blob.length > SYNC_BLOB_MAX_CHARS) {
     setTooLarge();
     return;
@@ -829,8 +1003,10 @@ const runSyncCycle = async (): Promise<void> => {
 // exactly one follow-up run when the current cycle finishes.
 let inFlight: Promise<void> | null = null;
 let pendingRerun = false;
+let rotating = false; // true while reissueCode swaps the code — cycles must not race the rotation
 
 const syncCycle = (): Promise<void> => {
+  if (rotating) return Promise.resolve();
   if (inFlight) {
     pendingRerun = true;
     return inFlight;
@@ -858,7 +1034,7 @@ const flushOnHidden = async (): Promise<void> => {
   try {
     const local = await buildLocalSnapshot();
     if (dataFingerprint(local) === meta.lastPushedHash) return;
-    const blob = await encodeSnapshot(canonicalStringify(local));
+    const blob = await encodeForPush(canonicalStringify(local));
     if (blob.length > SYNC_BLOB_MAX_CHARS) return;
     await pushSync(code, meta.lastRev, blob, { keepalive: blob.length < KEEPALIVE_MAX_CHARS });
   } catch {
@@ -925,10 +1101,87 @@ export const unlink = async (opts: { deleteRemote: boolean }): Promise<void> => 
     }
   }
   writeMeta({ code: null, lastRev: 0, lastPushedHash: null, lastSyncAt: null });
+  clearSyncKey();
   phase = 'idle';
   lastError = null;
   dirty = false;
   publishStatus();
+};
+
+/**
+ * Rotates to a brand-new sync code. Mints a fresh code, pushes the current local snapshot to it
+ * (encrypted with the NEW code's key, at baseRev 0), then retires the old code (best effort) and
+ * swaps the local meta. The old code stops working immediately; other devices must relink with the
+ * new one. Single-flight with the sync cycle: it blocks new cycles and waits for any in-flight one
+ * before rotating. Returns the new canonical code.
+ */
+export const reissueCode = async (): Promise<string> => {
+  const oldCode = meta.code;
+  if (!oldCode) throw new Error('not-linked');
+  rotating = true;
+  try {
+    if (inFlight) await inFlight;
+
+    const created = await createSyncCode();
+    const local = await buildLocalSnapshot();
+    const json = canonicalStringify(local);
+
+    // Encrypt with the NEW code's key (getSyncKey still caches the old code's key).
+    let blob: string;
+    try {
+      const key = await deriveSyncKey(created.code);
+      blob = supportsCompression() ? await encryptSnapshot(json, key) : await encodeSnapshot(json);
+    } catch {
+      blob = await encodeSnapshot(json);
+    }
+    if (blob.length > SYNC_BLOB_MAX_CHARS) {
+      try {
+        await deleteSyncCode(created.code);
+      } catch {
+        // best effort — the unused code expires on its own
+      }
+      throw new Error('too-large');
+    }
+
+    const pushed = await pushSync(created.code, 0, blob);
+
+    // The new code is authoritative now; retire the old one (idempotent, best effort).
+    try {
+      await deleteSyncCode(oldCode);
+    } catch {
+      // 404 / network — ignore
+    }
+
+    clearSyncKey();
+    writeMeta({
+      code: created.code,
+      lastRev: pushed.rev,
+      lastPushedHash: dataFingerprint(local),
+      lastSyncAt: Date.now(),
+    });
+    lastError = null;
+    phase = 'idle';
+    if (!running) start();
+    publishStatus();
+    return created.code;
+  } finally {
+    rotating = false;
+  }
+};
+
+/**
+ * Runs `fn` with tombstone recording suppressed, so genuine per-record deletes it performs do NOT
+ * propagate. Used by the Settings "reset all progress" flow: clearAllProgress stays LOCAL-ONLY (the
+ * server copy re-merges back on the next sync), so it must not emit deletion tombstones.
+ */
+export const suppressTombstonesDuring = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const previous = resetSuppressed;
+  resetSuppressed = true;
+  try {
+    return await fn();
+  } finally {
+    resetSuppressed = previous;
+  }
 };
 
 /** Rolls the local DB back to a syncBackups entry, then marks dirty so the next cycle re-merges. */
@@ -985,14 +1238,24 @@ export const __test = {
   applyMerged,
   attachDirtyDetection,
   dataFingerprint,
+  reconcile,
+  flushTombstones: flushPendingTombstones,
   getDirty: (): boolean => dirty,
   getMutationSeq: (): number => mutationSeq,
   setSuppressed: (value: boolean): void => {
     suppressed = value;
   },
+  setRunning: (value: boolean): void => {
+    running = value;
+  },
+  setResetSuppressed: (value: boolean): void => {
+    resetSuppressed = value;
+  },
   reset: (): void => {
     dirty = false;
     mutationSeq = 0;
     suppressed = false;
+    resetSuppressed = false;
+    pendingTombstones = [];
   },
 };

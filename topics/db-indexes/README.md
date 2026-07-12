@@ -21,3 +21,25 @@
 ## Runtime
 
 `sql.js` (диалект SQLite) исполняется целиком в браузере, без установки.
+
+---
+
+## English
+
+# Database Indexes and EXPLAIN
+
+A query against a million-row table can finish in microseconds or scan every single row - the index makes the difference. This topic explains why an index speeds up reads and what it costs on writes, breaks down how a B-tree is built (pages, height as a logarithm, ranges and sorting for free), teaches you to design composite and covering indexes with the leftmost-prefix rule, walks through the traps that silently disable an index (a function over a column, a leading `%`, implicit casts, low selectivity, stale statistics), and finishes by running `EXPLAIN QUERY PLAN` live in the sql.js sandbox: how to tell `SCAN` from `SEARCH`, what `USING COVERING INDEX` means, and how a plan catches an N+1 from the python-orm topic. For a mid-level Python developer who writes queries through an ORM or by hand and wants to understand what happens under the hood. Runtime is sql.js (SQLite dialect), everything runs right in the browser.
+
+## Concepts
+
+1. **Why indexes matter** - full scan vs. point access, the cost of an index on writes and disk space, when an index isn't worth it.
+2. **B-tree under the hood** - pages and branching, height as a logarithm, point lookups and ranges, ORDER BY for free; why B-tree and not hash.
+3. **Composite and covering indexes** - column order and the leftmost-prefix rule, equality on the left plus a range on the right, index-only scans, a redundant second index.
+4. **When an index stops working** - a function over a column, `LIKE '%...'`, `OR` across different columns, implicit type casts, low selectivity, ANALYZE.
+5. **EXPLAIN: reading a query plan** - `EXPLAIN QUERY PLAN` in SQLite, `SCAN` vs. `SEARCH`, `USING INDEX` and `USING COVERING INDEX`, how it differs from Postgres's `EXPLAIN ANALYZE`, the connection to N+1.
+
+## Prerequisites
+
+- `sql-fundamentals` - SELECT, WHERE, JOIN, GROUP BY, ORDER BY.
+
+Generated via `lesson-forge`.

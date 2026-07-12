@@ -1,0 +1,260 @@
+exercises:
+  - id: litestar-dto-validation-body-001
+    concept: litestar-dto-validation
+    type: theory-quiz
+    difficulty: 1
+    prompt: "Under what handler parameter name does Litestar, by convention, expect the request body for automatic parsing?"
+    choices:
+      - id: a
+        text: "`data` - the parameter `data: Model` binds to the request body and receives the parsed object."
+      - id: b
+        text: "`body` - that exact name is reserved in Litestar for the request body."
+      - id: c
+        text: "`request` - the body always arrives in the `request` parameter and is parsed by hand."
+      - id: d
+        text: "Any name works - Litestar determines the body only by type, the name plays no role."
+    correct: [a]
+    explanation: "The name `data` is Litestar's convention for the request body. A `data: Model` parameter in the signature makes the framework parse the body as `Model`, validate it, and hand over the ready object. Any other name gets interpreted differently by the framework (e.g. as a query or path parameter depending on type)."
+    variants:
+      - prompt: "How is a data model declared in Litestar by default for maximum serialization speed?"
+        choices:
+          - id: a
+            text: "By subclassing `msgspec.Struct` - a fast dataclass-like counterpart with validation."
+          - id: b
+            text: "By subclassing `pydantic.BaseModel` - Litestar supports no other option."
+          - id: c
+            text: "A plain `dict` with no declared fields."
+          - id: d
+            text: "By subclassing `litestar.Model` - the framework's built-in base class."
+        correct: [a]
+        explanation: "By default a model is a `msgspec.Struct`. Litestar also supports Pydantic, dataclasses, and TypedDict, but msgspec is the default for the sake of JSON parsing and encoding speed."
+      - prompt: "What happens if the request body fails the model's validation (a required field is missing or has the wrong type)?"
+        choices:
+          - id: a
+            text: "The handler never runs, and the client gets a structured error (e.g. 422) naming the offending field."
+          - id: b
+            text: "The handler runs, but `data` comes in as `None`, and the handler itself must check validity."
+          - id: c
+            text: "The server crashes with 500, because Litestar doesn't handle validation errors itself."
+          - id: d
+            text: "Invalid fields are silently replaced with defaults, and the handler runs as usual."
+        correct: [a]
+        explanation: "On an invalid body, Litestar never calls the handler and returns a client error response itself (422 for a semantically incorrect body) describing the offending field. Only a valid object ever reaches the handler."
+
+  - id: litestar-dto-validation-purpose-001
+    concept: litestar-dto-validation
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Why is a separate DTO needed on top of the model if you just want to hide `password_hash` from the response - why not remove that field from the model itself?"
+    choices:
+      - id: a
+        text: "Business logic (password checks) works with `password_hash`; removing it from the model would lose it everywhere. A DTO hides the field only at the boundary, while it stays on the model."
+      - id: b
+        text: "Removing the field from the model is the right call; a DTO isn't needed for this and just adds complexity."
+      - id: c
+        text: "The field can't be removed from the model purely because msgspec forbids it technically."
+      - id: d
+        text: "A DTO exists solely to rename fields; it has nothing to do with hiding `password_hash`."
+    correct: [a]
+    explanation: "The model describes the object's full shape, which the entire application's logic works with, including checking the password against its hash. Cutting `password_hash` from the model would remove it for the business logic too. A DTO solves this differently: the field stays on the model, while `return_dto` with `exclude={\"password_hash\"}` strips it only on the way out, at the app's boundary."
+    hints:
+      - "Think about who inside the app needs `password_hash` besides the response to the client. What breaks if the field disappears entirely?"
+      - "Separate two questions: \"what fields does the object have\" (the model) and \"what fields to show externally\" (the DTO)."
+
+  - id: litestar-dto-validation-fill-body-001
+    concept: litestar-dto-validation
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete a handler that accepts a request body as the `CreateUser` model."
+    template: |
+      from msgspec import Struct
+      from litestar import post
+
+      class CreateUser(Struct):
+          name: str
+          email: str
+
+      @post("/users")
+      async def create_user({{param}}: CreateUser) -> CreateUser:
+          return {{param}}
+    blanks:
+      param:
+        accept: ["data"]
+    variants:
+      - prompt: "Complete the model: the `in_stock` field should be optional with a default of `True`."
+        template: |
+          from msgspec import Struct
+
+          class Product({{base}}):
+              title: str
+              price: float
+              in_stock: bool = {{default}}
+        blanks:
+          base:
+            accept: ["Struct"]
+          default:
+            accept: ["True"]
+      - prompt: "Complete a read handler that hides a field via an output DTO."
+        template: |
+          from dataclasses import dataclass
+          from litestar import get
+          from litestar.dto import DataclassDTO, DTOConfig
+
+          @dataclass
+          class User:
+              id: int
+              name: str
+              password_hash: str
+
+          class UserReadDTO(DataclassDTO[User]):
+              config = DTOConfig(exclude={"{{field}}"})
+
+          @get("/users/{user_id:int}", {{kwarg}}=UserReadDTO)
+          async def get_user(user_id: int) -> User:
+              return User(id=user_id, name="Anna", password_hash="x")
+        blanks:
+          field:
+            accept: ["password_hash"]
+          kwarg:
+            accept: ["return_dto"]
+
+  - id: litestar-dto-validation-predict-exclude-001
+    concept: litestar-dto-validation
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? It models a DTO with `exclude`: excluded fields are dropped from the full record, the rest go into the response JSON."
+    snippet: |
+      record = {
+          "id": 7,
+          "name": "Anna",
+          "email": "anna@example.com",
+          "password_hash": "secret",
+      }
+      exclude = {"password_hash"}
+
+      response = {k: v for k, v in record.items() if k not in exclude}
+      print(list(response.keys()))
+    expected:
+      kind: stdout
+      value: "['id', 'name', 'email']"
+    hints:
+      - "A DTO with `exclude` passes through every field except the ones listed. Which fields of the record aren't in the excluded set?"
+      - "Walk through the record's fields in order and keep the ones whose name isn't in `exclude`."
+    variants:
+      - snippet: |
+          record = {
+              "id": 1,
+              "name": "Boris",
+              "password_hash": "h",
+              "created_at": "2026-01-10",
+          }
+          exclude = {"password_hash", "created_at"}
+
+          response = {k: v for k, v in record.items() if k not in exclude}
+          print(list(response.keys()))
+        expected:
+          kind: stdout
+          value: "['id', 'name']"
+      - snippet: |
+          record = {"id": 3, "name": "Vera", "email": "v@example.com"}
+          exclude = set()
+
+          response = {k: v for k, v in record.items() if k not in exclude}
+          print(list(response.keys()))
+        expected:
+          kind: stdout
+          value: "['id', 'name', 'email']"
+
+  - id: litestar-dto-validation-predict-include-001
+    concept: litestar-dto-validation
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models a DTO with `include` and `rename_fields`: only the included fields go out, and they're renamed along the way."
+    snippet: |
+      record = {"id": 7, "name": "Anna", "email": "anna@example.com"}
+      include = {"id", "name"}
+      rename = {"id": "userId"}
+
+      out = {}
+      for key in record:
+          if key in include:
+              out[rename.get(key, key)] = record[key]
+      print(out)
+    expected:
+      kind: stdout
+      value: "{'userId': 7, 'name': 'Anna'}"
+    hints:
+      - "`include` keeps only the listed fields and drops everything else. Which two fields survive the filter?"
+      - "Go through the fields in record order; for survivors, take the new name from `rename` if present, otherwise the old one."
+    variants:
+      - snippet: |
+          record = {"id": 1, "name": "Boris", "role": "admin"}
+          include = {"name", "role"}
+          rename = {"role": "accessLevel"}
+
+          out = {}
+          for key in record:
+              if key in include:
+                  out[rename.get(key, key)] = record[key]
+          print(out)
+        expected:
+          kind: stdout
+          value: "{'name': 'Boris', 'accessLevel': 'admin'}"
+      - snippet: |
+          record = {"id": 5, "title": "Book", "price": 300}
+          include = {"id", "title", "price"}
+          rename = {"id": "productId", "price": "cost"}
+
+          out = {}
+          for key in record:
+              if key in include:
+                  out[rename.get(key, key)] = record[key]
+          print(out)
+        expected:
+          kind: stdout
+          value: "{'productId': 5, 'title': 'Book', 'cost': 300}"
+
+  - id: litestar-dto-validation-predict-partial-001
+    concept: litestar-dto-validation
+    type: predict-output
+    difficulty: 4
+    prompt: "What does the program print? It models a partial update (PATCH) via DTOData with partial: server-owned fields are ignored on input, and only allowed client-sent fields are applied."
+    snippet: |
+      current = {"id": 7, "name": "Anna", "email": "a@example.com", "password_hash": "h"}
+      server_only = {"id", "password_hash"}
+      sent = {"email": "new@example.com", "id": 999, "name": "Annie"}
+
+      changes = {k: v for k, v in sent.items() if k not in server_only}
+      updated = dict(current)
+      updated.update(changes)
+
+      print(sorted(changes.keys()))
+      print(updated["id"])
+      print(updated["email"])
+    expected:
+      kind: stdout
+      value: "['email', 'name']\n7\nnew@example.com"
+    hints:
+      - "The input DTO excludes server-owned fields: whatever the client sends in `id`, it must not reach the changes. Which sent fields survive the filter?"
+      - "First filter the sent fields by `server_only`, then apply what's left onto the current record and look at the final `id` and `email`."
+      - "Note: `id: 999` falls into `server_only` and is dropped, so `id` in the record stays unchanged."
+
+  - id: litestar-dto-validation-direction-001
+    concept: litestar-dto-validation
+    type: theory-quiz
+    difficulty: 3
+    prompt: "A developer wants the client to be unable to set `id` when creating a user (the server assigns it), while the server should still return `id` in the response. How should the DTOs be configured?"
+    choices:
+      - id: a
+        text: "Exclude `id` in the input DTO (`dto=`), but not in the output DTO (`return_dto=`): the client can't send `id`, and the server returns the assigned one."
+      - id: b
+        text: "Exclude `id` in both the input and output DTOs - that's the safest option."
+      - id: c
+        text: "Exclude `id` only in the output DTO (`return_dto=`): that's enough to stop the client from sending it."
+      - id: d
+        text: "Remove `id` from the model entirely - then it can neither be sent nor returned."
+    correct: [a]
+    explanation: "`dto` filters the input (body parsing), `return_dto` filters the output (response). To stop the client from setting `id`, exclude it in the input DTO. For the server to still return the assigned `id`, do NOT exclude it in the output DTO. That's the whole point of having two independent filters on one model: different rules for input and output."
+    hints:
+      - "Input and output are two different directions, and Litestar has two different parameters for them. Which field should be filtered where?"
+      - "Ask yourself separately for each direction: should the client be able to SEND id? should the server RETURN id?"

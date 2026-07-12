@@ -1,0 +1,152 @@
+---
+conceptId: django-architecture
+title: "Django architecture: MTV and the request path"
+estimatedMinutes: 14
+---
+
+# What Django does for you between a request and a response
+
+The server receives a raw string, `GET /orders/42/`, and your handler function receives an already-built request object, reads the number `42` out of the URL, and returns a dictionary that somehow turns into an HTTP response with a status, headers, and a body. Between the raw bytes coming off the socket and your function lies a fair amount of ground, and almost all of it is someone else's code: parsing HTTP, matching the address to a handler, running a chain of checks, packing the response back into bytes. Django takes on exactly that routine, leaving you a thin layer for business logic.
+
+The problem the framework solves isn't "how do I answer one request" - a single request is easy enough to answer with a bare socket. The problem is that any real application has dozens of routes, shared checks (authentication, sessions, CSRF protection), database access, and HTML assembly, and all of it has to fit together so that adding one more page doesn't turn into archaeology. By the end of this section you'll know what layers a Django app is built from, how its MTV pattern differs from classic MVC, and what path a request travels from URL to response.
+
+## Mental model: a request rides a conveyor belt
+
+Picture a request as a package on a conveyor belt. The server receives it first and wraps it in an `HttpRequest` object. The package then passes through a chain of **middleware** - inspectors on the belt, each of which can check something, add something, or send the package back early. Next, the URL resolver looks at the address and decides which handler (view) the package goes to. The view is the one place where your logic lives: it works with data, hands it off to a template if needed, and returns an `HttpResponse`. The response travels back through that same middleware chain and heads out to the client.
+
+<Figure caption="A request travels through the middleware chain on the way in, reaches a view through the URL resolver, the view builds a response (often via a template), and the response travels back out through the same chain.">
+  <Sketch viewBox="0 0 480 250" title="The request path in Django">
+    <SketchBox x={16} y={106} width={70} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={51} y={130} mono size={11}>HTTP</SketchLabel>
+
+    <SketchBox x={120} y={40} width={120} height={170} />
+    <SketchLabel x={180} y={58} mono size={11}>middleware</SketchLabel>
+    <SketchArrow from={[86, 118]} to={[120, 100]} />
+    <SketchLabel x={150} y={92} muted size={10}>request</SketchLabel>
+    <SketchArrow from={[120, 165]} to={[86, 150]} dashed />
+    <SketchLabel x={150} y={182} muted size={10}>response</SketchLabel>
+
+    <SketchBox x={280} y={40} width={90} height={50} accent />
+    <SketchLabel x={325} y={62} mono accent size={11}>URL</SketchLabel>
+    <SketchLabel x={325} y={78} muted size={9}>resolver</SketchLabel>
+    <SketchArrow from={[240, 90]} to={[280, 65]} />
+
+    <SketchBox x={280} y={110} width={90} height={50} accent />
+    <SketchLabel x={325} y={132} mono accent size={11}>view</SketchLabel>
+    <SketchLabel x={325} y={148} muted size={9}>your code</SketchLabel>
+    <SketchArrow from={[325, 90]} to={[325, 110]} />
+
+    <SketchBox x={280} y={180} width={90} height={42} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={325} y={205} mono size={10}>template</SketchLabel>
+    <SketchArrow from={[325, 160]} to={[325, 180]} dashed />
+
+    <SketchBox x={400} y={110} width={66} height={50} />
+    <SketchLabel x={433} y={138} mono size={10}>response</SketchLabel>
+    <SketchArrow from={[370, 135]} to={[400, 135]} />
+  </Sketch>
+</Figure>
+
+The point of this picture: your code is the small "view" box in the middle. Everything else - accepting the connection, parsing HTTP, running the middleware chain, finding the handler, rendering the template - the framework handles around it. You don't write a socket-accept loop or parse headers by hand; you declare which address maps to which handler, and you write the handlers themselves.
+
+## MTV is MVC renamed for honesty
+
+Django calls its architecture MTV: Model, Template, View. Many developers arrive from the MVC world (Model-View-Controller) and try to map one onto the other - which causes confusion, because the word "view" means almost the opposite thing in the two worlds. Let's sort it out properly.
+
+In MVC, **Model** holds data and rules, **View** is responsible for presentation (what the user sees), and **Controller** takes the request and decides what to do. In Django, **Model** is the same idea (a class that mirrors a database table). But **Template** is what MVC calls "view" - HTML with holes for data. And Django's **View** is MVC's "controller": a function that takes a request, talks to models, and picks a template.
+
+<Compare
+  leftTitle="MVC"
+  rightTitle="Django MTV"
+  left={<>
+    <p><strong>Model</strong> - data and rules.</p>
+    <p><strong>View</strong> - presentation for the user.</p>
+    <p><strong>Controller</strong> - takes the request, drives the flow.</p>
+  </>}
+  right={<>
+    <p><strong>Model</strong> - data and rules (same idea).</p>
+    <p><strong>Template</strong> - presentation (this is MVC's "View").</p>
+    <p><strong>View</strong> - takes the request (this is MVC's "Controller").</p>
+  </>}
+  verdict="The difference is only in the names. Django's 'View' is the controller, and presentation is called Template. The framework itself answers 'who's the controller?' this way: Django's routing layer is."
+/>
+
+What's worth remembering isn't the naming table but the actual split: the model is about data, the template is about how it looks, the view is about what happens on a request. When logic leaks across the boundary - HTML built inside a model, SQL written inside a template - that leak is exactly where unmaintainable code comes from.
+
+## Project vs. app
+
+Django distinguishes two levels. A **project** is the configuration for an entire site: one `settings.py`, one root URL file, one entry point. An **app** is a reusable module inside a project responsible for a single domain area - say, `orders`, `accounts`, `blog`. An app has its own models, views, and templates, and can be plugged into different projects.
+
+```text
+shop_project/
+    manage.py            runs commands
+    shop_project/
+        settings.py      configuration for the whole site
+        urls.py           root URL routing
+    orders/               an app: its own domain area
+        models.py
+        views.py
+    accounts/             another app
+```
+
+`manage.py` is the entry point for commands: `python manage.py runserver` starts the dev server, `migrate` applies migrations, `createsuperuser` creates an admin user. It's essentially a thin wrapper that loads `settings.py` and hands control to Django. `settings.py` is the single registry of settings: the list of installed apps (`INSTALLED_APPS`), database configuration, the middleware list, template paths.
+
+<Callout type="info">
+One app can be plugged into several projects - that's the whole point of the split. But a typical site has one project and several apps. Don't confuse "create a project" (`startproject`) with "create an app" (`startapp`) - they're different commands.
+</Callout>
+
+## The request path, step by step
+
+Let's turn the conveyor belt from the start of this section into a precise sequence. Here's what happens when a request arrives.
+
+<Steps>
+<li>The server accepts the connection and builds an <code>HttpRequest</code> object holding everything about the request: method, path, headers, body, query parameters.</li>
+<li>The request goes through the <strong>middleware chain</strong> top to bottom. Each middleware can pass the request along, add something to it (attach a session and a user, for instance), or return a response immediately without reaching the view.</li>
+<li>The <strong>URL resolver</strong> takes the request path and, from the list of routes, finds a matching view; it's also the resolver that pulls parameters out of the path (say, <code>42</code> out of <code>/orders/42/</code>).</li>
+<li>The <strong>view</strong> runs the logic: reads models, hands data to a template if needed, builds an <code>HttpResponse</code>.</li>
+<li>The response travels back through middleware <strong>bottom to top</strong> - each one can still change headers or the body.</li>
+<li>The server sends the finished response to the client.</li>
+</Steps>
+
+The order of middleware in the list is exactly the order of "inspectors on the belt." On the way in they run top to bottom, on the way out, in reverse. That's why a middleware that attaches the user from the session to the request has to sit above the ones that check that user.
+
+## WSGI and ASGI: how the server talks to Django
+
+Between the actual web server (gunicorn, uvicorn) and Django sits a standard interface. **WSGI** is synchronous: the server hands Django a request and waits for the response; each request is handled in its own thread or process, one at a time. **ASGI** is asynchronous: it does everything WSGI does, plus long-lived connections like WebSocket and parallel handling via `async`. Modern Django supports both; for an ordinary site with forms and pages, WSGI is enough - reach for ASGI when you need WebSocket or heavy parallel I/O.
+
+## Edge cases
+
+**Middleware can cut a request off before it reaches the view.** That's not a bug, it's a designed mechanism. If an authentication middleware sees an unauthenticated request to a protected page, it returns a redirect to the login page right from within its own chain link - the view never even runs. When a page shows something other than expected, check the middleware chain, not just the view.
+
+**Order matters in both `INSTALLED_APPS` and the middleware list.** These are lists, not sets. Two apps can define a template with the same name - the one from the app listed first wins. Reordering middleware changes who runs first on the way in.
+
+**A view must return an `HttpResponse`.** If a handler function returns nothing (returns `None`), Django raises an error: the view's contract is to always hand back a response object, even if that's an empty page with status `204`.
+
+## Common mistakes
+
+- **Treating `runserver` as a production server.** The built-in `runserver` is a development tool: single-threaded by default, unoptimized, with code auto-reload. In production you put gunicorn or uvicorn in front of Django. Don't point real traffic at `runserver`.
+- **Putting business logic in a template.** Templates are about output. When branching on business rules and calculations shows up there, that's a sign the logic belongs in the view or the model. The template language is deliberately limited to discourage exactly that.
+- **Confusing the project's `settings.py` with app-level settings.** Global settings live in one project-level `settings.py`. An app doesn't keep its own copy of site settings; it just registers itself in `INSTALLED_APPS`.
+
+<Detail summary="Why Django is called a 'batteries included' framework">
+
+"Batteries included" means almost everything a typical site needs already ships in the box: an ORM, a migration system, a template engine, forms with validation, a ready-made admin, authentication with users and permissions, protection against common attacks (CSRF, SQL injection via parameterization, XSS via automatic escaping in templates). It's the opposite of a "micro-framework plus a pile of libraries" approach: fewer choices up front, but also fewer decisions you have to make and wire together yourself. The cost is conventions you need to follow; the payoff is predictability, and the fact that someone else's Django project looks a lot like yours.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Django handles accepting the connection, parsing HTTP, running the middleware chain, routing, and rendering; your code is the thin layer of views and models in the middle.",
+    "MTV is MVC under different names: Model is the same idea, Template is MVC's 'View', and Django's View is MVC's 'Controller'.",
+    "A project is the configuration for the whole site (one settings.py); an app is a reusable module for one domain area inside a project.",
+    "The request path: HttpRequest -> middleware chain -> URL resolver -> view -> (template) -> HttpResponse -> middleware in reverse order.",
+    "Middleware and INSTALLED_APPS are ordered lists; order decides who runs first and whose template wins on a name collision.",
+    "WSGI is the synchronous server-Django interface; ASGI adds async and long-lived connections like WebSocket.",
+  ]}
+/>
+
+## References
+
+- [Django - How Django processes a request](https://docs.djangoproject.com/en/stable/topics/http/urls/#how-django-processes-a-request)
+- [Django - Middleware](https://docs.djangoproject.com/en/stable/topics/http/middleware/)
+- [Django - Applications and projects](https://docs.djangoproject.com/en/stable/ref/applications/)
+- [Django - How to deploy with WSGI / ASGI](https://docs.djangoproject.com/en/stable/howto/deployment/)

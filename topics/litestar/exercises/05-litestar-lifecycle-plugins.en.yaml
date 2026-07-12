@@ -1,0 +1,268 @@
+exercises:
+  - id: litestar-lifecycle-plugins-guard-contract-001
+    concept: litestar-lifecycle-plugins
+    type: theory-quiz
+    difficulty: 1
+    prompt: "How does a guard in Litestar signal that a request must NOT reach the handler?"
+    choices:
+      - id: a
+        text: "By raising an exception (`NotAuthorizedException` or `PermissionDeniedException`); on approval a guard returns nothing."
+      - id: b
+        text: "By returning `False`; returning `True` lets the request through."
+      - id: c
+        text: "By returning an HTTP response with status 403 that goes straight to the client."
+      - id: d
+        text: "By setting `connection.allowed = False` and continuing execution."
+    correct: [a]
+    explanation: "The guard contract is \"stay silent on success, raise on rejection.\" Rejection is expressed via an exception (`NotAuthorizedException` for no authentication, `PermissionDeniedException` for insufficient permissions). No exception is treated as approval, so `return False` won't deny anything."
+    variants:
+      - prompt: "At what point relative to the handler does a guard fire?"
+        choices:
+          - id: a
+            text: "Before the handler: if the guard rejects (raises an exception), the handler body never runs at all."
+          - id: b
+            text: "After the handler: the guard checks that the handler returned a valid response."
+          - id: c
+            text: "In parallel with the handler, in a separate task."
+          - id: d
+            text: "Only at app startup, once for all requests."
+        correct: [a]
+        explanation: "A guard sits BEFORE the handler in the layer chain. This separates \"is this allowed at all\" (the guard) from \"what to do here\" (the handler): on rejection, the guard raises, and the handler never gets called."
+      - prompt: "Where in Litestar do you open a database connection pool so it lives for the app's whole run instead of being recreated on every request?"
+        choices:
+          - id: a
+            text: "In `lifespan` (or `on_startup`): the code before `yield` runs once at startup, the code after `yield` runs on shutdown."
+          - id: b
+            text: "As the first line of every handler - that's the most reliable place."
+          - id: c
+            text: "In a guard, because it runs before the handler."
+          - id: d
+            text: "In `after_response`, after the response has already been sent to the client."
+        correct: [a]
+        explanation: "Resources with open/close semantics are set up once at startup via `lifespan`: before `yield` opens the pool, after `yield` closes it on shutdown. Creating a connection on every request is expensive and wrong."
+
+  - id: litestar-lifecycle-plugins-after-001
+    concept: litestar-lifecycle-plugins
+    type: theory-quiz
+    difficulty: 2
+    prompt: "How does `after_response` differ from `after_request`, and where should you put an analytics event send so it doesn't delay the response to the client?"
+    choices:
+      - id: a
+        text: "`after_request` runs before the response is sent and can modify it; `after_response` runs after it's sent. Put the background event send in `after_response` to avoid stretching response time."
+      - id: b
+        text: "`after_response` runs before sending and edits the response; `after_request` runs after. Put the event in `after_request`."
+      - id: c
+        text: "No difference, both run after the response is sent; either one works."
+      - id: d
+        text: "`after_response` only fires on errors, `after_request` always fires; put the event in `after_request`."
+    correct: [a]
+    explanation: "`after_request` gets the response before it's sent and can still change it. `after_response` fires after the response has already reached the client and can't affect it anymore - which is exactly why it's ideal for work that shouldn't delay the response: background logging, metrics, event dispatch."
+    hints:
+      - "One hook can still affect the response, the other can't. Which one runs after the client has already gotten the response?"
+      - "Consider which is worse: delaying the response for analytics, or doing the analytics after the response has already left."
+
+  - id: litestar-lifecycle-plugins-fill-guard-001
+    concept: litestar-lifecycle-plugins
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete a guard that rejects a request missing the authorization header, and wire it to a handler."
+    template: |
+      from litestar import get
+      from litestar.connection import ASGIConnection
+      from litestar.handlers.base import BaseRouteHandler
+      from litestar.exceptions import NotAuthorizedException
+
+      def require_token(connection: ASGIConnection, handler: BaseRouteHandler) -> None:
+          if not connection.headers.get("authorization"):
+              {{action}} NotAuthorizedException()
+
+      @get("/secret", {{kwarg}}=[require_token])
+      async def secret() -> dict:
+          return {"data": "secret"}
+    blanks:
+      action:
+        accept: ["raise"]
+      kwarg:
+        accept: ["guards"]
+    variants:
+      - prompt: "Complete a lifespan that opens a pool at startup and closes it on shutdown."
+        template: |
+          from contextlib import asynccontextmanager
+          from litestar import Litestar
+
+          @asynccontextmanager
+          async def lifespan(app: Litestar):
+              app.state.pool = await open_db_pool()
+              {{sep}}
+              await app.state.pool.close()
+
+          app = Litestar(route_handlers=[], {{kwarg}}=[lifespan])
+        blanks:
+          sep:
+            accept: ["yield"]
+          kwarg:
+            accept: ["lifespan"]
+      - prompt: "Complete registering a domain exception handler that turns it into a response."
+        template: |
+          from litestar import Litestar, Request, Response
+
+          class OrderNotFound(Exception):
+              ...
+
+          def handle_not_found(request: Request, exc: OrderNotFound) -> Response:
+              return Response(content={"error": "not found"}, status_code=404)
+
+          app = Litestar(
+              route_handlers=[],
+              {{kwarg}}={OrderNotFound: handle_not_found},
+          )
+        blanks:
+          kwarg:
+            accept: ["exception_handlers"]
+
+  - id: litestar-lifecycle-plugins-predict-order-001
+    concept: litestar-lifecycle-plugins
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models the order of layers around a request: on the way in middleware -> guard -> before_request -> handler, on the way out - in reverse order."
+    snippet: |
+      log = []
+
+      def run():
+          log.append("middleware:in")
+          log.append("guard")
+          log.append("before_request")
+          log.append("handler")
+          log.append("after_request")
+          log.append("after_response")
+          log.append("middleware:out")
+
+      run()
+      print(" -> ".join(log))
+    expected:
+      kind: stdout
+      value: "middleware:in -> guard -> before_request -> handler -> after_request -> after_response -> middleware:out"
+    hints:
+      - "A request travels from the outside in down to the handler, then back out. What's the outermost layer, and what sits right before the handler?"
+      - "Assemble the order from the lifecycle diagram: entry down to the handler, then response processing, then exit through the same outer layer."
+    variants:
+      - snippet: |
+          stages = ["middleware:in", "guard", "handler", "middleware:out"]
+          print(len(stages))
+          print(stages[0])
+          print(stages[-1])
+        expected:
+          kind: stdout
+          value: "4\nmiddleware:in\nmiddleware:out"
+      - snippet: |
+          order = ["guard", "before_request", "handler"]
+          print(order.index("guard") < order.index("handler"))
+          print(order[1])
+        expected:
+          kind: stdout
+          value: "True\nbefore_request"
+
+  - id: litestar-lifecycle-plugins-predict-guard-001
+    concept: litestar-lifecycle-plugins
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models the guard contract: on rejection it raises and the handler never runs; on approval it stays silent and the handler fires."
+    snippet: |
+      def guard(has_token):
+          if not has_token:
+              raise PermissionError("no access")
+
+      def request(has_token):
+          try:
+              guard(has_token)
+              return "handler ran"
+          except PermissionError:
+              return "403, handler skipped"
+
+      print(request(True))
+      print(request(False))
+    expected:
+      kind: stdout
+      value: "handler ran\n403, handler skipped"
+    hints:
+      - "A guard stays silent when it lets a request through, and raises when it rejects one. With which token value does the handler never get reached at all?"
+      - "Trace both branches: with a token the guard doesn't raise, so we reach the handler; without one, the exception is caught before the handler."
+    variants:
+      - snippet: |
+          def guard(role):
+              if role != "admin":
+                  raise PermissionError
+
+          def request(role):
+              try:
+                  guard(role)
+                  return "ok"
+              except PermissionError:
+                  return "denied"
+
+          print(request("admin"))
+          print(request("user"))
+        expected:
+          kind: stdout
+          value: "ok\ndenied"
+      - snippet: |
+          def check(authenticated, is_owner):
+              if not authenticated:
+                  return "401"
+              if not is_owner:
+                  return "403"
+              return "200"
+
+          print(check(False, False))
+          print(check(True, False))
+          print(check(True, True))
+        expected:
+          kind: stdout
+          value: "401\n403\n200"
+
+  - id: litestar-lifecycle-plugins-predict-lifespan-001
+    concept: litestar-lifecycle-plugins
+    type: predict-output
+    difficulty: 4
+    prompt: "What does the program print? It models a lifespan around request handling: code before yield runs once at startup, request handling happens in between, code after yield runs once at shutdown. The resource opens exactly once, not per request."
+    snippet: |
+      log = []
+
+      def lifespan(requests):
+          log.append("open pool")
+          for r in requests:
+              log.append(f"handle {r}")
+          log.append("close pool")
+
+      lifespan(["a", "b", "c"])
+      print(log[0])
+      print(log[-1])
+      print(log.count("open pool"))
+      print(sum(1 for x in log if x.startswith("handle")))
+    expected:
+      kind: stdout
+      value: "open pool\nclose pool\n1\n3"
+    hints:
+      - "Opening the pool happens BEFORE request handling and runs exactly once; closing happens AFTER all requests. So how many times does the pool open for three requests?"
+      - "Lay out the log in order: opening comes first, then handling each request, closing comes last. Count how many times each event appears."
+      - "Key idea: the pool opens once for the whole app (so count('open pool') == 1), and it handles as many requests as are in the list."
+
+  - id: litestar-lifecycle-plugins-points-001
+    concept: litestar-lifecycle-plugins
+    type: theory-quiz
+    difficulty: 4
+    prompt: "A team needs to: (1) centrally turn the domain exception `OrderNotFound` into a 404 response, and (2) return a special response INSTEAD of the handler when maintenance mode is on. Which lifecycle points fit?"
+    choices:
+      - id: a
+        text: "(1) - an exception handler (mapping exception -> response); (2) - `before_request`, which can return a ready response instead of the handler."
+      - id: b
+        text: "(1) - a guard that raises 404; (2) - an exception handler for maintenance mode."
+      - id: c
+        text: "(1) - `after_response`, editing the response; (2) - middleware, the only way to return your own response."
+      - id: d
+        text: "Both tasks are solved by a guard alone: it both maps exceptions and swaps the response."
+    correct: [a]
+    explanation: "Mapping \"domain exception -> HTTP response\" is an exception handler's job: the handler raises `OrderNotFound`, the exception handler builds the 404. Returning a ready response INSTEAD of the handler is what `before_request` can do: if it returns something, that becomes the response and the handler never runs. A guard doesn't fit (2) - it can only pass through or raise, never return a response; and for (1), raising a 404 from a guard is semantically wrong (it's not a permissions question)."
+    hints:
+      - "Separate two different abilities: \"turn a raised exception into a response\" and \"return a response instead of the handler.\" Which point can do each?"
+      - "Recall how before_request differs from a guard in terms of returning a response: which one can RETURN a ready response, and which can only pass through or raise?"

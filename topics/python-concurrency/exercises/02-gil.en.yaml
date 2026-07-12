@@ -1,0 +1,181 @@
+exercises:
+  - id: gil-guarantee-quiz-001
+    concept: gil
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What exactly does the GIL guarantee in CPython?"
+    choices:
+      - id: a
+        text: "At any given moment at most one thread executes Python bytecode; there is no parallel execution of Python code across multiple cores."
+      - id: b
+        text: "Every operation on shared data becomes atomic and thread-safe."
+      - id: c
+        text: "A program cannot create more than one thread."
+      - id: d
+        text: "CPU-bound code automatically speeds up in proportion to the number of cores."
+    correct: [a]
+    explanation: "The GIL serializes bytecode execution: one thread holds the lock while the rest wait. It does not make compound operations atomic and does not give parallel computation across multiple cores."
+    variants:
+      - prompt: "Why does CPython have a GIL in the first place?"
+        choices:
+          - id: a
+            text: "To cheaply protect each object's reference count (refcount) from corruption under concurrent access from multiple threads."
+          - id: b
+            text: "To speed up multithreaded CPU-bound code."
+          - id: c
+            text: "To stop developers from using threads."
+          - id: d
+            text: "So Python threads would not be real OS threads."
+        correct: [a]
+        explanation: "Every CPython object keeps a reference count that changes constantly. Concurrent unprotected updates would corrupt it. The GIL closes this with one shared lock, cheaper than a lock per object."
+      - prompt: "Does a live GIL make the operation `counter += 1` on a shared counter atomic?"
+        choices:
+          - id: a
+            text: "No: it is several bytecode instructions, and a thread switch can happen between the read and the write."
+          - id: b
+            text: "Yes: as long as the GIL exists, any line of code runs to completion without switches."
+          - id: c
+            text: "Yes, but only for integers."
+          - id: d
+            text: "No, because the GIL does not affect threads at all."
+        correct: [a]
+        explanation: "`counter += 1` unfolds into a read, an addition, and a write. The GIL prevents two threads from executing bytecode at the same time, but allows a switch in the gap between instructions, so the increment can be lost."
+
+  - id: gil-terms-blanks-001
+    concept: gil
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks describing the GIL."
+    template: |
+      The GIL is one global lock, and at any moment bytecode is executed by only {{count}} thread.
+      It exists to safely change objects' {{refcount}} without races.
+    blanks:
+      count:
+        accept: ["one", "1"]
+      refcount:
+        accept: ["reference count", "reference counts", "refcount"]
+    variants:
+      - prompt: "Fill in the blanks about GIL switching."
+        template: |
+          Modern CPython switches threads not by a bytecode count but by {{by}}.
+          The default interval is about {{ms}} milliseconds.
+        blanks:
+          by:
+            accept: ["time", "timer", "time interval"]
+          ms:
+            accept: ["5", "five"]
+      - prompt: "Fill in the blanks about I/O."
+        template: |
+          During blocking I/O a thread {{release}} the GIL, so {{bound}}-bound tasks on threads still speed up.
+        blanks:
+          release:
+            accept: ["releases", "gives up"]
+          bound:
+            accept: ["IO", "io", "I/O"]
+
+  - id: gil-lost-update-predict-001
+    concept: gil
+    type: predict-output
+    difficulty: 3
+    prompt: "The snippet models interleaving the `counter += 1` steps of two threads: both load functions read the value BEFORE either store writes the result. What does the program print?"
+    snippet: |
+      shared = {"counter": 41}
+
+      def load():
+          return shared["counter"]
+
+      def store(value):
+          shared["counter"] = value
+
+      a = load()
+      b = load()
+      store(a + 1)
+      store(b + 1)
+      print(shared["counter"])
+    expected:
+      kind: stdout
+      value: "42"
+    hints:
+      - "Both load functions read counter earlier than any store writes anything. What value do a and b end up with?"
+      - "a and b are both 41. The first store writes 42, the second writes the same 41+1=42 on top. One increment is lost: it was 41, it becomes 42, not 43."
+    variants:
+      - prompt: "Same interleaving, but the counter starts at 100. What does the program print?"
+        snippet: |
+          shared = {"counter": 100}
+
+          def load():
+              return shared["counter"]
+
+          def store(value):
+              shared["counter"] = value
+
+          a = load()
+          b = load()
+          store(a + 1)
+          store(b + 1)
+          print(shared["counter"])
+        expected:
+          kind: stdout
+          value: "101"
+      - prompt: "Now three threads read the value before any write. What does the program print?"
+        snippet: |
+          shared = {"counter": 7}
+
+          def load():
+              return shared["counter"]
+
+          def store(value):
+              shared["counter"] = value
+
+          a = load()
+          b = load()
+          c = load()
+          store(a + 1)
+          store(b + 1)
+          store(c + 1)
+          print(shared["counter"])
+        expected:
+          kind: stdout
+          value: "8"
+
+  - id: gil-cpu-vs-io-quiz-001
+    concept: gil
+    type: theory-quiz
+    difficulty: 2
+    prompt: "You have a CPU-bound function (a heavy pure-Python loop). You spread it across 4 threads on an 8-core machine. What happens to the running time?"
+    choices:
+      - id: a
+        text: "No speedup, if anything slightly slower: because of the GIL bytecode runs on one thread at a time, the 4 threads share one core and spend time on switching. You need multiprocessing."
+      - id: b
+        text: "It speeds up about 4x, matching the number of threads."
+      - id: c
+        text: "It speeds up 8x, matching the number of cores."
+      - id: d
+        text: "The program hangs: the GIL will not let the threads start."
+    correct: [a]
+    explanation: "A pure Python loop holds the GIL and only releases it on the timer. The threads do not run in parallel on different cores, they share one and add switching overhead. Real computational parallelism comes from multiprocessing, with its own GIL per process."
+    variants:
+      - prompt: "Same 4 threads, but the task is IO-bound: downloading files over the network. What happens to the time?"
+        choices:
+          - id: a
+            text: "It speeds up: on blocking I/O a thread releases the GIL, and the threads wait on the network at the same time."
+          - id: b
+            text: "No change: the GIL forbids any overlap between threads."
+          - id: c
+            text: "It slows down 4x because of the GIL."
+          - id: d
+            text: "The program crashes with a locking error."
+        correct: [a]
+        explanation: "While a thread waits on the network, the GIL is free and another thread runs. The threads overlap exactly the waiting, so a hundred downloads finish in nearly the time of one."
+      - prompt: "Which tool gives real parallel execution of CPU-bound code across multiple cores in CPython?"
+        choices:
+          - id: a
+            text: "multiprocessing or ProcessPoolExecutor: separate processes, each with its own interpreter and its own GIL."
+          - id: b
+            text: "threading with as many threads as there are cores."
+          - id: c
+            text: "asyncio with a large number of coroutines."
+          - id: d
+            text: "Nothing helps: CPython simply cannot use multiple cores."
+        correct: [a]
+        explanation: "You get around the GIL for computation with processes: each process has its own GIL, and they genuinely run on different cores. asyncio and threading do not help here, they are about I/O."

@@ -1,0 +1,150 @@
+---
+conceptId: flags
+title: "Flags: Engine Modes"
+estimatedMinutes: 14
+---
+
+# One Pattern, Different Rules of the Game
+
+A log file writes "ERROR", "Error", and "error" ("ОШИБКА", "Ошибка", "ошибка") interchangeably - there's no single style, because different modules emit the lines. The pattern `ошибка` only matches an exact case, and rewriting it as `[оО][шШ][иИ][бБ][кК][аА]` is awkward and unreadable. A similar problem shows up with anchors: `^` and `$` from the previous concept, by default, see only the start and end of the whole text, not of each line - even though a log is exactly that, many lines in a row.
+
+Both problems are solved not by new pattern syntax, but by a flag - a mode switch for the engine, passed as a separate argument. The same pattern behaves differently under different flags, and this section covers the five flags you'll run into most in practice: `re.IGNORECASE`, `re.MULTILINE`, `re.DOTALL`, `re.VERBOSE`, and briefly `re.ASCII`.
+
+## re.IGNORECASE: Case Stops Mattering
+
+The `re.IGNORECASE` flag (short form `re.I`) makes the engine compare letters case-insensitively across the whole pattern.
+
+```python
+import re
+
+print(bool(re.search(r"ошибка", "ОШИБКА: диск полон", re.IGNORECASE)))
+print(bool(re.search(r"ошибка", "ОШИБКА: диск полон")))
+```
+
+This prints `True`, then `False` (matching "ошибка" against "ОШИБКА: диск полон" - "ERROR: disk full"). The flag works for Cyrillic as well as Latin: `re.IGNORECASE` in Python is Unicode-aware, the same way the `\w` class from the first concept of this topic is.
+
+## re.MULTILINE: Anchors at Every Line
+
+By default, `^` and `$` match only the start and end of the entire text, even when it's split into several lines by `\n` internally - you already saw this in the concept on anchors. The `re.MULTILINE` flag (short form `re.M`) retrains `^` to match right after every `\n`, and `$` right before every `\n`.
+
+<Figure caption="Without re.MULTILINE the ^ anchor only sees the start of the whole text; with the flag, it sees the start of every line.">
+  <RowFilterFigure
+    title="^\\w+ across the lines of a log"
+    columns={['mode', 'findall result']}
+    rows={[
+      { cells: ['without re.MULTILINE', "['первая']"], kept: false },
+      { cells: ['with re.MULTILINE', "['первая', 'вторая', 'третья']"], kept: true },
+    ]}
+    condition={'^\\w+'}
+  />
+</Figure>
+
+```python
+import re
+
+text = "первая строка\nвторая строка\nтретья строка"
+print(re.findall(r"^\w+", text, re.MULTILINE))
+print(re.findall(r"^\w+", text))
+```
+
+The first call prints `['первая', 'вторая', 'третья']` (from a three-line string reading "first line / second line / third line"), the second - just `['первая']`. An important detail that's easy to forget: `re.MULTILINE` doesn't touch `\A` and `\Z` at all - they always mean the start and end of the entire text. `re.findall(r"\A\w+", text, re.MULTILINE)` still returns only `['первая']`, even with the flag on - if you need a genuine "only the very first edge of the text", reach for `\A`/`\Z`, not `^`/`$`.
+
+## re.DOTALL: The Dot Sees Newlines
+
+The metacharacter `.` from the first concept of this topic matches any character except `\n` by default. That's convenient almost everywhere, except for one case: finding a block of text that itself spans multiple lines, like a comment of the form `<!-- ... -->`.
+
+```python
+import re
+
+text = "код\n<!-- TODO:\nпочинить парсер\n-->\nконец"
+print(re.search(r"<!--(.*?)-->", text))
+print(re.search(r"<!--(.*?)-->", text, re.DOTALL).group(1).strip())
+```
+
+The first call prints `None`: the comment body spans three lines, and the dot doesn't jump over `\n` by default, so `.*?` stops at the very first newline and never reaches the closing `-->`. The second call, with `re.DOTALL` (short form `re.S`), prints `TODO:\nпочинить парсер` ("fix the parser") - now the dot accepts `\n` too.
+
+The flag is powerful, and therefore dangerous: a greedy `.*` under `re.DOTALL` on a long multiline text can grab far more than intended - all the way up to everything between the first opening marker and the very last closing one in the whole file. This is a direct continuation of the greediness topic from the second concept: a non-greedy `.*?` is almost always the safer choice here.
+
+## Combining Flags, and a Bit of re.ASCII
+
+Need more than one flag? Combine them with bitwise OR: `re.IGNORECASE | re.MULTILINE`. A flag is just a number with a single bit set, and `|` turns both modes on at once.
+
+```python
+import re
+
+log = "ошибка: диск полон\nИНФО: старт\nОШИБКА: нет сети"
+print(re.findall(r"^ошибка.*$", log, re.IGNORECASE | re.MULTILINE))
+```
+
+This prints `['ошибка: диск полон', 'ОШИБКА: нет сети']` (from a three-line log reading "error: disk full / INFO: start / ERROR: no network") - both flags fired at once: per-line anchors from `re.MULTILINE`, case-insensitivity from `re.IGNORECASE`.
+
+The same result is available without an explicit argument, by embedding the flag right in the pattern: `(?im)^ошибка.*$`. This notation is called an inline flag, and it's handy when the pattern lives as a string separate from the call site. There's also a scoped version - `(?i:слово)` turns on case-insensitivity only inside the group, without affecting the rest of the pattern.
+
+`re.ASCII` (short form `re.A`) deserves a separate mention: it does the opposite of the first concept in this topic and narrows `\w`, `\d`, `\s` back down to ASCII, turning off Unicode awareness. Useful for strictly parsing machine formats like HTTP headers, where Cyrillic and other non-Latin alphabets aren't expected to begin with.
+
+## re.VERBOSE: A Readable Pattern With Comments
+
+A long pattern like a phone number turns into an unreadable wall of characters. The `re.VERBOSE` flag (short form `re.X`) allows spaces, newlines, and `#` comments inside the pattern - the engine simply ignores them, unless they're escaped or sit inside a character class.
+
+<PyDemo
+  title="The same pattern, with comments and without"
+  code={`import re
+
+PHONE_RE = re.compile(r"""
+    \\+7\\s          # country code and a space
+    \\(\\d{3}\\)\\s  # area code in parentheses and a space
+    \\d{3}-          # first three digits
+    \\d{2}-          # next two
+    \\d{2}           # last two
+""", re.VERBOSE)
+
+print(bool(PHONE_RE.fullmatch("+7 (912) 345-67-89")))
+print(bool(PHONE_RE.fullmatch("+7 (912) 3456789")))`}
+/>
+
+This prints `True`, then `False` - the second number lost its hyphens, and without them the groups of three and two digits no longer line up into the required shape. Notice: the spaces after `\s` inside the triple-quoted string are part of the actual regex pattern (a literal space character), while the indentation and line breaks around them are just formatting - `re.VERBOSE` doesn't see those at all.
+
+## Where Flags Surprise You
+
+The first surprise is the position of an inline flag. A global `(?im)` must sit at the very start of the pattern: `re.compile(r"abc(?i)def")` raises `global flags not at the start of the expression`. If you need to turn a flag on partway through a pattern rather than for the whole thing, use the scoped form with a colon - `(?i:def)` - it only affects what's inside the group.
+
+The second surprise already came up above: `re.MULTILINE` changes how `^` and `$` behave, but never touches `\A` and `\Z`. Code that relied on "`\A` behaves normally" before the flag was added keeps behaving normally after it too - that's intentional, but not obvious to anyone expecting all anchors to be consistent.
+
+The third surprise is a forgotten space inside `re.VERBOSE`. A literal space that's meant to be part of the pattern, not just formatting whitespace, must be escaped or wrapped in a class: `\ ` or `[ ]`, otherwise it silently vanishes and the digit count in the phone number stops lining up.
+
+## Common Mistakes
+
+- **Forgetting to combine flags.** `re.search(pattern, text, re.IGNORECASE)` later gets rewritten with `re.MULTILINE` and loses the first flag - you need `re.IGNORECASE | re.MULTILINE`, not two separate arguments.
+- **Inline flag not at the start of the pattern.** `abc(?i)def` breaks compilation on modern Python versions. Move the flag to the start, or switch to the scoped form `(?i:...)`.
+- **`re.DOTALL` where a non-greedy quantifier would have been enough.** DOTALL combined with a greedy `.*` on multiline text almost always bites off more than intended - check first whether `.*?` without the flag solves the problem.
+- **Assuming `\A`/`\Z` respect re.MULTILINE too.** They don't - they're always about the entire text. For "the start of every line", you need `^` with the flag.
+
+<Detail summary="Flags as bits: why re.I | re.M even works">
+
+Every flag in the `re` module is a `re.RegexFlag` object, a power of two: `re.IGNORECASE` equals 2, `re.MULTILINE` equals 8, and so on. The `|` operator is bitwise OR - it turns on both bits in one number without touching the rest. That's exactly why `re.compile(pattern, re.I | re.M | re.S)` can be extended indefinitely: each new flag just adds one more set bit.
+
+```python
+import re
+
+print(int(re.IGNORECASE), int(re.MULTILINE), int(re.IGNORECASE | re.MULTILINE))
+```
+
+This prints `2 8 10` - the combined flag equals the sum of its parts, because the bits don't overlap.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    're.IGNORECASE makes letter comparison case-insensitive across the whole pattern, including Cyrillic.',
+    're.MULTILINE switches ^ and $ to the start and end of every line; \\A and \\Z are never affected by this flag.',
+    're.DOTALL makes . match newlines too - needed for multiline blocks, but it sharpens the risk of a greedy .*',
+    're.VERBOSE allows spaces, newlines, and # comments inside a pattern; a literal space needs escaping.',
+    'Flags combine with bitwise re.I | re.M; a global inline flag (?im) must sit at the start of the pattern, a scoped one (?i:...) can go anywhere.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Module contents (flags)](https://docs.python.org/3/library/re.html#module-contents)
+- [Python docs · re - Regular expression syntax (inline flags)](https://docs.python.org/3/library/re.html#regular-expression-syntax)
+- [regular-expressions.info · Verbose Mode](https://www.regular-expressions.info/freespacing.html)

@@ -1,0 +1,78 @@
+---
+conceptId: consistent-hashing
+title: Consistent Hashing
+estimatedMinutes: 11
+---
+
+# Consistent hashing: how to add a node without moving everything
+
+The previous section left us stuck on a specific pain point: the naive rule `hash(key) % N`, when moving from three shards to four, relocated nine keys out of twelve. Three-quarters of the data shifted because of one new node. On a real database that's hours of downtime and terabytes over the wire, which is exactly why teams put off adding shards for as long as they can. Consistent hashing is a technique that breaks that link: adding or removing a node touches only a small fraction of keys, not nearly all of them. The same move, done sanely.
+
+## Why hash modulo N hurts so much
+
+The root of the problem is that under `hash(key) % N`, a key's location is tied to the node count `N` itself. Change `N`, and the modulus changes, which means the remainder changes for almost every key. This isn't bad luck, it's math: moving from `N` to `N + 1` leaves roughly `1/(N+1)` of the keys in place and relocates everything else. For three nodes becoming four, a quarter stayed put and three-quarters moved. Notice that the actual task was local: all we wanted was for the new node to take on its own share. But the modulo rule forces a reshuffle of data that never needed to move at all.
+
+<Figure caption="Adding a fourth node · hash modulo N dislodges about three-quarters of the keys, the ring moves about a quarter (exactly the new node's share).">
+  <BarChart
+    title="Share of keys that move when adding a node (3 to 4)"
+    data={[
+      { label: 'hash % N', value: 75 },
+      { label: 'ring', value: 25 },
+    ]}
+    unit="%"
+    highlight={['ring']}
+  />
+</Figure>
+
+## The ring: location stops depending on N
+
+The idea behind consistent hashing is elegant in its simplicity. Take the entire space of hash values and bend it into a ring: after the maximum value comes the minimum again. Onto this ring we hash not just the keys but the nodes themselves. A key belongs to the first node clockwise from its own position. That's it. Now a key's location is determined not by the number of nodes, but by its neighbor on the ring.
+
+See what that changes when you add a node. The new node lands at its own point on the ring and takes over only the keys on the arc between itself and the previous node counter-clockwise. Every other key doesn't move: its clockwise neighbor stays the same. When a node leaves, its keys go to the next one clockwise, and the rest are untouched again. Instead of a total reshuffle, only one arc moves.
+
+Try the visualization: add and remove nodes with the button and watch the count of relocated keys below. Compare that to how much would have moved under `hash % N`, which is nearly everything.
+
+<ConsistentHashRing />
+
+## Virtual nodes: fixing skew and cascading overload
+
+A naive ring has two problems, and both come from having too few nodes on it. First: the arcs end up uneven. If three nodes land badly on the ring, one might get half the keys and another a quarter. It's the same skew problem shards have, just on a ring. The second problem is nastier: when a node leaves, all of its keys dump entirely onto one clockwise neighbor. That neighbor instantly takes on double the load and can go down right after, setting off a chain reaction.
+
+One technique fixes both problems: virtual nodes (vnodes). Instead of representing each physical node with a single point on the ring, you represent it with a hundred or more virtual points scattered across the whole ring. Now the arcs are small and, on average, even, so load lands uniformly. And when a physical node leaves, its hundred virtual points free up a hundred small arcs, and the keys spread out to many nodes at once instead of dumping onto one neighbor. No single neighbor gets overwhelmed. Virtual nodes also give you an easy way to account for servers of different capacity: a node that's twice as powerful gets twice as many virtual points, and it fairly takes on twice the data.
+
+<Callout type="tip">
+The number of keys that move when you add a node to a ring with virtual nodes is roughly `1/N` of all the data: exactly the share the new node is supposed to take on. Not more, not less.
+</Callout>
+
+## Where this shows up
+
+Consistent hashing isn't academic elegance for its own sake, it's a workhorse of distributed systems where nodes come and go constantly. It underlies partitioning in Cassandra, DynamoDB, and Riak: data is placed on the ring, and copies are placed on the following nodes clockwise. Distributed cache clients use it too (the ketama algorithm in memcached clients), so that one cache server going down invalidates only its own slice instead of the entire cache. CDNs and some load balancers run on it as well. The common thread everywhere: topology changes on the fly, and the cost of change has to stay local.
+
+## Nuances worth remembering
+
+- **The ring limits how much moves, but on its own it doesn't balance load.** Without virtual nodes the arcs are uneven. Evenness comes specifically from having many virtual points per node (usually a hundred or more).
+- **Replication on top of the ring.** Fault tolerance gets added by placing copies of a key on the next `R` nodes clockwise. The ring defines not just the owner but also the order of backup holders.
+- **The hash function needs to be uniform.** If the hash mixes poorly, virtual points clump together and skew comes back. Teams use a good non-cryptographic hash function.
+- **The ring doesn't bring back range queries.** Like any hash-based sharding, it scatters adjacent keys. If you need ranges, shard by range instead.
+
+## Common mistakes
+
+- **Using `hash % N` in a system where the node count changes.** Every added node reshuffles almost everything. If node count changes, use a ring.
+- **A ring with no virtual nodes.** Three nodes on a bare ring produce skew and a cascading overload on failure. Virtual points aren't optional, they're part of the technique.
+- **Assuming the ring balances itself.** Evenness comes from virtual nodes and a good hash function, not from merely having a ring.
+
+<KeyTakeaways
+  items={[
+    "Naive hash modulo N ties a key's location to the node count, so changing N reshuffles almost every key.",
+    "Consistent hashing places nodes and keys on a shared ring, where a key belongs to the first node clockwise; adding a node moves only one arc.",
+    "Virtual nodes (hundreds of points per physical node) even out load and spread a departed node's keys across many neighbors instead of one.",
+    "Virtual nodes also account for uneven server capacity: a more powerful node gets more virtual points.",
+    "Consistent hashing underlies Cassandra, DynamoDB, distributed caches, and CDNs, because nodes there come and go and relocation has to stay local.",
+  ]}
+/>
+
+## References
+
+- [Wikipedia: Consistent hashing](https://en.wikipedia.org/wiki/Consistent_hashing)
+- [Amazon Dynamo: highly available key-value store (PDF)](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf)
+- [Martin Kleppmann, Designing Data-Intensive Applications, chapter 6](https://dataintensive.net/)

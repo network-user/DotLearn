@@ -1,0 +1,97 @@
+---
+conceptId: scaling-basics
+title: Vertical and Horizontal Database Scaling
+estimatedMinutes: 15
+---
+
+# Vertical vs. horizontal scaling: where a single server runs out of road
+
+Your service grows, and one day the dashboard shows an ugly picture: requests are queueing, latency is creeping up, the nightly backup no longer finishes by morning, and the disk sits at ninety percent full. Almost everyone's first thought is the same: get a beefier server. That works, and it works longer than you'd expect. But the approach has an edge, and at that point the choice stops being a hardware purchase and becomes an architectural decision. Before we get into replication, partitioning, and sharding, we need to understand the fork in the road they all grow out of: strengthen one node, or put a second one next to it.
+
+## A bigger box or a second one next to it
+
+There are exactly two ways to give a database more power. Vertical scaling (scale-up) grows a single node: more cores, more RAM, faster disks. Horizontal scaling (scale-out) adds nodes and spreads the work between them. The difference isn't the size of the bill; it's what happens to the data. With scale-up the data stays in one place, and all the familiar machinery (transactions, joins, integrity constraints) keeps working unchanged. With scale-out the data has to be either copied across several nodes or divided between them, and that's exactly where every complication in this topic begins.
+
+<Figure caption="Vertical · you strengthen one node until it hits price and physical limits. Horizontal · you add nodes, but pay for it with copied or divided data.">
+  <Sketch viewBox="0 0 640 210" title="Scale-up vs. scale-out">
+    <SketchLabel x={160} y={20}>Vertical (scale-up)</SketchLabel>
+    <SketchBox x={120} y={46} width={90} height={44} dashed />
+    <SketchLabel x={165} y={40} muted>ceiling</SketchLabel>
+    <SketchBox x={132} y={104} width={66} height={64} accent />
+    <SketchLabel x={165} y={140} mono accent>1 node</SketchLabel>
+    <SketchArrow from={[165, 104]} to={[165, 92]} accent />
+    <SketchLabel x={165} y={190} muted>price and limits climb</SketchLabel>
+
+    <SketchLabel x={470} y={20}>Horizontal (scale-out)</SketchLabel>
+    <SketchBox x={382} y={104} width={44} height={56} />
+    <SketchLabel x={404} y={136} mono>node</SketchLabel>
+    <SketchBox x={436} y={104} width={44} height={56} />
+    <SketchLabel x={458} y={136} mono>node</SketchLabel>
+    <SketchBox x={490} y={104} width={44} height={56} accent />
+    <SketchLabel x={512} y={136} mono accent>node</SketchLabel>
+    <SketchBox x={544} y={104} width={44} height={56} />
+    <SketchLabel x={566} y={136} mono>node</SketchLabel>
+    <SketchLabel x={484} y={190} muted>data must be copied or split</SketchLabel>
+  </Sketch>
+</Figure>
+
+Scale-up has four ceilings, and teams hit them one after another. Price grows non-linearly: a server twice as powerful costs noticeably more than two ordinary ones, and at the top of the price list every extra percent of performance costs several times more than the last. Physics is finite: you can't fit infinite cores and memory into one machine, and every generation of hardware has a maximum. Upgrading means downtime: swapping memory or migrating to a new machine usually means taking the node offline first. And the big one: a single node stays a single point of failure no matter how much you paid for it. The disk dies, and the service is gone.
+
+## Why reads scale easily and writes don't
+
+Here is the key asymmetry that explains the entire order of moves in this topic: reads and writes scale differently. A read doesn't change data, so you can hand it out to many nodes: keep several copies of the database and spread read traffic between them. Add a copy, get more read throughput. That's why the first move under growing load is almost always read replicas, not something more elaborate.
+
+Writes work in a fundamentally different way. For data to stay correct, every piece of it needs a single owner that serializes changes and resolves conflicts. Two nodes independently accepting writes to the same row will eventually diverge, and something then has to decide whose version wins. So you can't just "hand out" writes to copies: the only way to scale them is to split the data so each chunk has exactly one owner. That's sharding, the most expensive part of this topic. A practical rule follows from this: split read and write paths before anything else. Send reports, feeds, and dashboards to copies; keep critical writes on the primary node and optimize that path separately.
+
+<Compare
+  leftTitle="Read path"
+  rightTitle="Write path"
+  left={"Doesn't change data, so it copies to many nodes. Scales with replicas and caching, almost linearly and cheaply."}
+  right={"Needs a single owner per chunk of data for correctness. Scales only by splitting data (sharding), which is expensive and hard."}
+  verdict="Split read and write first: send reads to replicas, optimize writes on the primary, and treat sharding as a last resort."
+/>
+
+## How much one node can carry, and when that's enough
+
+Before adding complexity, it's worth honestly assessing where you actually stand. A single PostgreSQL or MySQL node on decent hardware comfortably serves thousands of transactions per second and tables in the hundreds of gigabytes, often more with well-chosen indexes and caching. For the vast majority of services that's years of runway with zero distribution. Before splitting data across nodes, cheaper moves are usually available: add the missing indexes, offload heavy reports to a replica, cache hot keys, give the buffer cache more memory, and strip out of the database anything it doesn't need to store (sessions and queues often don't belong in the primary database at all).
+
+A distributed system is expensive not in dollars but in complexity: cross-node queries, eventual consistency, operational overhead, a whole new class of failure modes. So it makes sense to move to scale-out not preemptively, but when you hit a specific wall: writes no longer fit on one node, data volume outgrew the disk, or availability requirements won't tolerate a single point of failure. Until you hit that wall, vertical growth and replicas almost always win on a "benefit per unit of added complexity" basis.
+
+## Three strategies: copy, slice, spread
+
+When one node genuinely isn't enough, three techniques come into play, and people constantly mix them up even though they solve different problems. Replication keeps the same data on several nodes: it's about read scale and fault tolerance. Partitioning cuts a large table into manageable chunks inside a single node: it's about operability and query speed on part of the data. Sharding spreads different data across different nodes: it's the only way to scale writes and volume past a single node, and the most expensive one to run.
+
+The three techniques aren't mutually exclusive; they stack in layers and get introduced in order. First you squeeze out vertical growth and replicas. Then you partition tables that have grown unwieldy. Only once you hit a wall on writes or on a single node's volume do you reach for sharding. The rest of this topic walks through each layer on its own and ends with a scenario-based breakdown of which combination fits which load profile.
+
+## When vertical scaling is still the right answer
+
+The temptation to jump straight into distribution is strong, but it's usually premature. As long as writes fit on one node and data fits on its disk, vertical growth wins on almost every axis: it doesn't require rewriting the application, it keeps transactions and joins intact, and it adds no new failure modes. Even large-scale services run for years on "one big node plus replicas," and that's not technical debt, it's a sound choice. A distributed architecture pays off when a specific constraint forces it, not when it makes a good conference talk.
+
+## Common mistakes
+
+- **Sharding too early.** A classic premature optimization: the team splits data across nodes when a single index or an extra 32 gigabytes of memory would have fixed the problem. The bill arrives immediately: cross-shard queries and resharding complicate everything. Exhaust the cheap moves first.
+- **Treating replicas as write scaling.** Read replicas only take pressure off reads. If it's specifically writes that hit the ceiling, ten replicas won't help: each one still replays the leader's entire write stream. Only sharding scales writes.
+- **Forgetting the single point of failure.** The most powerful server is still one node. Without a replica and a failover plan, its death means downtime for the whole service, and no number of extra cores changes that.
+- **Measuring the wrong resource.** Before scaling anything, figure out what actually ran out: CPU, memory, disk IOPS, network, or locks. The fix depends on the diagnosis, and "the database is slow" isn't a diagnosis.
+
+<Detail summary="A bit of arithmetic: why one big node is riskier than two mid-sized ones">
+
+Take a node that holds 99.9% availability on its own. That's roughly 8.7 hours of downtime a year concentrated in a single point of failure, and the whole service goes down with it. Now take two mid-sized nodes in a "leader plus replica with automatic failover" setup. The service becomes unavailable only when both fail at the same time (or when the failover itself misbehaves). The probability of two independent nodes failing simultaneously is far lower than the probability of one failing, so a pair of mid-sized machines with a solid failover plan is usually more reliable than one top-of-the-line server, and often cheaper too. The takeaway: past a certain scale, money is better spent on redundancy than on one increasingly expensive server. To be fair, failures aren't always independent (shared rack, network, data center, a bad deploy), so the real-world gain is smaller than the ideal case, but the direction still holds.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Vertical scaling (scale-up) strengthens one node and runs into price, physical limits, upgrade downtime, and a single point of failure.",
+    "Horizontal scaling (scale-out) adds nodes but requires copying or splitting data, and that's where all the complexity of distributed databases comes from.",
+    "Reads scale easily with copies; writes are hard, since every chunk of data needs a single owner for correctness.",
+    "One node carries thousands of transactions per second and years of runway; until you hit a specific wall, indexes, caching, and replicas beat distribution.",
+    "Replication copies data, partitioning cuts a table inside a node, sharding spreads data across nodes; they get introduced in exactly that order.",
+  ]}
+/>
+
+## References
+
+- [Martin Kleppmann, Designing Data-Intensive Applications, chapter 1](https://dataintensive.net/)
+- [PostgreSQL: High Availability, Load Balancing, and Replication](https://www.postgresql.org/docs/current/high-availability.html)
+- [Scalability, Wikipedia article](https://en.wikipedia.org/wiki/Scalability)

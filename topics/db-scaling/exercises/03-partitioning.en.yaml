@@ -1,0 +1,188 @@
+exercises:
+  - id: partitioning-what-001
+    concept: partitioning
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does partitioning a table do?"
+    choices:
+      - id: a
+        text: "Cuts one logical table into physical pieces by key, within a single node."
+      - id: b
+        text: "Spreads data across different servers."
+      - id: c
+        text: "Creates copies of the table on other nodes for fault tolerance."
+      - id: d
+        text: "Encrypts the table on disk."
+    correct: [a]
+    explanation: "Partitioning splits one table into partitions by key value, and all of them live on one node. Spreading across servers is sharding, and copies on other nodes are replication."
+    variants:
+      - prompt: "Does partitioning add hardware capacity?"
+        choices:
+          - id: a
+            text: "No: all partitions are on one node, it brings order inside a server rather than adding nodes."
+          - id: b
+            text: "Yes, each partition gets its own server."
+          - id: c
+            text: "Yes, it doubles the node's memory."
+          - id: d
+            text: "Yes, but only for reads."
+        correct: [a]
+        explanation: "Partitions physically live on the same node. It doesn't add capacity: partitioning is about manageability and pruning, and only sharding adds nodes."
+      - prompt: "How does a partitioned table look to the application?"
+        choices:
+          - id: a
+            text: "Like one ordinary table: the same INSERT and SELECT, and the database itself routes rows to the right partition."
+          - id: b
+            text: "Like a set of separate tables, each needing its own query."
+          - id: c
+            text: "Like several databases."
+          - id: d
+            text: "Like a message queue."
+        correct: [a]
+        explanation: "That's the convenience of declarative partitioning: the application works with the parent table as usual, and the database handles routing rows to partitions and pruning them on read."
+
+  - id: partitioning-pruning-when-001
+    concept: partitioning
+    type: theory-quiz
+    difficulty: 2
+    prompt: "When does partition pruning actually speed up a query?"
+    choices:
+      - id: a
+        text: "When the query has a condition on the partitioning key: the planner opens only the matching partitions."
+      - id: b
+        text: "Always, regardless of the query's conditions."
+      - id: c
+        text: "Only for queries with no WHERE at all."
+      - id: d
+        text: "Only when there are exactly two partitions."
+    correct: [a]
+    explanation: "Pruning relies on the partitioning key: if the planner sees a filter on it, it knows in advance which partitions can contain matching rows and skips the rest. Without such a filter, there's nothing to prune."
+    variants:
+      - prompt: "A table is partitioned by date, and the query filters only by user_id. What will the planner do?"
+        choices:
+          - id: a
+            text: "Scan all partitions: there's nothing to prune, since the target user could show up in any month."
+          - id: b
+            text: "Read only the latest partition."
+          - id: c
+            text: "Refuse to run the query."
+          - id: d
+            text: "Automatically re-partition the table by user_id."
+        correct: [a]
+        explanation: "The partitioning key is date, and the query has no filter on date. So any partition could turn out to be the right one, and the planner scans all of them. Partitioning by date doesn't speed up queries by user_id."
+      - prompt: "Why can thousands of tiny partitions hurt?"
+        choices:
+          - id: a
+            text: "They bloat planning time and the planner's memory; a sensible granularity is usually a month or a week."
+          - id: b
+            text: "The database forbids more than a hundred partitions."
+          - id: c
+            text: "Tiny partitions can't be indexed."
+          - id: d
+            text: "They automatically turn into shards."
+        correct: [a]
+        explanation: "The planner considers all partitions when building a plan, so tens of thousands of small pieces slow down planning and eat memory. A sensible granularity (month, week) keeps the partition count manageable."
+
+  - id: partitioning-kinds-blanks-001
+    concept: partitioning
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks about the kinds of partitioning, pruning, and lifecycle."
+    template: |
+      {{range}} partitioning puts a contiguous interval of the key into a partition and suits time-based data well.
+      {{hash}} partitioning spreads rows evenly across N partitions when there's no natural range.
+      Pruning of unneeded partitions only works when the query has a filter on the {{key}}.
+      Deleting an old month is cheapest by {{drop}} the whole partition.
+    blanks:
+      range:
+        accept: ["Range"]
+      hash:
+        accept: ["Hash"]
+      key:
+        accept: ["partitioning key", "the partitioning key"]
+      drop:
+        accept: ["detaching", "dropping", "detaching or dropping"]
+    variants:
+      - template: |
+          All partitions of one table live on the {{node}} node, so partitioning doesn't add hardware capacity.
+          An index speeds up point lookups, while a partition gives pruning and cheap data {{lifecycle}}.
+        blanks:
+          node:
+            accept: ["same"]
+          lifecycle:
+            accept: ["rotation", "archiving", "cleanup"]
+      - template: |
+          If a table is partitioned by date but a frequent query filters by user_id, there is {{nothing}} to prune, and the planner scans {{all}} partitions.
+        blanks:
+          nothing:
+            accept: ["nothing"]
+          all:
+            accept: ["all"]
+
+  - id: partitioning-pruning-predict-001
+    concept: partitioning
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It lays rows into monthly partitions and prints how many rows are in the June partition (the one a June query would read after pruning)."
+    snippet: |
+      partitions = {"2026-04": 0, "2026-05": 0, "2026-06": 0, "2026-07": 0}
+
+      def month_of(day):
+          return day[:7]
+
+      rows = ["2026-04-11", "2026-06-02", "2026-06-30", "2026-07-05", "2026-06-15"]
+      for r in rows:
+          partitions[month_of(r)] += 1
+
+      print(partitions["2026-06"])
+    expected:
+      kind: stdout
+      value: "3"
+    hints:
+      - "First lay the rows into partitions: month_of takes the first 7 characters of the date (year and month). How many dates fall into 2026-06?"
+      - "2026-06-02, 2026-06-30, and 2026-06-15 fall into June (2026-06). A June query after pruning reads only this partition."
+    variants:
+      - prompt: "What does the program print? It prints how many rows are in the July partition."
+        snippet: |
+          partitions = {"2026-04": 0, "2026-05": 0, "2026-06": 0, "2026-07": 0}
+
+          def month_of(day):
+              return day[:7]
+
+          rows = ["2026-04-11", "2026-06-02", "2026-06-30", "2026-07-05", "2026-06-15"]
+          for r in rows:
+              partitions[month_of(r)] += 1
+
+          print(partitions["2026-07"])
+        expected:
+          kind: stdout
+          value: "1"
+      - prompt: "What does the program print? A query without a filter on the partitioning key must scan all partitions. How many are there?"
+        snippet: |
+          partitions = ["2026-04", "2026-05", "2026-06", "2026-07"]
+
+          scanned = len(partitions)
+          print(scanned)
+        expected:
+          kind: stdout
+          value: "4"
+
+  - id: partitioning-vs-index-001
+    concept: partitioning
+    type: theory-quiz
+    difficulty: 3
+    prompt: "A table was partitioned by month for cheap rotation, but frequent queries look up a single user's email and got slower. What's the cause and the fix?"
+    choices:
+      - id: a
+        text: "Partitions don't speed up point lookups by email: you need an index on email inside the partitions. Partitions are good for pruning by date and rotation, not for selective lookups."
+      - id: b
+        text: "Partitioning always slows down lookups and should be removed."
+      - id: c
+        text: "You need to add more partitions, now by email."
+      - id: d
+        text: "Partitions replace indexes, so an index isn't needed here."
+    correct: [a]
+    explanation: "Partitions and indexes solve different problems. Slicing by date gives pruning by date and cheap rotation, but it doesn't speed up a point lookup by email: the target user could be in any partition. What speeds it up is an index on email, built inside the partitions. Partitions don't replace indexes, they complement them."
+    hints:
+      - "What exactly does the slow query filter on, and does it match the partitioning key? If not, there's nothing to prune."
+      - "Separate the two problems: cheap rotation of old data and fast selective lookup. The first is solved by partitions, the second by an index inside the partitions."

@@ -1,0 +1,175 @@
+---
+conceptId: mocking-and-isolation
+title: "Mocks and isolation: Mock, patch, monkeypatch"
+estimatedMinutes: 14
+---
+
+# Fakes at the boundary, so a test never touches the real world
+
+The function `notify_user` sends an email through an external service, reads the current time, and hits the database for an address. How do you write a fast unit test for it? Test it for real, and it reaches out over the network (slow and unreliable - the service might be down), the result depends on what time it happens to be, and the database needs to be up and populated. A test like that takes seconds, flakes for reasons that have nothing to do with your code, and ends up testing half the world instead of your one function.
+
+Isolation removes that pain. The idea is simple: for the duration of the test, you swap external dependencies for fakes that behave predictably and instantly. The email "sends" into the void, time "freezes" at the moment you choose, the database "returns" a pre-set address. The test becomes fast, deterministic, and checks exactly your logic. By the end of this section you'll know `Mock`/`MagicMock`, how to configure them with `return_value` and `side_effect`, how to check calls, where to patch a dependency, and the difference between a mock, a stub, and a fake.
+
+## Mental model: a fake at the boundary
+
+Your code talks to the outside world across a boundary - a function call, a method on an object. To isolate the code, you intercept that call and hand it a controlled fake instead of the real dependency. The code doesn't notice: it calls the same name, gets a "correct" answer, and moves on, while the test fully controls what comes back.
+
+<Figure caption="For the duration of the test, the real dependency (network, DB, clock) is swapped for a mock right at the call boundary: the code calls the same name but gets a controlled answer without ever leaving the process.">
+  <Sketch viewBox="0 0 470 200" title="Swapping a dependency for a mock">
+    <SketchBox x={20} y={75} width={120} height={50} accent />
+    <SketchLabel x={80} y={96} mono size={11} accent>notify_user</SketchLabel>
+    <SketchLabel x={80} y={112} size={9} muted>under test</SketchLabel>
+
+    <SketchBox x={310} y={20} width={140} height={46} fill="rgb(var(--surface-2))" dashed />
+    <SketchLabel x={380} y={40} size={10} muted>real service</SketchLabel>
+    <SketchLabel x={380} y={56} size={9} muted>network, slow</SketchLabel>
+
+    <SketchBox x={310} y={120} width={140} height={50} accent />
+    <SketchLabel x={380} y={141} mono size={10} accent>Mock</SketchLabel>
+    <SketchLabel x={380} y={157} size={9} muted>instant response</SketchLabel>
+
+    <SketchArrow from={[140, 88]} to={[310, 44]} dashed />
+    <SketchLabel x={225} y={56} size={9} muted>disabled in test</SketchLabel>
+    <SketchArrow from={[140, 105]} to={[310, 140]} accent />
+    <SketchLabel x={225} y={132} size={9} muted>swapped for</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Mock and MagicMock: an object that goes along with anything
+
+`unittest.mock.Mock` is an object that obligingly accepts any interaction. Call it like a function - it returns a new Mock. Access any attribute - it returns a Mock. It never raises errors on unfamiliar methods, it just quietly plays along - which is exactly why it's so convenient for standing in for anything.
+
+```python
+from unittest.mock import Mock
+
+service = Mock()
+service.send("письмо")
+service.connect().status
+```
+
+`MagicMock` is the same Mock, plus support for "magic" (dunder) methods (`__len__`, `__iter__`, `__getitem__`, and the rest), so you can use it anywhere your code expects a list, an iterator, or a context manager. In practice, most places reach for `MagicMock` (and `patch` uses it by default).
+
+## return_value and side_effect: what the mock returns
+
+A bare mock returns a fresh mock on every call - rarely what you want. To pin down a specific answer, set `return_value`:
+
+```python
+service = Mock()
+service.get_price.return_value = 500
+assert service.get_price("книга") == 500
+```
+
+Now `get_price` returns `500` regardless of its arguments. For more complex behavior, use `side_effect`. It has three modes, and it's worth telling them apart:
+
+```python
+m = Mock()
+m.side_effect = [1, 2, 3]
+m(), m(), m()
+```
+
+If `side_effect` is a **list** (or any iterator), the mock returns the next item on each call in turn: the first call returns `1`, the second `2`, the third `3`, and a fourth would raise `StopIteration`. If `side_effect` is an **exception class or instance**, the mock raises it on call (this is how you simulate a dependency failing). If `side_effect` is a **function**, the mock calls it with the same arguments and returns its result (this is how you make the answer depend on the input).
+
+<Callout type="info">
+`return_value` gives the same value on every call; a `side_effect` list gives values one at a time; a `side_effect` exception raises an error. The list is handy when repeated calls need to return different things (like polling a status: "pending", then "done").
+</Callout>
+
+## Checking calls: assert_called_once_with
+
+A mock remembers how it was called, and a test can check that. The most common method is `assert_called_once_with(...)`: it asserts the mock was called **exactly once**, and **with exactly these arguments**.
+
+```python
+def test_notify_sends_once():
+    sender = Mock()
+    notify_user(sender, user_id=42)
+    sender.send.assert_called_once_with(to="anna@example.com", text="готово")
+```
+
+This is a check on interaction: you don't care about a returned value, you care that your code drove the dependency correctly. Nearby you'll find `assert_called_with` (the most recent call matched this) and `assert_not_called` (never called at all), and the call count lives in `sender.send.call_count`.
+
+## patch, and the golden rule: patch where the name is looked up
+
+`Mock` is great when a dependency can be passed in as an argument. But often code imports and calls something directly - then you need to swap it "in place." That's what `unittest.mock.patch` is for: it temporarily replaces the named object with a mock for the duration of the test and restores it afterward.
+
+And here's **the single most important, and most counterintuitive, rule of mocking**: you patch where the name is **looked up** (in the module that uses it), not where it's **defined**. Here's why, worked through an example. Say `services.py` defines a function `get_time`, and `report.py` imports and calls it:
+
+```python
+from services import get_time
+
+
+def build_report():
+    return f"отчёт на {get_time()}"
+```
+
+When `report.py` ran `from services import get_time`, it created its **own** name, `report.get_time`, pointing at the same function. If you patch `services.get_time` in the test, `report.get_time` still points at the original - the swap misses entirely. You need to patch **`report.get_time`**:
+
+```python
+from unittest.mock import patch
+
+
+def test_report():
+    with patch("report.get_time", return_value="2026-06-19"):
+        assert build_report() == "отчёт на 2026-06-19"
+```
+
+The rule is usually phrased as "patch where it's looked up, not where it's defined." The name is looked up in the consuming module, so that's the path you patch. This is reason number one behind "my mock isn't working" - patching the definition site while the code looks at its own local reference.
+
+## monkeypatch: the same trick, pytest style
+
+pytest ships a built-in `monkeypatch` fixture that does the same thing, but rolls the change back automatically after the test, no `with` needed. It has `setattr` (swap an attribute), `setenv`/`delenv` (environment variables), and `setitem` (a dict entry).
+
+```python
+def test_report(monkeypatch):
+    monkeypatch.setattr("report.get_time", lambda: "2026-06-19")
+    assert build_report() == "отчёт на 2026-06-19"
+```
+
+The "patch where it's looked up" rule applies here too: the path in `setattr` is `report.get_time`, not `services.get_time`. `monkeypatch` is especially convenient for environment variables and attribute swaps when you don't need a full mock with call verification.
+
+## Mock, stub, and fake: not the same thing
+
+"Mock," "stub," and "fake" often get lumped together, but the distinction is practical. A **stub** just returns a pre-set answer and nothing more - you don't check how it was called, it just feeds your code data. A **mock** additionally **remembers calls**, and the test checks the interaction (was it called, with what arguments) - that's a behavior check, not a result check. A **fake** is a working but simplified implementation: say, a repository backed by a plain `dict` instead of a real database. A fake genuinely stores and returns data, just without touching disk or network.
+
+<Compare
+  leftTitle="Mock"
+  rightTitle="Fake"
+  left={<>A fake that <strong>remembers calls</strong>. The test checks that the code drove the dependency correctly (<code>assert_called_once_with</code>). Has almost no logic of its own.</>}
+  right={<>A simplified <strong>working implementation</strong> (a repository on a <code>dict</code> instead of a DB). Actually stores and returns data; the test checks the result, not the fact of a call.</>}
+  verdict="Use a mock when HOW the dependency was called matters; use a fake when what matters is that the code works correctly with its data. A stub sits in between: it just feeds an answer, with no call checking."
+/>
+
+## Freezing time
+
+Code that reads `datetime.now()` is non-deterministic: a test for "the session expired" behaves differently tomorrow. Time gets frozen instead. A simple approach is to swap the source function via `monkeypatch` (remembering the "where it's looked up" rule): `monkeypatch.setattr("billing.now", lambda: datetime(2026, 1, 1))`. For trickier cases, reach for the `freezegun` library and its `@freeze_time("2026-01-01")` decorator, which replaces `datetime` wholesale, so any `datetime.now()` anywhere returns the fixed moment. Frozen time makes date-dependent tests repeatable.
+
+## Edge case: a mock passes a check the real object wouldn't
+
+Here's `Mock`'s hidden trap. Because a mock plays along with any interaction, it'll happily return a mock for a method the real object doesn't **have**. A typo in a method name never surfaces: `sender.sedn(...)` (misspelled) calmly returns a mock, the test goes green, and in production the real object blows up with `AttributeError`. Same goes for assertions: `sender.assert_called_oce(...)` (typo in the assert method name) is just an attribute access on the mock - it checks nothing and never fails. The fix is `autospec`: `patch("report.sender", autospec=True)` creates a mock that mirrors the real interface, so touching a nonexistent method (or calling one with the wrong signature) fails immediately. That's why mocks with `autospec` are more trustworthy than bare ones.
+
+## Common mistakes
+
+- **Patched the definition site instead of the usage site.** `patch("services.get_time")` when `report.py` did `from services import get_time` - the swap doesn't take, and the test exercises the original. Fix: patch `report.get_time`, where the name is looked up.
+- **Typo in a mock's assert method name.** `assert_called_once` missing `_with`, or misspelled, silently checks nothing, because to the mock it's just a new attribute. Fix: use `autospec`/`spec` so these calls fail loudly, and double-check method names against the docs.
+- **`return_value` where a `side_effect` list belongs.** You set one `return_value`, but the code calls the mock multiple times expecting different answers (polling a status) and gets the same one every time. Fix: use a `side_effect` list for a series of different answers.
+
+<Detail summary="Why patch takes a string path instead of an object">
+
+`patch("report.get_time")` takes a string path, not the object itself, and that's not an accident. patch needs to temporarily replace an **attribute on a specific module** (`get_time` inside the `report` module object) and put it back after the test. To do that it needs to know both the container (the `report` module) and the attribute name (`get_time`) separately - the string `"report.get_time"` carries exactly that: "go into the report module and swap its get_time attribute." If you passed the `get_time` object itself, patch wouldn't know which namespace to redefine it in - the same object might be reachable under that name from a dozen modules. That's the root of the "where it's looked up" rule: you're literally telling patch which namespace the code under test uses to reach the dependency.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Isolation swaps external dependencies (network, DB, clock) for fakes so a unit test stays fast, deterministic, and checks only your logic.",
+    "Mock plays along with any interaction; return_value gives a fixed answer, side_effect gives a list (answers in turn), an exception (raises it), or a function (answer from the input).",
+    "assert_called_once_with checks the fact and arguments of a call - that's an interaction check, not a result check.",
+    "The golden rule of patch/monkeypatch: patch where the name is LOOKED UP (in the consuming module), not where it's defined, or the swap misses entirely.",
+    "A stub feeds an answer, a mock remembers calls, a fake is a simplified working implementation; autospec catches typos in method names, and time gets frozen for repeatability.",
+  ]}
+/>
+
+## References
+
+- [Python docs - unittest.mock](https://docs.python.org/3/library/unittest.mock.html)
+- [Python docs - Where to patch](https://docs.python.org/3/library/unittest.mock.html#where-to-patch)
+- [pytest - monkeypatch](https://docs.pytest.org/en/stable/how-to/monkeypatch.html)
+- [Martin Fowler - Mocks Aren't Stubs](https://martinfowler.com/articles/mocksArentStubs.html)

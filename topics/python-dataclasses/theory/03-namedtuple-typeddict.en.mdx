@@ -1,0 +1,141 @@
+---
+conceptId: namedtuple-typeddict
+title: NamedTuple and TypedDict
+estimatedMinutes: 11
+---
+
+# When your data doesn't need a full class
+
+Not every bundle of data needs a class. Sometimes a function returns a pair of values and you'd like to read them by name instead of index `[0]` and `[1]`, but reaching for a dataclass just for that feels heavy. Sometimes you're accepting someone else's JSON that already arrives as a dict, and all you need is to describe its shape for type checking, no wrapping required. The standard library has `typing.NamedTuple` and `typing.TypedDict` for exactly these two niches.
+
+Once you know how they differ from dataclass and from each other, you'll stop reaching for a full class where a named tuple would do, and you'll be able to type a dict's shape without turning it into an object. Choosing between these three forms is a common interview question too.
+
+## One tags a tuple, the other tags a dict
+
+`NamedTuple` produces a real tuple whose fields happen to have names. It's immutable, iterable, unpacks, indexes, and compares like an ordinary tuple. The only difference is you can reach its elements by name too.
+
+`TypedDict` doesn't produce any object at all. It's a shape annotation for a plain dict: at runtime you're still holding an ordinary `dict`, and the field description exists purely for the type checker. Zero overhead, because no new type ever shows up at runtime.
+
+<Figure caption="NamedTuple is a tuple with names attached: a field is reachable by both index [0] and name .x · which is why Point(1, 2) equals a plain tuple (1, 2).">
+  <Sketch viewBox="0 0 420 155" title="NamedTuple as a tuple with names">
+    <SketchBox x={55} y={58} width={130} height={58} />
+    <SketchLabel x={120} y={92} mono>x = 1</SketchLabel>
+    <SketchLabel x={120} y={44} muted size={12}>index 0 · name x</SketchLabel>
+    <SketchBox x={205} y={58} width={130} height={58} />
+    <SketchLabel x={270} y={92} mono>y = 2</SketchLabel>
+    <SketchLabel x={270} y={44} muted size={12}>index 1 · name y</SketchLabel>
+    <SketchLabel x={175} y={140} accent size={13} mono>Point(1, 2) == (1, 2)</SketchLabel>
+  </Sketch>
+</Figure>
+
+## NamedTuple: a tuple you can read by name
+
+The class-style syntax for `typing.NamedTuple` looks almost exactly like a dataclass: annotated fields, optionally with defaults. But the result is a subclass of `tuple`.
+
+```python
+from typing import NamedTuple
+
+class Point(NamedTuple):
+    x: int
+    y: int = 0
+```
+
+The resulting type carries the usual named-tuple bookkeeping: `Point._fields` returns `('x', 'y')`, and `_replace` gives you back a copy with one field changed (the object itself stays immutable). Since it's a tuple, unpacking, indexing, and every other tuple operation just work.
+
+Try it hands-on. Run the code, then add a third field `z: int = 0` and watch unpacking and `sum` pick it up without a single change anywhere else.
+
+<PyDemo
+  title="NamedTuple as a tuple with names"
+  code={`from typing import NamedTuple
+
+class Point(NamedTuple):
+    x: int
+    y: int = 0
+
+p = Point(3, 4)
+print(p.x, p[0])
+dx, dy = p
+print(dx + dy)
+print(p._replace(y=9))
+print(p == (3, 4))`}
+/>
+
+That last line prints `True`, and that's not a typo, more on why below.
+
+## TypedDict: a dict's shape without a wrapper
+
+`TypedDict` describes which keys and which types a dict is expected to hold. At runtime it's still an ordinary `dict`, so you build it with a dict literal, not a constructor.
+
+```python
+from typing import TypedDict
+
+class Movie(TypedDict):
+    title: str
+    year: int
+
+film: Movie = {"title": "Solaris", "year": 1972}
+```
+
+By default every key is required. You can relax that two ways. The `total=False` flag makes every key optional at once. `NotRequired` (and its counterpart `Required`) let you control this key by key, leaving the rest untouched.
+
+```python
+from typing import TypedDict, NotRequired
+
+class Config(TypedDict):
+    host: str
+    port: NotRequired[int]
+```
+
+`TypedDict` exists precisely for the boundary with the outside world: an HTTP request body, a message off a queue, a response from someone else's API all arrive as dicts, and `TypedDict` gives them a checkable shape without forcing you to wrap every one in an object.
+
+## What catches people off guard
+
+Since `NamedTuple` is a tuple, it compares like one, **by value, with no regard for type**. So `Point(1, 2) == (1, 2)` is true, and a `Point(1, 2)` from one module equals some unrelated `Rgb`-like named tuple holding the same numbers. For a dataclass that would be `False` (its `__eq__` checks the class first), and `NamedTuple`'s structural tuple equality often surprises people.
+
+`TypedDict` doesn't check types at runtime at all. It exists purely for the static analyzer. At runtime `Movie` is just a `dict`, `isinstance(film, dict)` is true, while `isinstance(film, Movie)` is flat-out forbidden. Nothing stops you from putting a string into the `year` field: mypy or pyright will catch that during analysis, but Python won't at runtime.
+
+<Callout type="warning">
+Neither `NamedTuple` nor `TypedDict` validates data at runtime. `NamedTuple` will happily accept `Point("a", "b")`, and `TypedDict` is just a dict. If you need to validate data coming from outside, reach for pydantic, covered in the next section.
+</Callout>
+
+## Choosing between the three forms
+
+| Form       | What it is at runtime      | When to reach for it                                               |
+| ---------- | --------------------------- | -------------------------------------------------------------------- |
+| NamedTuple | subclass of `tuple`         | a lightweight immutable bundle of values, often a function's return  |
+| TypedDict  | ordinary `dict`             | typing a dict's shape at the JSON boundary, no wrapper needed        |
+| dataclass  | ordinary class with `__dict__` | methods, `__post_init__`, `frozen`, mutability, real behavior     |
+
+The short version: returning several values and want immutability, use `NamedTuple`; typing someone else's dict, use `TypedDict`; anything more involved (behavior, `__post_init__` validation, field configuration), that's dataclass territory.
+
+## The cost and limits of NamedTuple
+
+Since `NamedTuple` is a tuple, instances have no `__dict__`: they weigh the same as an ordinary tuple, noticeably less than a dataclass with a full attribute dict. Across millions of small records (rows from a database, points, coordinates) that's a real memory saving, and a solid reason to prefer `NamedTuple` for a record that's only ever read. Attribute access goes through a field descriptor, so it's nearly as fast as indexing by number. Another consequence of being a tuple: `NamedTuple` hashes by value immediately, no `frozen` required, so it works as a dict key or set element out of the box, while a plain mutable dataclass has to be explicitly frozen with `frozen=True` for that, otherwise it's stuck with `__hash__ = None`.
+
+Its tuple nature has limits too. A `NamedTuple` subclass can add methods, but not new fields: the field set is locked in by the base declaration. Every field is public and positional, there's no private state or hidden invariants in a tuple. Once a record grows behavior, mutability, or validation, the tuple starts getting in the way, and it's time to move the shape to a dataclass.
+
+## Common mistakes
+
+- **Expecting `TypedDict` to check types at runtime.** It doesn't. `TypedDict` helps the analyzer, but at runtime it's a dict with no guarantees.
+- **Comparing a `NamedTuple` and forgetting it's a tuple.** A named tuple equals a plain tuple with the same values. If equality needs to care about type, you want a dataclass.
+- **Trying to mutate a `NamedTuple` in place.** It's immutable: assigning to a field is forbidden, use `_replace` to get a new tuple back with the change applied.
+- **Reaching for `NamedTuple` for an object with behavior.** Once methods and logic show up, the tuple gets in the way, move to a dataclass.
+
+<Detail summary="How typing.NamedTuple differs from collections.namedtuple">
+The older `collections.namedtuple` defines fields from a string of names and knows nothing about type annotations. `typing.NamedTuple` produces the same kind of tuple, but with class syntax, annotations, and defaults an analyzer can actually read. Under the hood both produce a `tuple` subclass with the same bookkeeping methods (`_fields`, `_replace`, `_asdict`); the difference is in declaration ergonomics and type support. New code should reach for `typing.NamedTuple`.
+</Detail>
+
+<KeyTakeaways items={[
+  "NamedTuple is a tuple subclass: immutable, unpackable, accessible by name and by index.",
+  "TypedDict doesn't create an object: at runtime it's a plain dict, and the shape exists only for type checking.",
+  "Point(1, 2) == (1, 2) is true because NamedTuple compares structurally, like a tuple, ignoring type.",
+  "TypedDict controls key requiredness with total=False and NotRequired/Required.",
+  "Neither NamedTuple nor TypedDict validates data at runtime; that's what pydantic is for.",
+  "NamedTuple for a lightweight immutable bundle, TypedDict for the shape of someone else's dict, dataclass for behavior and configuration.",
+]} />
+
+## References
+
+- [typing.NamedTuple](https://docs.python.org/3/library/typing.html#typing.NamedTuple)
+- [typing.TypedDict](https://docs.python.org/3/library/typing.html#typing.TypedDict)
+- [PEP 589 - TypedDict](https://peps.python.org/pep-0589/)

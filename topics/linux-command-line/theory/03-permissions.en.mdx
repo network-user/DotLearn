@@ -1,0 +1,148 @@
+---
+conceptId: permissions
+title: "Permissions and chmod"
+estimatedMinutes: 13
+---
+
+# Who's in charge here: permissions and chmod
+
+Anna wrote a script, `deploy.sh`, saved the file, and ran it with `./deploy.sh`. The terminal answered curtly: `Permission denied`. The file is right there, `cat deploy.sh` happily prints its contents, there's no typo in the code. The problem isn't the script, it's permission: Linux is a multi-user system, and every file records who is allowed to do what with it. Until that permission is granted explicitly, even the file's owner can't run it.
+
+In this lesson you'll learn to read the permission string from `ls -l`, understand what the read, write, and execute bits mean for files versus directories, and change permissions with `chmod`, in both symbolic notation and octal numbers like `755`.
+
+## The permission triad: owner, group, others
+
+Every file in Linux has an owner and a group. Permissions describe three separate sets of rights: what the owner can do, what the group can do, and what any other user on the system can do. `ls -l` prints all three sets on a single line:
+
+```bash
+$ ls -l deploy.sh
+-rwxr-xr-- 1 anna devops 812 Jul  8 10:20 deploy.sh
+```
+
+<Figure caption="The permission string -rwxr-xr--: the first character is the file type, followed by three triads of three bits each: owner, group, and everyone else.">
+  <Sketch viewBox="0 0 460 150" title="Breaking down a permission string">
+    <SketchLabel x={30} y={44} mono size={20}>-</SketchLabel>
+    <SketchBox x={60} y={24} width={100} height={40} accent />
+    <SketchLabel x={110} y={50} mono size={17} accent>rwx</SketchLabel>
+    <SketchBox x={175} y={24} width={100} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={225} y={50} mono size={17}>r-x</SketchLabel>
+    <SketchBox x={290} y={24} width={100} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={340} y={50} mono size={17}>r--</SketchLabel>
+    <SketchLabel x={30} y={86} size={11} muted>file type</SketchLabel>
+    <SketchLabel x={110} y={86} size={11} accent weight={600}>owner</SketchLabel>
+    <SketchLabel x={225} y={86} size={11} muted>group</SketchLabel>
+    <SketchLabel x={340} y={86} size={11} muted>others</SketchLabel>
+    <SketchLabel x={110} y={112} size={11} muted>read, write, execute</SketchLabel>
+    <SketchLabel x={225} y={112} size={11} muted>read, execute</SketchLabel>
+    <SketchLabel x={340} y={112} size={11} muted>read only</SketchLabel>
+  </Sketch>
+</Figure>
+
+The first character of the string isn't a permission at all, it's the type: `-` means a regular file, `d` a directory, `l` a symbolic link. Three groups of three characters follow. Within each group, `r` allows reading, `w` allows changing, `x` allows executing, and a dash in a letter's place means that right hasn't been granted. In the example, owner `anna` can read, write, and execute the file, group `devops` can read and execute, and everyone else can only read.
+
+Anna's error now reads directly off the line: `-rwxr-xr--` already grants the owner execute rights, so this particular file isn't the problem. The real cause turned out to be elsewhere: the script itself lived in a directory she'd copied from an archive, and permissions had dropped to `-rw-r--r--` along the way, losing the owner's `x` bit.
+
+## Directory permissions don't mean what they look like
+
+For a file, the three letters are intuitive: `x` lets you run it as a program. For a directory, they mean something else, and this trips up nearly every newcomer.
+
+<Compare
+  leftTitle="r on a directory"
+  rightTitle="x on a directory"
+  left={<>
+    <p>Lets you list the names inside the directory.</p>
+    <ul>
+      <li>Without r, running ls on the directory returns an access error.</li>
+      <li>Only reveals names, nothing more.</li>
+    </ul>
+  </>}
+  right={<>
+    <p>Lets you enter the directory and reach files inside it by name.</p>
+    <ul>
+      <li>Without x, cd into the directory fails, even with r present.</li>
+      <li>Needed to open a specific file inside, even if you already know its name.</li>
+    </ul>
+  </>}
+  verdict="The two rights are independent. r without x lists names but refuses any attempt to enter or read a file by name. x without r lets you enter and open a file by its exact name, but ls on the directory shows nothing."
+/>
+
+The `w` right on a directory also works differently than on a file: it's not about editing the directory's contents directly, it's about the right to create and remove entries inside it. That's exactly why deleting a file with `rm` actually requires write permission not on the file itself, but on the directory holding it: deletion is a change to the directory's list of names.
+
+## Changing permissions: chmod, symbolic notation
+
+The `chmod` command (change mode) changes permissions. Symbolic notation names who you're changing (`u` owner, `g` group, `o` others, `a` everyone) and what to do with a sign: `+` adds a right, `-` removes it, `=` sets the exact set given, wiping out that target's previous bits.
+
+```bash
+$ chmod u+x deploy.sh
+$ ls -l deploy.sh
+-rwxr--r-- 1 anna devops 812 Jul  8 10:20 deploy.sh
+```
+
+The letter before the sign is optional: `chmod +x deploy.sh` with no target given adds `x` to owner, group, and others all at once. Multiple changes are written comma-separated with no space:
+
+```bash
+$ chmod u+x,go-w deploy.sh
+```
+
+The owner gains execute rights, while group and others both lose write rights at the same time. The order of changes in the list doesn't matter, they're all applied together.
+
+## Changing permissions: octal notation
+
+The second method is more compact, and shows up in documentation and scripts even more often than the symbolic form. Each of the three letters in a triad carries a weight: `r` is worth 4, `w` is worth 2, `x` is worth 1. The sum of weights within a triad gives a single digit from 0 to 7, and three digits in a row describe the rights for owner, group, and others.
+
+| Rights | Sum | Digit |
+|---|---|---|
+| rwx | 4+2+1 | 7 |
+| rw- | 4+2 | 6 |
+| r-x | 4+1 | 5 |
+| r-- | 4 | 4 |
+| --- | 0 | 0 |
+
+```bash
+$ chmod 755 deploy.sh
+$ ls -l deploy.sh
+-rwxr-xr-x 1 anna devops 812 Jul  8 10:20 deploy.sh
+```
+
+`755` breaks down digit by digit: `7` is `rwx` for the owner, `5` is `r-x` for the group, the last `5` is the same for everyone else. Unlike symbolic notation with `+`/`-`, octal form always sets the whole set at once, like `=`: any bits not accounted for in the sum end up off.
+
+<MarginNote label="Common combinations">755 for executable scripts and directories, 644 for ordinary files like text and configs, 600 for secrets like private keys that nobody but the owner should read.</MarginNote>
+
+## What will surprise you
+
+The `x` right on a directory is needed even to read a single file inside it, if you know its exact name. Developers often set a directory to `r--` instead of `r-x` and then can't figure out why `cat folder/fail.txt` answers `Permission denied`, even though the file itself has perfectly fine permissions.
+
+Owning a file isn't the same as having superuser rights. Even the owner can't read their own file if they've removed their own `r` bit; permissions apply to everyone, including the file's creator. The same `chmod` gets your access back, assuming you still hold the right to change permissions in the first place.
+
+Octal notation turns off bits that weren't named. `chmod 700 deploy.sh` doesn't just grant the owner full access, it also strips every right from group and others, even if they had something before. If you only want to change one target without touching the rest, symbolic notation with `+`/`-` is safer.
+
+## Common mistakes
+
+**`chmod 777` on everything.** It feels like a quick way to make permission errors go away for good: rights are granted fully to everyone, including strangers on the system. On a personal machine this barely matters; on a shared server it becomes a security hole, since anyone can overwrite the file. The right question isn't "how do I get rid of this access error," it's "who specifically needs access, and to what," and the answer is usually `644` or `755`.
+
+**Mixing up r and x on a directory.** Setting a directory to `r--`, expecting that to be enough for working with the files inside, and hitting a wall on every `cd` and `cat`. A directory almost always needs both bits together for practical work, `r-x` at minimum.
+
+**Forgetting that octal notation wipes out anything unnamed.** `chmod 600 script.sh`, when the real intent was just to remove access for everyone else, unexpectedly also strips the owner's execute right. Check the result with `ls -l` right after `chmod`, it's faster than dealing with the fallout later.
+
+**Trying chmod without permission to do it.** Only a file's owner or the superuser is allowed to change its permissions; trying to modify someone else's file gets you `Operation not permitted`. That access error means exactly what it says: you're not the one allowed to do this.
+
+<Detail summary="chown and the SUID, SGID, sticky bits, for the curious">
+`chmod` changes permissions, not ownership: a separate command, `chown`, changes a file's owner or group, for example `chown boris deploy.sh`. There are also three special bits beyond the usual nine: SUID makes a program run as the file's owner no matter who launched it, SGID does the same for group, and the sticky bit on a directory (like on `/tmp`) restricts deleting files to their own owners, even when the directory itself is writable by everyone. None of these are needed for everyday beginner work, but you'll eventually spot them in `ls -l` output as `rwsr-xr-x` or `rwxrwxrwt`.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'The permission string from ls -l is the file type plus three rwx triads: owner, group, others.',
+    'On a file, x allows execution; on a directory, x allows entering and opening a file by name, while r only allows listing names.',
+    'chmod symbolic notation only changes the rights named: u/g/o/a plus +, -, = and the letters rwx.',
+    'Octal notation sets all three triads at once: r=4, w=2, x=1, the sum gives a digit from 0 to 7, for example 755 or 644.',
+    'Unlike +/-, octal notation turns off every bit that wasn\'t mentioned in the sum.',
+    'Only a file\'s owner or the superuser can change its permissions.',
+  ]}
+/>
+
+## References
+
+- [chmod man page](https://man7.org/linux/man-pages/man1/chmod.1.html)
+- [ls man page](https://man7.org/linux/man-pages/man1/ls.1.html)
+- [GNU Coreutils Manual: File permissions](https://www.gnu.org/software/coreutils/manual/html_node/File-permissions.html)

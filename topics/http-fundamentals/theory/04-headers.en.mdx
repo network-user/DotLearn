@@ -1,0 +1,100 @@
+---
+conceptId: headers
+title: Headers and Content Negotiation
+estimatedMinutes: 14
+---
+
+# Headers: how client and server negotiate
+
+The same address, `api.kinopoisk.ru/films/301`, returns JSON to a mobile app and an HTML page with a poster to a browser. Same URL, same method, different responses. There's no magic here: the app and the browser asked for different things, and they asked using headers. Headers carry half of everything HTTP can express: they're where the agreements about format, language, compression, caching, and access all happen.
+
+## Mental model: an envelope full of notes
+
+If the message body is the letter, headers are the notes on the envelope: to whom, from whom, what's inside, how to handle it. Each header is a line of the form "name, colon, value," and they're easiest to read in groups.
+
+**Request headers**: who's asking and what they're willing to accept. `Host` says which site the request is for; `User-Agent` says what kind of client this is; the `Accept` family says which formats the client can understand.
+
+**Response headers**: how the server handled the request. `Location` says where to go on a redirect; `Retry-After` says when to come back; `Server` says what software is answering.
+
+**Body headers**: these describe the payload and show up on both sides of the conversation. `Content-Type` is the body's format; `Content-Length` is its size in bytes; `Content-Encoding` is which algorithm compressed it.
+
+The key pair to understand for the whole topic is `Accept` and `Content-Type`. `Accept` is **the client's wish for the response it's about to get**: "I'd like JSON, please." `Content-Type` is **a fact about the body of the current message**: "there's JSON inside." A client sending a POST with a JSON body uses both at once: `Content-Type` describes what it's sending, `Accept` describes what it wants back.
+
+## Content negotiation: bargaining over format
+
+The mechanism behind this lesson's opening example is called content negotiation. It works like haggling over a counter, and Figure 1 shows the flow: the client lists what it's willing to accept, the server picks the best match from what it has, and reports the choice.
+
+<Figure caption="Negotiating format: the client lists what it will accept in Accept, the server picks from its own options and announces the choice in Content-Type.">
+  <Sketch viewBox="0 0 460 190" title="Content negotiation">
+    <SketchBox x={20} y={30} width={120} height={44} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={80} y={57} mono>client</SketchLabel>
+    <SketchBox x={320} y={30} width={120} height={44} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={380} y={57} mono>server</SketchLabel>
+    <SketchArrow from={[145, 45]} to={[315, 45]} accent />
+    <SketchLabel x={230} y={30} mono size={11}>Accept: application/json</SketchLabel>
+    <SketchArrow from={[315, 65]} to={[145, 65]} />
+    <SketchLabel x={230} y={92} mono size={11}>Content-Type: application/json</SketchLabel>
+    <SketchBox x={295} y={120} width={150} height={52} dashed radius={8} />
+    <SketchLabel x={370} y={141} muted size={11}>has: json, html, xml</SketchLabel>
+    <SketchLabel x={370} y={159} muted size={11}>chose: json</SketchLabel>
+  </Sketch>
+</Figure>
+
+Formats are written as MIME types: `text/html`, `application/json`, `image/png`. The client can list several and rank them with `q` weights from 0 to 1:
+
+```http
+GET /films/301 HTTP/1.1
+Host: api.kinopoisk.ru
+Accept: application/json, text/html;q=0.8, */*;q=0.1
+```
+
+Read it as: "JSON is best, HTML if that's not available, and anything at all as an absolute last resort." The default weight is 1, so `application/json` is the top candidate here.
+
+Negotiation isn't limited to format. Two more pairs work the same way: `Accept-Language` and `Content-Language` negotiate the human language of the response, `Accept-Encoding` and `Content-Encoding` negotiate compression:
+
+```http
+GET /docs HTTP/1.1
+Host: habr.com
+Accept-Language: en-US, en;q=0.9, ru;q=0.5
+Accept-Encoding: gzip, br
+```
+
+A server that can compress will pick gzip or brotli, send the compressed body, and honestly report it: `Content-Encoding: gzip`. The browser unpacks the body before you ever see it, which is why JSON looks like plain text in DevTools even though compressed bytes were what actually traveled over the wire.
+
+What if nothing matches? The client only asks for `application/xml`, and the server has JSON and nothing else. Technically the server is allowed to answer `406 Not Acceptable`. In practice most servers don't get picky and send what they have: the spec explicitly permits ignoring the request, since "something" is usually more useful than an error.
+
+## What will surprise you
+
+**Accept is a wish, not an order.** You can't rely on the server actually returning the format you asked for: check the response's `Content-Type` before you parse the body as JSON.
+
+**One URL, many representations.** Because of negotiation, a single address can serve both a Russian and an English version of a page. That's a trap for caching: a cache that remembered the Russian version must not hand it to an English-speaking client. To prevent that, the server adds a `Vary: Accept-Language` header, meaning "my response also depends on this header." We'll come back to `Vary` in the [[caching]] concept.
+
+**Custom headers are fine.** APIs often introduce their own headers, like `X-Request-Id`. The `X-` prefix was formally deprecated back in 2012, but it lives on out of sheer habit. The main rule: a custom header shouldn't duplicate the meaning of a standard one.
+
+## Common mistakes
+
+**Sending JSON without Content-Type.** Not knowing the format, the server parses the body as a form or rejects the request with a 400. The symptom "the body looks fine but the server doesn't see the fields" is almost always cured by adding `Content-Type: application/json`.
+
+**Mixing up the direction of Accept and Content-Type.** `Accept` on a server's response means nothing, and neither does `Content-Type` on a bodyless GET request. The wish belongs on the request, the fact belongs with the body.
+
+**Trusting User-Agent.** It's a string the client writes about itself: curl can claim to be a browser with a single flag. Fine for statistics, useless for security.
+
+<Detail summary="Why every User-Agent lies">
+  Look at your own User-Agent: Chrome introduces itself with a string that mentions Mozilla, AppleWebKit, and Safari all at once. It's 1990s archaeology: servers used to serve an enhanced version of a site only to "compatible" browsers, so every new browser mimicked its predecessors to avoid being treated as second-class. The layers piled up, and now every browser carries the names of everyone it once impersonated.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A header is a name: value pair; names are case-insensitive.",
+    "Accept is the client's wish about response format, Content-Type is a fact about the current message's body.",
+    "Content negotiation covers format (Accept), language (Accept-Language), and compression (Accept-Encoding); priorities are set with q weights.",
+    "The server is allowed to ignore your wishes: check the response's Content-Type instead of trusting Accept.",
+    "POST with a JSON body but no Content-Type: application/json is the most common cause of 'the server doesn't see my fields.'",
+  ]}
+/>
+
+## References
+
+- [MDN: HTTP headers](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers)
+- [MDN: Content negotiation](https://developer.mozilla.org/en-US/docs/Web/HTTP/Content_negotiation)
+- [RFC 9110: Content Negotiation](https://www.rfc-editor.org/rfc/rfc9110#name-content-negotiation)

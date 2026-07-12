@@ -1,0 +1,332 @@
+exercises:
+  - id: drf-query-optimization-select-001
+    concept: drf-query-optimization
+    type: theory-quiz
+    difficulty: 1
+    prompt: "An order has a ForeignKey to a customer. What removes the extra queries for the customer in a list?"
+    choices:
+      - id: a
+        text: "select_related(\"customer\"), because a to-one relation is fetched with a single JOIN."
+      - id: b
+        text: "prefetch_related(\"customer\"): it makes an extra second query where a JOIN would have been enough."
+      - id: c
+        text: "Nothing, pagination removes the repeated queries by itself."
+      - id: d
+        text: "It can't be optimized, a ForeignKey always loads one at a time."
+    correct: [a]
+    explanation: "A to-one relation (ForeignKey, OneToOne) is fetched with a single JOIN from the side holding the key, which is exactly what select_related is for. prefetch_related would make an extra separate query here."
+    variants:
+      - prompt: "An order has many line items (a reverse ForeignKey from Item). What preloads the items without N+1?"
+        choices:
+          - id: a
+            text: "prefetch_related(\"items\"), because a to-many relation is fetched with a separate query and stitched together in Python."
+          - id: b
+            text: "select_related(\"items\"): a single JOIN solves it all."
+          - id: c
+            text: "Nothing, N+1 is unavoidable for reverse relations."
+          - id: d
+            text: "only(\"items\") restricts the columns and removes the queries."
+        correct: [a]
+        explanation: "For to-many relations (reverse ForeignKey, ManyToMany) a JOIN would multiply the order's rows, so Django runs a separate query and stitches the result together. That's prefetch_related; select_related on such a relation fails with an error."
+      - prompt: "Where should select_related and prefetch_related be specified?"
+        choices:
+          - id: a
+            text: "On the queryset or get_queryset() of the ViewSet, where the query is built."
+          - id: b
+            text: "Inside a SerializerMethodField, closer to where the relation is read."
+          - id: c
+            text: "In the serializer's validate() method."
+          - id: d
+            text: "In the response template, at JSON render time."
+        correct: [a]
+        explanation: "Preloading is a property of the query, not of the data shape. It's set on the queryset (or in get_queryset()) in the ViewSet; the serializer already works with loaded objects and doesn't affect the number of queries."
+
+  - id: drf-query-optimization-choose-002
+    concept: drf-query-optimization
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Why doesn't pagination by itself remove N+1?"
+    choices:
+      - id: a
+        text: "It trims the query down to one page, but on that page each row still pulls the relation with a separate query."
+      - id: b
+        text: "It removes N+1 if the page size is under 100."
+      - id: c
+        text: "It turns all queries into one thanks to LIMIT."
+      - id: d
+        text: "It caches related objects between pages."
+    correct: [a]
+    explanation: "Pagination limits the number of rows on a page, but the N extra queries happen on exactly those rows. Twenty rows on a page still make twenty point queries; preloading fixes it, not LIMIT."
+    variants:
+      - prompt: "What's dangerous about a SerializerMethodField whose method has `return obj.items.count()`?"
+        choices:
+          - id: a
+            text: "The method runs for every row and fires a separate SELECT COUNT(*) for every order."
+          - id: b
+            text: "It caches the result forever and returns a stale number."
+          - id: c
+            text: "It makes the field required on write."
+          - id: d
+            text: "Nothing, count() is always free."
+        correct: [a]
+        explanation: "SerializerMethodField runs its method for every object. Touching the relation (items.count()) inside it creates one query per row. It's cheaper to compute it all at once with a Count annotation on the queryset."
+      - prompt: "An order refers to the customer's city through the chain customer.city (ForeignKey behind a ForeignKey). How do you fetch the city without extra queries?"
+        choices:
+          - id: a
+            text: "select_related(\"customer__city\"): a nested to-one relation is fetched with a single JOIN."
+          - id: b
+            text: "prefetch_related(\"customer__city\"), otherwise the city won't load."
+          - id: c
+            text: "Two separate select_related calls, one field at a time, otherwise the JOIN won't work."
+          - id: d
+            text: "There's no way, the ORM can't preload nested relations."
+        correct: [a]
+        explanation: "A to-one chain is written with a double underscore: select_related(\"customer__city\") fetches the customer and their city in a single JOIN. The double underscore works at any depth for to-one relations."
+
+  - id: drf-query-optimization-fill-queryset-003
+    concept: drf-query-optimization
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete the ViewSet's queryset: fetch the customer with a JOIN, and the items with a separate query."
+    template: |
+      class OrderViewSet(viewsets.ModelViewSet):
+          queryset = Order.objects.{{tone}}("customer").{{many}}("items")
+          serializer_class = OrderSerializer
+    blanks:
+      tone:
+        accept: ["select_related"]
+      many:
+        accept: ["prefetch_related"]
+    variants:
+      - prompt: "Complete optimizing the to-one relation to the customer with a single JOIN."
+        template: |
+          queryset = Order.objects.{{opt}}("customer")
+        blanks:
+          opt:
+            accept: ["select_related"]
+      - prompt: "Complete optimizing the to-many relation to the items with a separate query."
+        template: |
+          queryset = Order.objects.{{opt}}("items")
+        blanks:
+          opt:
+            accept: ["prefetch_related"]
+
+  - id: drf-query-optimization-fill-prefetch-004
+    concept: drf-query-optimization
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Complete the ViewSet method and class that preloads a filtered slice of items into a separate attribute."
+    template: |
+      class OrderViewSet(viewsets.ModelViewSet):
+          def {{method}}(self):
+              return Order.objects.prefetch_related(
+                  {{cls}}("items", queryset=Item.objects.filter(price__gt=1000), to_attr="expensive_items")
+              )
+    blanks:
+      method:
+        accept: ["get_queryset"]
+      cls:
+        accept: ["Prefetch"]
+    variants:
+      - prompt: "Complete an annotation so the item count is computed in one query along with the list."
+        template: |
+          from django.db.models import Count
+
+          queryset = Order.objects.annotate(item_count={{agg}}("items"))
+        blanks:
+          agg:
+            accept: ["Count"]
+      - prompt: "Complete a nested to-one relation: the customer and their city in one JOIN."
+        template: |
+          queryset = Order.objects.select_related("customer__{{attr}}")
+        blanks:
+          attr:
+            accept: ["city"]
+
+  - id: drf-query-optimization-predict-count-005
+    concept: drf-query-optimization
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? It counts database queries: a naive listing makes 1 query for the list plus one per row, while a preloaded one always makes two queries."
+    snippet: |
+      def naive(rows):
+          queries = 1
+          for _ in range(rows):
+              queries += 1
+          return queries
+
+      def prefetched(rows):
+          return 2
+
+      print(naive(3))
+      print(prefetched(3))
+      print(naive(10))
+      print(prefetched(10))
+    expected:
+      kind: stdout
+      value: |-
+        4
+        2
+        11
+        2
+    hints:
+      - "The naive counter starts at 1 (the query for the list) and adds 1 per row. Preloading doesn't depend on the number of rows."
+      - "naive(rows) equals 1 + rows, prefetched(rows) is always 2. Substitute 3 and 10."
+    variants:
+      - snippet: |
+          def naive(rows):
+              queries = 1
+              for _ in range(rows):
+                  queries += 1
+              return queries
+
+          def prefetched(rows):
+              return 2
+
+          print(naive(1))
+          print(naive(5))
+          print(prefetched(5))
+        expected:
+          kind: stdout
+          value: |-
+            2
+            6
+            2
+      - snippet: |
+          def naive(rows):
+              queries = 1
+              for _ in range(rows):
+                  queries += 1
+              return queries
+
+          def prefetched(rows):
+              return 2
+
+          print(naive(0))
+          print(prefetched(0))
+          print(naive(20))
+        expected:
+          kind: stdout
+          value: |-
+            1
+            2
+            21
+
+  - id: drf-query-optimization-predict-filter-006
+    concept: drf-query-optimization
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models a response with preloading (2 queries). The flag means that inside the row loop .filter() is called again on the relation, and each such call adds one query."
+    snippet: |
+      def render(rows, filter_in_loop):
+          queries = 2
+          if filter_in_loop:
+              queries += rows
+          return queries
+
+      print(render(5, False))
+      print(render(5, True))
+      print(render(0, True))
+    expected:
+      kind: stdout
+      value: |-
+        2
+        7
+        2
+    hints:
+      - "Preloading gives 2 queries. A repeated .filter() on the relation inside the loop bypasses the cache and adds a query per row."
+      - "Without the flag the result is always 2. With the flag, add rows to two. At rows=0 there's nothing to add."
+    variants:
+      - snippet: |
+          def render(rows, filter_in_loop):
+              queries = 2
+              if filter_in_loop:
+                  queries += rows
+              return queries
+
+          print(render(3, True))
+          print(render(10, False))
+          print(render(1, True))
+        expected:
+          kind: stdout
+          value: |-
+            5
+            2
+            3
+      - snippet: |
+          def render(rows, filter_in_loop):
+              queries = 2
+              if filter_in_loop:
+                  queries += rows
+              return queries
+
+          print(render(50, False))
+          print(render(50, True))
+          print(render(2, True))
+        expected:
+          kind: stdout
+          value: |-
+            2
+            52
+            4
+
+  - id: drf-query-optimization-predict-tools-007
+    concept: drf-query-optimization
+    type: predict-output
+    difficulty: 4
+    prompt: "What does the program print? It counts the total number of queries: 1 for the list; each relation in prefetch_related adds 1 query; each relation with no preloading (naive) adds one query per row of rows; select_related is folded into the first query and adds nothing."
+    snippet: |
+      def total(select_related, prefetch_related, naive_relations, rows):
+          queries = 1
+          queries += len(prefetch_related)
+          for _ in range(naive_relations):
+              queries += rows
+          return queries
+
+      print(total(["customer"], ["items"], 0, 20))
+      print(total([], [], 2, 20))
+      print(total(["customer"], [], 1, 20))
+    expected:
+      kind: stdout
+      value: |-
+        2
+        41
+        21
+    hints:
+      - "The starting one is the query for the list. Add one for every relation in prefetch_related. The select_related list doesn't affect the count."
+      - "Naive relations are the most expensive: each adds rows queries. The second call has 2 naive relations at rows=20, and the third has one."
+    variants:
+      - snippet: |
+          def total(select_related, prefetch_related, naive_relations, rows):
+              queries = 1
+              queries += len(prefetch_related)
+              for _ in range(naive_relations):
+                  queries += rows
+              return queries
+
+          print(total(["customer", "city"], ["items", "tags"], 0, 10))
+          print(total([], ["items"], 1, 10))
+          print(total(["customer"], [], 0, 10))
+        expected:
+          kind: stdout
+          value: |-
+            3
+            12
+            1
+      - snippet: |
+          def total(select_related, prefetch_related, naive_relations, rows):
+              queries = 1
+              queries += len(prefetch_related)
+              for _ in range(naive_relations):
+                  queries += rows
+              return queries
+
+          print(total([], [], 3, 5))
+          print(total(["a"], ["b", "c"], 0, 5))
+          print(total([], ["b"], 2, 5))
+        expected:
+          kind: stdout
+          value: |-
+            16
+            3
+            12

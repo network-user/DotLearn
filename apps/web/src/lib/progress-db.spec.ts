@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { db, localDayKey, recordAttempt } from './progress-db';
+import { db, localDayKey, recordAttempt, recordCheckpointResult } from './progress-db';
 
 beforeEach(async () => {
   await db.delete();
@@ -55,5 +55,24 @@ describe('recordAttempt', () => {
     await recordAttempt('fastapi', 'ex1', 'pass');
 
     expect(await db.attemptEvents.count()).toBe(2);
+  });
+});
+
+describe('recordCheckpointResult pruning', () => {
+  it('prunes checkpointResults down to the cap once writes overflow it', async () => {
+    const seed = Array.from({ length: 4001 }, (_, i) => ({
+      topicSlug: 't',
+      conceptId: `c${i}`,
+      status: 'pass' as const,
+      at: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+    }));
+    await db.checkpointResults.bulkAdd(seed);
+    expect(await db.checkpointResults.count()).toBe(4001);
+
+    await recordCheckpointResult({ topicSlug: 't', conceptId: 'latest', status: 'pass' });
+
+    await vi.waitFor(async () => {
+      expect(await db.checkpointResults.count()).toBe(4000);
+    });
   });
 });

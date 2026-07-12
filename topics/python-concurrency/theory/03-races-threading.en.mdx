@@ -1,0 +1,133 @@
+---
+conceptId: races-threading
+title: "threading and data races"
+estimatedMinutes: 11
+---
+
+# Eight threads, a million steps, and the wrong answer
+
+Eight threads increment a shared counter, a million times each. The answer has to be exactly eight million; the arithmetic leaves no room for anything else. You run the program and get 6,391,204. Run it again, you get 7,088,517. Run it once more, 5,903,660. Every run produces its own wrong answer, and none of them match what you expected. The count doesn't add up, and the culprit isn't the CPU, it's how the threads' steps got interleaved.
+
+This is a data race, and in this section we'll look at it up close: how to build one out of the `threading` module, why the result is different every time, why tests almost never catch it, and what other shapes it takes besides a lost counter. The thread API itself is compact; the interesting part is its dangerous side, so most of our attention goes to exactly where shared state breaks.
+
+## How a thread works in `threading`
+
+The workhorse of the module is the `Thread` class. You hand it a function through `target` and its arguments through `args`, then call `start`. The `start` method asks the operating system for a real thread and launches `target` inside it, returning immediately without waiting for a result. To wait for completion, there's `join`: it blocks the calling thread until the target one finishes.
+
+<Figure caption="start() creates a genuine OS thread and launches target inside it; the main thread keeps going and later blocks on join() until the worker finishes.">
+  <Sketch viewBox="0 0 470 200" title="Thread lifecycle">
+    <SketchBox x={24} y={78} width={130} height={52} />
+    <SketchLabel x={89} y={100} weight="bold">Main thread</SketchLabel>
+    <SketchLabel x={89} y={118} size={10} muted>creates a Thread</SketchLabel>
+
+    <SketchBox x={300} y={28} width={150} height={52} accent />
+    <SketchLabel x={375} y={50} weight="bold" accent>Worker thread</SketchLabel>
+    <SketchLabel x={375} y={68} size={10}>runs target</SketchLabel>
+
+    <SketchArrow from={[154, 92]} to={[300, 54]} accent />
+    <SketchLabel x={228} y={58} size={10} mono>start()</SketchLabel>
+
+    <SketchArrow from={[300, 74]} to={[154, 112]} dashed />
+    <SketchLabel x={230} y={138} size={10} mono>join() waits</SketchLabel>
+  </Sketch>
+</Figure>
+
+The `daemon` flag deserves its own mention. Create a thread with `daemon=True` and it becomes a background thread: once only daemons are left running, the interpreter exits without waiting for them. A regular (non-daemon) thread, by contrast, keeps the process alive until it finishes. Daemons are handy for never-ending background work like heartbeats or metrics collection, but dangerous for anything that can't be cut off mid-sentence.
+
+```python
+import threading
+
+counter = 0
+
+def bump():
+    global counter
+    for _ in range(1_000_000):
+        counter += 1
+
+threads = [threading.Thread(target=bump) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+
+print(counter)
+```
+
+Here eight threads share one global `counter`. Each faithfully adds one, a million times, and the printed number comes out below eight million, and different on every run.
+
+## Where the lost increment comes from
+
+The explanation is that `counter += 1` isn't atomic (we covered this in the GIL section): it's a read, an add, and a write, spread across separate bytecodes. The OS scheduler preempts a thread whenever it likes, and two threads can end up reading the same value before either of them writes its result. Both add one to the same number, both write the same result back, and instead of two increments, only one sticks. Over millions of iterations, this kind of collision happens thousands of times, and the accumulated shortfall is exactly the gap below eight million.
+
+A race always comes down to three conditions lining up: there's shared mutable state, at least one thread writes to it, and access is unordered. Remove any one of the three (make the data local, only read it, or introduce synchronization), and the race disappears. Keep this three-item checklist in mind; it reliably points at the dangerous spots in your code.
+
+## Why tests don't catch it
+
+The most treacherous property of a race is that it isn't reproducible. Whether it shows up or not depends on exactly how the scheduler happened to interleave the threads on that particular run, which depends on machine load, core count, and the phase of the moon. Your test passed green a hundred times on your laptop because the "bad" interleaving never once fell into place. In production, under load, on different hardware, it will fall into place, and the count will drift or the data will corrupt.
+
+<Figure caption="Both threads passed the 'key missing?' check before either one wrote a value. As a result, compute ran twice, when it should have run once.">
+  <Sketch viewBox="0 0 470 235" title="Check-then-act">
+    <SketchLabel x={110} y={22} weight="bold">Thread A</SketchLabel>
+    <SketchLabel x={360} y={22} weight="bold">Thread B</SketchLabel>
+
+    <SketchBox x={30} y={38} width={160} height={40} />
+    <SketchLabel x={110} y={62} mono size={11}>key missing? yes</SketchLabel>
+
+    <SketchBox x={280} y={92} width={160} height={40} />
+    <SketchLabel x={360} y={116} mono size={11}>key missing? yes</SketchLabel>
+
+    <SketchBox x={30} y={150} width={160} height={40} accent />
+    <SketchLabel x={110} y={174} mono size={11} accent>compute + write</SketchLabel>
+
+    <SketchBox x={280} y={150} width={160} height={40} accent />
+    <SketchLabel x={360} y={174} mono size={11} accent>compute + write</SketchLabel>
+
+    <SketchLabel x={235} y={218} size={11} muted>compute ran twice</SketchLabel>
+  </Sketch>
+</Figure>
+
+This lack of reproducibility carries an unpleasant consequence: tests cannot prove the absence of a race. A green run only says "this time it didn't line up", not "there's no race". The practical takeaway is that you can't trust multithreaded code just because "it works". You find races by reasoning about what state is shared and who writes to it, not by watching a program not crash for a while.
+
+## A race without a lost counter: check-then-act
+
+A lost increment is only the most visible kind of race. Far more common is "check-then-act", where a thread first checks a condition and then acts on it, trusting that nothing changed in between.
+
+```python
+cache = {}
+
+def get_user(user_id):
+    if user_id not in cache:
+        cache[user_id] = load_from_db(user_id)
+    return cache[user_id]
+```
+
+This looks innocent, but two threads can pass the `user_id not in cache` check at the same time, while the cache is still empty, exactly as in the diagram above, and both end up hitting the database for the same user. An extra query is only half the problem; it gets worse if the action has a side effect (charge money, send an email, create an order), because then it happens twice. This whole class of bug hides anywhere the code follows a "look first, then act" shape: `if not exists: create`, `if balance >= amount: withdraw`, lazy singleton initialization.
+
+## Common mistakes
+
+- **Trusting that green tests mean no races.** A green run is just one unlucky interleaving that didn't happen to occur. Fix: hunt for races by analyzing shared state, and protect real invariants with synchronization instead of hope.
+- **Forgetting `join`.** The main thread races ahead and reads a result before the worker has computed it, or the program exits and cuts off unfinished work. Fix: wait on every thread whose result you actually need.
+- **Handing a `daemon` thread work that can't be lost.** Once only daemons remain, the interpreter exits and kills them mid-task, leaving a file half-written or a transaction unclosed. Fix: run anything critical on a regular thread and wait for it with `join`.
+- **Mutating a shared object without protection because the operation "looks small".** An increment, an `append` to a shared list, a dict update keyed on reading the old value first. Fix: guard shared mutable state with a lock, or push it into a queue instead.
+
+<Detail summary="The observer effect: why a print statement 'fixes' a race">
+
+Add a `print` or `time.sleep` to racy code for debugging, and the bug often disappears. That's not because you fixed it; it's because the intervention shifted the timing. `print` grabs an I/O lock and releases the GIL at a predictable point, `sleep` shifts the switching moment, and the "unlucky" interleaving stops lining up as often. This is the observer effect: measuring changes what you're measuring. Bugs like this are called heisenbugs, after the uncertainty principle. The moral: if adding debug output changes how reproducible a bug is, that's a strong sign of a race, not a reason to stop looking at it.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "threading.Thread(target=..., args=...) plus start() launches a genuine OS thread; join() blocks the calling thread until it finishes.",
+    "A daemon thread doesn't keep the process alive: once only daemons remain, the interpreter exits and cuts them off; dangerous for critical work.",
+    "A race is three conditions lining up: shared mutable state, at least one writer, no synchronization. Remove any one, and the race is gone.",
+    "A race is irreproducible and depends on how threads happen to interleave, so tests can't prove its absence: a green run only means 'it didn't line up this time'.",
+    "Besides a lost increment, a common race shape is check-then-act: two threads pass a check before either one changes the state.",
+  ]}
+/>
+
+## References
+
+- [Python docs - threading](https://docs.python.org/3/library/threading.html)
+- [Python docs - Thread objects](https://docs.python.org/3/library/threading.html#thread-objects)
+- [Wikipedia - Race condition](https://en.wikipedia.org/wiki/Race_condition)

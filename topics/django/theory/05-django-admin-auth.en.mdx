@@ -1,0 +1,184 @@
+---
+conceptId: django-admin-auth
+title: "Admin and authentication: users and permissions"
+estimatedMinutes: 12
+---
+
+# A ready-made admin and built-in users you didn't have to write
+
+Register a model in one file, and Django spins up a full management interface for it: searchable, filterable lists, create and edit forms, deletion, all with permission checks. Right alongside it sits a user system out of the box: a `User` model, password checking, log in, log out, the notion of "the current user for this request," and a mechanism that separates "who you are" from "what you're allowed to do." This is Django's "batteries included" philosophy at its most visible - functionality that would take days to build in another framework.
+
+The temptation for newcomers is to roll their own: their own user table, their own password storage, their own "admin" page. That's almost always worse than the built-in version: it's easy to store passwords insecurely, easy to get permission checks wrong, and a hand-built admin eats time better spent on real features. By the end of this section you'll understand how the admin works and how to configure it for a model, how built-in authentication works (login, logout, current user), how authentication differs from authorization, and how to lock a page down from outsiders.
+
+## Admin: an interface from a single registration line
+
+To make a model show up in the admin, you register it. In the simplest form, one line does it.
+
+```python
+from django.contrib import admin
+from .models import Order
+
+admin.site.register(Order)
+```
+
+That's already enough to see an orders section at `/admin/`: list, add, edit, delete. But the default list view is sparse - a single column with the object's string representation. You configure the admin through a `ModelAdmin` class, where you declare how to display the model.
+
+```python
+from django.contrib import admin
+from .models import Order
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ["customer", "amount", "status", "created"]
+    search_fields = ["customer"]
+    list_filter = ["status"]
+```
+
+The three most common settings: `list_display` - which columns to show in the list (instead of the single default one); `search_fields` - which fields the search box at the top searches; `list_filter` - which fields get a sidebar of quick filters. The `@admin.register(Order)` decorator is shorthand for a separate `admin.site.register` call.
+
+<Callout type="info">
+The admin is a tool for staff, not a public-facing part of the site. It's not a replacement for regular pages and forms aimed at users - it's convenient for your team to manage data through, but it isn't meant to be shown to customers.
+</Callout>
+
+## Authentication: the User model and logging in
+
+The built-in `User` model stores an account: username, password (always as a hash, never in plain text), email, flags. Three important flags: `is_active` (the account is active), `is_staff` (allowed into the admin), `is_superuser` (allowed to do anything). You create a superuser with `python manage.py createsuperuser`.
+
+Logging in is two steps. First, **checking** the username/password pair with the `authenticate` function: it returns a `User` object if the credentials are correct, and `None` if not. Then, **starting a session** with the `login` function, which records in the session that this request (and the ones that follow) belong to that user.
+
+```python
+from django.contrib.auth import authenticate, login, logout
+
+def sign_in(request):
+    user = authenticate(
+        request,
+        username=request.POST["username"],
+        password=request.POST["password"],
+    )
+    if user is not None:
+        login(request, user)
+        return HttpResponse("logged in")
+    return HttpResponse("invalid credentials", status=401)
+```
+
+Logging out is `logout(request)`: it clears the session. After login, every following request has `request.user` available - the current user. It has an `is_authenticated` property: `True` for a logged-in user, `False` for an anonymous one (a guest). That's the property you check to know whether someone is logged in.
+
+<Callout type="warning">
+`request.user.is_authenticated` is a **flag property**, not a login check you call. An anonymous visitor still has `request.user` too (a special `AnonymousUser`), just with `is_authenticated` set to `False`. Don't confuse "does request.user exist" (it always does) with "is the user logged in" (that's exactly what `is_authenticated` answers).
+</Callout>
+
+## Authentication vs. authorization
+
+Two similar-sounding words that get mixed up constantly, and the difference is the foundation of the whole access-control system.
+
+<Compare
+  leftTitle="Authentication"
+  rightTitle="Authorization"
+  left={<>
+    <p>Question: <strong>"who are you?"</strong></p>
+    <p>Establish identity: check username and password.</p>
+    <p>Result: <code>request.user</code> and its <code>is_authenticated</code>.</p>
+  </>}
+  right={<>
+    <p>Question: <strong>"what are you allowed to do?"</strong></p>
+    <p>Decide whether the established user may perform an action.</p>
+    <p>Result: a permission and group check.</p>
+  </>}
+  verdict="Authentication first (find out who arrived), then authorization (decide what they're allowed). A logged-in user doesn't mean 'anything goes' - permissions are checked separately."
+/>
+
+The system establishes identity first (authentication), and only then decides what that identity is allowed to do (authorization). A logged-in user has passed authentication; whether they're allowed to delete orders is a question of authorization.
+
+<Figure caption="A request first passes authentication (who arrived), then authorization (what's allowed); failing either step closes off access.">
+  <Sketch viewBox="0 0 480 170" title="Access flow: who and what's allowed">
+    <SketchBox x={16} y={66} width={80} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={56} y={90} mono size={10}>request</SketchLabel>
+
+    <SketchBox x={130} y={56} width={110} height={60} />
+    <SketchLabel x={185} y={80} mono size={10}>who are you?</SketchLabel>
+    <SketchLabel x={185} y={98} muted size={9}>authenticate</SketchLabel>
+    <SketchArrow from={[96, 86]} to={[130, 86]} />
+
+    <SketchBox x={280} y={56} width={120} height={60} accent />
+    <SketchLabel x={340} y={80} mono accent size={10}>what's allowed?</SketchLabel>
+    <SketchLabel x={340} y={98} muted size={9}>permissions / groups</SketchLabel>
+    <SketchArrow from={[240, 86]} to={[280, 86]} />
+
+    <SketchBox x={428} y={66} width={44} height={40} />
+    <SketchLabel x={450} y={90} mono size={9}>view</SketchLabel>
+    <SketchArrow from={[400, 86]} to={[428, 86]} accent />
+
+    <SketchArrow from={[185, 116]} to={[185, 150]} dashed />
+    <SketchLabel x={235} y={148} muted size={9}>not logged in -> denied</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Locking a page: login_required and PermissionRequiredMixin
+
+The most common need: only let logged-in users see a page. For function-based views there's the `login_required` decorator. It checks `request.user.is_authenticated`, and if the user is anonymous, redirects to the login page without calling the view.
+
+```python
+from django.contrib.auth.decorators import login_required
+
+@login_required
+def my_orders(request):
+    return HttpResponse(f"orders for {request.user}")
+```
+
+For class-based views, mixins play the same role. `LoginRequiredMixin` lets in only logged-in users; `PermissionRequiredMixin` goes further - it requires a specific **permission** (not just being logged in).
+
+```python
+from django.contrib.auth.mixins import PermissionRequiredMixin
+from django.views.generic import ListView
+from .models import Order
+
+class OrderList(PermissionRequiredMixin, ListView):
+    model = Order
+    permission_required = "shop.view_order"
+```
+
+Here `"shop.view_order"` is a **permission** in the `app.action_model` format. Django automatically creates four permissions for every model (`add`, `change`, `delete`, `view`). Permissions are best handed out not one by one but through **groups**: a group is a named bundle of permissions (say, "managers"), and adding a user to a group grants them all of its permissions at once. That scales far better than assigning permissions to people individually.
+
+## Sessions: how the server remembers a logged-in user
+
+`login` and `request.user` work thanks to **sessions**. A session is server-side storage tied to a specific visitor. On login, Django stores the user's id in the session and sends the browser a cookie holding the session key. On every following request, the browser sends that cookie back, middleware looks up the session by its key, pulls out the id, and populates `request.user`. The password never travels back and forth for this - only the unguessable session key does. `logout` deletes the session, and the cookie stops meaning anything.
+
+## Edge cases
+
+**`authenticate` returns `None`, it doesn't raise.** A wrong password isn't an exception-level error, it's a normal "not this one." Check the result for `None` explicitly - never pass it straight to `login` without first confirming a user was found.
+
+**Being logged in doesn't mean "anything goes."** `is_authenticated` only says identity has been established. Access to a specific action is a separate check. `login_required` lets in any logged-in user, permissions or not; to require a permission you need `PermissionRequiredMixin` or an explicit `request.user.has_perm(...)` check.
+
+**`is_staff` and `is_superuser` are different things.** `is_staff` only lets someone into the admin - what they see there is still limited to what they have permission for. `is_superuser` bypasses permission checks entirely. Giving someone `is_staff` without permissions just lets them into an admin with nothing to do.
+
+## Common mistakes
+
+- **Building your own user table and password storage.** Easy to get wrong (plain-text passwords, weak hashing). Use the built-in `User` model and `authenticate`/`login` - passwords are hashed correctly there.
+- **Confusing authentication and authorization.** "The user is logged in" doesn't mean "the user can do anything." Logging in is authentication; access to an action is authorization through permissions and groups.
+- **Checking `request.user` for truthiness instead of `is_authenticated`.** `request.user` always exists (for a guest it's `AnonymousUser`, which is truthy as an object). The actual sign of being logged in is `request.user.is_authenticated`.
+- **Assigning permissions to each user by hand.** Fine for a couple of accounts, unmanageable fast after that. Group permissions into groups and add users to groups.
+
+<Detail summary="Why passwords are stored as a hash, not as text">
+
+Django never stores a password in plain text - only its hash, produced by a slow cryptographic function with a salt. The point is that a hash can't be reversed back into a password, and the salt prevents precomputing a lookup table. On login, Django hashes the entered password the same way and compares hashes, not passwords. So even if the database leaks, the original passwords aren't exposed instantly - and that's why `authenticate` compares hashes for you; writing that logic by hand is unnecessary and risky. Rolling your own password storage is a classic way to create a security hole out of nothing.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A model shows up in the admin via registration (admin.site.register or @admin.register); its display is configured through ModelAdmin: list_display (columns), search_fields (search), list_filter (filters).",
+    "Logging in is two steps: authenticate checks the username/password and returns a User or None, login stores the user in the session; logout clears the session.",
+    "After login, request.user is available on every request; the sign of being logged in is request.user.is_authenticated (a guest is an AnonymousUser with is_authenticated == False).",
+    "Authentication answers 'who are you?' (establish identity), authorization answers 'what are you allowed to do?' (permissions and groups); authentication comes first.",
+    "Locking a page: login_required (decorator for FBVs) and LoginRequiredMixin let in logged-in users; PermissionRequiredMixin requires a specific app.action_model permission; permissions are handed out via groups.",
+    "A session is server-side storage tied to a visitor via a cookie holding a key; middleware uses it to restore request.user, and the password itself never travels between requests.",
+  ]}
+/>
+
+## References
+
+- [Django - The Django admin site](https://docs.djangoproject.com/en/stable/ref/contrib/admin/)
+- [Django - Using the authentication system](https://docs.djangoproject.com/en/stable/topics/auth/default/)
+- [Django - Permissions and authorization](https://docs.djangoproject.com/en/stable/topics/auth/default/#permissions-and-authorization)
+- [Django - How to log a user in](https://docs.djangoproject.com/en/stable/topics/auth/default/#how-to-log-a-user-in)
+- [Django - How Django stores passwords](https://docs.djangoproject.com/en/stable/topics/auth/passwords/)

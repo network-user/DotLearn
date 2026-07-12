@@ -1,0 +1,267 @@
+exercises:
+  - id: s3-client-vs-resource-001
+    concept: s3-operations-boto3
+    type: theory-quiz
+    difficulty: 1
+    prompt: "How does the low-level `boto3.client(\"s3\")` differ from `boto3.resource(\"s3\")`?"
+    choices:
+      - id: a
+        text: "client is a thin wrapper over the S3 HTTP API (one method = one request); resource is an OOP wrapper on top of it, and new code is usually written against client."
+      - id: b
+        text: "client only works with metadata, resource only with object bodies."
+      - id: c
+        text: "client is synchronous, resource is always asynchronous."
+      - id: d
+        text: "They're aliases for the same object, with no behavioral difference."
+    correct: [a]
+    explanation: "client mirrors the S3 HTTP API one-to-one: each method is a single request with protocol parameters. resource provides an object-oriented facade on top of client. Development of resource at AWS is effectively frozen, so new code is usually written against client."
+    variants:
+      - prompt: "What does `get_object` return under the `Body` key in the response?"
+        choices:
+          - id: a
+            text: "A StreamingBody - a streaming object; the actual bytes appear only after calling .read()."
+          - id: b
+            text: "A ready-made string with the object's content, already decoded."
+          - id: c
+            text: "A path to a temporary file where S3 downloaded the object."
+          - id: d
+            text: "The object's size in bytes, without the content itself."
+        correct: [a]
+        explanation: "`get_object` doesn't load the whole body into memory right away: the `Body` key holds a StreamingBody. Content is read via `.read()` (or in chunks via `.iter_chunks()`), after which the stream is closed."
+      - prompt: "Why is `head_object` needed if there's `get_object`?"
+        choices:
+          - id: a
+            text: "head_object returns only metadata (size, type, existence) without transferring the body - cheap even for a huge object."
+          - id: b
+            text: "head_object deletes the object after reading its metadata."
+          - id: c
+            text: "head_object is a deprecated alias for get_object with no differences."
+          - id: d
+            text: "head_object downloads the first 1000 bytes of the body for a preview."
+        correct: [a]
+        explanation: "`head_object` returns metadata without the body: it's used to find the size, Content-Type, or simply whether the object exists (a missing key throws a 404). No need to download a gigabyte just to learn its size."
+
+  - id: s3-pagination-need-001
+    concept: s3-operations-boto3
+    type: theory-quiz
+    difficulty: 2
+    prompt: "Code called `list_objects_v2` once and got exactly 1000 keys, even though the bucket has forty thousand. Why, and how do you get them all?"
+    choices:
+      - id: a
+        text: "S3 returns at most 1000 keys per call and marks the response `IsTruncated: True`; you need to repeat the call with `NextContinuationToken` until the flag is false (or use a paginator)."
+      - id: b
+        text: "The rest of the objects haven't synced across zones yet; wait and re-read."
+      - id: c
+        text: "You need to raise `MaxKeys` to 40000 - then all keys will arrive in one call."
+      - id: d
+        text: "The bucket really only has 1000 objects; the console is showing the rest by mistake."
+    correct: [a]
+    explanation: "1000 keys is a hard S3 limit per listing page. When there are more objects, the response is truncated with `IsTruncated: True` and `NextContinuationToken`. You get all keys by paging through the token in a loop, or with the built-in paginator. `MaxKeys` cannot be raised above 1000."
+    variants:
+      - prompt: "What does `IsTruncated: True` mean in a `list_objects_v2` response?"
+        choices:
+          - id: a
+            text: "The list is truncated: there are more keys than fit on the page, and there's a `NextContinuationToken` for the next one."
+          - id: b
+            text: "Some keys are corrupted and can't be read."
+          - id: c
+            text: "Versioning is enabled on the bucket, and not all versions are shown."
+          - id: d
+            text: "The request rate limit was exceeded and listing is temporarily unavailable."
+        correct: [a]
+        explanation: "`IsTruncated: True` tells you the page didn't fit all the keys. Along with the flag comes `NextContinuationToken` - a bookmark used to request the next page. Listing is done when the flag becomes false."
+      - prompt: "Why use a paginator in boto3 for `list_objects_v2`?"
+        choices:
+          - id: a
+            text: "It scrolls through pages by token itself, handing them out one by one, so you don't have to juggle ContinuationToken manually or miss a page."
+          - id: b
+            text: "It speeds up each individual request by compressing the response."
+          - id: c
+            text: "It caches keys to disk so they aren't requested again."
+          - id: d
+            text: "It bypasses the 1000-key limit, returning everything in a single response without pages."
+        correct: [a]
+        explanation: "The paginator encapsulates the loop over `ContinuationToken`: `paginator.paginate(...)` hands out pages one at a time as long as they exist. This removes the manual token bookkeeping and the common \"only read the first page\" bug."
+
+  - id: s3-pages-count-001
+    concept: s3-operations-boto3
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? It counts how many pages `list_objects_v2` returns for 2500 keys with MaxKeys=1000 (ceiling division)."
+    snippet: |
+      total_keys = 2500
+      max_keys = 1000
+      pages = -(-total_keys // max_keys)
+      print(pages)
+    expected:
+      kind: stdout
+      value: "3"
+    hints:
+      - "Each page holds at most MaxKeys keys; the last page can be partial. How many pages are needed to cover all the keys?"
+      - "`-(-a // b)` is division rounded up. 2500 keys at 1000 per page: two full pages and one partial one."
+    variants:
+      - snippet: |
+          total_keys = 4000
+          max_keys = 1000
+          pages = -(-total_keys // max_keys)
+          print(pages)
+        expected:
+          kind: stdout
+          value: "4"
+      - snippet: |
+          total_keys = 1
+          max_keys = 1000
+          pages = -(-total_keys // max_keys)
+          print(pages)
+        expected:
+          kind: stdout
+          value: "1"
+
+  - id: s3-list-fill-001
+    concept: s3-operations-boto3
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Complete the pagination loop: it keeps going while the response is truncated, and grabs the next page's token."
+    template: |
+      token = None
+      keys = []
+      while True:
+          params = {"Bucket": "ozon-media"}
+          if token:
+              params["ContinuationToken"] = token
+          resp = client.list_objects_v2(**params)
+          keys += [o["Key"] for o in resp.get("Contents", [])]
+          if not resp[{{flag}}]:
+              break
+          token = resp[{{nexttoken}}]
+    blanks:
+      flag:
+        accept: ['"IsTruncated"', "'IsTruncated'"]
+      nexttoken:
+        accept: ['"NextContinuationToken"', "'NextContinuationToken'"]
+    variants:
+      - prompt: "Complete the safe read of the object list and the truncation-flag check."
+        template: |
+          resp = client.list_objects_v2(Bucket="ozon-media", MaxKeys=1000)
+          objects = resp.{{getcall}}("Contents", [])
+          more = resp["{{flag}}"]
+          print(len(objects), more)
+        blanks:
+          getcall:
+            accept: ["get"]
+          flag:
+            accept: ["IsTruncated"]
+      - prompt: "Complete the call that returns only the object's metadata without the body."
+        template: |
+          meta = client.{{method}}(Bucket="ozon-media", Key="backups/big.zip")
+          print(meta["ContentLength"])
+        blanks:
+          method:
+            accept: ["head_object"]
+
+  - id: s3-pagination-loop-001
+    concept: s3-operations-boto3
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models pagination: pages of 2 keys are collected into one list while there's a \"next page\"."
+    snippet: |
+      pages = [
+          {"keys": ["a", "b"], "truncated": True},
+          {"keys": ["c", "d"], "truncated": True},
+          {"keys": ["e"], "truncated": False},
+      ]
+      all_keys = []
+      i = 0
+      while True:
+          page = pages[i]
+          all_keys += page["keys"]
+          if not page["truncated"]:
+              break
+          i += 1
+      print(len(all_keys))
+    expected:
+      kind: stdout
+      value: "5"
+    hints:
+      - "The loop appends each page's keys and stops when it hits a page with truncated == False. How many keys total will there be by then?"
+      - "Go through the pages: two of two keys plus a last one with one. It stops on the page where truncated is false, but that page's keys are already added too."
+    variants:
+      - snippet: |
+          pages = [
+              {"keys": ["k1", "k2", "k3"], "truncated": True},
+              {"keys": ["k4", "k5", "k6"], "truncated": False},
+          ]
+          all_keys = []
+          for page in pages:
+              all_keys += page["keys"]
+              if not page["truncated"]:
+                  break
+          print(len(all_keys))
+        expected:
+          kind: stdout
+          value: "6"
+      - snippet: |
+          pages = [
+              {"keys": [], "truncated": False},
+          ]
+          all_keys = []
+          for page in pages:
+              all_keys += page["keys"]
+              if not page["truncated"]:
+                  break
+          print(len(all_keys))
+        expected:
+          kind: stdout
+          value: "0"
+
+  - id: s3-multipart-parts-001
+    concept: s3-operations-boto3
+    type: predict-output
+    difficulty: 4
+    prompt: "What does the program print? It counts the number of multipart upload parts for a 512 MB file with a 100 MB part size (the last part is partial), and checks the 5 MB minimum part size."
+    snippet: |
+      import math
+
+      def part_count(size_mb, part_mb):
+          if part_mb < 5:
+              raise ValueError("part too small")
+          return math.ceil(size_mb / part_mb)
+
+      print(part_count(512, 100))
+      try:
+          part_count(512, 4)
+      except ValueError:
+          print("rejected")
+    expected:
+      kind: stdout
+      value: "6\nrejected"
+    hints:
+      - "math.ceil rounds up: the file is cut into parts of part_mb, the last part can be smaller. How many 100 MB parts cover 512 MB?"
+      - "First call: 512 / 100 = 5.12, rounded up to 6. Second call: a 4 MB part is below the 5 MB minimum, the function raises ValueError, and the except branch prints its string."
+      - "Output is two lines: first the part count, then the word from the exception handler."
+    variants:
+      - snippet: |
+          import math
+
+          def part_count(size_mb, part_mb):
+              if part_mb < 5:
+                  raise ValueError("part too small")
+              return math.ceil(size_mb / part_mb)
+
+          print(part_count(1000, 250))
+          print(part_count(45, 10))
+        expected:
+          kind: stdout
+          value: "4\n5"
+      - snippet: |
+          import math
+
+          def part_count(size_mb, part_mb):
+              if part_mb < 5:
+                  raise ValueError("part too small")
+              return math.ceil(size_mb / part_mb)
+
+          print(part_count(5000, 5))
+        expected:
+          kind: stdout
+          value: "1000"

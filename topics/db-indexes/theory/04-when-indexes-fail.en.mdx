@@ -1,0 +1,116 @@
+---
+conceptId: when-indexes-fail
+title: "When an index silently stops working"
+estimatedMinutes: 12
+---
+
+# When an index silently stops working
+
+You've set up a perfect index on the `email` column, and the query still crawls. You dig into the code and find the culprit: `WHERE lower(email) = 'anna@mail.ru'`. Someone wrapped the column in `lower()` just in case, to make the match case-insensitive, and that alone killed the index. The database indexed `email`, not `lower(email)`, and a value computed on the fly is useless for a sorted lookup. There's no error, no warning; the query runs and returns the right answer. It's just slow, a full scan.
+
+This is the sneakiest class of index problems: the index exists, looks like a good fit, and quietly goes unused. By the end of this chapter you'll instantly recognize the conditions that neutralize an index: a function or arithmetic over a column, a `LIKE` with a leading wildcard, an `OR` across different columns, implicit type coercion, low selectivity. And you'll know how to rewrite each one so the index works again.
+
+## An index wants a bare column
+
+Keep one mental model in mind and almost every case becomes obvious. An index stores a column's values exactly as they are, laid out in order. A sorted lookup only works when you compare the column itself to a value. The moment something computed from the column (a function, arithmetic, a substring) appears on the comparison side, the database has to evaluate that expression for every single row, and evaluating something for every row is exactly what a full scan is. Such a condition has a name: non-sargable.
+
+<Figure caption="On the left, a condition on the bare column maps onto the index · on the right, arithmetic over the column forces every row to be read.">
+  <Sketch viewBox="0 0 440 200" title="Bare column vs. expression over a column">
+    <SketchLabel x={110} y={16} weight="bold">amount greater than 500</SketchLabel>
+    <SketchBox x={60} y={34} width={100} height={120} fill="rgb(var(--surface-2))" />
+    <SketchHighlight x={58} y={104} width={104} height={52} />
+    <SketchArrow from={[110, 30]} to={[110, 108]} accent />
+    <SketchLabel x={110} y={176} muted>index leads to a block</SketchLabel>
+    <SketchLabel x={330} y={16} weight="bold">amount times 2 greater than 1000</SketchLabel>
+    <SketchBox x={280} y={34} width={100} height={120} fill="rgb(var(--surface-2))" />
+    <SketchBox x={272} y={26} width={116} height={18} dashed />
+    <SketchArrow from={[330, 34]} to={[330, 152]} dashed />
+    <SketchLabel x={330} y={176} muted>scanning every row</SketchLabel>
+  </Sketch>
+</Figure>
+
+On the left, the condition `amount greater than 500` compares the bare column to a number, and the index leads straight to the block of matching rows. On the right, the same logical condition is written as `amount times 2 greater than 1000`, and arithmetic over the column forces every row to be read. The fix is to move the operation to the other side: `amount greater than 500` instead of `amount times 2 greater than 1000`. Same meaning, but the column is bare again.
+
+Try it live. Below is a table with an index on `amount` and a deliberately non-sargable condition. Run it and read the plan: it's `SCAN`, a full scan. Now rewrite the condition from `amount * 2 > 1000` to `amount > 500` and run it again: the plan becomes `SEARCH ... USING INDEX`.
+
+<SideSql
+  title="Sargable vs. non-sargable"
+  editable
+  live
+  fixture={`CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER);
+INSERT INTO orders (user_id, amount)
+WITH RECURSIVE seq(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1500
+)
+SELECT n % 200, (n * 13) % 3000 FROM seq;
+CREATE INDEX idx_orders_amount ON orders(amount);`}
+  query={`EXPLAIN QUERY PLAN
+SELECT id FROM orders WHERE amount * 2 > 1000;`}
+/>
+
+Why can't the database peek inside a function and still use the index? Because in the general case it has no way of knowing whether the function preserves value order. Lowercasing reorders strings unpredictably from the engine's point of view: in the original index, `Anna` and `anna` sit far apart, but after `lower()` they collapse into the same value. The planner won't try to reason about what an arbitrary function does to order, so it honestly falls back to a scan. There are only two ways to get the index back: remove the function from the condition, or index the function's result directly, ahead of time.
+
+## LIKE: a prefix works, a leading wildcard doesn't
+
+With strings, this model gives a neat consequence. An index stores strings sorted alphabetically, which means sorted by their beginning. That's why `email LIKE 'anna%'` uses the index beautifully: the known prefix `anna` defines a contiguous range, and every string starting with `anna` sits together. But `email LIKE '%mail.ru'` can't use the index: a leading wildcard means the string can start with anything, and you can't build a range around an unknown beginning.
+
+The practical rule: searching by the start of a string is indexable, searching by a substring or the end is not. If you need to search by the end of a string (say, by email domain), that's a signal your data model deserves a fix: add a separate domain column, use a full-text index, or store the string reversed and search by prefix on that instead. The same logic covers searching for a substring anywhere in the middle: the moment the target can start at any character, a sorted index is useless, and you need a different tool, such as a full-text or trigram index.
+
+## OR across different columns
+
+The condition `WHERE user_id = 5 OR status = 'paid'` stumps the engine: one index covers one column and can't check two unrelated conditions in a single pass. This usually ends in a full scan, even if both columns are individually indexed. The fix is to split it into two branches with `UNION`:
+
+```sql
+SELECT * FROM orders WHERE user_id = 5
+UNION
+SELECT * FROM orders WHERE status = 'paid';
+```
+
+Now each branch is a separate, single-column query, and each one uses its own index, while `UNION` merges the rows and, as a side effect, removes duplicates (rows that match both conditions). What looked like one non-sargable condition has become two sargable ones.
+
+## Implicit coercion and low selectivity
+
+Two quiet traps to close with. The first is implicit type coercion. If the `phone` column is declared `TEXT` and you write `WHERE phone = 74951234567` (a number), the database inserts a conversion to compare text with a number, and that conversion can knock the index out of use. Compare a column to a value of its own type: `WHERE phone = '74951234567'`. SQLite's flexible typing makes this worse: a text column stores `'0042'` and `'42'` as different strings, and comparing against a number produces a surprising result even before any index is involved. An explicit string literal clears up both the ambiguity and the lost index at once.
+
+The second is low selectivity. When a condition on an indexed column selects a large share of the table, the planner deliberately ignores the index. Reading half the rows through an index, jumping from reference to reference, costs more than reading that same half straight through. To make that call correctly, the planner needs fresh statistics about how values are distributed, and the `ANALYZE` command is what refreshes them. On a table that changed drastically after a bulk load, stale statistics can push the planner toward a bad plan, and a one-off `ANALYZE` often fixes the query without adding a single new index.
+
+<Compare
+  leftTitle="Index works (sargable)"
+  rightTitle="Index sits idle (non-sargable)"
+  left="WHERE email = 'anna@mail.ru'; WHERE created_at >= '2024-02-01' AND created_at < '2024-03-01'; WHERE email LIKE 'anna%'; WHERE phone = '74951234567'."
+  right="WHERE lower(email) = 'anna@mail.ru'; WHERE date(created_at) = '2024-02-15'; WHERE email LIKE '%mail.ru'; WHERE phone = 74951234567 (number vs. TEXT)."
+  verdict="On the left, the column is always bare and compared to a value of its own type. On the right, something's layered on top of the column, and a sorted lookup becomes impossible."
+/>
+
+## Common mistakes
+
+**Wrapping a column in a function out of habit.** `date(created_at) = '2024-02-15'` looks tidy but kills the index. The same filter written as a half-open range, `created_at >= '2024-02-15' AND created_at < '2024-02-16'`, leaves the column bare.
+
+**Comparing a TEXT column to a number.** Implicit coercion quietly cancels the index. Always compare against a string literal when the column is text.
+
+**Expecting a miracle from an index on a low-selectivity column.** An index on gender, a three-value status, or an `is_active` flag is rarely used: the condition selects too much. Before creating an index, estimate the fraction of rows the condition actually filters out.
+
+**A leading wildcard in a substring search.** `LIKE '%Smith%'` looks like a convenient universal search, but on a large table it guarantees a full scan. That's because the match can start at any character, so the index's ordering doesn't narrow the candidates at all.
+
+<Detail summary="Expression indexes and partial indexes">
+
+Sometimes a function over a column is genuinely needed in a query, and there's no way to rewrite around it. In that case, you index the expression itself rather than the column. Case-insensitive email search is the classic example: `CREATE INDEX idx_users_email_lower ON users(lower(email))`, and now `WHERE lower(email) = ?` uses the index, because the index holds exactly `lower(email)`. The second tool is a partial index with a condition: `CREATE INDEX idx_orders_pending ON orders(created_at) WHERE status = 'pending'`. It indexes only the rows with `status = 'pending'`, so it stays small and cheap to maintain, which is ideal when hot queries always filter on one rare status value. Both techniques exist in SQLite and in Postgres.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An index only works when a condition compares the bare column to a value; a function or arithmetic over the column makes it non-sargable and triggers a full scan.",
+    "LIKE 'prefix%' uses the index, LIKE '%suffix' with a leading wildcard doesn't: you can't build a range around an unknown starting point.",
+    "OR across different columns usually collapses into a SCAN; split it into branches with UNION, each using its own index.",
+    "Implicit type coercion (a TEXT column vs. a number) can cancel out an index; compare a column to a value of its own type.",
+    "The planner deliberately ignores a low-selectivity index; the ANALYZE command supplies the fresh statistics its decisions rely on.",
+  ]}
+/>
+
+## References
+
+- [SQLite: The SQLite Query Optimizer Overview](https://www.sqlite.org/optoverview.html)
+- [SQLite: Indexes On Expressions](https://www.sqlite.org/expridx.html)
+- [SQLite: Partial Indexes](https://www.sqlite.org/partialindex.html)
+- [Use The Index, Luke: Why is my index not used](https://use-the-index-luke.com/sql/where-clause/obfuscation)

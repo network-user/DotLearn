@@ -1,0 +1,120 @@
+---
+conceptId: generator-expressions
+title: "Generator expressions and pipelines"
+estimatedMinutes: 11
+---
+
+# One character stands between a list in memory and a lazy pipeline
+
+Write `sum([x * x for x in range(10_000_000)])` and Python dutifully builds a list of ten million numbers, adds them up, and immediately throws the whole list away. Drop the square brackets for round ones, and the same sum computes with almost no memory: `sum(x * x for x in range(10_000_000))`. A one-character difference separates a materialized list from a lazy pipeline that streams elements one at a time. That round form is called a generator expression.
+
+By the end of this section you will tell a generator expression apart from a list comprehension by memory and by timing, chain several lazy stages into a pipeline, pass an expression straight into `sum` and `any` without extra parentheses, and know which part of an expression runs immediately and which part waits.
+
+## A generator expression is a lazy list
+
+The syntax mirrors a comprehension, but round parentheses instead of square brackets change everything. A list comprehension computes and stores every element in memory right away. A generator expression computes nothing up front: it returns a generator that produces elements one at a time, only when asked.
+
+<Figure caption="A pipeline of generator expressions: data flows one element at a time, and no stage ever materializes in full.">
+  <PipelineFigure
+    title="A lazy processing pipeline"
+    stages={[
+      { label: 'lines', note: 'source, lazy' },
+      { label: 'if x', note: 'drop the empty ones', active: true },
+      { label: 'int(x)', note: 'convert on the fly' },
+      { label: 'sum(...)', note: 'fold one at a time' },
+    ]}
+  />
+</Figure>
+
+Compare the two forms. The list version builds an intermediate list; the generator version does without one:
+
+```python
+nums = [1, 2, 3, 4]
+as_list = [x * x for x in nums]
+as_gen = (x * x for x in nums)
+print(as_list)
+print(as_gen)
+```
+
+This prints `[1, 4, 9, 16]` and something like `<generator object <genexpr> at 0x...>`. The list is already fully computed, while the generator has not touched a single element yet: it is merely ready to produce them. You can walk it the same way you walk a list, just once.
+
+## Folding without an intermediate list
+
+The real payoff shows up once the result is folded right away by something like `sum`, `max`, `any`, or `all`. When a generator expression is the sole argument to a function, that function's own parentheses double as the expression's parentheses, so you never need to write them twice:
+
+```python
+nums = [1, 2, 3, 4, 5]
+print(sum(x * x for x in nums))
+print(any(x > 4 for x in nums))
+```
+
+This prints `55` and `True`. Neither a list of squares nor a list of comparisons ever appears in memory: `sum` and `any` pull elements one at a time. `any` throws in a second bonus, short-circuiting: the moment it finds a `True`, it stops evaluating the rest.
+
+## A pipeline of several lazy stages
+
+You can chain stages one after another, and as long as nobody has requested a result, no data flows. Run the example: a list of strings passes through a filter, a conversion to number, and a sum, all one element at a time. Change the threshold in the second stage from `n >= 10` to `n >= 20` and watch the smaller numbers drop out of the sum.
+
+<PyDemo
+  title="A pipeline: strings into a sum"
+  code={`lines = ["10", "", "20", "30", "", "5"]
+numbers = (int(x) for x in lines if x)
+big = (n for n in numbers if n >= 10)
+print(sum(big))`}
+/>
+
+Each stage is a generator built on top of the previous one. `numbers` pulls from `lines`, `big` pulls from `numbers`, and `sum` pulls from `big`. No intermediate list ever gets built, which is exactly what lets you process files too large to fit in memory whole. This is the convenient way to read a big log: line by line, without loading it all at once.
+
+## What runs immediately, and what waits
+
+Here is a subtlety interviewers love. The expression for the outermost `for`'s source evaluates immediately, at the moment the generator is created. Everything else, including filters and transforms, waits until you walk it.
+
+```python
+data = [1, 2, 3]
+gen = (x * 10 for x in data)
+data = [7, 8]
+print(list(gen))
+```
+
+This prints `[10, 20, 30]`, not `[70, 80]`. When `gen` was created, the expression `data` had already been evaluated, and the generator captured that first list. Reassigning the name `data` to a new list does not touch the generator, because it holds a reference to the original object, not to the name. Had you not reassigned `data` but mutated it with `append` before walking the generator, though, the generator would have seen those changes, since the lazy walk reaches them later.
+
+## Common mistakes
+
+Here are the slip-ups that erase the benefit of generator expressions.
+
+- **A stray `list()` around the expression.** Writing `sum(list(x for x in data))` builds a list first, losing the entire memory saving. If the result is folded right away, the `list()` wrapper is unnecessary.
+- **Walking an exhausted expression twice.** A generator expression is single-use. You sum it, then want the max, and find it empty. If you need two passes, create two expressions or one list.
+- **Expecting a length or indexing.** A generator expression has no `len()` and no indexing: it is a stream, not a sequence. If you need a length, you have to materialize a list.
+- **Intermediate lists inside a pipeline.** When assembling a pipeline, it is easy to wrap each stage in a list out of habit. That kills the laziness, and every stage ends up in memory at once. Keep the stages as generators until the final fold.
+
+<Detail summary="When a list still beats a generator expression on speed">
+
+Laziness is not free. For every element, a generator has to be thawed and refrozen, and that hop between frames costs a bit more than appending to a list via the `LIST_APPEND` instruction. So on small data that you need to walk in full right away, a list comprehension often turns out faster.
+
+The rule of thumb is simple. Reach for a generator expression when memory matters (large or endless data), when the result is folded right away (`sum`, `any`, `max`), or when short-circuiting helps and you might never reach the end of the data. Reach for a list when the data is small, you need a second pass, or you need a length or indexing.
+
+```python
+nums = range(1000)
+print(next(x for x in nums if x * x > 100))
+```
+
+This prints `11`: `next` over the generator expression found the first matching element and stopped, without checking the remaining 989 numbers. The list version would have checked all of them.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Round parentheses instead of square brackets turn a comprehension into a generator expression: same syntax, but a lazy stream instead of a list in memory.",
+    "When an expression is a function's sole argument, the function's own parentheses double as the expression's parentheses: sum(x*x for x in nums).",
+    "Pipeline stages stack on top of each other and move no data until the final fold requests a result.",
+    "The outermost for's source expression evaluates immediately at creation time; filters and transforms wait until you walk it.",
+    "A generator expression is single-use, with no len and no indexing: a second pass, a length, or indexing all require a list.",
+    "Reach for a list for speed on small data and repeated passes, and for an expression for memory and short-circuiting.",
+  ]}
+/>
+
+## References
+
+- [Python docs · Generator expressions](https://docs.python.org/3/reference/expressions.html#generator-expressions)
+- [PEP 289 · Generator Expressions](https://peps.python.org/pep-0289/)
+- [Python docs · any() and all()](https://docs.python.org/3/library/functions.html#any)
+- [Python FAQ · generator expressions and scope](https://docs.python.org/3/reference/expressions.html#displays-for-lists-sets-and-dictionaries)

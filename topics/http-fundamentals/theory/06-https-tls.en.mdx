@@ -1,0 +1,102 @@
+---
+conceptId: https-tls
+title: HTTPS and TLS in Plain Terms
+estimatedMinutes: 13
+---
+
+# HTTPS: what that padlock actually buys you
+
+You're sitting in a coffee shop typing your email password into the shared Wi-Fi. Everything sent over plain HTTP is visible to the hotspot's owner, or the kid with a sniffer at the next table, as plain text: your password, your cookies, the contents of your emails. HTTP was designed for a world where the network was assumed to be friendly. HTTPS is the admission that it isn't.
+
+## Mental model: the same HTTP, in an armored envelope
+
+HTTPS isn't a different protocol. It's the exact same HTTP from the earlier concepts, wrapped in an encrypted channel called TLS (Transport Layer Security). Every method, status code, header, and cookie works exactly as before, only the transport underneath changes: the client and server first set up a secure connection, and only then do ordinary requests and responses travel inside it.
+
+TLS gives you three guarantees, and it's worth keeping them separate:
+
+1. **Confidentiality.** The content of the exchange is encrypted: anyone sharing the Wi-Fi, or your ISP, sees a stream of meaningless bytes.
+2. **Integrity.** The message can't be silently altered in transit: tampering with even one byte breaks the cryptographic check. This is also why an ISP can no longer splice its own ads into someone else's pages, which used to be common practice before HTTPS became the default.
+3. **Server authentication.** You're actually talking to `chase.com`, not to a Wi-Fi hotspot pretending to be it. That's the job of certificates.
+
+The first two guarantees come from encryption algorithms. The third is the most interesting one, and it's the one that answers "how does the browser even know the server is real?"
+
+## The handshake: how strangers agree on a secret
+
+Before the first request, client and server run a **TLS handshake** - a brief exchange shown in Figure 1.
+
+<Figure caption="A simplified TLS handshake: agree on algorithms, verify the certificate, derive a shared key, and only then does HTTP begin.">
+  <PipelineFigure
+    title="Setting up an HTTPS connection"
+    stages={[
+      { label: 'ClientHello', note: 'ciphers I support' },
+      { label: 'ServerHello', note: 'picks one + sends certificate' },
+      { label: 'Verify', note: 'browser checks the certificate', active: true },
+      { label: 'Keys', note: 'shared secret derived' },
+      { label: 'HTTP', note: 'requests inside the encrypted channel', active: true },
+    ]}
+  />
+</Figure>
+
+The client says hello and lists the algorithms it understands. The server picks a shared option and presents a **certificate**. The client verifies it, and the two sides then derive a shared session key, in a way that an eavesdropper watching the whole exchange still can't compute it themselves - that's the Diffie-Hellman key exchange doing the math. From that point on, all HTTP traffic is encrypted with that key.
+
+The good news in practice: the whole handshake is handled by libraries and the browser. Your job is just to understand what's happening and why a certificate error means "stop," not "click through."
+
+## Certificates: a passport with a stamp
+
+A certificate is a file that says "this public key belongs to the domain chase.com," carrying a digital signature from a **certificate authority** (CA). Trust is structured in three tiers, shown in Figure 2: the browser doesn't know your site, but it knows a couple hundred root CAs, and a CA vouches for the site.
+
+<Figure caption="The chain of trust: the browser trusts the root CA, the CA signed the site's certificate, therefore the browser trusts the site.">
+  <Sketch viewBox="0 0 460 170" title="Certificate chain">
+    <SketchBox x={20} y={60} width={120} height={48} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={80} y={80} mono>browser</SketchLabel>
+    <SketchLabel x={80} y={98} muted size={11}>list of roots</SketchLabel>
+    <SketchArrow from={[145, 84]} to={[195, 84]} accent />
+    <SketchBox x={200} y={60} width={100} height={48} accent radius={8} />
+    <SketchLabel x={250} y={80} mono accent>CA</SketchLabel>
+    <SketchLabel x={250} y={98} muted size={11}>signs</SketchLabel>
+    <SketchArrow from={[305, 84]} to={[355, 84]} accent />
+    <SketchBox x={360} y={60} width={80} height={48} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={400} y={90} mono size={12}>site</SketchLabel>
+    <SketchLabel x={230} y={140} muted>trust flows down the chain of signatures</SketchLabel>
+  </Sketch>
+</Figure>
+
+An attacker can absolutely generate a forged certificate for `chase.com`, what they can't get is a signature from a CA the browser already trusts. That's exactly why browsers throw up a red warning on self-signed certificates: there's no stamp, nobody's vouching for it.
+
+Certificates are issued for a fixed term and renewed periodically. Since Let's Encrypt arrived, they're free and automatable, so "too expensive" hasn't been an excuse for skipping HTTPS in production for a long time.
+
+## What will surprise you
+
+**HTTPS doesn't hide where you're going.** An observer can't read the content, but they can see the server's IP address and, typically, the domain name: it travels in plain text at the start of the handshake (the SNI extension) and in the DNS lookup. The path, query parameters, headers, and bodies are hidden, but the bare fact "this client talked to this site" is not.
+
+**A padlock doesn't mean "this site is trustworthy."** A certificate only confirms you're talking to that exact domain. A phishing site like `chase-login-secure.ru` can get a perfectly valid certificate and padlock of its own. HTTPS is about the channel, not about reputation.
+
+**One HTTP image can undo everything.** If a page loads over HTTPS but links to a script over plain HTTP, that's mixed content: an attacker can tamper with the unprotected piece and use it to reach the rest of the page. Modern browsers simply block resources like that.
+
+## Common mistakes
+
+**Clicking "proceed anyway" on a certificate error.** The error means the authentication guarantee just failed: someone may be sitting between you and the server. Training yourself, or your users, to click through it defeats the entire point of TLS.
+
+**A self-signed certificate in production.** Perfectly fine for local development. For real users, it's indistinguishable from an attack, and the browser will say exactly that.
+
+**Terminating TLS and forgetting about it.** In a typical setup, a proxy decrypts TLS and the request reaches the application over plain HTTP. An application that checks the request scheme will conclude it's running unencrypted; the real scheme is passed along in a header like `X-Forwarded-Proto`.
+
+<Detail summary="HSTS: how a site bans itself from ever using HTTP">
+  A user's first visit to a site often starts over plain HTTP, and that very first, unencrypted request is interceptable. The Strict-Transport-Security header tells the browser: "for the next six months, only ever talk to me over HTTPS, even if a link points to HTTP." And to protect that very first visit too, a domain can be added to a preloaded HSTS list baked directly into browsers.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "HTTPS is ordinary HTTP running inside an encrypted TLS channel: request and response semantics don't change.",
+    "TLS provides three guarantees: confidentiality, integrity, and server authentication.",
+    "A certificate binds a key to a domain and is vouched for by a CA's signature; the browser trusts the site because it trusts whoever signed it.",
+    "HTTPS hides content but not the fact of communication: domain and IP are visible to an observer.",
+    "A certificate error is a reason to stop, not to 'proceed anyway': it can mean someone is intercepting the connection.",
+  ]}
+/>
+
+## References
+
+- [MDN: An overview of HTTP, HTTPS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview)
+- [RFC 8446: TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446)
+- [Let's Encrypt: How It Works](https://letsencrypt.org/how-it-works/)

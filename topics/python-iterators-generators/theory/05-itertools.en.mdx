@@ -1,0 +1,163 @@
+---
+conceptId: itertools
+title: "itertools: combining iterators"
+estimatedMinutes: 11
+---
+
+# Ready-made building blocks instead of hand-rolled loops
+
+You keep writing the same loops over and over: stitch two lists into one pass, take the first five items from something endless, group consecutive matching records, walk every pair from two sets. The `itertools` module packages these operations into small, lazy, C-implemented pieces that snap together like building blocks. They read like a named operation, run fast, and use almost no memory. Two of them, though, hide traps that everyone falls into exactly once.
+
+By the end of this section you will chain and slice streams with `chain` and `islice`, bound infinite sources like `count`, `cycle`, and `repeat`, walk every combination with `product`, group data with `groupby`, and steer around the `groupby` and `tee` traps.
+
+## itertools snaps together lazy building blocks
+
+Every `itertools` function takes iterators and returns an iterator. Until a consumer pulls on the result, not a single element gets computed. You assemble a pipeline from these pieces: a combinator joins sources, a slicer takes the piece you need, and a consumer at the end materializes everything.
+
+<Figure caption="itertools snaps together small lazy building blocks: combinators never touch the data until a consumer at the end pulls on it.">
+  <PipelineFigure
+    title="How an itertools pipeline comes together"
+    stages={[
+      { label: 'a, b, c', note: 'source iterators' },
+      { label: 'chain / product', note: 'combine', active: true },
+      { label: 'islice / groupby', note: 'slice, group' },
+      { label: 'list / sum', note: 'consumer pulls' },
+    ]}
+  />
+</Figure>
+
+## Stitching and slicing: chain, islice, and infinite sources
+
+`chain` walks several iterators back to back as if they were one. `islice` takes a slice of an iterator using `range`-style rules, but without indexing, and it works on any source, even an infinite one.
+
+```python
+from itertools import chain, islice, count
+
+print(list(chain([1, 2], [3, 4], [5])))
+print(list(islice(count(10), 3)))
+```
+
+This prints `[1, 2, 3, 4, 5]` and `[10, 11, 12]`. `chain` stitched three lists together with no intermediate copy, and `islice(count(10), 3)` cut three elements off the endless counter `count`, starting at ten.
+
+The trio `count`, `cycle`, and `repeat` produces endless streams: `count` counts upward, `cycle` loops a sequence around forever, `repeat` repeats a single value. You always bound them, usually with `islice` or `takewhile`, otherwise the walk never finishes.
+
+```python
+from itertools import cycle, repeat
+
+print(list(islice(cycle("AB"), 5)))
+print(list(repeat("x", 3)))
+```
+
+This prints `['A', 'B', 'A', 'B', 'A']` and `['x', 'x', 'x']`. `repeat` has a convenient finite form with a second argument, while `cycle` and `count` stay infinite without an outside bound.
+
+## product: walk every combination
+
+`product` gives you the Cartesian product, that is, every combination of elements drawn from several sets. It replaces nested loops with a single call.
+
+```python
+from itertools import product
+
+sizes = ["S", "M"]
+colors = ["red", "blue"]
+print(list(product(sizes, colors)))
+```
+
+This prints `[('S', 'red'), ('S', 'blue'), ('M', 'red'), ('M', 'blue')]`. The rightmost set cycles faster than the left one, exactly as it would in nested loops where `colors` was the inner loop.
+
+## groupby: groups only consecutive matching keys
+
+`groupby` collects neighboring elements that share a key into groups. The key word is "neighboring": it only compares adjacent items and starts a new group the moment the key changes. On unsorted data, that means the same key can splinter into several groups. Run the example and remove `sorted` to see the key `1` split into two groups instead of one.
+
+<PyDemo
+  title="groupby before and after sorting"
+  code={`from itertools import groupby
+
+data = [1, 1, 2, 3, 3, 3, 1]
+raw = [(k, len(list(g))) for k, g in groupby(data)]
+print("as-is:", raw)
+
+ordered = [(k, len(list(g))) for k, g in groupby(sorted(data))]
+print("after sorted:", ordered)`}
+/>
+
+On the unsorted `data`, the groups come out as `(1, 2), (2, 1), (3, 3), (1, 1)`: the value one shows up twice, because its occurrences are not adjacent. After `sorted`, the groups become `(1, 3), (2, 1), (3, 3)`, and each key appears exactly once. The rule that follows: to group across the whole dataset, sort by the same key you pass to `groupby` first.
+
+## Where itertools surprises people
+
+A group inside `groupby` is a sub-iterator, alive only until you advance the outer loop. `groupby` reuses a single buffer, so trying to save the groups for later gives you emptiness or the wrong elements.
+
+```python
+from itertools import groupby
+
+groups = list(groupby(sorted("aabbbc")))
+print([(k, list(g)) for k, g in groups])
+```
+
+This prints `[('a', []), ('b', []), ('c', [])]`, not the groups you expected. By the time this prints, `groupby`'s outer walk has already reached the end and drained every group, including the last one. To keep the contents, materialize them right inside the loop: `[(k, list(g)) for k, g in groupby(...)]`.
+
+The second trap is `tee`, which splits one iterator into several. As long as the branches stay roughly in step, this is cheap. But if one branch races far ahead, `tee` is forced to buffer everything in between, and memory grows. One more thing: once you have called `tee`, do not touch the original iterator, or the branches will lose elements.
+
+```python
+from itertools import tee
+
+source = iter([1, 2, 3, 4])
+a, b = tee(source, 2)
+print(list(a))
+print(list(b))
+```
+
+This prints `[1, 2, 3, 4]` twice: both branches saw the full stream, because we never touched `source` again after splitting it. Had we called `next(source)` between those lines, one value would have gone missing from both branches.
+
+A third subtlety concerns `zip`. Plain `zip` silently stops at the shortest sequence, and the leftover elements disappear without a warning. The `strict=True` flag (Python 3.10 and newer) turns a length mismatch into an explicit error.
+
+```python
+print(list(zip([1, 2, 3], ["a", "b"])))
+```
+
+This prints `[(1, 'a'), (2, 'b')]`: the `3` vanished silently. With `zip([1, 2, 3], ["a", "b"], strict=True)`, you would get a `ValueError` instead of a silent loss, which is usually exactly what you want.
+
+## Common mistakes
+
+Here are the slip-ups that come up most often.
+
+- **`groupby` without sorting first.** It only groups neighbors. If you want groups across the whole dataset, sort by the same key beforehand, or one key will scatter into several groups.
+- **Saving `groupby` groups for later.** A group's sub-iterator only lives until the outer loop's next step. If you need the elements later, wrap the group in `list` right inside the loop body.
+- **Touching the source iterator after `tee`.** `tee`'s branches read through a shared buffer. Reaching into the original after `tee` steals elements from the branches.
+- **An unbounded walk over `count` or `cycle`.** Without `islice` or `takewhile`, these sources never end, and the walk hangs. Always add a bound.
+
+<Detail summary="Why itertools usually beats a hand-written loop">
+
+`itertools` functions are implemented in C and run lazily: they never build intermediate lists, and they spin their inner loop without dropping back into Python bytecode on every element. Where your loop runs several interpreter instructions per step, `chain` or `islice` does the same work in compiled code.
+
+The official documentation also ships a "recipes" section: short functions like `take`, `pairwise` (before version 3.10), or `flatten`, assembled from the basic building blocks. They are worth reading in full: a ready-made dictionary of traversal idioms you would otherwise have to reinvent.
+
+```python
+from itertools import islice
+
+def take(n, iterable):
+    return list(islice(iterable, n))
+
+print(take(3, range(100)))
+```
+
+This prints `[0, 1, 2]`: `take`, straight from the recipes, grabs the first `n` elements from any iterator, including an infinite one.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "itertools functions take iterators and return iterators: they are lazy and snap into a pipeline, computing nothing until a consumer pulls.",
+    "chain stitches streams into one pass, islice slices any iterator by range-style rules, including an infinite one.",
+    "count, cycle, and repeat are infinite: bound them with islice or takewhile, or the walk never ends.",
+    "groupby groups only consecutive matching keys, so grouping across the whole dataset requires sorting by that same key first.",
+    "A group inside groupby is a single-use sub-iterator: wrap it in list right inside the loop to keep its contents.",
+    "tee buffers the gap between branches and breaks if you touch the source iterator; zip with strict=True turns a length mismatch into an error.",
+  ]}
+/>
+
+## References
+
+- [Python docs · itertools](https://docs.python.org/3/library/itertools.html)
+- [Python docs · itertools recipes](https://docs.python.org/3/library/itertools.html#itertools-recipes)
+- [Python docs · zip and the strict parameter](https://docs.python.org/3/library/functions.html#zip)
+- [Python docs · itertools.groupby](https://docs.python.org/3/library/itertools.html#itertools.groupby)

@@ -1,0 +1,119 @@
+---
+conceptId: methods
+title: Methods and Idempotency
+estimatedMinutes: 14
+---
+
+# Methods: the protocol's verbs and the promises they make
+
+The user clicks "Pay," the connection blips, the page freezes. They click again. Does the payment get charged twice? The answer isn't a matter of luck, it depends on which method the request used and whether the server actually keeps that method's promise. HTTP methods aren't just words in the start line, they're contracts: each one promises whether it's safe to repeat and whether it changes anything on the server.
+
+## Mental model: the method answers "what to do with the resource"
+
+The path in a request names a **resource** - the thing you're working with: a page, a product, an order. The method names the **action** on it. Five methods cover almost everything you'll ever need:
+
+- `GET` - read the resource. Change nothing.
+- `POST` - create a new resource or trigger processing.
+- `PUT` - replace the resource entirely with the version sent.
+- `PATCH` - change part of the resource.
+- `DELETE` - remove the resource.
+
+Beyond the action, each method carries two promise-properties, and Figure 1 shows how the methods split along them. A **safe** method doesn't change server state at all: read it as many times as you like, nothing breaks. An **idempotent** method can be repeated any number of times, and the server ends up in the same state as after just one call.
+
+<Figure caption="What each method promises: safe methods only read, idempotent ones can be repeated without fear. POST promises neither.">
+  <Sketch viewBox="0 0 460 220" title="Method properties">
+    <SketchBox x={20} y={20} width={420} height={80} fill="rgb(var(--surface-2))" radius={10} />
+    <SketchLabel x={230} y={44} muted>idempotent: repeating doesn't change the outcome</SketchLabel>
+    <SketchBox x={40} y={54} width={150} height={34} accent radius={8} />
+    <SketchLabel x={115} y={76} mono accent>GET  HEAD</SketchLabel>
+    <SketchBox x={240} y={54} width={170} height={34} radius={8} fill="rgb(var(--surface-1))" />
+    <SketchLabel x={325} y={76} mono>PUT  DELETE</SketchLabel>
+    <SketchLabel x={115} y={118} muted>safe: read-only</SketchLabel>
+    <SketchBox x={150} y={140} width={160} height={40} hatched radius={8} />
+    <SketchLabel x={230} y={165} mono>POST  PATCH</SketchLabel>
+    <SketchLabel x={230} y={202} muted>no guarantees: repeating can create a duplicate</SketchLabel>
+  </Sketch>
+</Figure>
+
+Why this is more than theory for theory's sake: **networks are unreliable**. A request can arrive fine while its response gets lost. The client has no idea whether the operation actually ran, and the only thing it can do is retry. With an idempotent method, retrying is harmless. With POST, retrying means a second order and a second charge.
+
+## Methods in the raw
+
+A read request looks familiar: no body, everything lives in the path.
+
+```http
+GET /orders/1042 HTTP/1.1
+Host: api.wildberries.ru
+```
+
+Creating an order is a POST with a body. Notice the path names the collection, not a specific order, since the new order doesn't have a number yet.
+
+```http
+POST /orders HTTP/1.1
+Host: api.wildberries.ru
+Content-Type: application/json
+
+{"product_id": 77, "quantity": 2}
+```
+
+A full replacement is a PUT at a specific address. The client sends the entire new state, and repeating this request writes the same thing on top of the same thing:
+
+```http
+PUT /orders/1042 HTTP/1.1
+Host: api.wildberries.ru
+Content-Type: application/json
+
+{"product_id": 77, "quantity": 3, "comment": "call ahead"}
+```
+
+A partial change is a PATCH: the body only carries what's changing.
+
+```http
+PATCH /orders/1042 HTTP/1.1
+Host: api.wildberries.ru
+Content-Type: application/json
+
+{"quantity": 5}
+```
+
+## PUT vs. PATCH: replace vs. edit
+
+The difference between them is a favorite interview question, and it's simpler than it sounds. PUT says: "here's the whole resource, put this in place of the old one." Fields you didn't send disappear or reset. PATCH says: "here's what's changing, apply it to what's already there." That's where idempotency comes from: PUT with the same body is idempotent by definition, while PATCH depends on what it says. A patch that says "set quantity to 5" is safe to repeat; one that says "increase quantity by 1" is not.
+
+<MarginNote label="In practice">Many APIs only allow "set to this value" patches, which makes them behave idempotently in practice. The protocol doesn't guarantee that, though, only the discipline of whoever wrote the server does.</MarginNote>
+
+## What will surprise you
+
+**Idempotency is about server state, not about responses.** The first DELETE returns 200; a repeat will probably return 404, the resource is already gone. That's not a broken contract: the server's final state is the same either way, the resource is deleted. Different responses to the client don't violate the contract.
+
+**The server keeps the promise, not the protocol.** Nothing physically stops you from writing a GET handler that deletes records. The protocol only records an agreement that the rest of the infrastructure relies on: browsers happily retry GET on a dropped connection, proxies cache GET responses, search crawlers follow every link they find. There's a well-known case of a crawler wiping out an entire site by following "delete" links that an admin panel had wired up as GET.
+
+**GET can technically carry a body, but nobody's listening for it.** The spec doesn't forbid a body on GET, but servers and proxies are free to ignore it. Read parameters belong in the query string, not the body.
+
+## Common mistakes
+
+**Mutating data through GET.** "I'll just whip up a `/delete?id=7` link" - and eventually a browser prefetch or a crawler will hit it. Anything that changes data needs a method with the right semantics.
+
+**Guessing between PUT and PATCH.** Ask yourself: does the client send the whole resource, or just the changes? Whole resource, PUT. Changes only, PATCH.
+
+**Repeating POST with no protection.** A "Pay" button should disable itself after the click, and serious APIs accept an idempotency key to recognize a retry. You can't count on "the user won't click twice."
+
+<Detail summary="HEAD, OPTIONS, and idempotency keys">
+  Beyond the core five there are utility methods. HEAD is GET without a response body: same headers, no payload. Handy for checking a file's size before downloading it. OPTIONS asks the server what it supports; browsers use it in CORS preflight requests - more on that in the CORS topic. And payment APIs guard against duplicate POSTs with an idempotency key: the client generates a unique string and sends it in a header like Idempotency-Key; when the server sees a repeat with the same key, it doesn't run the operation again, it just returns the response it already saved.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "The method names the action on a resource: GET reads, POST creates, PUT replaces entirely, PATCH edits part, DELETE removes.",
+    "Safe methods (GET, HEAD) don't change server state at all.",
+    "Idempotent methods (GET, HEAD, PUT, DELETE) can be repeated: the server's final state doesn't change.",
+    "POST is not idempotent: repeating the request can create a duplicate, so retries need protection.",
+    "Idempotency is about server state, not identical responses: a repeated DELETE returning 404 is expected, not a bug.",
+  ]}
+/>
+
+## References
+
+- [MDN: HTTP request methods](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods)
+- [RFC 9110: Methods](https://www.rfc-editor.org/rfc/rfc9110#name-methods)
+- [MDN: Idempotent](https://developer.mozilla.org/en-US/docs/Glossary/Idempotent)

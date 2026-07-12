@@ -1,0 +1,142 @@
+---
+conceptId: modeling-patterns
+title: Data modeling patterns
+estimatedMinutes: 11
+---
+
+# Choosing a data shape between layers
+
+You pass a dict `{"host": ..., "port": ...}` through five functions. Somewhere deep inside, someone writes `config["prot"]` instead of `"port"`, gets a `KeyError` in the best case or a silent `None` in the worst, and you spend an hour hunting down where the hole came from. The shape of that data is written down nowhere: which keys, which types, what's required. It lives only in your head, and it drifts as the code grows.
+
+Data modeling means making the shape explicit and checkable where a bare dict currently sits. This section collects working patterns: a DTO between layers, a config object instead of a settings dict, a value object for quantities, plus the other side of the coin, when a plain class beats a dataclass, and why passing a raw dict through an entire application is an anti-pattern.
+
+## A data model is an explicit contract
+
+The difference between a raw dict and a dataclass isn't syntax, it's whether the contract is written down. A dict's shape is implicit: you find out which keys exist by reading whatever code fills it in. A dataclass's shape is the class declaration itself: fields, types, and defaults are all visible at a glance, and a typo in a field name gets caught immediately, as a `TypeError` at creation or an `AttributeError` on access, rather than surfacing three layers away.
+
+<Figure caption="A typo in a dict key silently returns None or fails with KeyError somewhere deep · a typo in a model's field name gets caught immediately, at creation or access.">
+  <Sketch viewBox="0 0 440 175" title="Raw dict versus a typed model">
+    <SketchBox x={25} y={38} width={175} height={95} dashed />
+    <SketchLabel x={112} y={64} mono size={12}>config["prot"]</SketchLabel>
+    <SketchLabel x={112} y={92} muted size={12}>None or KeyError</SketchLabel>
+    <SketchLabel x={112} y={116} size={11}>error surfaces later</SketchLabel>
+    <SketchBox x={240} y={38} width={175} height={95} accent />
+    <SketchLabel x={327} y={64} mono size={12}>config.prot</SketchLabel>
+    <SketchLabel x={327} y={92} accent size={12}>AttributeError</SketchLabel>
+    <SketchLabel x={327} y={116} size={11}>error immediately</SketchLabel>
+  </Sketch>
+</Figure>
+
+## A config object instead of a settings dict
+
+Settings are the first obvious candidate for replacing a dict. Configuration has a fixed set of fields, most of them have sensible defaults, and code all over the place reads from them. A dataclass gathers all of that into a single declaration.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class ServerConfig:
+    host: str = "localhost"
+    port: int = 8080
+    debug: bool = False
+```
+
+Now `ServerConfig(port=443)` builds a config with a checkable shape: an unknown keyword raises `TypeError` immediately, defaults live in one place, and your editor's autocomplete knows every field. A dict like `{"port": 443}` gives you none of that.
+
+## Value object: equality by value
+
+Some things are defined by their value rather than their identity. A hundred rubles is a hundred rubles no matter which object in memory represents it; two identical coordinates are the same point. That kind of quantity is modeled as a value object: an immutable object equal to another whenever all its fields match. In Python that's a `frozen` dataclass, which gets value-based equality and hashability for free.
+
+Run the code: of three payments, two are equal by value, so the set collapses them into one. The `in` check goes by value too, not by reference. Add `Money(200, "RUB")` to the list and watch the length change.
+
+<PyDemo
+  title="Value object: equality and deduplication by value"
+  code={`from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Money:
+    amount: int
+    currency: str
+
+payments = [Money(100, "RUB"), Money(100, "RUB"), Money(100, "USD")]
+unique = set(payments)
+print(len(unique))
+print(Money(100, "RUB") in unique)`}
+/>
+
+The set keeps two elements, and the membership check returns `True`: for a value object, two objects with matching fields are the same object in every sense that matters.
+
+## DTO: a narrow contract between layers
+
+A domain object often carries more than it should expose externally. A `User` has a `password_hash`, but the HTTP handler has no business serializing it into a response. A DTO (data transfer object) is a narrow shape that one layer hands to another, carrying only the fields that layer needs.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    id: int
+    name: str
+    password_hash: str
+
+def to_public_dto(user: User) -> dict:
+    return {"id": user.id, "name": user.name}
+```
+
+`to_public_dto` deliberately builds a fresh dict rather than returning `asdict(user)`: unfolding the whole object would drag `password_hash` out with it. An explicit DTO is the boundary where you decide what crosses into another layer. How these layer boundaries fit together as a whole is covered in the clean architecture topic; what matters here is that a transition between layers is a good place for an explicit, narrowed data shape.
+
+## When a plain class beats a dataclass
+
+Modeling doesn't mean "everything becomes a dataclass." dataclass is strong as long as a class is mostly data. The opposite case, when it's worth going back to a plain class:
+
+- the class is primarily behavior: lots of methods and logic, barely any data fields, and `@dataclass` just adds noise;
+- construction involves heavy setup or invariants that can't be expressed through fields and `__post_init__`;
+- you need full control over `__init__`, or the object is mutable and shouldn't be compared by value.
+
+Not every bundle of data needs modeling at all. A one-off pair of values inside a single function, that never travels anywhere else, is perfectly fine as a plain tuple: building a class for it is just extra code.
+
+## Make invalid states unrepresentable
+
+The strongest form of modeling is choosing types so that invalid data can't even be constructed. A status field declared as `str` accepts any typo: `"aktive"`, `"ACTIVE"`, an empty string. The same field declared as an `Enum` accepts only the listed values, and anything else gets flagged by the analyzer before the code even runs.
+
+```python
+from dataclasses import dataclass
+from enum import Enum
+
+class Status(Enum):
+    ACTIVE = "active"
+    BANNED = "banned"
+
+@dataclass(frozen=True)
+class Account:
+    id: int
+    status: Status
+```
+
+Reach for `Enum` instead of a bare string for a closed set of values, and a dedicated value object instead of an unnamed tuple for a domain quantity. It's the same idea as pydantic at the boundary from the previous section: parse data once into a precise shape, then trust the type instead of checking it over and over. The more a type forbids on its own, the fewer manual checks are left scattered through the code, and the fewer bugs survive to runtime.
+
+## Common mistakes
+
+- **A raw dict running through the whole application.** The shape is implicit, typos surface late, and fields and types are pinned down nowhere. The moment a dict outlives a single function, give it a name: dataclass, NamedTuple, or, at the boundary, pydantic.
+- **Letting extra fields leak into a DTO.** `asdict(user)` in a response drags `password_hash` out with it. Build the DTO explicitly from the fields you actually need.
+- **A mutable value object.** If a quantity compares by value, it has to be immutable, otherwise a mutation leaves its hash out of sync with whichever bucket it landed in. Make value objects `frozen`.
+- **Modeling absolutely everything.** A dataclass for every two-field scrap is overkill. A local, one-off pair is fine as a plain tuple.
+
+<Detail summary="A DTO and a domain object are not the same thing">
+A domain object lives inside the application and carries business meaning, with every field and invariant intact. A DTO exists purely for transport: it's shaped around one specific boundary (an API response, a queue message) and holds exactly what that boundary needs. The two get conflated often, with the same object pressed into service as both domain and transport, which is exactly how extra fields leak out and how the domain ends up tied to someone else's protocol shape. Splitting them costs almost nothing (one converter function), and it decouples the domain from the external contract: the domain changes for its own reasons, the transport for its own.
+</Detail>
+
+<KeyTakeaways items={[
+  "A data model makes shape explicit and checkable: fields, types, and defaults are written down, and a typo gets caught right away.",
+  "A config object (a dataclass with defaults) replaces a settings dict: an unknown key fails immediately, defaults live in one place.",
+  "A value object is a frozen dataclass: value-based equality and hashability come free, ready for a set or dict key.",
+  "A DTO is a narrow shape between layers; build it explicitly so nothing like password_hash leaks out.",
+  "A plain class fits better when behavior dominates, invariants get complex, or you need full control over __init__.",
+  "A raw dict running through the whole application is an anti-pattern: once it outlives a single function, give the shape a name.",
+]} />
+
+## References
+
+- [Martin Fowler - Value Object](https://martinfowler.com/bliki/ValueObject.html)
+- [Martin Fowler - Data Transfer Object](https://martinfowler.com/eaaCatalog/dataTransferObject.html)
+- [dataclasses - Python documentation](https://docs.python.org/3/library/dataclasses.html)

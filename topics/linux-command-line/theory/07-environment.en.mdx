@@ -1,0 +1,177 @@
+---
+conceptId: environment
+title: "Environment variables and PATH"
+estimatedMinutes: 12
+---
+
+# How the shell knows where your home is and where commands live
+
+You downloaded a utility called `deploy`, dropped it into `/opt/tools/bin`, typed `deploy`, and got back `command not found`. Meanwhile `ls` runs instantly, so does `cat`, even though you have no idea where their files physically live. Why does the shell find some programs on its own while it flat out misses others, even when the file definitely exists?
+
+Here's a second mystery from the same family. Yesterday you set a variable in the terminal holding a test server's address, and today you opened a new terminal and the variable is gone. A script in the next tab over never saw it, not even yesterday. Both stories come down to the same mechanism: environment variables. Understand how that mechanism works once, and problems like these stop looking like mysteries you fix by rebooting.
+
+## Mental model: a backpack of strings and a list of directories
+
+Every process on Linux has an environment: a set of named strings the process carries around with it, like a backpack of settings. It holds the home directory `HOME`, the interface language `LANG`, the default editor `EDITOR`, and dozens of other values. Programs look into this set for settings: git opens the editor from `EDITOR`, a package manager checks the proxy address, and the shell itself substitutes `HOME` for the tilde in paths.
+
+One variable in the set outranks the rest: `PATH`. It holds an ordered list of directories separated by colons, something like `/usr/local/bin:/usr/bin:/bin`. When you type a command name with no path, the shell doesn't scan the whole disk. It walks the directories in `PATH` strictly left to right, and the moment it finds an executable file with the right name, it runs it and stops looking. The figure below shows that route: the command turns up in the second directory, so the third one never even gets checked.
+
+<Figure caption="Looking up the command app with PATH=/usr/local/bin:/usr/bin:/bin: the shell checks directories in order and runs the first match; directories to the right of the winner never get checked at all.">
+  <PipelineFigure
+    title="How the shell finds the command app via PATH"
+    stages={[
+      { label: '/usr/local/bin', note: 'no app here, keep going' },
+      { label: '/usr/bin', note: 'first match, search stops', active: true },
+      { label: '/bin', note: 'the shell never even looks here' },
+    ]}
+  />
+</Figure>
+
+The second pillar of the model: inheritance. Every process, the moment it starts, gets a copy of its parent's environment, and from then on the two copies live independently of each other. Almost every behavior that trips up newcomers grows out of this one rule, which is why it gets a worked example below.
+
+## Reading and creating variables
+
+A single variable's value is substituted with a dollar sign:
+
+```bash
+$ echo $HOME
+/home/anna
+$ echo $PATH
+/usr/local/bin:/usr/bin:/bin
+```
+
+`env` and `printenv` print the whole set at once. The output is long, so it's convenient to filter it or ask for a specific name:
+
+```bash
+$ printenv LANG
+en_US.UTF-8
+$ env | grep EDITOR
+EDITOR=nano
+```
+
+Now, creating one. Assignment is written with no spaces around the equals sign:
+
+```bash
+$ CITY=Kazan
+$ echo $CITY
+Kazan
+```
+
+This looks like a full-fledged environment variable, but for now it's only a shell variable: it exists inside the current bash process and goes nowhere else. Easy to prove by launching a child process:
+
+```bash
+$ bash -c 'echo [$CITY]'
+[]
+$ export CITY
+$ bash -c 'echo [$CITY]'
+[Kazan]
+```
+
+`bash -c` launches a new shell and runs the string passed to it. As long as `CITY` isn't exported, the child inherits an environment without it, and the substitution comes out empty: nothing between the brackets. After `export CITY`, the variable enters the environment, and the next child process sees the value. The brackets in the example exist precisely to make an empty string visible: without them, the first command would print an invisible empty line, and the difference would be easy to miss.
+
+<PullQuote>Every process gets a copy of its parent's environment the moment it starts. There's no going back for changes: not upward, not into processes already running.</PullQuote>
+
+The diagram below sums up inheritance in one picture. The copy is made exactly once, when the child launches. If a program started before your `export`, it runs with the old environment for the rest of its life, no matter how much you export afterward. And the reverse holds too: whatever the child changes on its end, the parent never sees.
+
+<Figure caption="Environment inheritance: a child gets a copy of the variable set the moment it launches; anything the parent exports later never makes it into that copy, and changes the child makes don't travel back up to the parent.">
+  <Sketch viewBox="0 0 480 210" title="Copying the environment when a child launches">
+    <SketchBox x={40} y={16} width={180} height={78} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={130} y={38}>parent shell</SketchLabel>
+    <SketchLabel x={130} y={58} mono size={11}>HOME=/home/anna</SketchLabel>
+    <SketchLabel x={130} y={76} mono size={11}>PATH=/usr/bin:...</SketchLabel>
+    <SketchArrow from={[130, 98]} to={[130, 132]} accent />
+    <SketchLabel x={142} y={118} size={11} muted anchor="start">copied at launch</SketchLabel>
+    <SketchBox x={40} y={136} width={180} height={58} accent />
+    <SketchLabel x={130} y={158}>child process</SketchLabel>
+    <SketchLabel x={130} y={177} mono size={11}>its own environment copy</SketchLabel>
+    <SketchArrow from={[300, 158]} to={[300, 66]} dashed />
+    <SketchLabel x={312} y={115} size={11} muted anchor="start">nothing flows back</SketchLabel>
+  </Sketch>
+</Figure>
+
+This also answers the mystery of the second terminal tab. Two tabs aren't parent and child, they're two independent processes, each with its own copy of the environment. A variable set in one tab physically cannot show up in another.
+
+## Bringing deploy back to life
+
+The `which` command makes the diagnosis: it shows exactly which file the shell would run for a given name.
+
+```bash
+$ which ls
+/usr/bin/ls
+$ which deploy
+$
+```
+
+For `deploy` the answer is empty: none of the directories in `PATH` contain such a file. The fix follows straight from the model: add `/opt/tools/bin` to the list, keeping everything already there.
+
+```bash
+$ export PATH="$PATH:/opt/tools/bin"
+$ which deploy
+/opt/tools/bin/deploy
+```
+
+The `$PATH` substitution inside the quotes expands to the old list, and a colon separates the new directory. Order matters. Append it to the end and the directory becomes a fallback: the shell only looks there if it didn't find the name earlier. Prepend it, `export PATH="/opt/tools/bin:$PATH"`, and your files start shadowing system commands with the same name. Sometimes that's intentional, say to swap out an interpreter version, but appending to the end is the safer default.
+
+<MarginNote label="Why export">The word export dates back to the 1970s, to the original Bourne shell: a variable gets "exported" out of the shell's private space into the outside world its children can see.</MarginNote>
+
+## Settings that survive a restart
+
+`export` lasts only until the session ends. Close the terminal, open a new one, and `PATH` is back to what it was before. Permanent settings go into `~/.bashrc`: bash reads this file at the start of every interactive shell and runs whatever's written there.
+
+```bash
+$ echo 'export PATH="$PATH:/opt/tools/bin"' >> ~/.bashrc
+$ source ~/.bashrc
+```
+
+The first line appends the command to the end of the file, the second makes the current shell reread it. Without `source`, the edit only affects new terminals: already-open ones read the file once at launch and never revisit it.
+
+<Callout type="tip" title="Quick check after an edit">
+After editing `~/.bashrc`, run `source ~/.bashrc` right away and check the result with `echo $PATH`. That way a typo shows up immediately instead of a week later in a new terminal, once you've forgotten what you changed.
+</Callout>
+
+## What will surprise you
+
+A variable without `export` isn't visible even to a command launched from the very same terminal line. Intuition says "my terminal" and "commands running in it" share one memory, but `bash -c 'echo $CITY'` creates a separate process with its own copy of the environment, and an unexported variable never makes it into that copy. Hence the classic standoff: in the shell, `echo $CITY` prints the value, while a script insists the variable doesn't exist. Both are right.
+
+<Callout type="warning" title="A directory early in PATH shadows the system silently">
+If a directory listed in `PATH` before the system ones gains an executable file sharing the name of an existing command, the shell starts running that one instead, with no warning whatsoever. A homemade `~/bin/test` script or a broken `python` sitting early in the list can break other people's scripts in the most baffling way. The first diagnostic step is always the same: `which name`, to see who's actually answering.
+</Callout>
+
+A third surprise: `export` writes nothing to disk. Every variable you set by hand lives in the shell's memory and disappears when the window closes. If a setting "disappeared" the next day, it didn't break, you just never saved it to `~/.bashrc`.
+
+## Common mistakes
+
+**Overwriting PATH instead of extending it.** The command `export PATH=/opt/tools/bin`, missing the `$PATH:` part, replaces the whole list with a single directory. Everything breaks instantly: `ls`, `cat`, and `grep` all answer `command not found`, because the shell no longer knows where to look for them. The mistake comes from a false analogy with ordinary assignment, where the old value doesn't matter. The fix: always include the old list, `export PATH="$PATH:/opt/tools/bin"`. If you've already broken it, call a command by its full path, `/usr/bin/ls` works with no `PATH` involved at all, or just close the terminal: the damage only lives in that one session.
+
+**Editing ~/.bashrc without restarting the shell.** You edit the file, and the open terminal shows no change. It's natural to expect the config to apply itself, but bash only reads `~/.bashrc` once, at startup. The fix: run `source ~/.bashrc` in every terminal that's already open, or open a new one.
+
+**Spaces around the equals sign.** The line `CITY = Kazan` isn't an assignment. The shell parses it as a call to a command named `CITY` with two arguments and answers `CITY: command not found`. The reason is that a space is a word separator to the shell, not decoration in the syntax. The fix: write it with no spaces, `CITY=Kazan`.
+
+<Detail summary="A variable for a single run">
+
+There's a third form, somewhere between a plain assignment and `export`: you can hand a value to one specific command by writing the assignment right before it on the same line. In a fresh terminal:
+
+```bash
+$ CITY=Kazan bash -c 'echo [$CITY]'
+[Kazan]
+$ echo [$CITY]
+[]
+```
+
+The variable entered the environment only for that one run and disappeared along with it: the shell itself never saw it. This form is handy for one-off runs with a different language, timezone, or config, when you'd rather not clutter the session with a lasting `export`.
+
+</Detail>
+
+<KeyTakeaways items={[
+  'The environment is a set of named strings every process carries and passes to its children as a copy at launch time.',
+  'Writing NAME=value creates a variable only in the current shell; child processes see it only after export NAME.',
+  'Environment changes never propagate to processes already running or up to the parent: the copy happens once, at startup.',
+  'PATH holds an ordered, colon-separated list of directories: the shell searches left to right and runs the first match, and which shows you the winner.',
+  'export lasts only for the session; permanent settings go into ~/.bashrc and take effect via source or a new terminal.',
+]} />
+
+## References
+
+- [Bash Reference Manual: shell parameters and environment](https://www.gnu.org/software/bash/manual/)
+- [environ(7) on man7.org: how a process's environment works](https://man7.org/linux/man-pages/man7/environ.7.html)
+- [GNU coreutils: the env command](https://www.gnu.org/software/coreutils/manual/html_node/env-invocation.html)

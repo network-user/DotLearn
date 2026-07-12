@@ -1,0 +1,119 @@
+---
+conceptId: composite-covering
+title: "Composite and covering indexes: column order decides everything"
+estimatedMinutes: 13
+---
+
+# Composite and covering indexes: column order decides everything
+
+You have an index on `user_id`, and the query `WHERE user_id = 4821 AND status = 'paid'` should fly. But the profiler shows something odd: the index fired, yet the query is still slow. The reason is that a single-column index only got the engine to all of customer 4821's orders, and an active buyer has ten thousand of them; from there the engine filtered for `status = 'paid'` by brute force, row by row. Out of ten thousand rows, five made it into the answer. The other nine thousand nine hundred ninety-five were read for nothing.
+
+The fix is a composite index on both columns at once, `(user_id, status)`. It takes the engine straight to the five rows that matter instead of the customer's whole block. By the end of this chapter you'll understand why column order is critical in a composite index, what the leftmost-prefix rule is and when it silently keeps an index from firing, how the "equality on the left, range on the right" rule tells you the right column order, and what a covering index is: a structure that answers a query without ever touching the table.
+
+## A composite index sorts by tuple
+
+A single-column index stores one column's values in order. A composite index stores tuples of several columns in order, sorted lexicographically: first by the leading column, then by the second where the first ties, then by the third where both tie. It's exactly how a phone book sorted by (last name, first name) works: every Smith sits together, and within that block the first names run alphabetically.
+
+<Figure caption="Keys are ordered by (user_id, status). A query on user_id grabs one contiguous block · a query on status alone can't: paid values are scattered across the whole index.">
+  <Sketch viewBox="0 0 400 214" title="Keys of a composite index (user_id, status)">
+    <SketchLabel x={200} y={16} weight="bold">index (user_id, status), in order</SketchLabel>
+    <SketchBox x={120} y={28} width={160} height={24} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={200} y={44} mono>10 · cancelled</SketchLabel>
+    <SketchBox x={120} y={56} width={160} height={24} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={200} y={72} mono>10 · paid</SketchLabel>
+    <SketchBox x={120} y={84} width={160} height={24} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={200} y={100} mono>10 · paid</SketchLabel>
+    <SketchBox x={120} y={112} width={160} height={24} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={200} y={128} mono>11 · paid</SketchLabel>
+    <SketchBox x={120} y={140} width={160} height={24} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={200} y={156} mono>11 · pending</SketchLabel>
+    <SketchBox x={120} y={168} width={160} height={24} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={200} y={184} mono>12 · paid</SketchLabel>
+    <SketchHighlight x={116} y={26} width={168} height={84} />
+    <SketchLabel x={58} y={70} accent>user_id = 10</SketchLabel>
+    <SketchArrow from={[92, 70]} to={[114, 68]} accent />
+  </Sketch>
+</Figure>
+
+In the diagram above, user 10's three rows sit together in one contiguous block: descending to them and reading is cheap. The value `paid`, though, shows up in three different spots in the index. If a query filtered on `status = 'paid'` alone, there'd be no contiguous range to read, and the `(user_id, status)` index wouldn't help at all.
+
+## The leftmost-prefix rule
+
+This gives you the main rule for composite indexes. An index `(a, b, c)` serves queries on any leftmost prefix of its columns: on `a` alone; on `a` and `b`; on `a`, `b`, and `c`. But not on `b` alone, not on `c` alone, and not on the pair `(b, c)` without `a`. The moment you skip a column on the left, the ordering breaks down: without a fixed `a`, the `b` values are scattered across the whole index.
+
+The practical upshot is that one well-designed composite index covers a whole family of queries. An index on `(city, created_at, status)` automatically serves a filter on one city, city plus a date range, and all three conditions together. A query on a date alone, with no city, gets ignored though, and that's worth keeping in mind when you design a set of indexes.
+
+## Equality on the left, range on the right
+
+The leftmost-prefix rule leads to a column-ordering rule of its own. Put the columns checked for equality on the left, and the column used for a range or a sort on the right. The reasoning is simple: equality pins down a fixed position in the index, and a range only reads as one contiguous chunk once everything to its left is already pinned.
+
+Take the query `WHERE user_id = 4821 AND created_at > '2024-01-01'`. The right index is `(user_id, created_at)`: equality on `user_id` lands you in that customer's block, and within it rows are already ordered by `created_at`, so the date range reads straight through. The reverse order, `(created_at, user_id)`, is much worse: you'd first have to pull every row in that period across all users, with `user_id` scattered inside it.
+
+Try it live. Below is an `orders` table with a composite index `(user_id, status, amount)`. Run the query and read the plan: it shows `SEARCH ... USING COVERING INDEX`, more on that shortly. Now change `SELECT amount` to `SELECT *` in the query and run it again: the word `COVERING` disappears from the plan.
+
+<SideSql
+  title="Composite index: two conditions at once"
+  editable
+  live
+  fixture={`CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, amount INTEGER);
+INSERT INTO orders (user_id, status, amount)
+WITH RECURSIVE seq(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1500
+)
+SELECT n % 200,
+  CASE WHEN n % 5 = 0 THEN 'paid' WHEN n % 5 = 1 THEN 'pending' ELSE 'cancelled' END,
+  (n * 13) % 3000
+FROM seq;
+CREATE INDEX idx_orders_user_status ON orders(user_id, status, amount);`}
+  query={`EXPLAIN QUERY PLAN
+SELECT amount FROM orders
+WHERE user_id = 42 AND status = 'paid';`}
+/>
+
+## Covering index: an answer with no table access
+
+An index lookup is normally a two-step affair: find the entry in the index, then follow its reference into the table for the rest of the row's columns. That second step is a separate read, and it adds up across many rows. A covering index removes it entirely. The idea: if the index already holds every column the query needs, both in `WHERE` and in `SELECT`, there's no reason to touch the table at all; the answer comes fully assembled from the index. This access pattern is called an index-only scan, and SQLite's plan labels it `USING COVERING INDEX`.
+
+That's exactly what you saw in the sandbox above. The index `(user_id, status, amount)` holds both the filter columns and `amount`, the only column in `SELECT`. So the query is satisfied entirely from the index, and the table is never read. Ask for `SELECT *` instead, and the engine once again needs every column of the row, forcing a trip to the table, and `COVERING` disappears.
+
+<Callout type="tip">
+A covering index is a deliberate trade-off: you add a column to the index not to filter on it, but to avoid a trip to the table for it. This speeds up one specific, frequent query at the cost of a slightly larger index and slightly slower writes. Don't dump every column into the index; include only the ones a hot query actually returns.
+</Callout>
+
+## When a second index is redundant
+
+A composite index is generous with its prefixes, which leads to a common mistake: keeping both `(user_id)` and `(user_id, status)` around. The second already handles everything the first can, since `user_id` is its leftmost prefix. A standalone `(user_id)` only duplicates the work and needlessly slows down writes. It can be dropped.
+
+The reverse doesn't hold. If you need to filter on `status` alone, `(user_id, status)` won't help: `status` isn't a prefix there. That query needs its own index, with `status` listed first. Column order isn't a cosmetic detail; it's the whole point: `(a, b)` and `(b, a)` are two different indexes serving two different families of queries.
+
+This leads to a design practice: you build a set of indexes around queries, not columns. Take the most frequent, hottest queries, work out an ideal composite index for each, and check whether one well-chosen index can cover several queries at once through its prefixes. Often three or four well-picked composite indexes handle almost the entire load, leaving a dozen single-column indexes redundant.
+
+## Common mistakes
+
+**A range or low-selectivity column comes first.** Put a range column on the left and you strip the index of its ability to narrow the search with the columns that follow. Equalities belong on the left, ranges on the right.
+
+**A duplicate `(a)` next to `(a, b)`.** A single-column index on a composite index's prefix is redundant. It eats up space and slows down inserts without giving anything back.
+
+**Hoping `(a, b)` will speed up a filter on `b` alone.** Without a condition on `a`, the leftmost-prefix rule isn't satisfied, and the index silently goes unused. Check with `EXPLAIN QUERY PLAN`: if the plan shows `SCAN`, the prefix didn't match.
+
+<Detail summary="INCLUDE in Postgres and coverage without sorting">
+
+In SQLite, making an index covering is simple: just tack the needed column onto the end of a composite index. Postgres offers dedicated syntax for this, `CREATE INDEX ... INCLUDE (col)`. The difference is subtle but important. Columns in the main part of the index participate in both sorting and filtering, so every insert pays to keep them in order. Columns in `INCLUDE` live only in the leaves, as extra payload for coverage: you can't search or sort by them, but they make the index covering more cheaply, without taking part in the tree itself. If a column exists only so you can skip the table, and you're never going to filter on it, `INCLUDE` is the right tool.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A composite index stores column tuples in lexicographic order: first by the leading column, then by the second where it ties, and so on.",
+    "The leftmost-prefix rule: an index (a, b, c) serves queries on a, on (a, b), and on (a, b, c), but not on b or c alone.",
+    "Column order: equality on the left, range or sort on the right; equality pins down a position while a range reads straight through.",
+    "A covering index holds every column a query needs and answers it without touching the table (an index-only scan, USING COVERING INDEX).",
+    "A standalone index (a) is redundant once (a, b) exists; but a filter on b alone needs its own index, with b listed first.",
+  ]}
+/>
+
+## References
+
+- [SQLite: Indexes On Expressions and multi-column indexes](https://www.sqlite.org/queryplanner.html)
+- [PostgreSQL: Multicolumn Indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html)
+- [PostgreSQL: Index-Only Scans and Covering Indexes](https://www.postgresql.org/docs/current/indexes-index-only-scans.html)

@@ -1,0 +1,137 @@
+---
+conceptId: litestar-overview
+title: "What is Litestar and how it differs from FastAPI"
+estimatedMinutes: 14
+---
+
+# Yet another ASGI framework, and why it exists
+
+You open someone else's project and see classes marked as controllers, methods with `@get` decorators that have no `app.` in front of them, an `Litestar(route_handlers=[...])` object instead of the familiar `FastAPI()`. Request bodies get parsed into some `Struct`, not a `BaseModel`. At first glance it looks like FastAPI with the furniture rearranged. A fair question follows: if FastAPI already does all of this, why does Litestar exist, and is it worth learning yet another framework with an almost identical feature set?
+
+Honest answer: Litestar solves the same problems as FastAPI, and in a simple app the difference is small. But it makes three different bets - organizing code around controller classes, serializing through msgspec instead of Pydantic, and treating DI and plugins as part of the core rather than an add-on. By the end of this section you will understand the architecture of a Litestar app, recognize its handlers in unfamiliar code, and judge soberly where it actually differs from FastAPI and where it is just different syntax for the same thing.
+
+## Mental model: four layers from server to function
+
+Both FastAPI and Litestar are ASGI applications. ASGI (Asynchronous Server Gateway Interface) is the contract between a web server (`uvicorn`, `hypercorn`) and your code: the server accepts a TCP connection, parses HTTP, packs the request into a `scope` dictionary, and calls the application; the application returns a response. The framework lives between that contract and your functions: it looks at the request's path and method and decides which function to call.
+
+The difference is in how the framework is organized internally. FastAPI collects routes flat: you attach `@app.get(...)` directly to functions, optionally grouping them into an `APIRouter`. Litestar introduces an explicit four-layer hierarchy that a request travels through: the `Litestar` application, optional `Router` objects, controller classes (`Controller`), and the handlers themselves - functions or methods decorated with `@get`, `@post`, and so on.
+
+<Figure caption="A request travels top to bottom: the ASGI server hands it to the Litestar app, which routes it layer by layer down to a specific handler. Each layer can add a path prefix, dependencies, and settings.">
+  <Sketch viewBox="0 0 440 250" title="Layers of a Litestar app">
+    <SketchBox x={120} y={14} width={200} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={36} mono size={12}>ASGI server (uvicorn)</SketchLabel>
+
+    <SketchBox x={120} y={66} width={200} height={34} />
+    <SketchLabel x={220} y={88} mono size={12}>Litestar(app)</SketchLabel>
+
+    <SketchBox x={120} y={118} width={200} height={34} />
+    <SketchLabel x={220} y={140} mono size={12}>Router</SketchLabel>
+
+    <SketchBox x={120} y={170} width={200} height={34} />
+    <SketchLabel x={220} y={192} mono size={12}>Controller</SketchLabel>
+
+    <SketchBox x={130} y={216} width={180} height={30} accent />
+    <SketchLabel x={220} y={236} mono accent size={12}>@get handler</SketchLabel>
+
+    <SketchArrow from={[220, 48]} to={[220, 66]} />
+    <SketchArrow from={[220, 100]} to={[220, 118]} />
+    <SketchArrow from={[220, 152]} to={[220, 170]} />
+    <SketchArrow from={[220, 204]} to={[220, 216]} accent />
+  </Sketch>
+</Figure>
+
+This hierarchy is not decoration. Each layer can declare a path prefix, a set of dependencies, guards, and other settings, and the layers below inherit them. FastAPI achieves something similar through `APIRouter` and its parameters, but in Litestar layering is the central idea, not an option. The rest of this topic builds on it.
+
+## The minimal app
+
+Let's compare two "hello world" apps side by side. Here's FastAPI, which you have probably already seen.
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def index() -> dict:
+    return {"hello": "world"}
+```
+
+And here's the same thing in Litestar.
+
+```python
+from litestar import Litestar, get
+
+@get("/")
+async def index() -> dict:
+    return {"hello": "world"}
+
+app = Litestar(route_handlers=[index])
+```
+
+Three differences stand out. The `@get` decorator is imported separately and attached to the function **without any reference to `app`**: the handler exists on its own first, and gets registered only afterward. Registration is explicit - you pass a list of handlers into `route_handlers` instead of "attaching" them to the app through a decorator. And the function is declared `async def`: Litestar is designed async-first, though it supports plain `def` handlers too and offloads them to a thread pool, just like FastAPI does.
+
+<Callout type="info">
+The `@get("/")` decorator in Litestar returns a handler object that doesn't depend on any particular application. That means the same handler can be registered in several places, and tests can assemble a minimal app from just the subset of handlers they need.
+</Callout>
+
+## Litestar's three real bets
+
+Now to the substance: where Litestar actually differs, rather than just being written differently.
+
+**Serialization on msgspec instead of Pydantic.** Litestar defaults to [msgspec](https://jcristharif.com/msgspec/) - a serialization and validation library built for speed. A data model is declared as `msgspec.Struct` instead of `BaseModel`. In practice msgspec is noticeably faster at parsing and encoding JSON, and that's a measurable win for high-traffic services. An honest caveat: Litestar can also work with Pydantic, dataclasses, and `TypedDict` - msgspec is only the default. So "Litestar is faster than FastAPI" is a statement about defaults and microbenchmarks, not a law of nature: under real load the bottleneck is usually the database or the network, not the serializer.
+
+**DI as part of the core.** FastAPI does dependency injection through `Depends(...)` in a function's signature. Litestar has `Provide(...)` for the same purpose, and dependencies can be declared at any of the four layers, with a lower layer overriding a higher one. This isn't "better," it's a different model: layered DI fits naturally with layered routing, but it requires keeping track of which layer declares what. More on this in the dependencies section.
+
+**DTOs and plugins out of the box.** Litestar has built-in support for DTOs (Data Transfer Objects) - a mechanism that filters a model's fields on input and output so the internal data structure doesn't dictate the external JSON shape. FastAPI achieves a similar effect with a pair of models (`UserIn`/`UserOut`) and `response_model`. Litestar also has a plugin system (for example, for SQLAlchemy) integrated into the application lifecycle.
+
+<Figure caption="Differences in substance, not syntax. In a simple service they're barely visible; they show up in a large app with many layers and models.">
+  <Compare
+    leftTitle="FastAPI"
+    rightTitle="Litestar"
+    left={<>Flat registration: <code>@app.get</code> on functions, optionally an <code>APIRouter</code>. Serialization and validation via Pydantic. DI through <code>Depends</code> in the signature. Input/output handled by a pair of models plus <code>response_model</code>.</>}
+    right={<>Layered hierarchy: app → router → controller → handler as a central idea. Serialization via msgspec by default (Pydantic supported too). DI through <code>Provide</code> at any layer. Input/output handled by the DTO mechanism with include/exclude.</>}
+    verdict="Both are mature ASGI frameworks with typed handlers and automatic docs. Litestar bets on controller classes, msgspec, and built-in DTOs/DI; FastAPI bets on the simplicity of a flat model and the Pydantic ecosystem. In a small service the choice barely affects the code."
+  />
+</Figure>
+
+## Where the difference doesn't show
+
+Worth naming the opposite too - where the frameworks are practically the same, so we don't overstate the differences. Both build automatic OpenAPI docs from annotations. Both infer a parameter's source (path, query, body) from the handler signature. Both support sync and async handlers. Both return clear validation errors that point to the offending field. Write a small five-endpoint CRUD service, and the FastAPI and Litestar code will differ by a couple of imports and whether you pass handlers as a list or attach them with a decorator. The real difference accumulates with growth: many models with different representations, a deep routing hierarchy, shared dependencies at different levels - that's where Litestar's architectural choices start paying off, or getting in the way if the app stays simple.
+
+## Edge cases
+
+**`async def` without `await` doesn't make a handler faster.** Litestar encourages an async style, but an `async def` handler with no `await` inside just runs on the event loop thread with no context switches - like an ordinary function. `async` only pays off when there's real I/O waiting inside. Declaring a handler `async` "for speed" is a misconception, just as it is in FastAPI.
+
+**msgspec is stricter than Pydantic about type coercion.** By default msgspec won't silently turn the string `"42"` into the number `42` for an `int` field the way Pydantic sometimes does in lax mode. That's not a bug, it's a deliberate choice for strictness, but it surprises people carrying over habits from Pydantic v1.
+
+**"Litestar" with one t.** The project used to be called Starlite; it was renamed to Litestar in 2023. Older articles and packages under the name `starlite` are the same project before the rename. When searching docs, stick to recent material under the Litestar name.
+
+## Common mistakes
+
+- **Forgetting `route_handlers`.** A handler marked with `@get` but never passed into `Litestar(route_handlers=[...])` (directly or via a router/controller) simply won't be registered, and its path will return a 404. Unlike `@app.get`, the decorator alone doesn't tell the app anything.
+- **Expecting Litestar to be "magically faster everywhere."** msgspec's advantage is real at the serialization step, but in a typical service that talks to a database and the network, it gets lost in the overall response time. Choosing a framework purely on serializer microbenchmarks means optimizing the wrong thing.
+- **Carrying Pydantic habits into msgspec verbatim.** `BaseModel`, `Field`, `@field_validator` are Pydantic APIs. `msgspec.Struct` has its own toolset, covered in the models and DTO section. Don't mix them at random.
+
+<Detail summary="What ASGI actually is and why it's the common denominator">
+
+ASGI is a specification for the interface between an async web server and a Python application, the successor to the synchronous WSGI. An application is a callable that takes three arguments: `scope` (a dictionary with the event type and request metadata - method, path, headers), `receive` (a coroutine for pulling events from the client), and `send` (a coroutine for pushing events back). FastAPI, Litestar, and Starlette all implement this same contract, which is why they can all run under the same `uvicorn module:app` command and sit behind the same reverse proxy. This shared ASGI foundation is what makes the frameworks interchangeable at the deployment level: the application code changes, but how you launch it stays the same. The differences we're discussing here are differences in how a framework turns one ASGI call into a call to your function, not differences in the protocol itself.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Litestar and FastAPI are both ASGI frameworks, run under the same uvicorn, and solve the same problems; in a small service the code barely differs.",
+    "A Litestar handler gets its own decorator (@get) with no tie to app, and is registered explicitly through Litestar(route_handlers=[...]).",
+    "Litestar's architecture is layered: app → router → controller → handler, and each layer can add a path prefix, dependencies, and settings.",
+    "Litestar's three real bets: msgspec instead of Pydantic by default, DI through Provide at any layer, built-in DTOs and plugins.",
+    "msgspec's speed advantage is real at serialization, but on a typical I/O-bound service it gets lost in overall response time - don't pick a framework on that alone.",
+  ]}
+/>
+
+## References
+
+- [Litestar docs](https://docs.litestar.dev/)
+- [Litestar - Getting Started](https://docs.litestar.dev/latest/usage/applications.html)
+- [msgspec docs](https://jcristharif.com/msgspec/)
+- [ASGI specification](https://asgi.readthedocs.io/en/latest/)
+- [FastAPI docs](https://fastapi.tiangolo.com/)

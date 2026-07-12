@@ -1,0 +1,148 @@
+---
+conceptId: s3-storage-classes-lifecycle
+title: "S3 storage classes, lifecycle rules, and cost"
+estimatedMinutes: 18
+---
+
+# How a "cheap" storage class ended up tripling the bill
+
+An engineer noticed a line in the console, "archive class, way cheaper per gigabyte," and got excited: application logs were piling up, gigabytes accumulating, and paying full price for them felt wasteful. He moved the whole fresh log stream into the coldest, most "frozen" class - and the storage bill did drop. A week later, someone on call was investigating an incident, pulled yesterday's logs, and ran into two surprises: retrieving them took several hours, and every retrieval came with its own separate charge. By month's end, the "savings" turned into a bigger bill than before - the data was being read constantly, and a cold class charges you precisely for reading, and for objects that didn't sit long enough to satisfy the minimum term.
+
+S3 storage classes aren't "better or worse," they're a trade-off axis: the cheaper it is to hold bytes, the more expensive and slower it is to get them back. The engineer's mistake wasn't choosing a cold class - it was applying a cold class to hot data. By the end of this section you'll know what separates the storage classes, why cold ones carry a minimum term and a retrieval fee, how versioning quietly inflates a bill with no rules attached, and how lifecycle rules automatically move aging data into cheaper classes and clean up after itself.
+
+## Mental model: a ladder where "colder" means "cheaper to store, pricier to fetch"
+
+Think of your data like things you keep at home. What you use every day sits within reach - expensive "shelf space," but instant access. What you need once a year moves to the closet. What you almost never need goes to a storage unit across town: rent is next to nothing, but you have to drive out for every box, and not instantly. S3's storage classes are exactly this ladder, with the two axes being price per gigabyte per month and the delay-adjusted price of getting something back.
+
+<Figure caption="The lower a class sits on the ladder, the cheaper the gigabyte-month, but the higher the retrieval fee and the longer access takes. Cold classes only pay off on data that's read rarely.">
+  <Sketch viewBox="0 0 480 250" title="The storage class ladder: storage cost vs. retrieval cost">
+    <SketchBox x={30} y={30} width={150} height={34} accent />
+    <SketchLabel x={105} y={51} mono size={11} accent>Standard</SketchLabel>
+
+    <SketchBox x={70} y={80} width={150} height={34} />
+    <SketchLabel x={145} y={101} mono size={11}>Standard-IA</SketchLabel>
+
+    <SketchBox x={110} y={130} width={160} height={34} />
+    <SketchLabel x={190} y={151} mono size={10}>Glacier Instant</SketchLabel>
+
+    <SketchBox x={150} y={180} width={170} height={34} />
+    <SketchLabel x={235} y={201} mono size={10}>Glacier Flexible</SketchLabel>
+
+    <SketchBox x={190} y={210} width={180} height={34} />
+    <SketchLabel x={280} y={231} mono size={10}>Deep Archive</SketchLabel>
+
+    <SketchArrow from={[420, 40]} to={[420, 235]} />
+    <SketchLabel x={445} y={60} muted size={9}>cheaper</SketchLabel>
+    <SketchLabel x={445} y={75} muted size={9}>to store</SketchLabel>
+    <SketchLabel x={445} y={215} muted size={9}>pricier and</SketchLabel>
+    <SketchLabel x={445} y={230} muted size={9}>slower to fetch</SketchLabel>
+  </Sketch>
+</Figure>
+
+The rungs of the ladder go like this. **Standard** is the default hot class: data is read often, access is instant, storage costs the most. **Standard-IA** (infrequent access) is lukewarm: same instant access and high durability, but storage is cheaper, while every retrieval carries its own fee - it's meant for data you need only occasionally. **One Zone-IA** is the same idea, except copies live in a single availability zone instead of several: even cheaper, at the cost that a zone outage can lose the data (fine for anything easy to recreate). Next come the Glacier classes - archival tiers. **Glacier Instant Retrieval** stores very cheaply but still retrieves instantly (for a fee). **Glacier Flexible Retrieval** and **Deep Archive** are the cheapest to store, but retrieval isn't instant - you request it and wait (minutes to hours for Flexible, hours for Deep Archive). Deep Archive sits at the bottom of the ladder: for data you probably never need again, but can't throw away.
+
+<Callout type="info">
+S3-compatible providers each have their own set of classes. Yandex Object Storage, for instance, has "cold" and "ice" storage - analogues of AWS's warm and archival classes, following the same "cheaper to store, pricier to fetch" logic. Names and exact rates differ, but the trade-off is universal.
+</Callout>
+
+## Where the catch in cold classes comes from
+
+Warm and cold classes hide two charges that Standard doesn't have, and both hit hot data hardest.
+
+The first is the **retrieval fee**: every gigabyte read out of IA or Glacier costs money on top of regular data transfer. Standard has none of that. The second is the **minimum storage duration**: an object in Standard-IA is billed as if it sat there for at least 30 days, 90 for Glacier Flexible, 180 for Deep Archive - even if you deleted or overwrote it sooner. Delete a file from IA after a day, and you still pay for the full 30. That's the early-deletion charge.
+
+<PullQuote>A cold class charges you for exactly what you do most with hot data - reading it and changing it fast.</PullQuote>
+
+Which gives you the rule of thumb: pick a class based on **how often the data is read**, not on how much you want to shave off storage cost. Read often? Standard, or the retrieval fees eat the savings alive. Sits for months and gets read occasionally? IA. An archive that's rarely touched and won't get deleted early? Glacier. Fresh, frequently rewritten data in a cold class is always a losing move.
+
+## Versioning: insurance against overwrites that quietly inflates your bill
+
+There's a separate bucket-level setting called **versioning**. Turned on, it means every time an object is overwritten or deleted, the old content isn't wiped - the previous version is kept under the same key. It's the insurance against your own mistakes mentioned back in section one: "eleven nines" of durability won't save you from overwriting an object with garbage or deleting it yourself - but versioning does, because the earlier version stays reachable.
+
+But that insurance has a cost, and it's not obvious. Every version is a full-fledged object, and you pay to store it. Overwrite an object a hundred times, and the bucket now holds a hundred versions - your storage bill went up a hundredfold, even though "logically" it's still one file. Worse, deleting under versioning doesn't free up any space: it just drops a **delete marker** on top of the object, while every version underneath keeps existing and keeps getting billed. You "deleted" a terabyte of logs, no space was freed, the bill didn't shrink - because the versions are still alive underneath the marker.
+
+<Callout type="warning">
+Versioning without lifecycle rules is a bill that grows on its own. Versions don't disappear until you explicitly delete them or set up a lifecycle rule that cleans out old ones. "I deleted the object" under versioning does not mean "I stopped paying for it."
+</Callout>
+
+## Lifecycle rules: automatic management of object age
+
+There's no manually moving aging data into cold classes and cleaning up leftovers once you're dealing with millions of objects. That's what **lifecycle rules** are for - a set of "when an object reaches this age, do this to it" conditions that S3 applies on its own, with no involvement from you. A rule is attached to a bucket (optionally scoped by prefix or tag) and describes three kinds of actions.
+
+<Figure caption="A typical age-based lifecycle policy: a hot period in Standard, a move to warm, then to archival, and deletion once the data's no longer needed.">
+  <Sketch viewBox="0 0 480 170" title="Timeline of lifecycle transitions by object age">
+    <SketchArrow from={[20, 110]} to={[470, 110]} />
+
+    <SketchBox x={30} y={70} width={90} height={32} accent />
+    <SketchLabel x={75} y={90} mono size={10} accent>Standard</SketchLabel>
+    <SketchLabel x={30} y={130} mono size={9}>day 0</SketchLabel>
+
+    <SketchBox x={150} y={70} width={90} height={32} />
+    <SketchLabel x={195} y={90} mono size={10}>Standard-IA</SketchLabel>
+    <SketchLabel x={150} y={130} mono size={9}>day 30</SketchLabel>
+
+    <SketchBox x={270} y={70} width={90} height={32} />
+    <SketchLabel x={315} y={90} mono size={10}>Glacier</SketchLabel>
+    <SketchLabel x={270} y={130} mono size={9}>day 90</SketchLabel>
+
+    <SketchBox x={390} y={70} width={80} height={32} hatched />
+    <SketchLabel x={430} y={90} mono size={10}>expire</SketchLabel>
+    <SketchLabel x={388} y={130} mono size={9}>day 365</SketchLabel>
+
+    <SketchArrow from={[120, 86]} to={[150, 86]} />
+    <SketchArrow from={[240, 86]} to={[270, 86]} />
+    <SketchArrow from={[360, 86]} to={[390, 86]} />
+  </Sketch>
+</Figure>
+
+The first action type is **transition**: "once an object is older than N days, move it to a colder class." A fresh log sits in Standard for 30 days, then automatically moves to Standard-IA, and two months after that, into Glacier. The second is **expiration**: "once an object is older than N days, delete it." Logs older than a year are nobody's concern - the rule wipes them on its own. For versioned buckets there's a separate action that deletes **noncurrent versions** older than N days and clears out dangling delete markers, without touching the current version - keeping versioning under control. The third type cleans up incomplete uploads: "abort and delete multipart uploads that haven't completed within N days." That's exactly the cure for the "shrapnel" from section two, which piles up unnoticed and gets billed as storage.
+
+<Steps>
+<li>A fresh object is written to Standard - it's read heavily in the first weeks.</li>
+<li>After 30 days, a transition moves it to Standard-IA: reads have grown rare, and keeping it in the hot class is wasteful.</li>
+<li>After 90 days, it moves into Glacier: it's barely touched anymore, just needed as an archive.</li>
+<li>After 365 days, expiration deletes the object: the retention period is over, no reason to keep paying for it.</li>
+</Steps>
+
+## The cost model: what you're actually billed for
+
+An S3 bill isn't a single "you pay for volume" line, and that's a common source of surprises. You're billed for three separate things. **Storage** - per gigabyte-month, at the class's rate (Standard costs more, Glacier less). **Requests** - by operation count: `PUT`, `GET`, `LIST` are billed per thousand requests, and requests cost more on cold classes, plus a separate retrieval fee from IA and Glacier. **Outbound traffic** (egress) - per gigabyte leaving the cloud out to the internet.
+
+Egress is the sneakiest line item. Uploading into S3 is usually free, while serving data out to the internet costs per gigabyte, and on popular content that line easily dwarfs storage. That's exactly why a CDN sits in front of S3: it caches objects closer to users, so most downloads come from the cache instead of S3 - egress from S3 drops, and so does the bill. "Cheap to store" and "cheap to serve" are two different problems: storage class solves the first, delivery architecture solves the second.
+
+## Surprise: on hot data, the cheap class ends up pricier
+
+Back to the engineer from the intro - let's run the numbers on that intuition. Say a gigabyte in Standard costs a hypothetical 2.3 cents a month, and 0.1 cents in the archive class - 23 times cheaper to store. The temptation is obvious. But if that data gets read every day, storage now has to add the retrieval fee for every gigabyte read, plus the pricier requests of a cold class - and on fresh, quickly-replaced data, the early-deletion charge too, since the object never lives long enough to hit the minimum term. Add it all up, and "23 times cheaper" turns into "several times more expensive."
+
+A cheap class only pays off when the data is genuinely cold: read rarely, and not deleted before the minimum term. That's exactly what lifecycle rules are for - they move an object into a cold class not right away, but once it's **actually cooled off**, meaning it's stopped being read. Manually shoving hot data into a cold class "to save money" is a classic way to lose money instead.
+
+## Common mistakes
+
+- **Picking a class by storage price instead of read frequency.** A cold class is cheaper per gigabyte, but it adds a retrieval fee and a minimum term. On data that's read often or deleted quickly, it ends up pricier than Standard. Ask how often the data gets read first, and only then pick a class.
+- **Turning on versioning and forgetting about lifecycle.** Versions and delete markers don't vanish on their own; "I deleted the object" doesn't mean "I stopped paying for it." Without a rule that cleans up old versions, the storage bill creeps up unnoticed. Versioning almost always needs a lifecycle rule for noncurrent versions alongside it.
+- **Assuming lifecycle frees up space instantly.** Transitions and expirations run once a day, asynchronously, based on the object's age in days - not by the hour, and not the instant you edit a rule. It's background housekeeping, not a command, and the effect shows up with a delay.
+
+<Detail summary="How the charges are actually calculated, and why a transition isn't free either">
+
+Storage cost accrues proportionally to time: a gigabyte that sat for half a month costs half the monthly rate - but never less than the minimum term for cold classes. Standard-IA has a 30-day minimum, Glacier Flexible 90, Deep Archive 180: deleting or overwriting sooner is billed as if the object had sat for the entire minimum term. A lifecycle transition is itself an operation, and there's a small charge per object transitioned - so moving millions of tiny objects into a cold class can cost more than what you'd save on storing them, which is why cold classes pay off on large objects, not small ones. Retrieval from Glacier Flexible and Deep Archive is a separate asynchronous request (a restore) with a choice of speed: the faster you need the object, the more the retrieval costs; after a restore, the object is available as a temporary copy for a while, while the original stays in the archive. This is exactly why you pick a class based on your access pattern and leave the ongoing optimization to lifecycle rules rather than manual transitions.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Storage classes are a trade-off axis: the cheaper it is to hold a gigabyte (Standard → IA → Glacier → Deep Archive), the more expensive and slower it is to get it back.",
+    "Cold classes (IA, Glacier) carry a retrieval fee and a minimum storage term (30/90/180 days) with an early-deletion charge - on hot data, that outweighs the storage savings.",
+    "Pick a class by how often the data is read, not by storage price: frequently read data goes to Standard, occasional reads to IA, archives to Glacier.",
+    "Versioning stores every version as its own billable object; deleting just adds a delete marker, and the versions underneath keep getting billed.",
+    "Lifecycle rules act on object age: they move data into colder classes, expire (delete) old objects and versions, and clean up incomplete multipart uploads.",
+    "An S3 bill is storage + requests + outbound traffic (egress); egress to the internet often outweighs storage, which is why delivery gets cached through a CDN.",
+  ]}
+/>
+
+## References
+
+- [Amazon S3 - Storage classes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/storage-class-intro.html)
+- [Amazon S3 - Managing the lifecycle of objects](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)
+- [Amazon S3 - Using versioning in S3 buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html)
+- [Amazon S3 - Pricing](https://aws.amazon.com/s3/pricing/)
+- [Yandex Object Storage - storage classes](https://yandex.cloud/en/docs/storage/concepts/storage-class)

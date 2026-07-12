@@ -1,0 +1,162 @@
+---
+conceptId: drf-pagination-filtering
+title: "Pagination, filtering, throttling, versioning"
+estimatedMinutes: 13
+---
+
+# When "return everything" stops working
+
+The first version of a product list endpoint returns `Item.objects.all()`, and everything's fine - there are twenty rows in the database. A year later there are two hundred thousand. The same endpoint now pulls two hundred thousand objects from the database and sends them over the network on every request, the mobile app chokes on a ten-megabyte response, and the server burns memory serializing data the user was never going to scroll through anyway. Nobody broke the code - the data just grew, and the naive "return everything" scales exactly until the data stops being small.
+
+A mature list endpoint doesn't return everything. It returns a **page** (pagination), lets the client **narrow** the results (filtering), **limits how often** it can be called (throttling), and knows how to **change without breaking old clients** (versioning). These are four separate DRF mechanisms layered over the same list. By the end of this section you'll be choosing a pagination style to fit the task, telling filtering apart from search and sorting, understanding why throttling matters, and seeing how versions keep incompatible contracts apart.
+
+## Mental model: a funnel over the queryset
+
+Between "every row in the database" and "JSON in the response" sits a funnel of four narrowing steps, and the order matters. First, the **filter** drops irrelevant rows (`?status=paid`). Then **sorting** orders what's left (`?ordering=-created`). Then **pagination** slices off one chunk - a page. Throttling sits even earlier, at the front door, and decides not "which rows" but "should this request even be let through this often". Versioning picks which set of rules applies in the first place.
+
+<Figure caption="A funnel over the queryset: the filter drops irrelevant rows, sorting orders what's left, pagination slices off one page. Ahead of the funnel, throttling decides whether to let the request through; the version picks the contract.">
+  <Sketch viewBox="0 0 460 200" title="Funnel: filter → sort → paginate">
+    <SketchBox x={20} y={84} width={96} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={68} y={101} mono size={10}>queryset</SketchLabel>
+    <SketchLabel x={68} y={116} muted size={8}>all rows</SketchLabel>
+
+    <SketchBox x={136} y={80} width={84} height={48} accent />
+    <SketchLabel x={178} y={100} mono accent size={10}>filter</SketchLabel>
+    <SketchLabel x={178} y={116} muted size={8}>?status</SketchLabel>
+
+    <SketchBox x={240} y={80} width={84} height={48} />
+    <SketchLabel x={282} y={100} mono size={10}>order</SketchLabel>
+    <SketchLabel x={282} y={116} muted size={8}>?ordering</SketchLabel>
+
+    <SketchBox x={344} y={80} width={96} height={48} />
+    <SketchLabel x={392} y={100} mono size={10}>paginate</SketchLabel>
+    <SketchLabel x={392} y={116} muted size={8}>one page</SketchLabel>
+
+    <SketchArrow from={[116, 104]} to={[136, 104]} />
+    <SketchArrow from={[220, 104]} to={[240, 104]} accent />
+    <SketchArrow from={[324, 104]} to={[344, 104]} />
+
+    <SketchLabel x={230} y={40} muted size={9}>throttle: let this request through?</SketchLabel>
+    <SketchArrow from={[230, 48]} to={[178, 76]} dashed />
+  </Sketch>
+</Figure>
+
+Keep the split straight: filtering decides **what** is in the results, pagination decides **how much at once**, throttling decides **how often you can ask**, and versioning decides **under which rules**. These are orthogonal axes, and mixing them up (say, limiting response size through throttling instead of pagination) is a common source of awkward APIs.
+
+## Pagination: three styles, and when to use which
+
+DRF ships three built-in pagination classes, and choosing between them isn't a matter of taste - it's an answer to the shape of your data.
+
+- **PageNumberPagination** - pages by number: `?page=3`. The client thinks in terms of "page three of twenty". Simple and familiar, but the "page number" drifts if rows are added or removed between requests.
+- **LimitOffsetPagination** - a window by offset: `?limit=20&offset=40`. The client sets its own window size and shift. Flexible for arbitrary slices, but it shares the same downside: a large `offset` makes the database skip over rows, and that gets expensive on deep pages.
+- **CursorPagination** - a cursor on a sorted field: `?cursor=<opaque>`. Returns "the next page after this record" via an opaque marker. Resilient to inserts/deletes and fast at any depth, but it can't jump to an arbitrary page - only forward/backward.
+
+<Figure caption="The first page as sorting plus LIMIT: the list is ordered by amount, and only the first three records make it into the response (LIMIT 3). The next page is the same trick with an offset shift.">
+  <SortLimitFigure
+    items={[
+      { label: 'Anna', value: 540 },
+      { label: 'Boris', value: 420 },
+      { label: 'Vera', value: 390 },
+      { label: 'Gleb', value: 310 },
+      { label: 'Dina', value: 200 },
+      { label: 'Egor', value: 150 },
+    ]}
+    limit={3}
+    desc
+    orderLabel="by amount ↓"
+  />
+</Figure>
+
+The rule of thumb: a browsable UI with page numbers - `PageNumberPagination`; arbitrary slices and "load more" with size control - `LimitOffsetPagination`; large, frequently changing feeds where stability and depth matter - `CursorPagination`.
+
+## Filtering, search, and sorting
+
+Three different jobs, three different backends - easy to confuse because all three read query parameters.
+
+- **Exact filtering - django-filter (`DjangoFilterBackend`).** By field: `?status=paid&category=books`. Matches on an exact value. Declared via `filterset_fields` or a `FilterSet` class.
+- **Full-text search - `SearchFilter`.** One parameter, `?search=...`, across several text fields listed in `search_fields`. This is "find where it occurs", not "equals".
+- **Sorting - `OrderingFilter`.** `?ordering=-created,name`: sets the order by the fields allowed in `ordering_fields`. A leading minus means descending.
+
+```python
+class ItemViewSet(viewsets.ModelViewSet):
+    queryset = Item.objects.all()
+    serializer_class = ItemSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["status", "category"]
+    search_fields = ["title", "description"]
+    ordering_fields = ["created", "price"]
+```
+
+Backends stack: a request like `?status=paid&search=book&ordering=-price` first filters by `status`, then narrows by search, then sorts. Each backend reads its own set of query parameters and stays out of the others' way.
+
+<Callout type="info">
+`filterset_fields` and `search_fields` aren't the same thing. Filtering on `title` (`?title=Book`) looks for an exact match, while `search_fields=["title"]` (`?search=book`) looks for a substring. Exact "equals" and fuzzy "contains" are different operations, and the client reaches for a different parameter for each.
+</Callout>
+
+## Throttling: limiting request frequency
+
+Throttling answers "is this too often", and it runs before the view does any real work. Its purpose is protection against brute-forcing and abuse, not business logic. Classes set a rate in "number/period" form: `AnonRateThrottle` (for anonymous users), `UserRateThrottle` (per user), `ScopedRateThrottle` (its own limit for a group of endpoints).
+
+```python
+class ItemViewSet(viewsets.ModelViewSet):
+    throttle_classes = [UserRateThrottle]
+```
+
+The rate is configured as a string like `"100/hour"` or `"10/min"` in `DEFAULT_THROTTLE_RATES`. Exceeding the limit returns `429 Too Many Requests` with a `Retry-After` header. This isn't about "how many rows to return" - it's about "how often you're allowed to ask", an axis orthogonal to pagination.
+
+## Versioning: changing without breaking things
+
+An API contract changes over time: a field gets renamed, the response format shifts. Old clients won't update instantly, so incompatible changes get split across versions. DRF supports several schemes: version in the URL (`/api/v2/items/`), in the `Accept` header, or in a query parameter (`?version=2`). The chosen version is available in the view as `request.version`, and the code uses it to decide which serializer or behavior to apply.
+
+```python
+class ItemViewSet(viewsets.ModelViewSet):
+    def get_serializer_class(self):
+        if self.request.version == "v2":
+            return ItemSerializerV2
+        return ItemSerializerV1
+```
+
+The idea: `v1` keeps working the old way, `v2` carries the new contract, and clients migrate gradually. A version is a switch between rule sets, not between data.
+
+## Edge cases
+
+**Without explicit pagination, a list returns everything.** If `pagination_class` isn't set and there's no global default, the endpoint returns the entire queryset - the exact problem this section opened with. Turn pagination on globally via `DEFAULT_PAGINATION_CLASS`, or it gets forgotten until the first production incident.
+
+**A deep `offset` is expensive even with a small `limit`.** `?limit=20&offset=100000` still makes the database walk through and discard a hundred thousand rows before it can hand back twenty. A small page doesn't save you from a large shift - `CursorPagination` exists for deep feeds.
+
+**Filtering and sorting only work on allowed fields.** `ordering_fields` and `filterset_fields` are allowlists. A field that's not on the list gets silently ignored (not sorted or filtered on). That's a safeguard: otherwise a client could sort by any field, including unindexed or private ones.
+
+<Callout type="warning">
+Surprise: with `CursorPagination` you can't jump to "page 50" - cursor-based pagination has no page numbers at all, only "next/previous" relative to the current cursor. If the product needs arbitrary page jumps, a cursor won't work, no matter how appealing its stability and speed are. Choosing a style also means choosing what the client can and can't do.
+</Callout>
+
+## Common mistakes
+
+- **No pagination on a growing list.** "Return everything" works in a demo and fails in production. Turn on pagination globally by default, don't remember it only after an incident.
+- **Throttling instead of pagination to control response size.** Throttling limits request frequency, not response size. A large response gets trimmed by pagination; frequent requests get limited by throttling. These are different axes.
+- **Confusing filter and search.** `?title=...` (exact match via filter) and `?search=...` (substring match via SearchFilter) are different operations. Give the client the parameter that matches the semantics it needs.
+- **A breaking change without a version bump.** Rename a field in the response, and old clients break. Introduce incompatible changes as a new version and keep the old one alive until clients migrate.
+
+<Detail summary="Why CursorPagination survives inserts while PageNumber doesn't">
+
+`PageNumberPagination` turns into `LIMIT n OFFSET (page-1)*n` under the hood: a page is an offset from the start of the sorted set. If someone inserts a row near the beginning between fetching page 2 and page 3, everything shifts by one position: the last record of page 2 slides onto page 3 and gets shown to the client twice (or, on a deletion, one record gets skipped entirely). `CursorPagination` doesn't count an offset - it remembers the sort field's value on the last record shown (the cursor) and fetches the next page with the condition "sort field strictly greater than the cursor". Inserts and deletes further up the list don't move that threshold, so there are no duplicates or gaps, and the database uses an index on the sort field instead of an expensive row skip - hence both the stability and the speed at any depth. The price is losing random access: knowing only the last record's cursor, you can't compute "page 50".
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A funnel sits over the queryset: filtering decides what's in the results, sorting decides the order, pagination decides how much at once; throttling and version are separate axes.",
+    "Pagination: PageNumber (?page, browsable UI), LimitOffset (?limit&offset, arbitrary slices), Cursor (stable and fast at depth, but no page jumping).",
+    "Filtering (django-filter, exact match), search (SearchFilter, substring across fields), and sorting (OrderingFilter) are three different backends on their own query parameters.",
+    "Throttling limits request frequency (429 on excess), not response size; size is trimmed by pagination.",
+    "Versioning keeps incompatible contracts apart (request.version), letting the API change without breaking old clients.",
+  ]}
+/>
+
+## Links
+
+- [DRF - Pagination](https://www.django-rest-framework.org/api-guide/pagination/)
+- [DRF - Filtering](https://www.django-rest-framework.org/api-guide/filtering/)
+- [DRF - Throttling](https://www.django-rest-framework.org/api-guide/throttling/)
+- [DRF - Versioning](https://www.django-rest-framework.org/api-guide/versioning/)
+- [django-filter - documentation](https://django-filter.readthedocs.io/)

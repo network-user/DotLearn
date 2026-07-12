@@ -1,0 +1,103 @@
+---
+conceptId: replication
+title: "Replication: Leader and Replicas"
+estimatedMinutes: 12
+---
+
+# Replication: one leader, many replicas, and the gap between them
+
+Replication is the first move in almost any growth scenario, and it does two things at once. First, it buys read scale: you can keep several copies of the database and spread read traffic between them. Second, it buys fault tolerance: if one node dies, you have a ready copy to switch to. It sounds like a free lunch, but the cost hides in one word: a copy isn't instant. There's always a gap between the moment data is written on the primary node and the moment it arrives at the copies. Almost all the pain of replication grows out of that gap.
+
+## The leader takes writes, replicas repeat them
+
+The classic setup is called leader and replicas (leader-follower, also known as primary-replica). One node is designated the leader: only it accepts writes. Every change the leader writes to itself, it also appends to a stream of changes (the replication log). Replicas read that stream and apply the changes locally in the same order. Clients can read from any replica, but they can only write to the leader.
+
+<Figure caption="The leader accepts writes and streams changes to replicas · replicas apply the stream and serve reads · there's a lag between a write on the leader and its appearance on a replica.">
+  <Sketch viewBox="0 0 620 210" title="Leader and replicas">
+    <SketchLabel x={40} y={96} muted anchor="start">write</SketchLabel>
+    <SketchArrow from={[36, 108]} to={[74, 108]} accent />
+    <SketchBox x={76} y={84} width={96} height={50} accent />
+    <SketchLabel x={124} y={114} mono accent>leader</SketchLabel>
+    <SketchArrow from={[172, 100]} to={[392, 52]} />
+    <SketchArrow from={[172, 116]} to={[392, 160]} />
+    <SketchLabel x={280} y={78} muted>change stream</SketchLabel>
+    <SketchBox x={394} y={30} width={96} height={44} />
+    <SketchLabel x={442} y={57} mono>replica</SketchLabel>
+    <SketchBox x={394} y={140} width={96} height={44} />
+    <SketchLabel x={442} y={167} mono>replica</SketchLabel>
+    <SketchArrow from={[492, 52]} to={[540, 52]} />
+    <SketchLabel x={556} y={57} muted>read</SketchLabel>
+    <SketchLabel x={442} y={104} muted>lag</SketchLabel>
+  </Sketch>
+</Figure>
+
+The change stream can be transmitted in different ways. You could ship the raw SQL statements, but that's unreliable (non-deterministic functions like `now()` or `random()` would produce a different result on a replica). That's why production databases replicate not commands but their effect: PostgreSQL streams WAL records (the write-ahead log), and MySQL supports a row-based binlog format. A replica applies exactly the changes that happened on the leader and ends up in the same state.
+
+## Synchronous, asynchronous, and semi-synchronous replication
+
+The main configuration question: should the leader wait for a replica before telling the client "saved"? The answer determines what you're trading away.
+
+With asynchronous replication, the leader confirms the write to the client immediately, and the change stream makes its own way to the replicas afterward. This is fast and resilient to slow replicas, but if the leader dies while some changes haven't arrived yet, those changes are gone. The client was told "saved," and the data isn't there. Asynchronous is the default almost everywhere because it's the fastest option.
+
+With synchronous replication, the leader waits for an acknowledgment from a replica before responding to the client. There's no data loss if the leader dies: a confirmed change is guaranteed to exist on at least two nodes. The cost is heavy: writes now move at the speed of the slowest replica, and if a synchronous replica hangs, the leader can't confirm any write at all. Making every replica synchronous is dangerous in practice.
+
+The compromise is called semi-synchronous replication: the leader waits for an acknowledgment from at least one replica, while the rest catch up asynchronously. This guarantees a confirmed change exists on at least two nodes, but one slow replica among many doesn't stall writes.
+
+<Compare
+  leftTitle="Asynchronous"
+  rightTitle="Synchronous"
+  left={"The leader confirms immediately, replicas catch up later. Fast and resilient to slow replicas, but changes that haven't arrived yet are lost if the leader dies."}
+  right={"The leader waits for a replica's ack. No data loss, but writes move at the speed of the slowest replica, and a hung synchronous replica blocks writes entirely."}
+  verdict="Semi-synchronous takes the middle ground: wait for an ack from at least one replica, and let the rest catch up asynchronously."
+/>
+
+## Replication lag and what it breaks
+
+When things are calm, lag is a fraction of a second. But under load or during a heavy migration a replica can fall behind by seconds or minutes, and that's when effects show up that break what users expect.
+
+The first and most common: **read-your-writes**. A user posts a comment (the write goes to the leader), the page reloads and reads from a lagging replica, and the comment isn't there yet. The user is convinced their action was lost. Fixed by reading a user's own fresh writes from the leader (or from a replica known to have caught up to the right position), while everything else reads from replicas.
+
+Second: **monotonic reads**. A user reads the same data twice, and the second request lands on a replica with more lag than the first. They watch time run backward: a fresh answer a moment ago, a stale one now. Fixed by pinning a user to the same replica, so they don't "hop" between different amounts of lag.
+
+There's a third effect too, **consistent prefix**: with careless delivery, an observer can see an effect before its cause (a reply to a message before the message itself). It matters in sharded and multi-leader systems, where order across different streams isn't guaranteed on its own.
+
+<Callout type="warning">
+A read replica isn't just "faster." It's data from the past. Any query where freshness matters (a balance before a charge, checking whether something's already been paid) should go to the leader, not a replica.
+</Callout>
+
+## Failover and the trap of split-brain
+
+When the leader dies, something has to appoint a new one: that's failover. Automatic failover picks the freshest replica and promotes it to leader. Two traps hide here. First: with asynchronous replication, the new leader might be missing the old leader's most recent changes, and those are gone for good. Second, and nastier: **split-brain**. The old leader didn't actually die, it just dropped off the network for a minute; the system promoted a replica, and then the old leader came back, still convinced it's in charge. Now two nodes accept writes, the data diverges, and merging it back together is manual pain.
+
+Protection against split-brain comes from quorum and fencing: a new leader is elected only by a majority of nodes, and the old one, if it comes back, is barred from writing (for example, by revoking its access to shared storage). Behind this sits a fundamental trade-off that's easy to keep in mind through the CAP theorem: when the network partitions, a distributed system is forced to choose between consistency and availability. Click through the pairs: a strict mode (CP) will, during a partition, refuse writes on the minority side of the cluster rather than let data diverge; an available mode (AP) keeps accepting writes everywhere at the cost of temporary divergence.
+
+<Figure caption="During a network partition you get to keep two guarantees out of three · CP sacrifices the minority's availability for consistency · AP sacrifices strict consistency for availability.">
+  <CapTheoremFigure />
+</Figure>
+
+## Multi-leader: when there's more than one
+
+Sometimes one leader isn't enough: say, two data centers on different continents, where routing every write across the ocean is too slow. Then you set up several leaders (multi-leader), each accepting writes locally, and the leaders replicate changes to each other. You gain in latency and in resilience during a split between centers. There's one cost, but it's a big one: conflicts. The same key could be changed on two leaders at once, and something has to decide whose version wins. Resolution strategies (last-write-wins by timestamp, application-level merging, CRDTs) are their own hard class of problems. So multi-leader gets used when geography or offline clients force it, not for plain read scale, where ordinary replicas are enough.
+
+## Common mistakes
+
+- **Reading a user's own fresh data from a replica.** The classic read-your-writes bug: a user can't see the action they just took. Read fresh writes from the leader.
+- **Treating an asynchronous replica as a lossless copy.** Changes that haven't arrived yet disappear if the leader dies. If loss isn't acceptable, critical writes need a synchronous or semi-synchronous replica.
+- **Automatic failover with no protection against split-brain.** Without quorum and fencing, a returning old leader creates two owners and diverging data. Failover has to be agreed on by a majority.
+- **Running analytics on the leader.** Heavy reports choke the primary node and inflate lag. They belong on a replica set aside specifically for reads.
+
+<KeyTakeaways
+  items={[
+    "In a leader-and-replicas setup, only the leader accepts writes and streams changes (WAL, binlog); replicas apply the stream and serve reads.",
+    "Asynchronous replication is fast but loses changes that haven't arrived yet if the leader dies; synchronous loses nothing but moves at the speed of the slowest replica; semi-synchronous waits for at least one.",
+    "Lag breaks expectations: read-your-writes (can't see your own write) and monotonic reads (time runs backward); fixed by reading fresh data from the leader and pinning users to one replica.",
+    "Failover risks losing asynchronous changes and split-brain (two leaders); the defense is quorum and fencing.",
+    "Multi-leader gives you local writes in different data centers at the cost of conflict resolution, so it gets used out of necessity, not for plain read scale.",
+  ]}
+/>
+
+## References
+
+- [Martin Kleppmann, Designing Data-Intensive Applications, chapter 5](https://dataintensive.net/)
+- [PostgreSQL: Replication and WAL](https://www.postgresql.org/docs/current/high-availability.html)
+- [Jepsen: analyses of distributed database behavior under network partitions](https://jepsen.io/analyses)

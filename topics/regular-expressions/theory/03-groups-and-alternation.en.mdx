@@ -1,0 +1,135 @@
+---
+conceptId: groups-and-alternation
+title: "Groups, Captures, and Alternation"
+estimatedMinutes: 15
+---
+
+# Not Just Finding a Match, But Taking It Apart
+
+The pattern `\d\d\.\d\d\.\d{4}` finds the whole date "09.05.1945" in one piece, and that's enough for highlighting text. But a real task usually goes deeper: pull the day, month, and year out separately, rearrange them into ISO format, compare against another date. A match isn't just something to find - it's something to take apart. That's what groups are for, and along the way they solve a second problem too: how to say "at this point, allow one of several alternatives."
+
+By the end of this section you'll capture parts of a match with parentheses, refer back to them by number and by name, build alternatives with `|`, and reference already-captured text right inside the pattern itself.
+
+## Parentheses Capture, Numbers Count From the Left
+
+Parentheses in a pattern do two things at once: they group a chunk of the pattern into a single element, and they remember the text that matched that chunk. The remembered text is called a capture, and the parentheses themselves are a group. Groups are numbered by their opening parenthesis, left to right, starting at one; number zero is reserved for the whole match. Figure 1 shows a date split into three groups.
+
+<Figure caption="Each pair of parentheses gets a number based on the position of its opening parenthesis. group(0) is the whole match; group(1), group(2), group(3) are the captured pieces.">
+  <Sketch viewBox="0 0 460 160" title="Groups in a date pattern">
+    <SketchBox x={20} y={30} width={110} height={40} accent />
+    <SketchLabel x={75} y={55} mono accent>(\d\d)</SketchLabel>
+    <SketchLabel x={142} y={55} mono>{'\\.'}</SketchLabel>
+    <SketchBox x={155} y={30} width={110} height={40} accent />
+    <SketchLabel x={210} y={55} mono accent>(\d\d)</SketchLabel>
+    <SketchLabel x={277} y={55} mono>{'\\.'}</SketchLabel>
+    <SketchBox x={290} y={30} width={140} height={40} accent />
+    <SketchLabel x={360} y={55} mono accent>(\d\d\d\d)</SketchLabel>
+    <SketchArrow from={[75, 75]} to={[75, 105]} accent />
+    <SketchArrow from={[210, 75]} to={[210, 105]} accent />
+    <SketchArrow from={[360, 75]} to={[360, 105]} accent />
+    <SketchLabel x={75} y={125} mono>09</SketchLabel>
+    <SketchLabel x={210} y={125} mono>05</SketchLabel>
+    <SketchLabel x={360} y={125} mono>1945</SketchLabel>
+    <SketchLabel x={75} y={148} muted size={11}>group(1)</SketchLabel>
+    <SketchLabel x={210} y={148} muted size={11}>group(2)</SketchLabel>
+    <SketchLabel x={360} y={148} muted size={11}>group(3)</SketchLabel>
+  </Sketch>
+</Figure>
+
+Run the example and watch the match object hand out pieces by number. Then try wrapping a fourth group around the whole date and see how the numbering shifts.
+
+<PyDemo
+  title="Splitting a date into groups"
+  code={`import re
+
+m = re.search(r"(\\d\\d)\\.(\\d\\d)\\.(\\d\\d\\d\\d)", "Победа: 09.05.1945, парад")
+print(m.group(0))
+print(m.group(1), m.group(2), m.group(3))
+print(m.groups())`}
+/>
+
+Numbers work fine while you have two or three groups. In a long pattern, counting parentheses gets painful, so groups can be named instead: `(?P<day>\d\d)`. A named group is reached with `m.group("day")`, and `m.groupdict()` collects every named capture into a dictionary:
+
+```python
+import re
+
+m = re.search(r"(?P<day>\d\d)\.(?P<month>\d\d)\.(?P<year>\d{4})", "09.05.1945")
+print(m.group("day"))
+print(m.groupdict())
+```
+
+This prints `09` and `{'day': '09', 'month': '05', 'year': '1945'}`. Named groups keep their plain numbers too, so `m.group(1)` still works.
+
+## Alternation: One of Several Options
+
+The pipe `|` offers the engine a choice: `cat|dog` matches either "cat" or "dog". Alternation has the lowest priority of any operation - it splits everything to its left and right, all the way to the edges of the pattern or the enclosing group, into separate options. The pattern `good morning|afternoon` doesn't read as "good morning" or "good afternoon" - it reads as "good morning" or "afternoon". The boundaries of the alternatives need a group: `good (?:morning|afternoon)`.
+
+That introduced new notation: `(?:...)`. This is a non-capturing group. It groups but doesn't remember text and doesn't get a number. Reach for it whenever the parentheses are only there for precedence: with a quantifier, `(?:cat)+`, with alternation, `(?:yes|no)`. The pattern stays readable and the capture numbering doesn't shift under you.
+
+One more important detail: alternation picks the first option that matches, not the longest one. The pattern `cat|catalog` on the string "catalog" matches just "cat", because that option comes first and already succeeds. If your alternatives overlap, put the longer one first: `catalog|cat`.
+
+## Backreferences: Matching Already-Captured Text
+
+A capture is available not only after the search, but right inside the pattern itself. The notation `\1` means "here, the text must be exactly what group 1 captured." A classic use is finding accidentally doubled words.
+
+```python
+import re
+
+print(re.findall(r"(\w+) \1", "это было было давно"))
+```
+
+This prints `['было']` (from "это было было давно", "this was was long ago" - the doubled word is "было", "was"). Notice: `\1` doesn't mean "repeat the group's pattern" - it means "repeat its capture." The pattern `(\w+) \1` would not match "было есть" ("was is"), even though both words fit `\w+`. For named groups the same reference is written `(?P=name)`.
+
+## Where Groups Surprise You
+
+The biggest surprise involves `findall`. As long as a pattern has no groups, it returns a list of full matches. Add one group, and it returns a list of that group's captures. Add two or more, and it returns a list of tuples. The shape of the result depends on the number of parentheses:
+
+```python
+import re
+
+text = "Иванов Иван, Петрова Анна"
+print(re.findall(r"(\w+) (\w+)", text))
+```
+
+This prints `[('Иванов', 'Иван'), ('Петрова', 'Анна')]` - tuples of surname and first name, not a list of full matches. This behavior breaks code the moment someone adds "harmless" parentheses to a working pattern. If you need grouping without changing the result shape, use `(?:...)`.
+
+The second surprise: a group under a quantifier only keeps its last repetition. In `re.findall(r"(ха)+", "хахаха ха")`, each match hands back the group's capture rather than the whole match, giving `['ха', 'ха']`: from "хахаха" only the final "ха" survives. If you need the whole repeated match, wrap the repetition in an outer group: `((?:ха)+)`.
+
+## Common Mistakes
+
+- **`|` without a group eats half the pattern.** `^london|paris$` means "london at the start" or "paris at the end", not "one of the two full words". Why: alternation has the lowest priority of all. Fix it with a group: `^(?:london|paris)$`.
+- **Capturing parentheses "just in case".** Every extra pair of parentheses changes the `findall` result and shifts group numbers. Parentheses added only for grouping should be `(?:...)`.
+- **A short alternative before a longer one.** `cat|catalog` will never match "catalog" as a whole. Order overlapping alternatives from longest to shortest.
+- **`\1` expecting "the same shape" rather than "the same text".** A backreference requires the identical text, not the same rule. "12-13" won't match `(\d\d)-\1`.
+
+<Detail summary="Numbering nested groups and referencing by name">
+
+When groups are nested, each one's number is determined by the position of its opening parenthesis. In the pattern `((\d+)-(\d+))`, group 1 is the whole expression `(\d+)-(\d+)`, group 2 is the first number, group 3 is the second. The rule is simple: scan the pattern left to right and count only opening parentheses, ignoring `(?:` and other question-mark constructs, which get no number at all.
+
+```python
+import re
+
+m = re.search(r"((\d+)-(\d+))", "матч 3-2 закончился")
+print(m.group(1), m.group(2), m.group(3))
+```
+
+This prints `3-2 3 2`. When you reference a named group inside a pattern, prefer the name too, `(?P=name)`: such a pattern survives inserting new groups without any renumbering to fix.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'Parentheses group a chunk of the pattern and capture the matched text; numbers count opening parentheses starting at one.',
+    'Named groups (?P<name>...) read better than numbers, and groupdict() returns every capture as a dictionary.',
+    'Alternation | has the lowest priority and picks the first successful option, not the longest one.',
+    'A non-capturing group (?:...) groups without affecting numbering or the shape of findall results.',
+    'findall changes result shape based on group count: no groups gives strings, one group gives its captures, two or more give tuples.',
+    'A backreference \\1 or (?P=name) requires repeating the captured text, not the pattern.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Regular expression operations](https://docs.python.org/3/library/re.html#regular-expression-syntax)
+- [Python docs · Regular Expression HOWTO, Grouping](https://docs.python.org/3/howto/regex.html#grouping)
+- [regular-expressions.info · Alternation](https://www.regular-expressions.info/alternation.html)

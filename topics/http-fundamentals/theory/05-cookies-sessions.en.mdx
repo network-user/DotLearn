@@ -1,0 +1,114 @@
+---
+conceptId: cookies-sessions
+title: Cookies and Sessions
+estimatedMinutes: 14
+---
+
+# Cookies and sessions: memory for a memoryless protocol
+
+From the request-and-response concept, you already know HTTP is stateless, the server forgets the client the instant it replies. Yet you log into your Amazon account once, not before every click, and your cart doesn't empty out when you move between pages. Something is remembering you across requests. That something is a pair of headers, `Set-Cookie` and `Cookie`, the smallest and most argued-about mechanism on the web.
+
+## Mental model: the server hands out a badge, the client shows it
+
+Picture the lobby of an office building. Security doesn't remember faces, but hands you a badge at the door, and from then on you just show it. Cookies work the same way, and Figure 1 shows the full cycle: the server issues a tag in a response via `Set-Cookie`, the browser stores it, and from then on **automatically, on its own**, attaches it to every request to that site in a `Cookie` header.
+
+<Figure caption="The life of a cookie: one Set-Cookie in a response, and the browser attaches that tag to every following request to the same site.">
+  <Sketch viewBox="0 0 460 210" title="Set-Cookie and Cookie">
+    <SketchBox x={20} y={30} width={120} height={44} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={80} y={57} mono>browser</SketchLabel>
+    <SketchBox x={320} y={30} width={120} height={44} fill="rgb(var(--surface-2))" radius={8} />
+    <SketchLabel x={380} y={57} mono>server</SketchLabel>
+    <SketchArrow from={[145, 42]} to={[315, 42]} />
+    <SketchLabel x={230} y={28} mono size={11}>POST /login</SketchLabel>
+    <SketchArrow from={[315, 62]} to={[145, 62]} accent />
+    <SketchLabel x={230} y={90} mono size={11} accent>Set-Cookie: session=abc123</SketchLabel>
+    <SketchArrow from={[145, 130]} to={[315, 130]} accent />
+    <SketchLabel x={230} y={116} mono size={11} accent>GET /cart + Cookie: session=abc123</SketchLabel>
+    <SketchArrow from={[145, 160]} to={[315, 160]} accent />
+    <SketchLabel x={230} y={186} mono size={11} accent>GET /orders + Cookie: session=abc123</SketchLabel>
+  </Sketch>
+</Figure>
+
+The word "automatically" is doing all the work in that sentence. A frontend developer never writes code that says "attach the cookie": the browser does it on its own for every request to the domain that cookie belongs to. That's the mechanism's whole power, and, as we'll see below, its biggest risk.
+
+## Reading the raw headers
+
+A user logs in. The server checks the password and replies:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Set-Cookie: session=abc123; Max-Age=86400; Path=/; Secure; HttpOnly; SameSite=Lax
+
+{"status": "ok"}
+```
+
+The first pair, `session=abc123`, is the cookie's own name and value. Everything after it is attributes, instructions to the browser on how to handle this tag. The browser sends its next request already carrying the tag:
+
+```http
+GET /cart HTTP/1.1
+Host: www.amazon.com
+Cookie: session=abc123
+```
+
+Only the `name=value` pair travels back. The attributes are instructions for the browser; the server never sees them again.
+
+## Attributes: instructions for handling the badge
+
+**Lifetime.** `Max-Age=86400` means live for a day. A cookie with no expiry is called a session cookie and dies when the browser closes. There's also an older sibling, `Expires`, with a fixed date; when the two conflict, `Max-Age` wins.
+
+**Scope.** `Domain` and `Path` limit which addresses the browser attaches the cookie to. By default, it's only the domain that set it.
+
+**`Secure`** means send only over HTTPS. Without it, the tag also travels over unencrypted connections, visible to anyone sharing the Wi-Fi.
+
+**`HttpOnly`** means hide from JavaScript. A script running on the page can't read that cookie through `document.cookie`. If an attacker manages to inject a script into the page (an XSS attack), they still can't steal the session through `document.cookie`.
+
+**`SameSite`** controls whether the cookie is attached to requests that originated from another site. `Lax` (the current browser default) skips the cookie on cross-site POSTs, `Strict` skips it on any cross-site navigation at all, and `None` always sends it (and requires `Secure`). This is the answer to CSRF attacks: a malicious site tricks your browser into sending a POST to amazon.com, and without SameSite the browser would happily attach your session to it.
+
+For login sessions, the standard combination is all three protections at once: `Secure; HttpOnly; SameSite=Lax`.
+
+## Sessions: what's actually in the badge
+
+The cookie is just the transport. What you carry in it is up to you, and there are two camps.
+
+**Server-side sessions.** The cookie holds a random identifier, `session=abc123`, and all the data (who's logged in, what's in the cart) lives on the server, typically in something like Redis. Upside: revoking a session is trivial, delete the record and the badge turns into a pumpkin. Downside: you need to run that storage and hit it on every request.
+
+**Self-contained tokens.** The cookie (or the `Authorization` header) carries a signed token, usually a JWT, encoding something like "user 42, regular permissions, valid until 3pm." The server stores nothing: check the signature, trust the contents. Upside: no storage needed at all. Downside: you can't revoke a token instantly, it stays valid until it expires.
+
+<MarginNote label="In practice">A common split: Redis-backed sessions for websites, JWTs for APIs and microservices. Hybrids are common too: a short-lived JWT paired with a long-lived, revocable refresh token.</MarginNote>
+
+## What will surprise you
+
+**Cookies travel with every request.** Even for images and stylesheets. Stuff an extra kilobyte into your cookies, and it rides along hundreds of times on every page. A single cookie caps out around 4 KB, but common sense runs out long before that.
+
+**The value is visible to the user.** Cookies sit in DevTools in plain text, and whoever owns the browser can edit them. So a cookie should never hold anything the server will just take on faith later: an unsigned `admin=true` is an open invitation to abuse. Use either a random identifier or signed data.
+
+**Deleting a cookie is just another Set-Cookie.** There's no separate mechanism: the server sets the same cookie again with `Max-Age=0`, and the browser wipes it.
+
+## Common mistakes
+
+**A session cookie missing HttpOnly and Secure.** Both protections cost nothing to add and close off session theft via XSS and open Wi-Fi. Skipping them is leaving the door open on purpose.
+
+**Sensitive data in plain sight.** Phone number, role, a "paid" flag stored unsigned in a cookie, all of it can be rewritten by the user. The server should either not trust it or verify a signature.
+
+**Forgetting cookies are domain-scoped.** A tag set on `amazon.com` won't travel to `stripe.com`. For an API on a different domain, a session that "mysteriously stops working" is exactly the subject of the neighboring CORS topic.
+
+<Detail summary="Third-party cookies, and why they're being phased out">
+  A cookie can be set not just by the site in the address bar, but by any embedded resource on the page: an analytics pixel, an ad, a social share button. These "third-party" cookies let an ad network recognize you across thousands of unrelated sites and build a browsing history. Safari and Firefox block them by default, and Chrome has spent years announcing it will too. None of this matters for logins and sessions, though: those live on first-party cookies, which aren't going anywhere.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Cookies give a stateless protocol memory: the server issues a tag via Set-Cookie, the browser attaches it to every request itself, via Cookie.",
+    "Attributes are instructions to the browser: Max-Age sets a lifetime, Secure means HTTPS only, HttpOnly hides it from JavaScript, SameSite limits cross-site sending.",
+    "For a login session, the standard is Secure; HttpOnly; SameSite=Lax all together.",
+    "A server-side session is an identifier in the cookie with data on the server; a token (JWT) is signed data inside the tag itself, at the cost of not being instantly revocable.",
+    "Users can see and edit their own cookies: the server can't trust their contents without a signature.",
+  ]}
+/>
+
+## References
+
+- [MDN: Using HTTP cookies](https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies)
+- [RFC 6265: HTTP State Management Mechanism](https://www.rfc-editor.org/rfc/rfc6265)
+- [MDN: Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie)

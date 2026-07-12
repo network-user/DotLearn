@@ -1,0 +1,133 @@
+---
+conceptId: request-response
+title: "Request and Response: Anatomy of an HTTP Message"
+estimatedMinutes: 16
+---
+
+# Request and response: anatomy of an HTTP message
+
+You type `ozon.ru` into the address bar, hit Enter, and half a second later there's a page full of products on screen. In that half second, the browser composed a text letter to the server, sent it across the country, got a reply letter back, and rendered its contents. Neither side is on a phone call, and neither holds shared state: the entire web runs on exchanging letters like this. Learn to read them, and DevTools, curl, nginx logs, and "it failed with a 502" all stop being noise.
+
+## Mental model: the client asks, the server answers
+
+HTTP stands for HyperText Transfer Protocol, but the substance is simpler than the acronym suggests: it's the correspondence rules for two programs. One side is always the **client** - it starts the conversation by sending a **request**. The other is always the **server** - it waits, receives the request, and returns a **response**. The server never speaks first: until the client asks, the server has nothing to send and nowhere to send it.
+
+That correspondence follows a strict format. Every message, whether request or response, has four parts, always in the same order, as shown in Figure 1: a start line, headers, a blank line, and a body.
+
+<Figure caption="The four parts of every HTTP message. The blank line is mandatory: it's what separates metadata from the body.">
+  <Sketch viewBox="0 0 460 240" title="Structure of an HTTP message">
+    <SketchBox x={20} y={16} width={280} height={40} accent />
+    <SketchLabel x={160} y={41} mono accent>GET /catalog HTTP/1.1</SketchLabel>
+    <SketchLabel x={380} y={41} muted>start line</SketchLabel>
+    <SketchBox x={20} y={64} width={280} height={64} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={160} y={90} mono>Host: ozon.ru</SketchLabel>
+    <SketchLabel x={160} y={112} mono>Accept: text/html</SketchLabel>
+    <SketchLabel x={380} y={100} muted>headers</SketchLabel>
+    <SketchBox x={20} y={136} width={280} height={28} dashed />
+    <SketchLabel x={380} y={154} muted>blank line</SketchLabel>
+    <SketchBox x={20} y={172} width={280} height={48} hatched />
+    <SketchLabel x={160} y={199} mono>body (may be absent)</SketchLabel>
+    <SketchLabel x={380} y={199} muted>body</SketchLabel>
+  </Sketch>
+</Figure>
+
+**The start line** answers the main question. In a request, it's "what does the client want to do": method, path, and protocol version. In a response, it's "what happened": version, status code, and its text explanation.
+
+**Headers** are metadata, `name: value` pairs, one per line. Who sent it, what format is inside, how many bytes the body has, how to cache it.
+
+**The blank line** is the boundary. The protocol reads everything before it as bookkeeping, everything after it as payload.
+
+**The body** is the payload itself: the page's HTML, JSON from an API, image bytes. Many messages have no body at all: a "give me the page" request, for instance, is nothing but a start line and headers.
+
+## Reading a raw request
+
+Here's what the browser actually sends when you open a catalog page:
+
+```http
+GET /catalog?category=books HTTP/1.1
+Host: ozon.ru
+User-Agent: Mozilla/5.0
+Accept: text/html
+Accept-Language: ru-RU
+
+```
+
+Let's break down the start line word by word. `GET` is the method: "I want to fetch." `/catalog?category=books` is the path to the resource, plus the query string after the question mark. `HTTP/1.1` is the protocol version the client proposes to speak.
+
+Notice there's no domain name in the path. It moved into the `Host` header. That's a historical artifact of virtual hosting: hundreds of sites can live on one IP address, and the server needs to know which one you're asking for. There's no body on the request either: right after the headers comes a blank line, and the message is over.
+
+## Reading a raw response
+
+The server replies with a message in the same shape, just a different start line:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 5120
+Date: Tue, 10 Mar 2026 12:00:00 GMT
+
+<!DOCTYPE html>
+<html lang="en">
+...
+```
+
+The response's start line: version, status code `200`, and the phrase `OK`. Then headers: `Content-Type` says the body is HTML in UTF-8, `Content-Length` says the body is 5120 bytes. After the blank line comes the body itself - the HTML the browser is about to render.
+
+One request-response cycle is rarely the last one. The browser parses the HTML, finds links to stylesheets, scripts, and images, and fires off a separate request for each. A single storefront page easily turns into a hundred cycles, as shown in Figure 2.
+
+<Figure caption="The life of one click: before the request there's still a server to find and a connection to open, and after the first response the cycle repeats for every resource on the page.">
+  <PipelineFigure
+    title="From click to page"
+    stages={[
+      { label: 'DNS', note: 'name to IP address' },
+      { label: 'TCP', note: 'open connection' },
+      { label: 'Request', note: 'GET /catalog', active: true },
+      { label: 'Response', note: '200 + HTML', active: true },
+      { label: 'Resources', note: 'CSS, JS, images' },
+    ]}
+  />
+</Figure>
+
+<MarginNote label="History">The first version of HTTP, from 1991, could do exactly one thing: GET, with no headers and no version number. The response was raw HTML, without even a status code.</MarginNote>
+
+## A protocol with no memory
+
+HTTP has one property that shapes the entire architecture of the web: it's **stateless**, memoryless. The server handles a request, sends a reply, and forgets you existed. The next request is, to the server, a letter from a stranger - even if it arrives a millisecond later from the same address.
+
+That's not an oversight, it's a deliberate choice. The server doesn't have to hold thousands of "conversations" in memory, any request can be handed to any server behind a load balancer, and a crashed server doesn't lose anyone's dialogue. The price of that simplicity is the obvious question: "then how does a shopping cart or a login even work?" The answer is cookies, covered in a dedicated concept, [[cookies-sessions]].
+
+## What will surprise you
+
+**The blank line isn't decoration.** Drop it, and the server keeps reading the body as if it were more headers, then returns a parse error. And a header name is separated from its value by exactly a colon and a space. The format is rigid because programs parse it, not people.
+
+**Header names are case-insensitive.** `content-type`, `Content-Type`, and `CONTENT-TYPE` are the same header. Values, on the other hand, are compared according to that specific header's own rules.
+
+**Versions above 1.1 aren't text anymore.** HTTP/2 and HTTP/3 carry the same methods, headers, and status codes, but pack them into binary frames for speed. The semantics don't change, so everything you learn here applies to them too, and DevTools still shows you the messages in readable form.
+
+## Common mistakes
+
+**Confusing the URL with the request path.** The start line only carries the path, `/catalog`; the host lives in the `Host` header. The client splits the full URL apart before it ever sends anything.
+
+**Assuming request and response travel together.** They're two independent messages. A request can arrive fine while the response gets lost, so "the client got no response" doesn't mean "the server did nothing." We'll see why that matters in the [[methods]] concept, on idempotency.
+
+**Expecting the server to take initiative.** "Have the server ping me when something changes" isn't HTTP anymore, that's WebSocket or Server-Sent Events territory. In plain HTTP, the client always asks first.
+
+<Detail summary="How to see the raw messages yourself">
+  Open your browser's DevTools, go to the Network tab, and reload any page. Clicking the first row shows request and response headers - those are the very parts from Figure 1. In a terminal, `curl -v https://example.com` gives you the same thing: lines prefixed with `>` are the request, lines prefixed with `<` are the response.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "HTTP is an exchange of text messages: the client always sends the request, the server always sends the response.",
+    "Every message has a start line, headers, a blank line, and an optional body.",
+    "A request's start line: method, path, version. A response's start line: version, status code, phrase.",
+    "The domain travels in the Host header; only the part of the URL after the domain stays in the path.",
+    "HTTP is stateless: every request is self-contained to the server and knows nothing about the ones before it.",
+  ]}
+/>
+
+## References
+
+- [MDN: Overview of HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview)
+- [MDN: HTTP messages](https://developer.mozilla.org/en-US/docs/Web/HTTP/Messages)
+- [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110)

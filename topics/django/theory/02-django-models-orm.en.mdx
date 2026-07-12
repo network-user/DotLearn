@@ -1,0 +1,209 @@
+---
+conceptId: django-models-orm
+title: "Models and the ORM: QuerySets, relations, N+1"
+estimatedMinutes: 14
+---
+
+# Where the SQL you never wrote comes from
+
+You declare a class `Order`, write `Order.objects.filter(status="paid")` - and a moment later you're holding a set of objects with their fields filled in, even though you never typed `SELECT`, never opened a connection, never parsed a row of results. Django's ORM translates operations on Python objects into SQL and back: a class becomes a table, an instance becomes a row, an attribute becomes a column. It's convenient enough that it's easy to forget: behind any innocent attribute access, a query to the database might be hiding.
+
+That forgetfulness isn't harmless. The most common performance problems in Django projects don't come from "slow SQL" - they come from not understanding two things: **when** the ORM actually hits the database, and **how many times**. By the end of this section you'll be able to answer both confidently: how a model maps to a table, why a `QuerySet` is lazy and when it "wakes up," how `select_related` differs from `prefetch_related`, and how one innocent line in a template can turn into a hundred queries.
+
+## A model is a class, a table is its mirror image
+
+A model is an ordinary Python class inheriting from `models.Model`. Each field attribute describes a column: its type, constraints, default value. From that description Django can create a table, and later turn rows into instances and back.
+
+```python
+class Order(models.Model):
+    customer = models.CharField(max_length=100)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, default="new")
+    created = models.DateTimeField(auto_now_add=True)
+```
+
+A separate `models.Manager` object, available as `Order.objects`, is the "door" into the table: every query starts through it. The nested `class Meta` describes properties of the table as a whole rather than a single field: the default ordering, a human-readable name, indexes, uniqueness constraints.
+
+```python
+class Order(models.Model):
+    customer = models.CharField(max_length=100)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        ordering = ["-created"]
+        verbose_name = "order"
+```
+
+<Figure caption="A model class becomes a table: the class name becomes the table name, fields become columns, an instance becomes a row. The ORM translates in both directions.">
+  <Sketch viewBox="0 0 480 220" title="A model mirrored into a table">
+    <SketchBox x={20} y={40} width={150} height={140} />
+    <SketchLabel x={95} y={32} mono size={11}>class Order</SketchLabel>
+    <SketchLabel x={34} y={70} mono muted size={10} anchor="start">customer</SketchLabel>
+    <SketchLabel x={34} y={96} mono muted size={10} anchor="start">amount</SketchLabel>
+    <SketchLabel x={34} y={122} mono muted size={10} anchor="start">status</SketchLabel>
+    <SketchLabel x={34} y={148} mono muted size={10} anchor="start">created</SketchLabel>
+
+    <SketchArrow from={[170, 110]} to={[300, 110]} accent />
+    <SketchLabel x={235} y={98} muted size={10}>ORM</SketchLabel>
+
+    <SketchBox x={300} y={40} width={160} height={140} accent />
+    <SketchLabel x={380} y={32} mono accent size={11}>table order</SketchLabel>
+    <SketchLabel x={314} y={70} mono muted size={10} anchor="start">customer | amount</SketchLabel>
+    <SketchLabel x={314} y={96} mono muted size={9} anchor="start">Anna | 1200.00</SketchLabel>
+    <SketchLabel x={314} y={118} mono muted size={9} anchor="start">Ben | 540.00</SketchLabel>
+    <SketchLabel x={314} y={140} mono muted size={9} anchor="start">Vera | 999.00</SketchLabel>
+  </Sketch>
+</Figure>
+
+For this mirror image to show up in a real database, Django uses **migrations**. The command `python manage.py makemigrations` compares your current models against the last recorded state and writes a migration file - a step-by-step recipe of changes ("create table," "add column"). The command `python manage.py migrate` applies the accumulated migrations to the database. Keep the two separate: `makemigrations` doesn't touch the database at all, it only writes the recipe; `migrate` is what changes the database. Migrations are code - you commit them to the repository so everyone ends up with the same schema.
+
+## Mental model: a QuerySet is a deferred recipe, not data
+
+The core ORM idea you need to internalize: a `QuerySet` is **lazy**. When you write `Order.objects.filter(status="paid")`, nothing hits the database. You get back a description of a future query - a recipe. You can keep refining it: `.exclude(...)`, `.order_by(...)`, another `.filter(...)` - each call returns a new `QuerySet` with the recipe extended, and still not a single trip to the database.
+
+SQL executes only when the `QuerySet` is actually asked for data. That happens when you iterate it in a `for` loop, slice it by index or range, wrap it in `list()`, call `len()`, `bool()`, or an aggregate like `.count()`. Up to that point the recipe can be passed around, copied, and extended freely - the database stays asleep.
+
+<Figure caption="A chain of filter/exclude/order_by only extends the recipe; the actual database trip happens on iteration, a slice, or list().">
+  <PipelineFigure
+    title="When a QuerySet wakes up"
+    stages={[
+      { label: ".filter(status='paid')", note: "builds the recipe" },
+      { label: ".exclude(amount=0)", note: "extends the recipe" },
+      { label: ".order_by('-created')", note: "still lazy" },
+      { label: "for o in qs / list(qs)", note: "SQL runs", active: true },
+    ]}
+  />
+</Figure>
+
+Why go to this trouble? Laziness is an optimization. Django defers the query so it can collect all of your refinements into **one** piece of SQL and hit the database exactly once, instead of running each intermediate `filter` separately. On top of that, a lazy `QuerySet` can be passed into a template or another function, and whoever receives it decides whether it actually needs the data.
+
+```python
+qs = Order.objects.filter(status="paid")
+qs = qs.exclude(amount=0)
+qs = qs.order_by("-created")
+total = qs.count()
+```
+
+The first three lines here never touch the database - they only grow the recipe. The query hits the database exactly once, at `.count()`. If you then also wrote `for o in qs:`, that would be a **second** trip (unless the result was already cached by iteration) - a sign you might be doing extra work.
+
+## Fetching a single object: filter, exclude, get
+
+`filter(...)` keeps rows matching a condition and returns a `QuerySet` (possibly empty). `exclude(...)` is its mirror: it keeps everything **except** what matches. Both are lazy and both return a set.
+
+`get(...)` is different: it executes the query immediately and returns **exactly one** object, not a set. That's why it behaves specially at the edges. If no row matches, it raises `DoesNotExist`. If more than one matches, it raises `MultipleObjectsReturned`. That's its contract: "give me the one and only object, or admit that's not possible."
+
+```python
+order = Order.objects.get(id=42)
+paid = Order.objects.filter(status="paid")
+not_new = Order.objects.exclude(status="new")
+```
+
+<Callout type="warning">
+`get()` without an exact match is a common source of unhandled exceptions. `Order.objects.get(status="paid")`, when there are dozens of paid orders, blows up with `MultipleObjectsReturned`. Use `get` only on a genuinely unique field (primary key, a field with `unique=True`); for "maybe there, maybe not," use `filter(...).first()`.
+</Callout>
+
+## Relations: ForeignKey, OneToOne, ManyToMany
+
+Real data is connected. Django expresses relations through dedicated field types.
+
+**`ForeignKey`** is a many-to-one relation: many orders belong to one customer. In the table it's a column holding an identifier that points to a row in another table.
+
+```python
+class Customer(models.Model):
+    name = models.CharField(max_length=100)
+
+class Order(models.Model):
+    customer = models.ForeignKey(
+        Customer, on_delete=models.CASCADE, related_name="orders"
+    )
+```
+
+`related_name="orders"` sets up the **reverse** side: from a customer to their orders. Given an object `c` of type `Customer`, you write `c.orders.all()` and get all their orders. Without `related_name`, Django makes up a name (`order_set`), but an explicit name reads better. The `on_delete` argument is mandatory: it says what to do with orders when a customer is deleted (`CASCADE` deletes them along with it, `PROTECT` blocks the deletion, `SET_NULL` clears the reference).
+
+**`OneToOneField`** is a one-to-one relation - a special case: a profile for a user, a passport for a person. Under the hood it's a `ForeignKey` with a uniqueness constraint.
+
+**`ManyToManyField`** is a many-to-many relation: an order has many products, a product appears in many orders. Django sets up a hidden intermediate table of id pairs to represent this.
+
+```python
+class Product(models.Model):
+    title = models.CharField(max_length=200)
+
+class Order(models.Model):
+    products = models.ManyToManyField(Product, related_name="orders")
+```
+
+## The N+1 problem and how to fix it
+
+Now let's combine laziness and relations - and run straight into the ORM's most infamous trap. Say you're printing a list of orders and, for each one, the customer's name.
+
+```python
+for order in Order.objects.all():
+    print(order.customer.name)
+```
+
+Looks harmless. But `Order.objects.all()` is **one** query for the orders, and each `order.customer` access for a new order is **another** query for the customer (the customer wasn't part of the first result set, so the ORM lazily loads it). A hundred orders means a hundred and one queries. That's **N+1**: one query for the list, plus one per item.
+
+The fix is telling the ORM up front to pull related data along with the main query.
+
+<Compare
+  leftTitle="select_related"
+  rightTitle="prefetch_related"
+  left={<>
+    <p>For <strong>ForeignKey</strong> and <strong>OneToOne</strong>.</p>
+    <p>Does a <strong>JOIN</strong> and pulls related rows in <strong>one</strong> query.</p>
+    <p><code>Order.objects.select_related("customer")</code></p>
+  </>}
+  right={<>
+    <p>For <strong>ManyToMany</strong> and reverse <strong>ForeignKey</strong>.</p>
+    <p>Runs a <strong>separate</strong> query and stitches the data together in Python.</p>
+    <p><code>Customer.objects.prefetch_related("orders")</code></p>
+  </>}
+  verdict="A JOIN suits 'one related object' (select_related). For 'many related objects' a JOIN would blow up the result set, so prefetch_related fetches them in a second query and joins them in memory. Both turn N+1 into a fixed number of queries."
+/>
+
+With `select_related`, the same loop runs exactly one query: the JOIN pulls the customer along with each order immediately.
+
+```python
+for order in Order.objects.select_related("customer"):
+    print(order.customer.name)
+```
+
+## Edge cases
+
+**A `QuerySet` caches its result after the first iteration.** Once you've looped over `qs` or called `list(qs)`, the result is stored inside the object. A second `for` over the **same** `qs` no longer hits the database - it reads the cache. But `qs.filter(...)` or `qs.count()` creates or runs a fresh query. The rule that follows: reuse the same evaluated `QuerySet` rather than building a similar one again.
+
+**A slice runs a query, but `qs[:5]` is lazier than it looks.** A step-free slice translates into `LIMIT`/`OFFSET` and is usually lazy on its own (it returns a `QuerySet`), but as soon as you iterate it or index a specific element (`qs[0]`), the query executes. And `qs[0]` with a negative index is disallowed: the ORM can't express "last" in SQL without an explicit `order_by`.
+
+**`select_related` on a field that isn't a ForeignKey is an error.** You can't use it on a `ManyToManyField` or a reverse `ForeignKey` - there's no single row to JOIN against. That's what `prefetch_related` is for.
+
+## Common mistakes
+
+- **Accessing a relation inside a loop without preloading.** The classic N+1. If a loop over objects touches `obj.related.something`, add `select_related`/`prefetch_related` to the original query. A SQL query counter (Django Debug Toolbar) helps you spot this.
+- **Using `get()` where the data might not exist.** It blows up with `DoesNotExist`. Use `filter(...).first()` (returns an object or `None`) or catch the exception explicitly.
+- **Triggering a query from inside a template loop.** A template that touches `order.customer.name` in a loop produces the same N+1, just harder to notice - the SQL is hiding behind rendering. Prepare the data in the view, not the template.
+- **Assuming `filter` already hit the database.** `qs = Model.objects.filter(...)` doesn't run any SQL. If you time "query duration" around that line, you're timing recipe construction, not a query.
+
+<Detail summary="Why amount should be a DecimalField, not a float">
+
+Money shouldn't live in a `FloatField`: binary floats can't represent even `0.1` exactly, and summing amounts accumulates error - `1200.00 + 540.00` can come out as `1740.0000000002`. `DecimalField(max_digits, decimal_places)` stores a number as an exact fixed-precision decimal, the way accounting actually works. That's why the examples above use `DecimalField` for currency: you pick an ORM field not just by "data type" but by precision and range requirements.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A model is a class inheriting from models.Model: fields become columns, an instance becomes a row; class Meta describes the table as a whole (ordering, indexes).",
+    "Migrations: makemigrations writes a recipe of changes, migrate applies it to the database; migrations get committed to the repository.",
+    "QuerySets are lazy: filter/exclude/order_by only extend the recipe. SQL runs on iteration, an indexed slice, list(), len(), count().",
+    "get() hits the database immediately and requires exactly one object: DoesNotExist if none, MultipleObjectsReturned if several; for an optional lookup use filter().first().",
+    "Relations: ForeignKey (many-to-one, has related_name and on_delete), OneToOne, ManyToMany; the reverse side is reached through related_name.",
+    "N+1 is one query for a list plus one per item; fixed by select_related (JOIN, for FK/OneToOne) and prefetch_related (separate query, for M2M and reverse FK).",
+  ]}
+/>
+
+## References
+
+- [Django - Models](https://docs.djangoproject.com/en/stable/topics/db/models/)
+- [Django - Making queries](https://docs.djangoproject.com/en/stable/topics/db/queries/)
+- [Django - QuerySet API: when querysets are evaluated](https://docs.djangoproject.com/en/stable/ref/models/querysets/#when-querysets-are-evaluated)
+- [Django - select_related and prefetch_related](https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related)
+- [Django - Migrations](https://docs.djangoproject.com/en/stable/topics/migrations/)

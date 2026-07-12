@@ -1,0 +1,148 @@
+exercises:
+  - id: caching-directives-001
+    concept: caching
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does the no-cache directive actually mean?"
+    choices:
+      - id: a
+        text: "Storing a copy is fine, but it must be validated with the server before each use."
+      - id: b
+        text: "Don't store the response in any cache."
+      - id: c
+        text: "Cache only in the CDN, not in the browser."
+      - id: d
+        text: "Cache for exactly one minute."
+    correct: [a]
+    explanation: "The name is misleading: no-cache allows storage but requires validation before each use. A full ban on storage is no-store."
+    hints:
+      - "There are two similar directives: one forbids storing, the other forbids using without a check. This one is about the check."
+    variants:
+      - prompt: "A bank statement must not be stored in the browser, the CDN, or any proxy. Which Cache-Control directive is needed?"
+        choices:
+          - id: a
+            text: "no-store"
+          - id: b
+            text: "no-cache"
+          - id: c
+            text: "private"
+          - id: d
+            text: "max-age=0"
+        correct: [a]
+        explanation: "'Don't store a single byte anywhere' is no-store. no-cache and max-age=0 leave a copy on disk, and private only restricts storage to the browser."
+      - prompt: "A response with a user's personal page can be cached in their browser, but must not be cached in a shared CDN. Which directive expresses this?"
+        choices:
+          - id: a
+            text: "private"
+          - id: b
+            text: "public"
+          - id: c
+            text: "immutable"
+          - id: d
+            text: "no-store"
+        correct: [a]
+        explanation: "private allows storage only in that specific user's browser. A personal page that ended up in a shared CDN with public would leak into other people's results."
+
+  - id: caching-predict-001
+    concept: caching
+    type: predict-output
+    difficulty: 2
+    prompt: "The resource's content on the server hasn't changed. What numeric status code will the server return for this conditional request?"
+    snippet: |
+      GET /api/products/77 HTTP/1.1
+      Host: api.ozon.ru
+      If-None-Match: "a3f5c9"
+    expected:
+      kind: scalar
+      value: 304
+    explanation: "The client's fingerprint matches the current ETag - the content hasn't changed. The server responds 304 Not Modified with no body, and the cache keeps using its own copy."
+    hints:
+      - "The client sent a fingerprint of its copy. If it matches the current one, why send the body over the network again?"
+    variants:
+      - prompt: "The product changed, and its new ETag is \"b7e2d1\". What numeric status code will the server return for this conditional request?"
+        snippet: |
+          GET /api/products/77 HTTP/1.1
+          Host: api.ozon.ru
+          If-None-Match: "a3f5c9"
+        expected:
+          kind: scalar
+          value: 200
+        explanation: "The fingerprints don't match - the client's copy is stale. The server responds with a full 200, a new body, and a new ETag."
+      - prompt: "The browser stored this response at 12:00:00. Up to and including what time is the copy considered fresh and served without contacting the server? Enter the time as HH:MM:SS."
+        snippet: |
+          HTTP/1.1 200 OK
+          Cache-Control: max-age=600
+          Content-Type: application/json
+
+          {"stock": 14}
+        expected:
+          kind: scalar
+          value: '12:10:00'
+        explanation: "max-age is set in seconds: 600 seconds is 10 minutes. From 12:00:00 the copy is fresh until 12:10:00, after which the cache must validate it with the server."
+
+  - id: caching-blanks-001
+    concept: caching
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "A CSS file with a hash in its name will never change. Complete the response header: a one-year lifetime in seconds and the 'don't even check' directive."
+    template: |
+      HTTP/1.1 200 OK
+      Content-Type: text/css
+      Cache-Control: public, max-age={{seconds}}, {{directive}}
+    blanks:
+      seconds:
+        accept: ['31536000']
+      directive:
+        accept: ['immutable', 'Immutable']
+    explanation: "A year is 31536000 seconds, and immutable tells the cache 'the content won't change, no validation needed.' This combination is safe precisely because changing the content would also change the filename."
+    hints:
+      - "The lifetime is set in seconds: multiply 365 days, 24 hours, 60 minutes, and 60 seconds."
+      - "The second directive promises the cache that the resource will never change, sparing it conditional requests."
+    variants:
+      - prompt: "The server serves JSON with a content fingerprint so the cache can validate its copy. Fill in the name of the fingerprint header and the name of the conditional request header."
+        template: |
+          HTTP/1.1 200 OK
+          {{tagheader}}: "a3f5c9"
+          Cache-Control: max-age=60
+
+          The client's next request after the period expires:
+          GET /api/products/77 HTTP/1.1
+          {{condheader}}: "a3f5c9"
+        blanks:
+          tagheader:
+            accept: ['ETag', 'Etag', 'etag']
+          condheader:
+            accept: ['If-None-Match', 'if-none-match']
+        explanation: "The validation pair: the server issues a fingerprint in ETag, the client returns it in If-None-Match. A match gives 304 with no body; a mismatch gives 200 with new content."
+      - prompt: "The server serves Russian and English versions at the same URL and must warn shared caches. Fill in the header name and its value."
+        template: |
+          HTTP/1.1 200 OK
+          Content-Type: text/html; charset=utf-8
+          Content-Language: ru
+          {{varyheader}}: {{varyvalue}}
+        blanks:
+          varyheader:
+            accept: ['Vary', 'vary']
+          varyvalue:
+            accept: ['Accept-Language', 'accept-language']
+        explanation: "Vary: Accept-Language tells the cache that the response depends on the client's language: without it, a shared cache will sooner or later serve the Russian HTML to an English-speaking user."
+
+  - id: caching-deploy-001
+    concept: caching
+    type: theory-quiz
+    difficulty: 4
+    prompt: "After a deploy, some users see the old version of the site for a week. The HTML was served with Cache-Control: max-age=604800. What went wrong, and what's the right approach?"
+    choices:
+      - id: a
+        text: "HTML with a week-long max-age is served from cache with zero requests to the server; the fix is a short lifetime or no-cache on HTML, and a long max-age with immutable on assets whose filenames carry a content hash."
+      - id: b
+        text: "no-store should have been set on every response on the site: then the cache never gets in the way."
+      - id: c
+        text: "The problem is the CDN: browser caches can't store HTML."
+      - id: d
+        text: "Users should be asked to press Ctrl+F5; the headers have nothing to do with it."
+    correct: [a]
+    explanation: "As long as max-age hasn't expired, the browser doesn't even ask the server - the old HTML keeps linking to the old assets. The working pattern splits their fates: HTML is validated often (short lifetime or no-cache), while files with a hash in the name are cached for a year - a name change is what updates them. no-store on everything would kill performance, and 'ask the users' doesn't scale."
+    hints:
+      - "As long as the freshness period hasn't expired, the cache doesn't even make conditional requests. What does that mean for a page that links to every other file?"
+      - "Split resources into two kinds: those whose name changes with every content change, and those whose name stays fixed. Which lifetime suits which?"

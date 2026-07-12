@@ -16,3 +16,26 @@
 Тема [database-types](../database-types): нужно понимать реляционную и NoSQL-модели, первичный и внешний ключи, разницу OLTP и OLAP. Полезны, но не обязательны, темы [hashing](../hashing) и [message-brokers](../message-brokers).
 
 Generated via `lesson-forge`.
+
+---
+
+## English
+
+# Database Scaling: Replication, Sharding, and Partitioning
+
+A topic for mid-level developers who hit the ceiling of a single database server and want to understand what comes next. Three strategies get confused constantly, even though they solve different problems: replication copies the same data to several nodes for fault tolerance and reads, partitioning cuts a table into chunks inside one node for manageability, sharding spreads data across different nodes for writes and volume. The focus is on mechanics and pitfalls: replication lag and read-your-writes, choosing a shard key and hot keys, consistent hashing versus `hash % N`, cross-shard queries and the pain of resharding. Interview-level coverage, not tied to a specific database engine. After this topic you'll be able to pick a strategy for a given scenario and explain why it fits.
+
+## Concepts
+
+1. **Vertical and horizontal scaling**: the ceiling of scale-up, splitting read and write paths, when one server is enough for a long time, a map of the topic.
+2. **Replication: leader and replicas**: synchronous, asynchronous, and semi-synchronous replication, lag and its consequences, read-your-writes and monotonic reads, failover and split-brain, multi-leader.
+3. **Partitioning within a single node**: range, list, and hash partitions, partition pruning, partitions versus indexes, the "time plus TTL" case.
+4. **Sharding**: choosing a key, hash versus range, hot keys, cross-shard queries and transactions, resharding, routing through the application, a proxy, or a coordinator.
+5. **Consistent hashing**: the trouble with `hash % N`, the ring, virtual nodes, where it's used (caches, Cassandra, DynamoDB).
+6. **Choosing a strategy by scenario**: read-heavy, write-heavy, multi-tenant SaaS, a checklist of questions before scaling, CQRS and read replicas.
+
+## Prerequisites
+
+The [database-types](../database-types) topic: you need to understand the relational and NoSQL models, primary and foreign keys, and the difference between OLTP and OLAP. The [hashing](../hashing) and [message-brokers](../message-brokers) topics are helpful but not required.
+
+Generated via `lesson-forge`.

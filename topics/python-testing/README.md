@@ -15,3 +15,25 @@
 - `python-oop` - тесты в `unittest` пишутся как классы-наследники `TestCase`, а моки заменяют объекты, поэтому базовое понимание классов и методов обязательно.
 
 Generated via `lesson-forge`.
+
+---
+
+## English
+
+# Python Testing: unittest, pytest, Fixtures, and Mocking
+
+A practical walkthrough of testing Python code: why automated tests matter and what makes a good one (the Arrange-Act-Assert pattern, the testing pyramid), how the built-in `unittest` module works with `TestCase`, its assert methods, and the `setUp`/`tearDown` hooks, why `pytest` feels lighter (plain `assert` with introspection, parametrization, markers), how fixtures set up and tear down state via `scope` and `yield`, and how mocks isolate a unit test from the network, the database, and time. Built for anyone who knows Python and classes and wants to write tests they can actually trust.
+
+## Concepts
+
+1. Why tests exist and what they're made of
+2. unittest: TestCase, assert methods, setUp/tearDown
+3. pytest: assert, parametrization, markers
+4. pytest fixtures: scope, conftest, yield
+5. Mocking and isolation: Mock, patch, monkeypatch
+
+## Prerequisites
+
+- `python-oop` - tests in `unittest` are written as `TestCase` subclasses, and mocks replace objects, so a working knowledge of classes and methods is required.
+
+Generated via `lesson-forge`.

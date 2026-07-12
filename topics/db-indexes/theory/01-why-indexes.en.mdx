@@ -1,0 +1,134 @@
+---
+conceptId: why-indexes
+title: "Why you need indexes: full table scans vs. point lookups"
+estimatedMinutes: 12
+---
+
+# Why you need indexes: full table scans vs. point lookups
+
+Your "My Orders" page takes almost three seconds to load, and the culprit is one innocent-looking query: `SELECT * FROM orders WHERE user_id = 4821`. Nobody noticed the delay when the table held a thousand rows. But `orders` grew to two million rows while the query stayed exactly the same, so now every page load makes the database honestly scan all two million rows just to pick out the dozen that match. An index removes that work entirely: with one in place, the database finds the same rows without ever looking at the rest.
+
+By the end of this chapter you'll understand why a query without an index slows down linearly as the table grows, what `CREATE INDEX` actually builds, what an index costs you on writes and on disk, and how `EXPLAIN QUERY PLAN` lets you see with your own eyes whether the database is reading the whole table or jumping straight to the target.
+
+## A full scan grows with the table
+
+Without a suitable index, the database has exactly one way to run `WHERE user_id = 4821`: take the first row, compare, take the second row, compare, and keep going until the last one. This is called a full table scan (SQLite's plan labels it `SCAN`). Its cost is linear in the number of rows: double the table, double the time. That's tolerable for a one-off analytics query, but a page that fires this query on every click turns that linear growth into the exact seconds of waiting you started with.
+
+Notice the proportion: only a dozen rows actually match the condition, yet millions get read. Almost all the work goes into rows that were never going to qualify. An index exists for exactly one reason: to skip that wasted work.
+
+<Figure caption="On the left the engine reads every row in order · on the right the index leads straight to the one that matters.">
+  <Sketch viewBox="0 0 440 220" title="Full scan vs. index seek">
+    <SketchLabel x={100} y={20} weight="bold">Full scan</SketchLabel>
+    <SketchBox x={55} y={34} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={55} y={60} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={55} y={86} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={55} y={112} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={55} y={138} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={55} y={164} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchArrow from={[100, 32]} to={[100, 188]} dashed />
+    <SketchLabel x={100} y={206} muted>reading every row</SketchLabel>
+    <SketchLabel x={345} y={20} weight="bold">Index seek</SketchLabel>
+    <SketchBox x={300} y={34} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={300} y={60} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={300} y={86} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={300} y={112} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={300} y={138} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchBox x={300} y={164} width={90} height={22} fill="rgb(var(--surface-2))" />
+    <SketchHighlight x={296} y={108} width={98} height={30} />
+    <SketchArrow from={[215, 60]} to={[295, 120]} accent curve />
+    <SketchLabel x={205} y={46} accent>index</SketchLabel>
+    <SketchLabel x={345} y={206} muted>straight to the target</SketchLabel>
+  </Sketch>
+</Figure>
+
+In the diagram on the left, the arrow travels top to bottom through every row; that's what a `SCAN` looks like. On the right, a single arrow lands directly on the target row, skipping its neighbors, because the index pointed the way.
+
+## An index is a separate, sorted copy of the key
+
+`CREATE INDEX idx_orders_user ON orders(user_id)` builds a separate structure alongside the table. It stores `user_id` values in sorted order, and next to each value sits a reference to the matching table row (in SQLite, the `rowid`). Sorting is the entire trick: on ordered values, the database can binary-search its way to the answer in a handful of steps instead of scanning. Once it finds the value in the index, it follows the reference to fetch the actual row.
+
+Here's an analogy that barely lies: an index works like the alphabetical index at the back of a thick reference book. To find a term, you don't flip through every page; you open the index, find the word (already sorted alphabetically), and jump straight to the page it names. The difference between paging through the whole book and consulting the index is exactly the difference between a `SCAN` and a point lookup.
+
+You don't have to guess which path a query will take; you can just ask the database. Prefixing a query with `EXPLAIN QUERY PLAN` returns not data but a plan: how the engine intends to execute it.
+
+```sql
+EXPLAIN QUERY PLAN SELECT * FROM orders WHERE user_id = 5;
+```
+
+Without an index, the plan is short and depressing:
+
+```text
+SCAN orders
+```
+
+After `CREATE INDEX idx_orders_user ON orders(user_id)`, the same query gets a different plan:
+
+```text
+SEARCH orders USING INDEX idx_orders_user (user_id=?)
+```
+
+`SCAN` became `SEARCH`, and the index's name showed up. That's the key signal: `SCAN` reads the whole table, `SEARCH` walks the index straight to the rows you want. The last chapter of this topic covers plans in full detail; for now, these two words are enough.
+
+## Ask the database for its plan
+
+Below is a live database with a `logs` table holding two thousand rows and a query wrapped in `EXPLAIN QUERY PLAN`. Run it: the plan shows `SCAN logs`, meaning every row gets read. Now, in the editor, add `CREATE INDEX idx_logs_user ON logs(user_id);` before the `EXPLAIN` line and run it again; the plan switches to `SEARCH ... USING INDEX`. Then change the condition from `user_id = 42` to `level = 'error'` and see whether the same index still helps a different column.
+
+<SideSql
+  title="Query plan: SCAN or SEARCH"
+  editable
+  live
+  fixture={`CREATE TABLE logs (id INTEGER PRIMARY KEY, user_id INTEGER, level TEXT, ts INTEGER);
+INSERT INTO logs (user_id, level, ts)
+WITH RECURSIVE seq(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 2000
+)
+SELECT n % 500, CASE WHEN n % 100 = 0 THEN 'error' ELSE 'info' END, n
+FROM seq;`}
+  query="EXPLAIN QUERY PLAN SELECT * FROM logs WHERE user_id = 42;"
+/>
+
+An index on `user_id` won't help a condition on `level`: it sorts the wrong column, so the plan for `level` stays `SCAN`. An index only speeds up queries that filter on the columns it actually contains, and that's worth remembering from day one.
+
+## What an index costs you
+
+If an index helps reads this much, why not index every column? Because it has a price, and you pay it on writes and on disk.
+
+Every `INSERT`, every `UPDATE` of an indexed column, and every `DELETE` now touches not just the table but all of its indexes: the value has to slot into its correct spot in a sorted structure instead of just getting appended. Five indexes on a table turn one row insert into six separate writes. On a table with a heavy insert stream, unnecessary indexes slow the application down directly.
+
+An index also takes up space. It stores a copy of the indexed values plus references, and for a wide, multi-column index that volume can rival the table itself. It's entirely common to find a database where indexes account for half its size on disk.
+
+## When you don't need an index
+
+- **The primary key is already indexed.** An `INTEGER PRIMARY KEY` column in SQLite is the same as `rowid`, the table's built-in row key. Looking it up (`WHERE id = 5`) goes through that key without any `CREATE INDEX`, so a separate index on that column is redundant.
+- **The table is small.** If a lookup table of statuses has ten rows, scanning all ten is cheaper than bothering with an index, and the planner will pick `SCAN` on its own. Indexes pay off at scale.
+- **The column has few distinct values.** An index on a `status` column with just three values across a million rows is nearly useless: filtering for `paid` still selects half the table, and reading that half through an index is no faster than scanning. This property is called selectivity, and a separate chapter of this topic is devoted to it.
+
+## Common mistakes
+
+**Indexing everything.** The temptation to slap an index on every column ends in slow writes and a bloated database. Index the columns you actually filter and join on, not every column that exists.
+
+**Indexing a column with three possible values.** An index on `status`, on `is_active`, or on a user's gender rarely speeds up anything: selectivity is too low. Before creating an index, estimate what fraction of the table the condition actually filters out.
+
+**Hoping an index will speed up writes.** An index speeds up reads and slows down writes, never the other way around. If your bottleneck is the insert stream, extra indexes only make it worse.
+
+<Detail summary="How much an index actually slows down inserts">
+
+The exact number depends on the schema, but the order of magnitude is this. Inserting a row with no indexes appends the data and updates one built-in `rowid` key. Every additional index adds a search for the right spot in its own sorted structure, plus a write there, sometimes with rebalancing. In practice, a table with five indexes accepts an insert stream several times slower than the same table with none. That's why systems where write throughput matters (logs, metrics, events) keep indexes to a minimum and push heavy analytics onto a separate replica or a storage engine built for reads.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Without an index, a filtered query runs as a full scan (SCAN), and its time grows linearly with the number of rows.",
+    "An index is a separate, sorted copy of a column's values with references back to rows; it lets the database find what it needs without scanning.",
+    "EXPLAIN QUERY PLAN shows whether the database reads the whole table (SCAN) or walks an index straight to the rows (SEARCH).",
+    "An index speeds up reads but slows down writes and takes up space: every INSERT and UPDATE has to update all of its indexes too.",
+    "INTEGER PRIMARY KEY is already indexed; on small tables and low-selectivity columns, an index usually doesn't speed up anything.",
+  ]}
+/>
+
+## References
+
+- [SQLite Query Planner](https://www.sqlite.org/queryplanner.html)
+- [SQLite CREATE INDEX](https://www.sqlite.org/lang_createindex.html)
+- [Use The Index, Luke](https://use-the-index-luke.com/)

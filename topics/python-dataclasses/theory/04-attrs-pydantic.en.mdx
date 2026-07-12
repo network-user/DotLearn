@@ -1,0 +1,139 @@
+---
+conceptId: attrs-pydantic
+title: attrs and pydantic
+estimatedMinutes: 11
+---
+
+# When data needs validation, not just structure
+
+A plain dataclass honestly lays your arguments out into fields and stops there. It trusts you completely: `Box("5")` for a field declared `size: int` will happily create an object where `size` stays the string `"5"`, and nobody objects. Inside your own code, where you control the input, that's exactly what you want, and extra checking would only slow things down.
+
+The trouble starts at the boundary. An HTTP request body, a config string, a message off a queue all come from someone you can't trust: types are wrong, fields are missing, numbers arrive as strings. At that point structure alone isn't enough, you need validation. Two libraries outside the standard library cover that: `attrs` and `pydantic`. This section draws the line between "trust" and "verify" and shows where each tool fits. The `attrs` and `pydantic` code here is read-only: neither library is available in the sandbox, so there's nothing to run.
+
+## A spectrum from structure to validation
+
+Three tools line up by how much work they take on. A standard dataclass gives you structure and checks nothing. `attrs` adds optional validators and converters on top of structure. `pydantic` goes furthest of all: it validates and coerces types, and it's built specifically for taking in untrusted data.
+
+<Figure caption="pydantic sits at the input/output boundary and turns untrusted input into verified data · inside the domain that data can already be trusted, and a plain dataclass is enough.">
+  <PipelineFigure
+    stages={[
+      { label: 'External input', note: 'JSON · form · queue' },
+      { label: 'pydantic at the boundary', note: 'validation · coercion', active: true },
+      { label: 'Verified data', note: 'types guaranteed' },
+      { label: 'dataclass inside the domain', note: 'structure, no extra checks' },
+    ]}
+  />
+</Figure>
+
+## dataclass trusts you: see it for yourself
+
+Before reaching for outside libraries, it's worth actually feeling what a standard dataclass doesn't do. A type annotation is a hint for humans and analyzers, not a runtime check. Run the code: the `size` field is declared as `int`, yet a string sits inside it just fine. Swap `"5"` for the number `5` and watch the second line of output turn from `55` into `10`.
+
+<PyDemo
+  title="dataclass neither coerces nor validates types"
+  code={`from dataclasses import dataclass
+
+@dataclass
+class Box:
+    size: int
+
+b = Box("5")
+print(b)
+print(b.size + b.size)
+print(type(b.size).__name__)`}
+/>
+
+The output is `Box(size='5')`, then `55`, then `str`: the `int` annotation didn't stop a string from getting in, and `"5" + "5"` gave you concatenation, not addition. That's not a dataclass bug, it's the contract: structure without checks. Once data starts arriving from outside, that contract turns dangerous.
+
+## attrs: structure plus validators and converters
+
+`attrs` is dataclass's predecessor and its more flexible relative. The syntax looks similar, but fields get two extra levers that the standard library doesn't offer. A **converter** transforms a value before it's stored. A **validator** checks a value and raises if it's not acceptable.
+
+```python
+from attrs import define, field
+from attrs.validators import ge
+
+@define
+class Account:
+    name: str
+    price: int = field(converter=int)
+    balance: int = field(validator=ge(0))
+```
+
+Here `converter=int` turns `"5"` into `5` at creation time, and `validator=ge(0)` refuses to let a negative balance through, raising an error instead. Reach for `attrs` when you want fine-grained control over fields and performance, without pulling in pydantic's whole validation model.
+
+## pydantic: validation and coercion at the boundary
+
+`pydantic` is built for one job: take data from the outside world and either turn it into a verified object or reject it with a clear reason. A model inherits from `BaseModel`, and `model_validate` does the parsing on the way in.
+
+```python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    id: int
+    name: str
+
+user = User.model_validate({"id": "1", "name": "Anna"})
+```
+
+The string `"1"` in the `id: int` field doesn't raise an error: pydantic coerces it into the number `1`. A value that genuinely can't be coerced raises a `ValidationError` describing exactly what's wrong and in which field. The reverse operation is `model_dump`, which hands back a dict ready for serialization.
+
+```python
+user.id
+user.model_dump()
+```
+
+The first returns `1` (already an `int`), the second returns `{"id": 1, "name": "Anna"}`. Those are the model's two boundaries: `model_validate` on the way in, `model_dump` on the way out.
+
+<Callout type="info">
+pydantic v2 is rewritten with a Rust core, so validation is fast, but not free. When coercion is unwelcome and types need to match exactly, turn on strict mode, and then `"1"` in an `int` field becomes an error instead of a silent conversion.
+</Callout>
+
+## The rule: dataclass inside, pydantic at the boundary
+
+The philosophy behind both worlds fits in one sentence: **dataclass trusts, pydantic verifies**. That gives you a practical placement rule. At the input/output boundary, where data isn't trusted yet, put pydantic there: it checks shape and types once, on the way in. Deeper in the domain, where data has already been checked, a dataclass is enough, there's no reason to pay for revalidation at every step.
+
+This pairing shows up clearly in frameworks like FastAPI. There, request and response models are pydantic `BaseModel`s: the framework validates the request body on the way in and serializes the response on the way out by itself. The domain objects living between the handler and the database can stay ordinary dataclasses, since by the time they see the data, it's already been checked.
+
+## A bridge between the two worlds: pydantic on top of dataclass
+
+Sometimes you want the familiar dataclass syntax but with validation on input. pydantic has a dedicated decorator for that, `pydantic.dataclasses.dataclass`: it looks and behaves like a standard dataclass (`fields()`, `asdict`, and field declarations all work the same way), but adds validation at creation time. It's a way to bolt checks onto an existing domain model without rewriting it as a `BaseModel`. The trade-off: this is no longer a genuine `dataclasses.dataclass`, and third-party code that checks for the exact standard-library type might not recognize it.
+
+```python
+from pydantic.dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: int
+    y: int
+```
+
+`Point(x="1", y=2)` here will either coerce `"1"` to a number or raise `ValidationError`, where a standard dataclass would have stayed silent.
+
+`ValidationError` itself carries not a string but a structured list: every entry has a path to the field, an error type, and a message, all available through `.errors()`. That's exactly why pydantic works well at an HTTP boundary: it's easy to turn that list into a precise response about which field failed and how. The cost is measured in cycles: even with a Rust core, validation isn't free, one more reason to validate once at the boundary rather than on every internal object.
+
+## Common mistakes
+
+- **pydantic everywhere.** Validating every internal object at every step burns cycles for nothing. Check once at the boundary, trust the types after that.
+- **dataclass at the boundary.** Accepting untrusted JSON into a plain dataclass is risky: it will silently accept a string where a number belongs, or a missing nested field. Input needs validation.
+- **Mixing up the pydantic v1 and v2 APIs.** In v2 the methods are `model_validate` and `model_dump`; the old `parse_obj` and `dict` from v1 don't belong in new code.
+- **Expecting validation from annotations alone.** Neither dataclass nor attrs check types at runtime without an explicit validator. An annotation is a contract for humans and analyzers, not a runtime guarantee.
+
+<Detail summary="Why dataclass looks so much like attrs">
+That's no coincidence: dataclass grew out of `attrs`. Once the idea of "generate my __init__ and __repr__ from fields" proved itself in the third-party `attrs`, it got folded into the standard library as PEP 557. The standard dataclass deliberately kept only the core part (structure and method generation) and left validators, converters, and the rest of the flexibility outside. That's why `attrs` is still around: it covers what dataclass deliberately doesn't, while keeping the familiar syntax.
+</Detail>
+
+<KeyTakeaways items={[
+  "A plain dataclass neither validates nor coerces types: Box('5') for an int field leaves a string in place, the annotation is only a hint.",
+  "attrs adds optional converters (transform a value) and validators (check it and raise) on top of structure.",
+  "pydantic's BaseModel validates and coerces types at the boundary: model_validate on the way in, model_dump on the way out.",
+  "Placement rule: pydantic at the input/output boundary with untrusted data, dataclass inside the domain.",
+  "In FastAPI, request and response models are pydantic, while domain objects between layers stay dataclasses.",
+  "pydantic v2 uses model_validate and model_dump; strict mode turns off silent coercion.",
+]} />
+
+## References
+
+- [pydantic documentation](https://docs.pydantic.dev/latest/)
+- [attrs documentation](https://www.attrs.org/en/stable/)
+- [FastAPI - request body with pydantic](https://fastapi.tiangolo.com/tutorial/body/)

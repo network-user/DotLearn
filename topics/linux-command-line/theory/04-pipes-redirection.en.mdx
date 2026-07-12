@@ -1,0 +1,130 @@
+---
+conceptId: pipes-redirection
+title: "Pipes and redirection"
+estimatedMinutes: 13
+---
+
+# Building a pipeline: streams, redirection, pipes
+
+The file `access.log` weighs three hundred megabytes, and Boris needs exactly one answer: how many `404` errors showed up today. Opening the file in an editor and scrolling by hand is out of the question, and writing a whole program just for one number would be overkill. In the terminal, this task gets solved with three small commands chained into a single line: one prints the file, the second picks out the lines you want, the third counts them. Connecting commands to each other is what this lesson is about.
+
+## Every command has three streams
+
+Every running command has three named channels for text: standard input (`stdin`, number 0), standard output (`stdout`, number 1), and the error stream (`stderr`, number 2). By default all three connect to the terminal: `stdin` reads what you type on the keyboard, while `stdout` and `stderr` both print to the screen, even though they look identical there.
+
+```bash
+$ ls no-such-folder
+ls: cannot access 'no-such-folder': No such file or directory
+```
+
+That error message went to `stderr`, not `stdout`: the screen doesn't show the difference, but it becomes obvious the moment you start redirecting the streams separately.
+
+## Redirecting to a file: `>`, `>>`, `<`
+
+The `>` operator replaces `stdout`: instead of the screen, the command's output goes into the given file, completely overwriting whatever was there.
+
+```bash
+$ ls -1 > listing.txt
+$ cat listing.txt
+archive
+deploy.sh
+report.txt
+```
+
+If the file already existed, its contents vanish before the command on the left even gets a chance to print anything: the shell opens the file for writing and truncates it to zero bytes the moment it parses the command, not when the command finishes. When you want to append instead of replace, use `>>`:
+
+```bash
+$ echo "deployment finished" >> log.txt
+```
+
+Every call with `>>` adds a line to the end of the file without touching what's already there. There's also the reverse direction: `<` feeds a file's contents into a command's `stdin` instead of the keyboard.
+
+```bash
+$ sort < names.txt
+anna
+boris
+irina
+```
+
+## Redirecting errors: `2>`
+
+The error stream is redirected the same way, just with an explicit `2` before the sign.
+
+```bash
+$ find / -name "*.conf" 2> errors.log
+```
+
+Regular found paths still fly to the screen as usual, while every complaint like `Permission denied` from system directories quietly lands in `errors.log`. You can merge both streams into one file with `2>&1`, which reads as "point stream 2 wherever stream 1 currently points":
+
+```bash
+$ find / -name "*.conf" > all-output.log 2>&1
+```
+
+Order matters here. The line above first switches `stdout` to the file, and only then tells the error stream to follow the first one, so both end up in `all-output.log`. Swap the operators, `find / -name "*.conf" 2>&1 > all-output.log`, and `stderr` copies `stdout`'s current target, which at that moment is still the terminal, and only after that does `stdout` switch to the file on its own. The result: errors keep spilling onto the screen, while the file gets only the regular lines.
+
+<Callout type="tip" title="How to read 2>&1 without getting confused">
+Read it right to left: "point whatever's on the right wherever whatever's on the left currently points." The ampersand before the 1 means "this is a stream number, not a filename called 1."
+</Callout>
+
+## The pipe: | connects commands
+
+The `|` operator (pipe) wires one command's `stdout` directly into the next command's `stdin`, with no file in between. The commands run as separate processes at the same time, and data flows between them as it becomes available.
+
+<Figure caption="Pipeline cat access.log | grep 404 | wc -l: each command's stdout becomes the next one's stdin, so only the final number ever reaches the screen.">
+  <PipelineFigure
+    title="How data flows through three commands"
+    stages={[
+      { label: 'cat access.log', note: 'prints every line of the file' },
+      { label: 'grep 404', note: 'keeps only lines with 404', active: true },
+      { label: 'wc -l', note: 'counts the remaining lines' },
+    ]}
+  />
+</Figure>
+
+```bash
+$ cat access.log | grep 404 | wc -l
+37
+```
+
+Boris's answer is now a single line: `cat` prints the file, `grep 404` keeps only the lines with that code, `wc -l` counts the lines it receives. Only one number ever reaches the screen; everything in between exists only for an instant inside the pipeline. A chain can hold as many commands as you like, each one receiving the previous one's result as input.
+
+<PullQuote>A pipe only connects stdout to stdin. The error stream doesn't enter the pipeline by default.</PullQuote>
+
+## What will surprise you
+
+The most dangerous surprise: `>` truncates a file before the command gets a chance to read it. The command `sort names.txt > names.txt`, which at first glance should sort the file and save the result back into it, actually destroys the original data. The shell opens `names.txt` for writing and empties it the moment it parses the line, and only then does `sort` try to read it, by which point there's nothing left to read. The fix is simple: sort into a temporary file and rename it over the original, or use a dedicated `-o` flag where the command supports one.
+
+Second surprise: a pipe only carries `stdout`, and error messages still fly to the screen past the pipeline. If you need the next command in the chain to see errors too, merge the streams first with `2>&1` before the `|`.
+
+Third: `>` and `>>` only work with files, they can't pass data between commands. Trying to write `ls > grep txt` won't connect the commands, it'll just create a file with a very strange name.
+
+## Common mistakes
+
+**`command > file.txt` instead of `>>`.** You meant to append a line to a log, and instead wiped out its entire history: a single `>` replaces the file wholesale. If the goal is accumulation, always use `>>`.
+
+**Mixed-up order of `2>&1` and `>`.** As shown above, `2>&1 > file` and `> file 2>&1` give different results. The rule of thumb: point `stdout` where you want it first, and only then ask `stderr` to follow it.
+
+**Expecting a pipe to carry errors too.** `build.sh | grep error` will let genuine build errors slip past `grep` if they're printed to `stderr` instead of `stdout`. You need to merge the streams first: `build.sh 2>&1 | grep error`.
+
+**Reading a sort of a file back into itself.** The classic data-loss case from above: `sort data.txt > data.txt`. A minute after running that, `data.txt` is empty, and there's nothing to restore it from without a backup.
+
+<Detail summary="/dev/null: where output vanishes without a trace">
+Sometimes you don't want the output at all, and `/dev/null` serves as a special void file: anything written to it disappears instantly and permanently. The command `command > /dev/null 2>&1` silences both regular output and errors completely; you'll often see this line in background jobs and schedulers where only the fact that something ran matters, not the text it printed.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'Every command has three streams: stdin (0) for input, stdout (1) for regular output, stderr (2) for errors.',
+    '> redirects stdout to a file, fully replacing its contents; >> appends to the end without erasing what was there.',
+    '< feeds a file\'s contents into a command\'s stdin instead of the keyboard.',
+    '2> redirects only errors; 2>&1 attaches stderr to stdout\'s current target, and the order of operators in the line matters.',
+    '| connects one command\'s stdout to the next one\'s stdin, letting you build pipelines out of small utilities.',
+    'A pipe only carries stdout: to include errors in a pipeline too, merge the streams with 2>&1 first.',
+  ]}
+/>
+
+## References
+
+- [Bash Reference Manual: Redirections](https://www.gnu.org/software/bash/manual/html_node/Redirections.html)
+- [bash man page, REDIRECTION section](https://man7.org/linux/man-pages/man1/bash.1.html)
+- [GNU Coreutils Manual](https://www.gnu.org/software/coreutils/manual/)

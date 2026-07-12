@@ -1,0 +1,122 @@
+---
+conceptId: processes-threads
+title: "Processes and threads: the OS model"
+estimatedMinutes: 12
+---
+
+# One process, many threads: who shares what with whom
+
+You write a script that downloads a hundred price lists from supplier sites. Fetching them one by one means waiting on the network a hundred times, roughly a second each, almost two minutes spent doing nothing but waiting. You want to run everything "at once", and the operating system hands you two tools for that: spawn several processes or spawn several threads. Both let you "do many things at the same time", but they work in fundamentally different ways, and the whole story of the GIL, races, and locks that follows grows straight out of that difference.
+
+Let's work out what a thread shares with its neighbors and what a process keeps to itself, what switching between them costs, and why a thread in Python is a real operating-system thread rather than something the interpreter invents. Once this model settles in, the oddities in later sections stop being odd.
+
+## An apartment and its tenants: two models of isolation
+
+A process is a running program together with everything the operating system granted it for private use: its own address space, its own heap, its own table of open files, its own permissions. Two processes, even launched from the same executable, never see each other's variables. If one changes its global variable, the other never finds out; their memory is separate, and an address inside one process means nothing inside the other. To exchange data, processes have to arrange it explicitly, through pipes, sockets, or shared memory, and every such exchange is a deliberate copy of bytes from one address space into another.
+
+A thread works differently. A thread lives inside a process and shares almost everything with its sibling threads: the same heap, the same global objects, the same module state. Keep the apartment analogy going: the process is the apartment, the threads are its tenants. The fridge and the kitchen are shared, but each tenant has a desk of their own. That personal desk is the thread's stack, holding its local variables and the chain of functions it has called, plus its own CPU registers and an instruction pointer that remembers exactly which instruction the thread is on.
+
+<Figure caption="Threads of one process share a heap of common objects, but each has its own stack, registers, and instruction pointer.">
+  <Sketch viewBox="0 0 460 260" title="A process and its threads">
+    <SketchBox x={20} y={20} width={420} height={220} dashed />
+    <SketchLabel x={32} y={40} anchor="start" muted size={12}>Process · its own address space</SketchLabel>
+
+    <SketchBox x={55} y={70} width={160} height={72} />
+    <SketchLabel x={135} y={98} weight="bold">Thread 1</SketchLabel>
+    <SketchLabel x={135} y={120} size={10} muted>own stack · registers · PC</SketchLabel>
+
+    <SketchBox x={245} y={70} width={160} height={72} />
+    <SketchLabel x={325} y={98} weight="bold">Thread 2</SketchLabel>
+    <SketchLabel x={325} y={120} size={10} muted>own stack · registers · PC</SketchLabel>
+
+    <SketchBox x={55} y={175} width={350} height={52} accent />
+    <SketchLabel x={230} y={197} weight="bold" accent>Heap · shared objects</SketchLabel>
+    <SketchLabel x={230} y={216} size={10} muted>visible to every thread in the process</SketchLabel>
+
+    <SketchArrow from={[135, 142]} to={[180, 175]} accent />
+    <SketchArrow from={[325, 142]} to={[280, 175]} accent />
+  </Sketch>
+</Figure>
+
+## What's shared and what's private
+
+The boundary sits exactly where the diagram draws it. Everything living on the heap is shared: lists, dicts, class instances, module-level globals. Any thread sees these objects at the same addresses and can read or change them. Everything tied to the current line of execution is private: a function's local variables live on the thread's own stack, and each thread has its own stack.
+
+```python
+counter = 0
+
+def work():
+    local = 0
+    local += 1
+    return local
+```
+
+Here `counter` lives on the heap: if two threads call a function that changes it, they fight over the same object. But `local` is created fresh on the stack of whichever thread called `work`, and no other thread ever sees that variable. That's why local variables are almost always safe, while shared mutable state is a source of future trouble. Keep this boundary in mind; it explains why later sections make such a fuss about protecting global structures specifically.
+
+## A Python thread is a real OS thread
+
+This is an easy place to get it wrong. Because of the GIL, many people assume Python threads are somehow fake, simulated by the interpreter. They aren't. When you create a `threading.Thread` and call `start`, the interpreter asks the operating system for a genuine kernel thread (on Linux, a pthread). From that point on it's scheduled by the OS, not by Python, right alongside the browser's threads and every other program's. The kernel can preempt your thread at any moment, between any two instructions, without asking permission; this is called preemptive multitasking.
+
+The GIL, which we get to next, doesn't change that. It only adds one rule: at any given instant, only one thread executes bytecode. But threads themselves remain full-fledged kernel threads that genuinely get switched. That's the key difference from `asyncio` coroutines, where switching is cooperative and happens only at explicitly marked points. We'll come back to that distinction in the last section; for now, remember that a thread can be preempted by the kernel any time, without warning.
+
+<Figure caption="Context switch: the kernel freezes thread 1, saves its registers and stack pointer, then loads thread 2's state. This work itself doesn't run any of your code.">
+  <Sketch viewBox="0 0 470 150" title="Context switch">
+    <SketchBox x={30} y={45} width={120} height={46} />
+    <SketchLabel x={90} y={72} mono size={12}>Thread 1 runs</SketchLabel>
+    <SketchBox x={185} y={45} width={100} height={46} hatched />
+    <SketchLabel x={235} y={66} size={10}>save ·</SketchLabel>
+    <SketchLabel x={235} y={80} size={10}>load</SketchLabel>
+    <SketchBox x={320} y={45} width={120} height={46} accent />
+    <SketchLabel x={380} y={72} mono size={12} accent>Thread 2 runs</SketchLabel>
+    <SketchArrow from={[150, 68]} to={[185, 68]} />
+    <SketchArrow from={[285, 68]} to={[320, 68]} />
+    <SketchLabel x={235} y={120} size={11} muted>overhead, not useful work</SketchLabel>
+  </Sketch>
+</Figure>
+
+## What a context switch costs
+
+A context switch isn't free. To take the CPU away from one thread and hand it to another, the kernel does a well-defined amount of work.
+
+<Steps>
+  <li>Stops the current thread at its next instruction.</li>
+  <li>Saves its registers and stack pointer so it can resume from exactly that point later.</li>
+  <li>Picks the next thread according to its scheduling rules.</li>
+  <li>Loads the saved state of the chosen thread and hands it the CPU.</li>
+</Steps>
+
+A single switch costs a few microseconds, which sounds trivial. But with hundreds of threads fighting over the CPU, switches happen millions of times a second, and the accumulated overhead becomes real: the processor spends its time shuffling state instead of running your code. Switching between processes costs even more than switching between threads of the same process, because it swaps out an entire address space and forces the CPU to flush its address-translation caches. That's one reason threads are called "lightweight": creating one and switching to it is cheaper than spawning a process.
+
+## Edge cases: shared memory is both a gift and a trap
+
+A shared heap looks like a gift: nothing to copy, threads just see the same data. That's exactly where the trap of multithreading hides. Since two threads see the same list and both can change it, nothing stops them from doing so at the same instant and leaving the structure in an inconsistent state. Process memory isolation, by contrast, makes such bugs impossible by construction, at the cost of expensive data exchange. This is a fundamental trade-off: threads buy cheap communication at the price of dangerous shared state; processes buy safety at the price of expensive copying.
+
+The second surprise concerns the moment of preemption. Since the kernel can stop a thread at any instruction, it can do so at the most inconvenient point, say, in the middle of an operation that looks like a single action in the source code. In the next section we'll see that even `x += 1` is made of several steps, and preemption between them corrupts the result. For now, just carry a sense of caution: "one line of code" and "one indivisible action" are not the same thing.
+
+## Common mistakes
+
+- **Assuming threads are isolated.** A developer changes a global variable in one thread and is surprised another thread sees the change. That's correct behavior, not a bug: the heap is shared. The bug appears once they change it at the same time.
+- **Confusing a thread with an `asyncio` coroutine.** This breeds a false sense that a thread only switches at "safe" spots. It doesn't: a kernel thread can be preempted anywhere; cooperative switching is a coroutine thing, not a thread thing.
+- **Assuming threads make processes unnecessary.** For CPU-bound work, Python threads give no speedup because of the GIL, and that's exactly where processes, with their separate interpreters, save the day. The right tool depends on what you're short on: network time or CPU time.
+
+<Detail summary="What the kernel keeps for each thread">
+
+For every thread, the kernel maintains a small structure (often called a thread control block): saved registers, a stack pointer, a priority, a state (running, ready, waiting), and a reference to the owning process. This structure is what makes switching possible: freezing a thread means writing its registers into this block, thawing it means loading them back. A process additionally owns heavier things: page tables, the list of open files, permissions. That's why creating a thread inside an existing process is cheap (you just need another stack and a control block), while spawning a process is expensive (you need to set up all of the above from scratch). Hence the familiar shorthand: "threads are light, processes are heavy."
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A process has its own isolated address space; two processes never see each other's variables and can only communicate by explicit copying.",
+    "Threads of one process share the heap and every object on it, but each has its own stack, registers, and instruction pointer.",
+    "Local variables live on a thread's stack and are private; shared mutable state lives on the heap and needs protection.",
+    "A Python thread is a genuine kernel thread with preemptive scheduling: the kernel can stop it between any two instructions.",
+    "Shared memory makes thread communication cheap but opens the door to races; process isolation is safer but costs more to bridge.",
+  ]}
+/>
+
+## References
+
+- [Python docs - threading](https://docs.python.org/3/library/threading.html)
+- [Python docs - multiprocessing](https://docs.python.org/3/library/multiprocessing.html)
+- [Operating System Concepts - Processes and Threads](https://www.os-book.com/OS10/)

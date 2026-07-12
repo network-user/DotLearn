@@ -216,6 +216,19 @@ export interface SyncBackupRecord {
   payload: string;
 }
 
+// Cross-device deletion propagation. When the user genuinely deletes a per-record item in a synced
+// table (a bookmark, highlight, note, own card, interview toggle-off, mark-unread), the sync engine
+// records a tombstone here so the deletion can travel to other devices instead of being resurrected
+// by the additive merge. Written only from the engine's 'deleting' hook for tracked tables (see
+// apps/web/src/lib/sync/engine.ts); bulk resets (clearAllProgress / restoreBackup / applyMerged)
+// never create tombstones. `id` is `${table}:${recordKey}`.
+export interface SyncTombstoneRecord {
+  id: string;
+  table: string;
+  recordKey: string;
+  deletedAt: string; // ISO
+}
+
 class ProgressDb extends Dexie {
   progress!: Table<ProgressRecord, string>;
   activity!: Table<ActivityRecord, string>;
@@ -236,6 +249,7 @@ class ProgressDb extends Dexie {
   playgroundSnippets!: Table<PlaygroundSnippetRecord, string>;
   reExamSchedule!: Table<ReExamScheduleRecord, string>;
   syncBackups!: Table<SyncBackupRecord, number>;
+  syncTombstones!: Table<SyncTombstoneRecord, string>;
 
   constructor() {
     super('dotlearn-progress');
@@ -428,6 +442,11 @@ class ProgressDb extends Dexie {
     this.version(17).stores({
       syncBackups: '++id, createdAt',
     });
+    // Cross-device sync: deletion tombstones so genuine per-record deletions propagate instead of
+    // being resurrected by the additive merge. Keyed by `${table}:${recordKey}`.
+    this.version(18).stores({
+      syncTombstones: 'id, table, deletedAt',
+    });
   }
 }
 
@@ -571,6 +590,18 @@ interface WriteCheckpointOutcomeExtra {
   shouldScheduleReExam?: (prev: ReExamState | undefined, passed: boolean) => boolean;
 }
 
+const CHECKPOINT_RESULT_CAP = 4000;
+
+const pruneCheckpointResults = async (): Promise<void> => {
+  const count = await db.checkpointResults.count();
+  if (count <= CHECKPOINT_RESULT_CAP) return;
+  const oldest = await db.checkpointResults
+    .orderBy('id')
+    .limit(count - CHECKPOINT_RESULT_CAP)
+    .primaryKeys();
+  if (oldest.length > 0) await db.checkpointResults.bulkDelete(oldest);
+};
+
 const writeCheckpointOutcome = async (
   topicSlug: string,
   conceptId: string,
@@ -579,7 +610,7 @@ const writeCheckpointOutcome = async (
 ): Promise<{ scheduled: boolean }> => {
   const now = new Date();
   const passed = status === 'pass';
-  return db.transaction('rw', db.checkpointResults, db.reExamSchedule, async () => {
+  const result = await db.transaction('rw', db.checkpointResults, db.reExamSchedule, async () => {
     await db.checkpointResults.add({
       topicSlug,
       conceptId,
@@ -599,6 +630,9 @@ const writeCheckpointOutcome = async (
     }
     return { scheduled };
   });
+
+  void pruneCheckpointResults();
+  return result;
 };
 
 export const recordCheckpointResult = async (input: {

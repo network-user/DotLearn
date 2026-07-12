@@ -1,0 +1,172 @@
+---
+conceptId: pytest-basics
+title: "pytest: assert, parametrization, markers"
+estimatedMinutes: 11
+---
+
+# A plain assert that explains its own failures
+
+Open any random Python project and odds are its tests are written in pytest, not the standard `unittest`. The reason isn't magic - it's a single design choice that removes a whole category of ceremony: pytest lets you write checks with the plain `assert` statement, but on failure it shows the operand values in just as much detail as `assertEqual` would. You no longer need to memorize a dozen assert methods and pick the right one for each check - you just write `assert x == y`, and the framework parses the expression itself and prints what `x` and `y` actually were.
+
+This is called **assert introspection**: at import time, pytest rewrites the bytecode of your test files, wiring each `assert` to capture its intermediate values. That's why the failure message is so informative even though the code is a plain built-in statement. By the end of this section you'll write test functions without classes, run a chosen subset by name or marker, multiply a single test across dozens of data sets through parametrization, and mark tests as skipped or expected to fail.
+
+## Mental model: a test is just a function with an assert
+
+In pytest, a test is a function whose name starts with `test_`. No class, no inheritance, no `self.assert...`. Just a plain `assert` inside.
+
+```python
+def test_free_above_3000():
+    assert shipping_cost(3500) == 0
+
+
+def test_paid_below_3000():
+    assert shipping_cost(1500) == 500
+```
+
+When `assert shipping_cost(1500) == 0` fails, pytest doesn't stop at "false." It prints something like `assert 500 == 0` and even breaks down complex expressions - showing what was on the left, what was on the right, which list elements diverged. That's the same introspection at work: the values are captured automatically, with no effort from you.
+
+<Figure caption="One parametrized test fans out into N independent test cases, one per data set. One failing doesn't stop the others.">
+  <Sketch viewBox="0 0 460 210" title="Parametrization fan-out">
+    <SketchBox x={150} y={20} width={160} height={46} accent />
+    <SketchLabel x={230} y={40} mono size={11} accent>test_shipping</SketchLabel>
+    <SketchLabel x={230} y={56} size={10} muted>parametrize x4</SketchLabel>
+
+    <SketchBox x={20} y={120} width={90} height={56} />
+    <SketchLabel x={65} y={143} mono size={10}>total=3500</SketchLabel>
+    <SketchLabel x={65} y={162} accent size={10}>PASS</SketchLabel>
+
+    <SketchBox x={130} y={120} width={90} height={56} />
+    <SketchLabel x={175} y={143} mono size={10}>total=3000</SketchLabel>
+    <SketchLabel x={175} y={162} accent size={10}>PASS</SketchLabel>
+
+    <SketchBox x={240} y={120} width={90} height={56} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={285} y={143} mono size={10}>total=1500</SketchLabel>
+    <SketchLabel x={285} y={162} size={10}>FAIL</SketchLabel>
+
+    <SketchBox x={350} y={120} width={90} height={56} />
+    <SketchLabel x={395} y={143} mono size={10}>total=0</SketchLabel>
+    <SketchLabel x={395} y={162} accent size={10}>PASS</SketchLabel>
+
+    <SketchArrow from={[200, 66]} to={[65, 120]} />
+    <SketchArrow from={[215, 66]} to={[175, 120]} />
+    <SketchArrow from={[245, 66]} to={[285, 120]} />
+    <SketchArrow from={[260, 66]} to={[395, 120]} />
+  </Sketch>
+</Figure>
+
+## Running and selecting tests
+
+The `pytest` command finds `test_*.py` files on its own, then the `test_*` functions inside them, and runs them - discovery works much like `unittest`'s. But the most useful thing for daily work is picking a subset instead of running the whole suite.
+
+Every test is addressed by its **node id** - a path shaped like `file::function`. That runs exactly one test. The `-k` flag takes a substring expression matched against test names, and `-m` selects tests by marker.
+
+```text
+pytest                                   all tests
+pytest tests/test_cart.py::test_total    one specific test
+pytest -k "total and not refund"         tests with "total" in the name but not "refund"
+pytest -m slow                           only tests marked @pytest.mark.slow
+```
+
+The `-k` expression isn't a regex - it's boolean logic over substrings of the name: you can use `and`, `or`, `not`. That's handy when you're mid-refactor and want to run only the tests around the function you touched instead of waiting for the whole suite.
+
+## Parametrization: one test, many data sets
+
+Often the same test needs to run against different inputs: check the discount at 3500, at 3000, and at 1500. Copying the function just to change one number is a bad idea. The `@pytest.mark.parametrize` decorator multiplies the test: you list out sets of arguments, and pytest spawns a separate test case for each.
+
+```python
+import pytest
+
+
+@pytest.mark.parametrize("total, expected", [
+    (3500, 0),
+    (3000, 0),
+    (1500, 500),
+])
+def test_shipping(total, expected):
+    assert shipping_cost(total) == expected
+```
+
+This is **not** one test with a loop inside - it's three independent tests. If the `(1500, 500)` case fails, the other two still run and show up in the report as passed - you see immediately which input broke, instead of "the test failed somewhere inside." The report tells cases apart by their parameter values; you can also give them readable names via `ids=[...]`.
+
+<Callout type="tip">
+Parametrization is the main tool against duplication in tests. Instead of five nearly identical functions, you write one with five data sets. Adding a new case means adding one line to the list, not copying the whole function.
+</Callout>
+
+## Markers: tags on tests
+
+A marker is a label you attach to a test with the `@pytest.mark.<name>` decorator. Some markers are built in and change behavior; others you invent yourself, just for grouping.
+
+`@pytest.mark.skip(reason="...")` unconditionally skips a test. `@pytest.mark.skipif(condition, reason="...")` skips it only when the condition is true - say, on the wrong Python version or OS.
+
+```python
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="нужен 3.11+")
+def test_new_syntax():
+    ...
+```
+
+A special case is `@pytest.mark.xfail`: it marks a test as **expected to fail**. Wrap a known, not-yet-fixed bug in `xfail`, and its failure won't turn the whole run red (it shows up as `xfail` in the report) - but if the test unexpectedly **passes**, pytest flags it as `xpass` and calls attention to it: the bug might already be fixed and the marker might be due for removal.
+
+Custom markers (like `@pytest.mark.slow` for slow tests) are worth registering in the config, or pytest will warn about an unknown marker. Once registered, they're handy for filtering runs: `pytest -m "not slow"` runs everything except the slow ones.
+
+## Checking exceptions: pytest.raises
+
+The pytest equivalent of `assertRaises` is the `pytest.raises` context manager. The block inside `with` must raise the given exception.
+
+```python
+def test_negative_rejected():
+    with pytest.raises(ValueError):
+        shipping_cost(-100)
+```
+
+Often you also want to check the error message. `pytest.raises` takes a `match` argument (a regex against the message) and gives you access to the exception itself via `as`:
+
+```python
+def test_message():
+    with pytest.raises(ValueError, match="отрицательн"):
+        shipping_cost(-100)
+```
+
+## Edge case: the same reference in parametrize data sets
+
+Here's a trap that catches even experienced developers off guard. If you pass a **mutable** object into parametrize as a single shared instance, the cases start sharing it:
+
+```python
+shared = []
+
+
+@pytest.mark.parametrize("data", [shared, shared])
+def test_append(data):
+    data.append(1)
+    assert len(data) == 1
+```
+
+The first case builds the list `[1]` and passes. The second gets the **same** list (it's the same `shared` reference), appends another item, sees a length of `2`, and fails. Parametrization doesn't copy objects - it passes exactly what you wrote into the list. The fix is to use fresh literals in each entry (`[1]`, `[1]` as two distinct lists) or to build the object inside the test rather than outside it.
+
+## Common mistakes
+
+- **A test class named without `Test...`.** If you want to group tests in a class, pytest only picks it up if the name starts with `Test` and the class has no `__init__`. Otherwise the tests inside it silently never run. Fix: either name it `TestCart`, or skip the class entirely and use plain functions.
+- **Parameters in the wrong order.** In `parametrize("total, expected", ...)`, the order of names must match the order of values in the tuples. Mix them up, and the test checks the wrong thing. Fix: keep names and tuples in the same order, and use `ids` when in doubt.
+- **`@pytest.mark.skip` left in place after the fix.** The test was disabled temporarily, the bug got fixed, and nobody removed the marker - so the check silently does nothing for months. Fix: for a known bug, prefer `xfail` - once the bug is fixed, the test becomes `xpass` and reminds you to remove the marker.
+
+<Detail summary="Why pytest can see the values inside an assert">
+
+A plain `assert x == y` statement, at the bytecode level, just checks the result of `x == y` and raises `AssertionError` with no detail if it's false - by that point the operands are already gone. pytest solves this with assertion rewriting: when it imports a test module, it intercepts the load, parses the AST of every `assert`, and replaces it with code that first evaluates and stores the subexpressions, then, if the check is false, builds a detailed message out of them. That's why introspection only works in files pytest imports itself as tests (or in helper modules explicitly registered via `register_assert_rewrite`); a plain `assert` in application code doesn't get it.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "In pytest a test is a test_* function with a plain assert; introspection (bytecode rewriting at import time) prints operand values on failure automatically.",
+    "Tests are selected by node id (file::function), by -k (a boolean expression over substrings of the name), and by -m (marker).",
+    "@pytest.mark.parametrize multiplies one test into N independent cases, one per data set - the main tool against duplication.",
+    "skip/skipif markers skip a test, xfail marks one as expected to fail (an unexpected pass shows up as xpass); custom markers should be registered.",
+    "pytest.raises is a context manager for checking exceptions, with match to verify the message; parametrization never copies the objects you pass in.",
+  ]}
+/>
+
+## References
+
+- [pytest - How to write and report assertions](https://docs.pytest.org/en/stable/how-to/assert.html)
+- [pytest - Parametrizing tests](https://docs.pytest.org/en/stable/how-to/parametrize.html)
+- [pytest - Marking test functions](https://docs.pytest.org/en/stable/how-to/mark.html)
+- [pytest - skip and xfail](https://docs.pytest.org/en/stable/how-to/skipping.html)

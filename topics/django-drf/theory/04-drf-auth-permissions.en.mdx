@@ -1,0 +1,179 @@
+---
+conceptId: drf-auth-permissions
+title: "Authentication and permissions: who can do what"
+estimatedMinutes: 12
+---
+
+# Two questions that trip up even experienced developers
+
+A request hits the personal-account endpoint of a government portal. Before handing back any data, the server has to answer two questions, and the order between them isn't an accident. First: "who even is this?" - establish the sender's identity from a token or a session. Second, and only after that: "is this specific person allowed to?" - can this particular user perform this action on this particular object. It's easy to mix the two up, and that's how classic bugs are born: someone else's profile opens because nobody checked "is this allowed", or an anonymous request gets a `403` instead of an honest "please identify yourself".
+
+DRF keeps these two questions in two separate layers, and the layers always run in the same order. First, **authentication** figures out who the sender is and puts the result into `request.user`. Then **permissions** look at that `request.user` and decide whether to let the request through or reject it. By the end of this section you'll confidently tell authentication classes apart from permission classes, understand why `401` and `403` are about different questions, and know where object-level access checks live.
+
+## Mental model: a checkpoint with two posts
+
+Picture a checkpoint with a conveyor belt. A request drives in and passes through the posts one by one. The first post is authentication: it doesn't let anyone in or throw anyone out, it only establishes identity and pins a `request.user` badge onto the request. It lets an anonymous visitor through too - just with a "guest" badge (`AnonymousUser`). The second post is permissions: it looks at the badge and decides whether to let the request through this particular door. A third, optional post is throttling, which counts whether this visitor is showing up too often. Only after clearing every post does the request reach the view.
+
+<Figure caption="The DRF pipeline before the view: authentication sets request.user (identity), permission decides access based on that user, throttling limits frequency. The order is fixed: first 'who', then 'is it allowed'.">
+  <Sketch viewBox="0 0 470 160" title="Pipeline: authentication → permission → throttle → view">
+    <SketchBox x={12} y={62} width={56} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={40} y={86} mono size={10}>request</SketchLabel>
+
+    <SketchBox x={88} y={58} width={88} height={48} accent />
+    <SketchLabel x={132} y={78} mono accent size={10}>authn</SketchLabel>
+    <SketchLabel x={132} y={94} muted size={8}>request.user</SketchLabel>
+
+    <SketchBox x={196} y={58} width={88} height={48} />
+    <SketchLabel x={240} y={78} mono size={10}>permission</SketchLabel>
+    <SketchLabel x={240} y={94} muted size={8}>allowed?</SketchLabel>
+
+    <SketchBox x={304} y={58} width={80} height={48} />
+    <SketchLabel x={344} y={78} mono size={10}>throttle</SketchLabel>
+    <SketchLabel x={344} y={94} muted size={8}>rate</SketchLabel>
+
+    <SketchBox x={404} y={62} width={54} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={431} y={86} mono size={10}>view</SketchLabel>
+
+    <SketchArrow from={[68, 82]} to={[88, 82]} />
+    <SketchArrow from={[176, 82]} to={[196, 82]} accent />
+    <SketchArrow from={[284, 82]} to={[304, 82]} />
+    <SketchArrow from={[384, 82]} to={[404, 82]} />
+  </Sketch>
+</Figure>
+
+The key point of this model is the division of labor. Authentication **doesn't decide** about access, it only establishes identity; permissions **don't establish** identity, they only judge an identity that's already established. So an anonymous request is a perfectly normal state after the first post, not an error - whether it becomes an error (or not) is up to the permissions post.
+
+## Authentication: who's the sender
+
+An authentication class reads something from the request - a header, a cookie - and uses it to set `request.user` and `request.auth`. DRF tries the classes in the list one by one; the first one that recognizes the sender wins. If none of them do, `request.user` becomes `AnonymousUser`.
+
+- **SessionAuthentication** - based on Django's session cookie. Fits when the frontend and the API share the same domain (the same browser session as your regular pages). Requires CSRF protection on unsafe methods.
+- **TokenAuthentication** - based on a static token in the `Authorization: Token <key>` header. The token is issued once and lives until it's revoked. Simple, but it doesn't expire on its own.
+- **JWT via SimpleJWT** - based on a self-verifying access token (`Authorization: Bearer <jwt>`) that carries its own lifetime and doesn't require a database round trip on every request. Access/refresh pair: a short-lived access token and a long-lived refresh token for renewing it.
+
+```python
+class Profile(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        return Response({"user": request.user.username})
+```
+
+Once the class has done its job, `request.user` points to a specific user. Notice: at this step nobody has asked yet whether they're allowed in. Authentication has only introduced the guest.
+
+## Permissions: who's allowed to do what
+
+A permission class receives the `request` (and therefore the already-set `request.user`) and returns `True`/`False`. There are two methods, at two levels.
+
+- **`has_permission(self, request, view)`** - a check at the level of the whole endpoint, before any object is selected. "Is this user authenticated at all?", "does the user have the staff role?". It runs for every request to the view.
+- **`has_object_permission(self, request, view, obj)`** - a check at the level of a specific object. "Does this order belong to this user?". It's called when the view fetches a single object via `get_object()`.
+
+Built-in classes cover the common cases: `AllowAny` (let everyone through), `IsAuthenticated` (recognized users only), `IsAdminUser` (`is_staff` only), `IsAuthenticatedOrReadOnly` (anyone can read, only authenticated users can write).
+
+```python
+from rest_framework.permissions import IsAuthenticated
+
+class Profile(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"user": request.user.username})
+```
+
+A custom class subclasses `BasePermission` and overrides whichever method it needs.
+
+```python
+from rest_framework.permissions import BasePermission
+
+class IsOwner(BasePermission):
+    def has_object_permission(self, request, view, obj):
+        return obj.owner_id == request.user.id
+```
+
+`IsOwner` only lets an object's owner reach it. Notice: this check is object-level, so it needs `obj`, and it only runs when the view fetches a specific record.
+
+## Order: "who" first, then "is it allowed"
+
+The order isn't configurable and it isn't arbitrary. Authentication always comes before permissions, because permissions judge `request.user`, and that has to be established first. If permissions ran first, they'd have nothing to judge.
+
+<Steps>
+  <li>Authentication classes try, one by one, to recognize the sender; <code>request.user</code> is set (possibly to <code>AnonymousUser</code>).</li>
+  <li><code>has_permission(request, view)</code> is called for each permission class; a single <code>False</code> means a rejection.</li>
+  <li>If the view fetches an object via <code>get_object()</code>, <code>has_object_permission(request, view, obj)</code> is called for it.</li>
+  <li>Only after clearing all of this does the request reach the body of the action (<code>get</code>, <code>retrieve</code>, and so on).</li>
+</Steps>
+
+<PullQuote>
+Authentication answers "who are you", permissions answer "what are you allowed to do"; mix up the order and you end up judging someone you haven't identified yet.
+</PullQuote>
+
+## 401 vs. 403
+
+Two error codes, two different questions, and DRF chooses between them deliberately.
+
+<Compare
+  leftTitle="401 Unauthorized"
+  rightTitle="403 Forbidden"
+  left={
+    <>
+      <p>Identity isn't established: no token, or it's expired or invalid. Meaning: "please identify yourself".</p>
+      <pre><code>{`GET /profile/
+(no Authorization header)
+→ 401 Unauthorized`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Identity is established, but there aren't enough permissions. Meaning: "we know who you are, but you can't come in here".</p>
+      <pre><code>{`GET /admin-stats/
+Authorization: Token <regular user>
+→ 403 Forbidden`}</code></pre>
+    </>
+  }
+  verdict="401 means your identity is unknown and logging in fixes it; 403 means your identity is known but you still lack access, and logging in won't help."
+/>
+
+DRF picks the code deliberately: if the request is anonymous and there's an authentication scheme that promises to log the user in (it advertises a `WWW-Authenticate` header), it returns `401` - "try identifying yourself". If the user is already recognized but permissions said `False`, it returns `403` - "too late to identify yourself, you simply can't do this".
+
+## Edge cases
+
+**An empty `permission_classes` doesn't mean "deny everyone".** An empty list means "no permission checks at all" - in other words, let everyone through, just like `AllowAny`. To lock down an endpoint you need an explicit `IsAuthenticated`, not an empty list. Silence here reads as "allowed".
+
+**`has_object_permission` isn't called for lists.** It only fires when the view calls `get_object()` for a single record. In a `list` there are many objects, and DRF doesn't call the object check for each one - filtering the results by ownership belongs in the queryset (`get_queryset`), not something you can rely on `has_object_permission` for.
+
+**`IsAuthenticated` knows nothing about ownership.** It lets any logged-in user through - the order's owner and a random other user alike. "Only your own object" is a separate check, `has_object_permission`. Being authenticated doesn't mean being authorized for this particular object.
+
+<Callout type="warning">
+Surprise: object-level permission checks are easy to bypass if you fetch the record by hand, skipping `get_object()`. If a view writes `Order.objects.get(pk=pk)` directly, `has_object_permission` **never runs** - it's `get_object()` specifically that calls it. Object-level permissions only work when the object is fetched through the standard path.
+</Callout>
+
+## Common mistakes
+
+- **Relying on `IsAuthenticated` to protect other people's objects.** It only checks that the user is logged in, not that they own anything. "Only your own" access needs `has_object_permission` or queryset filtering, otherwise any logged-in user can see someone else's data.
+- **Mixing up `401` and `403` in your own logic.** Don't return `403` to an anonymous user - that says "you can't", when the honest answer is "identify yourself" (`401`). And don't return `401` to a recognized user - they've already logged in.
+- **Trying to filter lists via `has_object_permission`.** It's never called for `list`. Hide other users' records in `get_queryset()`, returning only what belongs to `request.user`.
+- **An empty `permission_classes` meant to "lock things down".** An empty list opens the endpoint to everyone. Locking down means an explicit permission class, not the absence of one.
+
+<Detail summary="Where DRF gets its default classes from, and how to override them selectively">
+
+Both `authentication_classes` and `permission_classes` have global defaults in the `REST_FRAMEWORK` settings (`DEFAULT_AUTHENTICATION_CLASSES`, `DEFAULT_PERMISSION_CLASSES`). If a view doesn't specify anything, the global defaults apply. A list specified on a view **completely replaces** the global one for that view rather than extending it - so when you override permissions on one endpoint, it's easy to accidentally drop the base authentication if you forget the two lists are independent. Good practice is to set a safe global default (`IsAuthenticated`) and selectively loosen it on public endpoints with `AllowAny`, rather than the other way around: default "closed", exceptions "open". That way a forgotten endpoint stays closed instead of open. The `get_permissions()` method lets you return different classes for different actions on the same ViewSet - for example, opening `list` to everyone while keeping `create` locked down.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Authentication establishes identity (request.user), permissions judge an already-established identity; the order authentication → permission is fixed.",
+    "Authentication classes: SessionAuthentication (cookie), TokenAuthentication (static token), JWT via SimpleJWT (self-verifying access token with expiry).",
+    "has_permission checks access at the endpoint level, has_object_permission at the level of a specific object, and only when get_object() runs.",
+    "401 means identity isn't established (identify yourself), 403 means it is established but access is denied (logging in won't help); DRF picks the code based on whether authentication is offered.",
+    "An empty permission_classes opens the endpoint to everyone; object-level permissions aren't called for list - hide other users' records via get_queryset.",
+  ]}
+/>
+
+## Links
+
+- [DRF - Authentication](https://www.django-rest-framework.org/api-guide/authentication/)
+- [DRF - Permissions](https://www.django-rest-framework.org/api-guide/permissions/)
+- [SimpleJWT - documentation](https://django-rest-framework-simplejwt.readthedocs.io/)
+- [DRF - Tutorial: Authentication & Permissions](https://www.django-rest-framework.org/tutorial/4-authentication-and-permissions/)
+- [MDN - HTTP 401 vs 403](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401)

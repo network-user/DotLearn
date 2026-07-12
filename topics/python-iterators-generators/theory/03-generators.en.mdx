@@ -1,0 +1,170 @@
+---
+conceptId: generators
+title: "Generators: yield and laziness"
+estimatedMinutes: 11
+---
+
+# A function that hands back values one at a time and naps in between
+
+An ordinary function lives for one flash: it gets called, computes, returns a result, and forgets everything it knew. Local variables vanish, its place in the code is lost. But what if a function needs to hand back a million log lines one at a time without holding them all in memory, or produce an endless sequence of numbers? For that you need a function that can pause itself, hand back one value, and on the next request wake up exactly where it fell asleep, with every variable intact. The `yield` keyword gives you exactly that function, and it is called a generator.
+
+By the end of this section you will know how `yield` differs from `return`, why calling a generator function does not run its body, how a generator saves memory on large data, and why you cannot walk the same generator twice.
+
+## A generator behaves like a state machine
+
+As soon as a function contains at least one `yield`, Python turns it into a generator function: calling it no longer runs the code, it returns a generator object that knows how to pause and resume. Each `next()` runs the function up to the next `yield`, hands back a value, and freezes the function's frame along with all its local variables. The next `next()` thaws that frame and continues from the very same line.
+
+<Figure caption="A generator behaves like a state machine: the call creates a frame while the code stays silent, each next runs it to the following yield, and reaching the end of the function raises StopIteration.">
+  <PipelineFigure
+    title="A generator's life cycle"
+    stages={[
+      { label: 'gen = f()', note: 'frame created, code silent' },
+      { label: 'next(gen)', note: 'code runs to yield', active: true },
+      { label: 'yield x', note: 'hand back x, freeze the frame' },
+      { label: 'next(gen)', note: 'resume from that same point' },
+      { label: 'StopIteration', note: 'function ran to the end' },
+    ]}
+  />
+</Figure>
+
+Here is the simplest generator, a countdown. Notice that `n` lives on between calls to `next` and remembers where the count stands:
+
+```python
+def countdown(n):
+    while n > 0:
+        yield n
+        n -= 1
+
+gen = countdown(3)
+print(next(gen))
+print(next(gen))
+print(next(gen))
+```
+
+This prints `3`, `2`, `1`. Between two calls to `next`, the `countdown` frame stays frozen on the `yield` line: `n` remembers its value, the loop remembers it is not done. A fourth `next(gen)` would raise `StopIteration`, because the loop has run its course and the function has returned.
+
+## Laziness: the code runs only when asked
+
+A generator's defining trait is laziness. Not a single line of its body runs until someone requests the first item. Run the example: the "generator created" message prints immediately, while "computing 0", "computing 1" only appear as the loop walks the generator. Change `range(3)` to `range(6)` and confirm the work is spread across every step instead of happening all at once.
+
+<PyDemo
+  title="Exactly when a generator's code runs"
+  code={`def squares(limit):
+    print("generator created")
+    for i in range(limit):
+        print("computing", i)
+        yield i * i
+
+gen = squares(3)
+print("before the loop")
+for value in gen:
+    print("got", value)`}
+/>
+
+The order of the output reveals the point: "before the loop" prints before any "computing", because `squares(3)` only created the generator and never touched the body. The work started on the loop's first step and proceeded in installments, alternating between computing and consuming. That is exactly why a generator can produce an endless sequence: it never tries to compute everything at once.
+
+## Memory: one frame instead of every element
+
+A list dutifully computes and stores all of its elements. A generator keeps only its current frame in memory and produces elements one at a time, on request. On a million rows, that is the difference between a gigabyte and a couple of kilobytes.
+
+<Compare
+  leftTitle="List"
+  rightTitle="Generator"
+  left="Every element is computed up front and sits in memory. You can walk it as many times as you like, and it has a length and indexing."
+  right="Only the current frame sits in memory. Elements are computed lazily, one at a time. You can walk it exactly once, and there is no length or indexing."
+  verdict="You reach for a generator to save memory on large or endless sequences, and you pay for it with single use."
+/>
+
+## return in a generator does not hand back a value, it ends the generator
+
+Inside a generator, `return` does not send a result back the way it does in an ordinary function. It simply ends the generator, and any value it carries hides inside the `value` attribute of the `StopIteration` exception. You can retrieve it by hand like this:
+
+```python
+def take_until_zero(numbers):
+    total = 0
+    for n in numbers:
+        if n == 0:
+            return total
+        total += n
+        yield total
+
+gen = take_until_zero([2, 3, 0, 9])
+print(list(gen))
+```
+
+This prints `[2, 5]`. Once it hits zero, the generator runs `return total` and stops, so `9` never makes it into the result. The value of `total` itself went into `StopIteration.value`, and you can only see it directly by catching that exception or through `yield from`, covered in the section on advanced generators.
+
+## Where generators surprise people
+
+A generator is an iterator, which means it is single-use. You cannot walk the same generator object twice: the second pass sees nothing.
+
+```python
+gen = (n for n in range(3))
+print(sum(gen))
+print(sum(gen))
+```
+
+The first `sum` prints `3`, the second prints `0`. By the time of the second call the generator is exhausted and never rewinds. To walk the data twice, either create the generator again or freeze it into a list.
+
+The second surprise concerns the delayed start. Since the body does not run until the first `next`, any argument validation at the top of a generator function fires not when you call it, but only when you first ask for an item.
+
+```python
+def positives(numbers):
+    if not numbers:
+        raise ValueError("empty input")
+    for n in numbers:
+        if n > 0:
+            yield n
+
+gen = positives([])
+print("generator created, no exception yet")
+```
+
+That message prints calmly, even though the input is empty. `ValueError` only appears on the first `next(gen)`, not on the `positives([])` line itself. If you need validation to run immediately, wrap the generator in an ordinary function that checks the input first and only then returns the inner generator.
+
+## Common mistakes
+
+Here are the slip-ups generators trip people up with most often.
+
+- **A second pass over an exhausted generator.** You save a generator, sum it, then try to print it and find it empty. If you need the data twice, recreate the generator or freeze it into a list.
+- **Confusing the function with the object.** `countdown` is a generator function, `countdown(3)` is a generator. You put the call `countdown(3)` into `for` and `next`, not the bare function name.
+- **Expecting `return` to hand back a value.** Inside a generator, `return` ends the work rather than delivering a value through `yield`. The returned value hides inside `StopIteration.value`.
+- **Validating arguments in a generator's body.** That check fires on the first `next`, not on the call. Early validation needs a wrapper function on top of the generator.
+
+<Detail summary="What it means to freeze a frame, and the states a generator moves through">
+
+A pause is made possible by the execution frame. An ordinary function destroys its frame after `return`; a generator keeps it: the generator object holds a reference to its frame in the `gi_frame` attribute, where every local variable and the current line pointer live. `yield` saves that pointer and hands control back outward; `next` restores it and continues.
+
+A generator itself moves through states: just created (`GEN_CREATED`, not a single `next` yet), currently running (`GEN_RUNNING`), paused at a `yield` (`GEN_SUSPENDED`), and finished (`GEN_CLOSED`). `inspect.getgeneratorstate(gen)` reads the current state.
+
+```python
+import inspect
+def g():
+    yield 1
+gen = g()
+print(inspect.getgeneratorstate(gen))
+next(gen)
+print(inspect.getgeneratorstate(gen))
+```
+
+This prints `GEN_CREATED`, then `GEN_SUSPENDED`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A function with at least one yield becomes a generator function: calling it does not run the body, it returns a generator object.",
+    "Each next runs the function to the next yield, hands back a value, and freezes the frame along with every local variable.",
+    "A generator is lazy: code runs only on request, which is why it can produce even an endless sequence.",
+    "Only the current frame lives in memory, not every element, which saves memory on large data at the cost of single use.",
+    "return inside a generator ends it, and the value hides in StopIteration.value; it never travels out through yield.",
+    "A generator is an iterator: a second pass over the same object is empty, so you recreate it to walk it again.",
+  ]}
+/>
+
+## References
+
+- [Python docs · Yield expressions](https://docs.python.org/3/reference/expressions.html#yield-expressions)
+- [Python docs · Generator Types](https://docs.python.org/3/library/stdtypes.html#generator-types)
+- [PEP 255 · Simple Generators](https://peps.python.org/pep-0255/)
+- [Python docs · inspect.getgeneratorstate](https://docs.python.org/3/library/inspect.html#inspect.getgeneratorstate)

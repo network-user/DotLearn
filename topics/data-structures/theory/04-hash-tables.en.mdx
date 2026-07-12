@@ -1,0 +1,165 @@
+---
+conceptId: hash-tables
+title: Hash tables
+estimatedMinutes: 17
+---
+
+# Hash tables: the structure Python is built on
+
+While any Python program runs, hash tables are working nonstop under the hood. Accessing an attribute with `obj.attr`, looking up a name in global scope, passing keyword arguments, importing a module: all of it is a dict lookup. The interpreter performs tens of thousands of these lookups per second, and each one costs a constant that doesn't depend on the table's size. Pull the hash table out of CPython, and not much of the language would be left.
+
+There's a second reason to look at this structure closely: in interviews a good half of "data structures" questions get solved with "let's use a dict" or "let's use a set." Whoever understands why key lookup is cheap, where it breaks down, and what can even go into a key closes those questions in minutes. The properties of hash functions themselves (the avalanche effect, cryptographic strength, distributed use cases) are covered in the neighboring "Hashing" topic; here we'll focus on the data structure itself and how to get the most out of it.
+
+## Mental model: an array of buckets and a bridging formula
+
+At the core sits an ordinary array of m cells, called buckets. An array does exactly one thing, but does it perfectly: instant access by a numeric index. A hash table builds a bridge from an arbitrary key to that kind of index:
+
+```text
+index = hash(key) % m
+```
+
+The `hash` function turns a key into a large integer, and the remainder of division squeezes it into the range from zero to `m - 1`. Insertion and lookup follow the same route: compute the index, jump to the bucket. No operation scans the whole table, so the table's size barely affects speed.
+
+<Figure caption="A key's path to its bucket: hash turns «Kazan» into a large number, and the remainder of division by the bucket count gives index 3.">
+  <Sketch viewBox="0 0 560 200" title="A key passes through hash and modulo to reach its bucket">
+    <SketchBox x={20} y={30} width={95} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={67} y={52} mono>"Kazan"</SketchLabel>
+    <SketchArrow from={[118, 47]} to={[148, 47]} />
+
+    <SketchBox x={150} y={30} width={75} height={34} />
+    <SketchLabel x={187} y={52} mono>hash()</SketchLabel>
+    <SketchArrow from={[228, 47]} to={[258, 47]} />
+
+    <SketchBox x={260} y={30} width={125} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={322} y={52} mono>7349218003</SketchLabel>
+    <SketchArrow from={[388, 47]} to={[418, 47]} />
+
+    <SketchBox x={420} y={30} width={60} height={34} accent />
+    <SketchLabel x={450} y={52} mono accent>% 8</SketchLabel>
+    <SketchArrow from={[450, 68]} to={[256, 118]} curve dashed accent />
+
+    <SketchBox x={60} y={120} width={52} height={36} />
+    <SketchBox x={116} y={120} width={52} height={36} />
+    <SketchBox x={172} y={120} width={52} height={36} />
+    <SketchBox x={228} y={120} width={52} height={36} fill="rgb(var(--surface-2))" />
+    <SketchHighlight x={228} y={120} width={52} height={36} />
+    <SketchBox x={284} y={120} width={52} height={36} />
+    <SketchBox x={340} y={120} width={52} height={36} />
+    <SketchBox x={396} y={120} width={52} height={36} />
+    <SketchBox x={452} y={120} width={52} height={36} />
+
+    <SketchLabel x={86} y={176} mono muted>0</SketchLabel>
+    <SketchLabel x={142} y={176} mono muted>1</SketchLabel>
+    <SketchLabel x={198} y={176} mono muted>2</SketchLabel>
+    <SketchLabel x={254} y={176} mono accent>3</SketchLabel>
+    <SketchLabel x={310} y={176} mono muted>4</SketchLabel>
+    <SketchLabel x={366} y={176} mono muted>5</SketchLabel>
+    <SketchLabel x={422} y={176} mono muted>6</SketchLabel>
+    <SketchLabel x={478} y={176} mono muted>7</SketchLabel>
+  </Sketch>
+</Figure>
+
+Following this scheme, `dict` stores key-value pairs, while `set` stores only keys and therefore answers a single question: has this element been seen before or not. Both structures share the same underlying mechanism, so everything said about `dict` from here on applies to `set` too.
+
+## Collisions: when two keys claim the same bucket
+
+There are infinitely many possible keys and only m buckets, so sooner or later `hash(a) % m` and `hash(b) % m` will collide for two different keys. Such a match is called a collision, and every implementation has to handle it. There are two classic approaches:
+
+- **Chaining.** A bucket holds not one pair but a list of pairs. Colliding keys line up in a chain, and a search inside the bucket scans it linearly.
+- **Open addressing.** Pairs live directly in the array, one per cell. If a key's "home" bucket is already taken by another key, the algorithm probes other cells by a fixed rule until it finds the right key or an empty slot.
+
+CPython chose open addressing for `dict`: it's more compact and friendlier to the CPU cache than a scatter of separate lists. Play with the visualization: insert keys in both modes and watch how the same collision grows a chain in one mode and turns into a series of probes across neighboring cells in the other.
+
+<CollisionViz lang="en" />
+
+## Load and growth
+
+The more tightly packed the table, the more frequent the collisions and the longer the probe sequences. The ratio of elements to buckets is called the load factor. CPython never lets it rise above 2/3: the moment the threshold is crossed, `dict` allocates a bigger array and reinserts every key into it, since a new m gives different remainders. This reshuffle is called rehashing and costs O(n), but it happens less and less often as the table grows, so the average cost across all insertions stays constant. Watch the gauge: add elements and catch the moment the table decides to grow.
+
+<LoadFactorViz threshold={0.66} label="Table load: 2/3 threshold, like CPython" lang="en" />
+
+The practical consequence for your code: an individual insertion occasionally costs O(n), the very one that triggers rehashing. Nobody notices this in ordinary code, but in a hot loop with strict latency requirements, those spikes show up clearly on graphs.
+
+## Why dict and set average O(1), and when that breaks
+
+Lookup, insertion, and deletion all follow the same formula and typically touch one or two cells: O(1) on average. That guarantee rests on `hash` spreading keys evenly. If almost every key collides into one bucket, whether by bad luck or by malicious design, the table degenerates into a linear scan, and every operation costs O(n). That's exactly why Python salts string hashes with a random value on every process start: an attacker can't precompute a batch of keys that all land in the same bucket and take a service down.
+
+<Checkpoint
+  q="A dict holds a million pairs. How many cells does looking up an existing key typically check?"
+  choices={["One or two: the bucket index is computed, not searched for", "About twenty: the search halves the table each step", "About a million: every key has to be checked", "It depends on how long ago the key was inserted"]}
+  answer={0}
+  explain="The formula hash(key) % m gives the bucket number directly; all that's left is to check it and maybe a couple of nearby probes. Halving belongs to binary search, and a full scan only happens in a degenerate table."
+/>
+
+## Not everything can be a key: hashable
+
+The requirement for dict keys and set elements is the same: the object must be hashable, meaning its hash never changes over its lifetime. Numbers, strings, and tuples qualify. Mutable containers don't:
+
+```python
+sizes = {(1920, 1080): "FullHD", (3840, 2160): "4K"}
+print(sizes[(1920, 1080)])
+
+sizes[[1280, 720]] = "HD"
+```
+
+The last line raises `TypeError: unhashable type: 'list'`, and that's a safeguard, not a whim. If Python allowed a mutable key, after `key.append(...)` its hash would change, the formula would point to a different bucket, and the value would be "lost" in the table forever, even though it physically still sits inside.
+
+The surprise hides inside tuples: `hash((1, 2))` works, but `hash((1, [2]))` fails with the same `TypeError`. A tuple's hash is built from the hashes of its contents, and one mutable nesting doll inside spoils the entire key. If a set needs to be a key, there's an immutable `frozenset` for exactly that.
+
+## Insertion order: a small promise since 3.7
+
+Since Python 3.7 the language guarantees that iterating over a dict returns keys in insertion order. That's a consequence of the compact implementation, where entries sit in a separate dense array and the index table merely points into it. The guarantee doesn't extend to `set`: its element order depends on hashes and changes from run to run, which is why sets are conventionally sorted before printing in tests and logs.
+
+## Three patterns that close half of all interviews
+
+Frequency counting, duplicate finding, and a "seen already" set. All three rest on one property: checking `key in d` and inserting both cost O(1), so a single pass over the data solves the problem in O(n) instead of O(n²) with nested loops. Run it and try your own text: add the word "cat" a couple more times and watch the frequency dict change, then feed a list with no repeats into `first_duplicate` and confirm it returns `None`.
+
+<PyDemo title="Frequencies, a duplicate, and a 'seen already' set" code={`text = "the cat sat on the mat and the cat slept"
+counts = {}
+for word in text.split():
+    counts[word] = counts.get(word, 0) + 1
+print(counts)
+
+def first_duplicate(items):
+    seen = set()
+    for item in items:
+        if item in seen:
+            return item
+        seen.add(item)
+    return None
+
+print(first_duplicate([3, 1, 4, 1, 5]))`} />
+
+The line `counts.get(word, 0) + 1` replaces four lines of `if` checks. In the standard library this pattern has grown into `collections.Counter`, and a dict with a default value into `collections.defaultdict`. In an interview it helps to start with a plain dict and then mention `Counter`: that shows both an understanding of the mechanics and knowledge of the tools.
+
+<MarginNote label="Counter">Counter(text.split()) builds the same dict in one line and comes with most_common(k).</MarginNote>
+
+## Common mistakes
+
+- **Mutating a dict while iterating over it.** A loop `for key in d:` with `del d[key]` inside raises `RuntimeError`. Fix: iterate over a snapshot `list(d)`, or collect the keys to delete into a separate list.
+- **Expecting O(1) from a search by value.** The table only speeds up the route from key to value; the check `270 in prices.values()` scans everything in O(n). Fix: if reverse lookups are frequent, build a reverse dict `{v: k for k, v in d.items()}`.
+- **Relying on set order.** There isn't any: order depends on hashes and the process's random salt. Fix: sort before printing, or store data in a dict, which does remember insertion order.
+- **Putting mutable data into keys.** `d[[1, 2]] = "x"` fails with `TypeError`. Fix: turn a list into a tuple with `tuple(...)`, and a set into a `frozenset(...)`.
+
+<Detail summary="Why dict prints in insertion order and set doesn't">
+
+The compact dict stores entries in a dense array in insertion order, while the hash table itself holds only small indices pointing into that array. Iteration reads the dense array straight through, hence the stable order. A set has no such split: traversal walks the buckets, whose order is set by hashes, and string hashes are additionally salted on every process start. The salt can be pinned with the `PYTHONHASHSEED` environment variable, but that's a debugging tool, not behavior your code should depend on.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A hash table joins an array of buckets with the formula index = hash(key) % m, so key lookup costs O(1) on average.",
+    "Collisions are resolved by chaining or open addressing; CPython's dict uses open addressing.",
+    "Above the load threshold (around 2/3 in CPython) the table grows and rehashes every key; an individual insertion occasionally costs O(n).",
+    "A key must be hashable: tuple qualifies, list raises TypeError, and a tuple with mutable content fails too.",
+    "dict remembers insertion order since Python 3.7; set makes no order guarantee.",
+    "Frequency counting, duplicate finding, and a set of 'seen already' items turn an O(n²) scan into a single O(n) pass.",
+  ]}
+/>
+
+## References
+
+- [Python docs: mapping types, dict](https://docs.python.org/3/library/stdtypes.html#mapping-types-dict)
+- [Python glossary: hashable](https://docs.python.org/3/glossary.html#term-hashable)
+- [Python Wiki: TimeComplexity](https://wiki.python.org/moin/TimeComplexity)

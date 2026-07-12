@@ -1,0 +1,207 @@
+---
+conceptId: drf-query-optimization
+title: "Query optimization: N+1 in serializers, select_related and prefetch_related"
+estimatedMinutes: 45
+---
+
+# One list and twenty extra queries
+
+Open a seller's dashboard on an online marketplace and look at the list of recent orders: twenty rows, each with the customer's name and the number of items in the cart. A ViewSet returns the list, and the serializer reaches for the customer's name and recomputes the item count for every order. It looks like the database answers with one neat query. In reality there are twenty-one: one for the order list itself, plus one more per order to fetch the customer.
+
+While there are twenty rows, the extra queries get lost in the noise. Once there are two hundred orders, the page fires off more than two hundred queries and starts visibly lagging, with response time growing linearly with the row count. This is the classic N+1 problem. It's especially easy to trigger in DRF: a serializer happily walks an object's relations without ever asking how many queries that will cost. By the end of this section you'll be able to spot an extra query hiding in code where it isn't obvious, and remove it with two ORM tools.
+
+## Mental model: one list and a scatter of pinpoint queries
+
+A Django QuerySet is lazy: until you start iterating over the result, nothing touches the database. The first query fetches the order list in one fetch. But related objects don't come along in that fetch, since nobody asked for the customer or the items ahead of time. As soon as the serializer gets to a row and reads `order.customer`, the ORM notices there's no data on hand and silently runs a separate pinpoint query for that customer. N rows means N extra queries. One query for the list plus N for the relations - hence the name.
+
+<Figure caption="The list costs one query. Every access to order.customer inside the serializer adds one more · that's how N extra queries pile up.">
+  <Sketch viewBox="0 0 460 230" title="Where the 1 plus N queries come from">
+    <SketchBox x={20} y={18} width={160} height={38} accent />
+    <SketchLabel x={100} y={41} mono accent size={11}>Order queryset</SketchLabel>
+
+    <SketchBox x={300} y={92} width={140} height={72} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={370} y={122} mono size={11}>Database</SketchLabel>
+    <SketchLabel x={370} y={140} muted size={9}>PostgreSQL</SketchLabel>
+
+    <SketchArrow from={[180, 40]} to={[300, 108]} />
+    <SketchLabel x={222} y={64} muted size={9}>1 query · list</SketchLabel>
+
+    <SketchBox x={20} y={92} width={160} height={30} />
+    <SketchLabel x={100} y={111} mono size={9}>#101 → customer</SketchLabel>
+    <SketchBox x={20} y={130} width={160} height={30} />
+    <SketchLabel x={100} y={149} mono size={9}>#102 → customer</SketchLabel>
+    <SketchBox x={20} y={168} width={160} height={30} />
+    <SketchLabel x={100} y={187} mono size={9}>#103 → customer</SketchLabel>
+
+    <SketchArrow from={[180, 107]} to={[300, 128]} accent dashed />
+    <SketchArrow from={[180, 145]} to={[300, 136]} accent dashed />
+    <SketchArrow from={[180, 183]} to={[300, 148]} accent dashed />
+    <SketchLabel x={238} y={205} accent size={9}>+1 query per row</SketchLabel>
+  </Sketch>
+</Figure>
+
+The serializer isn't doing anything malicious: it honestly reads an attribute, and the lazy relation honestly loads the data on demand. The trouble is that the demand repeats in a loop over every row. If the serializer touches two different relations, the pinpoint query count doubles.
+
+<Figure caption="A naive response makes 1+N queries and degrades linearly; select_related together with prefetch_related hold a constant two queries no matter what N is.">
+  <BarChart
+    title="Queries per page: naive vs. prefetch"
+    data={[
+      { label: 'N=10 naive', value: 11 },
+      { label: 'N=10 prefetch', value: 2 },
+      { label: 'N=50 naive', value: 51 },
+      { label: 'N=50 prefetch', value: 2 },
+      { label: 'N=100 naive', value: 101 },
+      { label: 'N=100 prefetch', value: 2 },
+    ]}
+    highlight={['N=10 prefetch', 'N=50 prefetch', 'N=100 prefetch']}
+  />
+</Figure>
+
+The gap between "naive" and "with prefetching" on the chart isn't about slope - it's a difference in the shape of the curve itself: the naive response grows linearly, while the correct one stays flat. That's exactly why N+1 rarely gets noticed during development with a handful of test rows, and gets caught only in production.
+
+## Where N+1 hides specifically in DRF
+
+In a serializer, the extra query is almost always tucked behind an innocent-looking field. Four spots are dangerous:
+
+- **A nested serializer** `items = ItemSerializer(many=True)`: to return each order's line items, DRF iterates over `order.items`, and that's a separate query per order.
+- **A `SerializerMethodField`** whose method touches a relation: a call like `obj.customer.name` or `obj.items.count()` inside a `get_*` method repeats for every row.
+- **`StringRelatedField` and `PrimaryKeyRelatedField`** when walking a relation: to show a string representation or build a list of ids, DRF walks the related objects.
+- **Pagination doesn't save you.** It only trims the result to a single page, but on that page N+1 remains in full force: twenty rows still produce their own twenty extra queries.
+
+```python
+class OrderSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source="customer.username")
+    item_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = ["id", "customer_name", "item_count"]
+
+    def get_item_count(self, obj):
+        return obj.items.count()
+```
+
+Here each row costs two database hits: one for `customer`, another for `obj.items.count()`. Twenty orders turn into 1 + 20 + 20 queries. The field looks innocent, and the cost is hidden inside its implementation.
+
+## Two tools: select_related and prefetch_related
+
+The ORM can load relations up front, in one pass. There are two tools, and they aren't interchangeable - the type of relation dictates which one to use.
+
+<Compare
+  leftTitle="select_related"
+  rightTitle="prefetch_related"
+  left={
+    <>
+      <p>One SQL query with a JOIN. For "to-one" relations: <code>ForeignKey</code> and <code>OneToOneField</code> on the side that holds the key.</p>
+      <pre><code>{`Order.objects.select_related("customer")`}</code></pre>
+      <p>The customer arrives together with the order in the same result row, no separate queries needed.</p>
+    </>
+  }
+  right={
+    <>
+      <p>A separate second query plus stitching in Python by key. For "to-many" relations: reverse <code>ForeignKey</code> and <code>ManyToManyField</code>.</p>
+      <pre><code>{`Order.objects.prefetch_related("items")`}</code></pre>
+      <p>Django fetches every needed item in a single query with an IN condition and sorts them into their orders in memory.</p>
+    </>
+  }
+  verdict="A 'to-one' relation → select_related (JOIN). A 'to-many' relation → prefetch_related (a second query). They can and should be combined in the same chain."
+/>
+
+The rule is simple: ask yourself how many objects sit on the other end of the relation. Just one? A JOIN is cheap, use `select_related`. Many? A JOIN would multiply the order's rows, so Django runs a separate query and stitches the result together in memory - that's `prefetch_related`.
+
+## Where the optimization belongs
+
+Prefetching has no business living inside a serializer. A serializer describes the shape of the data, not how to fetch it from the database. The right place is the `queryset` (or a `get_queryset()` method) on the ViewSet, where the query is actually built.
+
+```python
+class OrderViewSet(viewsets.ModelViewSet):
+    queryset = Order.objects.select_related("customer").prefetch_related("items")
+    serializer_class = OrderSerializer
+```
+
+If the query depends on the request or the user, the same call moves into `get_queryset()`:
+
+```python
+def get_queryset(self):
+    return (
+        Order.objects
+        .select_related("customer")
+        .prefetch_related("items")
+        .filter(seller=self.request.user)
+    )
+```
+
+The serializer itself doesn't change: it still reads `order.customer` and iterates over `order.items`, only now the data is already sitting in memory and there are no pinpoint queries left to make.
+
+## Fine control: Prefetch, annotations, only
+
+Sometimes you need not the whole relation but a filtered or sorted slice of it. That's what the `Prefetch` class is for - it takes a ready-made `queryset` and can stash the result into a separate attribute via `to_attr`:
+
+```python
+from django.db.models import Prefetch
+
+queryset = Order.objects.prefetch_related(
+    Prefetch(
+        "items",
+        queryset=Item.objects.filter(price__gt=1000),
+        to_attr="expensive_items",
+    )
+)
+```
+
+Now every order gets an `order.expensive_items` list, built by the same second query, with no per-row trip to the database.
+
+<Callout type="warning">
+Prefetching caches exactly the set you asked for. If a serializer method calls `obj.items.filter(...)` or `obj.items.order_by(...)` again, Django treats it as a brand-new query and hits the database again for every row. N+1 comes right back, even though `items` was already prefetched. Use the prefetched list as-is, and set up any filtering or sorting ahead of time through `Prefetch`.
+</Callout>
+
+Counting over a relation is a trap of its own. `obj.items.count()` inside a serializer method fires a `SELECT COUNT(*)` for every row. Replace it with an annotation that counts everything in a single query, alongside the list:
+
+```python
+from django.db.models import Count
+
+queryset = Order.objects.annotate(item_count=Count("items"))
+```
+
+Then `item_count` arrives as a plain field, and you don't need a `SerializerMethodField` at all. By the same logic, `only("id", "title")` and `defer("body")` trim the set of columns, and a nested prefetch like `select_related("customer__city")` fetches the customer and their city in a single JOIN, no matter how deep the chain of "to-one" relations goes.
+
+## How to catch N+1
+
+You can't spot the problem by eye, it has to be measured by counting queries.
+
+- **`assertNumQueries(n)`** in tests pins down the expected number of queries: if someone adds a field with a relation, the test fails on the overage. This is the best way to prevent a regression.
+- **`connection.queries`** in a shell shows the list of executed queries after hitting an endpoint (with `DEBUG=True`).
+- **django-silk** and **Django Debug Toolbar** show every response's queries right in the browser, including duplicates, and flag repeats immediately.
+
+Reading query plans and profiling slow queries is covered in a separate topic on Django query profiling, which goes deeper into how to read these tools' output and what to do next. The one thing to remember here: until you're counting queries, you don't know whether you have an N+1.
+
+## Common mistakes
+
+- **Optimizing inside the serializer.** Calling `select_related` inside a `SerializerMethodField` does nothing useful: the query already ran in the view, and the serializer is working with objects that already exist. Prefetching belongs on the queryset.
+- **`select_related` on a "to-many" relation.** `select_related("items")` on a reverse ForeignKey fails with an error: a JOIN would multiply the order's rows. Relations like that only work through `prefetch_related`.
+- **`.filter()` or `.count()` on a relation inside a loop or method.** Any new query on a relation bypasses the prefetch cache and resurrects N+1. Set up filtering through `Prefetch`, counting through `Count`.
+- **Testing with ten rows.** With a handful of test rows, N+1 is invisible. Measure the query count with a test using `assertNumQueries`, don't eyeball it.
+
+<Detail summary="Why select_related fails on 'to-many' relations while prefetch_related doesn't">
+
+`select_related` builds a single SQL query with a JOIN. For a "to-one" relation, that's safe: an order has exactly one customer, so the result row never multiplies. For a "to-many" relation, a JOIN would produce one order row per line item, and a single record would balloon into dozens of duplicates; Django simply refuses `select_related` on such a relation and raises an error. `prefetch_related` sidesteps the problem differently: first a query for the orders, then a second query for all of their items at once with a single `WHERE order_id IN (...)`, and only then does Python sort the items back into their orders in memory. Two queries instead of N+1, and no row multiplication at all. So "to-one" means a JOIN, and "to-many" means a second query plus stitching.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "N+1 is one query for the list plus one per row for a relation; in DRF it's caused by the serializer reading an object's relations inside a loop.",
+    "select_related does a JOIN and fits 'to-one' relations (ForeignKey, OneToOne); prefetch_related runs a second query and fits 'to-many' relations (reverse ForeignKey, ManyToMany).",
+    "Prefetching belongs on the queryset or in get_queryset() on the ViewSet, not in the serializer.",
+    "Prefetch with to_attr preloads a filtered slice, but a fresh .filter() or .count() on a relation inside a method triggers new queries again; counting objects is better done with the Count annotation.",
+    "N+1 isn't visible in the code, it's caught by counting queries: assertNumQueries, connection.queries, django-silk, Django Debug Toolbar.",
+  ]}
+/>
+
+## Links
+
+- [Django - select_related](https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related)
+- [Django - prefetch_related](https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related)
+- [Django - Prefetch](https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-objects)
+- [Django - Database access optimization](https://docs.djangoproject.com/en/stable/topics/db/optimization/)
+- [DRF - Generic views (get_queryset)](https://www.django-rest-framework.org/api-guide/generic-views/)

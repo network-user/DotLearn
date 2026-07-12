@@ -1,0 +1,158 @@
+---
+conceptId: advanced-generators
+title: "send, throw, close, and yield from"
+estimatedMinutes: 11
+---
+
+# A generator that listens: two-way exchange and delegation
+
+Up to now the generator has only talked while we listened: `yield` handed a value outward, and that was the end of the conversation. But `yield` is an expression, not just a statement, and it has a result. Call `send(value)` from the outside, and that value flies in and becomes the result of the very `yield` where the generator fell asleep. A one-way stream turns into a two-way channel, and a generator into a coroutine you can feed. Add delegation through `yield from`, and you get the mechanism that `contextlib` and Python's early coroutines are built on.
+
+By the end of this section you will feed values into a generator with `send`, understand why a coroutine needs to be "primed" first, throw exceptions into it with `throw`, release resources with `close`, and delegate work to a nested generator with `yield from`.
+
+## yield looks both ways
+
+The statement `x = yield value` does two things in one beat. Outward, to the caller, goes `value`. And when the caller resumes the generator with `send(sent)`, that `sent` value becomes the result of the `yield` expression and lands in `x`. What goes out and what comes in travel in opposite directions through the very same point.
+
+<Figure caption="yield is an expression: the value after yield travels right to the caller, and the send argument travels left and becomes yield's result.">
+  <Sketch viewBox="0 0 420 150" title="Two-way exchange through yield">
+    <SketchBox x={26} y={50} width={130} height={50} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={91} y={79} mono>caller</SketchLabel>
+    <SketchBox x={264} y={50} width={130} height={50} accent />
+    <SketchLabel x={329} y={79} mono accent>generator</SketchLabel>
+    <SketchArrow from={[156, 64]} to={[264, 64]} accent />
+    <SketchLabel x={210} y={44} size={12} muted>send(v)</SketchLabel>
+    <SketchArrow from={[264, 88]} to={[156, 88]} />
+    <SketchLabel x={210} y={112} size={12} muted>yield x</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Priming: why next always goes first
+
+A freshly created coroutine sits before its first `yield`, and you cannot send it a value right away, since it has nowhere yet to receive one. So you "prime" the coroutine first with a `next()` call (or the equivalent `send(None)`), which runs it up to that first `yield`. Only then does `send` land in a ready expression. Run the accumulator below: `next(acc)` primes it and prints the starting zero, and each `send` returns the running total. Change the numbers you send and watch the accumulator remember the total between calls.
+
+<PyDemo
+  title="A running-total coroutine built on send"
+  code={`def running_total():
+    total = 0
+    while True:
+        x = yield total
+        total += x
+
+acc = running_total()
+print(next(acc))
+print(acc.send(10))
+print(acc.send(5))
+print(acc.send(100))`}
+/>
+
+Step by step. `next(acc)` runs the generator up to `yield total`, hands back `0`, and freezes. `acc.send(10)` resumes it: `10` becomes the result of `yield` and lands in `x`, the total climbs to `10`, the loop reaches `yield total` again and hands back `10`. From there it continues the same way: `5` brings the total to `15`, `100` brings it to `115`. Skip the priming step and call `send(10)` first, and you get a `TypeError`: you cannot send a non-`None` value into an unprimed generator.
+
+## yield from: hand work off to a nested generator
+
+When a generator needs to pass along every value from another generator, the natural move is a loop, `for item in sub: yield item`. That works fine for a plain pass-through, but `yield from sub` does the same thing more concisely and, more importantly, more faithfully: it does not just forward values outward, it also relays `send` and `throw` inward, and it catches the sub-generator's return value too. Recursively flattening nested lists comes down to `yield from` in three lines:
+
+```python
+def flatten(nested):
+    for item in nested:
+        if isinstance(item, list):
+            yield from flatten(item)
+        else:
+            yield item
+
+print(list(flatten([1, [2, [3, 4]], 5])))
+```
+
+This prints `[1, 2, 3, 4, 5]`. Whenever `flatten` meets a nested list, it delegates to itself through `yield from`, and elements at any depth rise to the surface as one even stream. A hand-written loop would give the same list, but it would lose the sub-generator's return value and would not relay `send` and `throw` inward.
+
+`yield from` is exactly what retrieves a sub-generator's return value. Whatever the sub-generator hands back through `return` becomes the result of the `yield from` expression:
+
+```python
+def inner():
+    yield 1
+    yield 2
+    return "done"
+
+def outer():
+    result = yield from inner()
+    print("subgenerator returned:", result)
+
+print(list(outer()))
+```
+
+This prints `subgenerator returned: done` first, then `[1, 2]`. The value `"done"`, tucked inside the sub-generator's `StopIteration`, is exactly what `yield from` retrieved and assigned to `result`. A plain pass-through loop would never have reached that value.
+
+## throw and close: exceptions and cleanup
+
+`throw` injects an exception right at the point where the generator fell asleep on `yield`, as if it had arisen there. The generator can catch it and carry on, or let it propagate. `close` injects a special `GeneratorExit`, asking the generator to wrap up. Anything that needs releasing no matter how the generator ends belongs in a `finally` block, because that is the only thing that runs both on ordinary exhaustion and on `close`.
+
+```python
+def worker():
+    try:
+        while True:
+            task = yield
+            print("doing", task)
+    finally:
+        print("cleanup")
+
+w = worker()
+next(w)
+w.send("A")
+w.close()
+```
+
+This prints `doing A`, then `cleanup`. Calling `close()` injected `GeneratorExit` into the frozen `yield`, the loop broke, and the `finally` block got to print "cleanup". This is exactly how a generator releases files, connections, and locks, whatever happens to it.
+
+## Where this surprises people
+
+This very machinery is what `@contextlib.contextmanager` is built on. A single `yield` in such a function splits it into two halves: the code before `yield` is entering the `with` block (setup), the code after is leaving it (teardown). The context manager primes the generator on entry and resumes it on exit, and if an exception happens inside the block, it relays that exception into the generator through `throw`. One `yield` keyword replaces a pair of methods, `__enter__` and `__exit__`.
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def tag(name):
+    print("<" + name + ">")
+    yield
+    print("</" + name + ">")
+
+with tag("b"):
+    print("hi")
+```
+
+This prints `<b>`, `hi`, `</b>`. The half of the function before `yield` ran on entering the `with`, the half after ran on leaving it. More on this in the course on context managers.
+
+## Common mistakes
+
+Here are the slip-ups typical of coroutines and delegation.
+
+- **Forgetting to prime.** The first `send(value)` into an unprimed coroutine fails with `TypeError`. Run it up to the first `yield` first, with `next` or `send(None)`.
+- **Cleanup outside `finally`.** Release code that sits after `yield` but outside `finally` never runs on `close`: `GeneratorExit` cuts the generator off right at `yield`. Put resource release in `finally`.
+- **Swallowing `GeneratorExit`.** If the generator catches `GeneratorExit` after `close` and then yields again, Python raises `RuntimeError`. A generator is supposed to end on `GeneratorExit`, not keep producing values.
+- **Replacing `yield from` with a hand-written loop.** The loop `for item in sub: yield item` only forwards values, but loses the sub-generator's return value and does not relay `send` and `throw` inward. Full delegation needs `yield from`.
+
+<Detail summary="A short history: from send to async and await">
+
+Two-way exchange arrived in PEP 342 (Python 2.5), which gave generators `send`, `throw`, and `close` and turned them into coroutines. PEP 380 (Python 3.3) added `yield from`, letting generators delegate work and chain together. Early asynchronous frameworks grew out of these building blocks: you fed a coroutine through `send`, and `yield` announced outward "here is what I am waiting on." Finally, PEP 492 (Python 3.5) cemented the idiom with dedicated syntax, `async def` and `await`, tucking the `send` machinery under the hood.
+
+So understanding `send` and `yield from` is not a museum piece, it is the foundation under `async`/`await`: beneath the pretty syntax there still lives a generator that pauses and receives values back.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "yield is an expression: the value to its right travels outward, and the send(v) argument becomes yield's result on the inside.",
+    "A fresh coroutine is primed with next or send(None), or the first send with a non-None value fails with TypeError.",
+    "send resumes the coroutine and returns the next yielded value, which is what makes a generator a two-way channel.",
+    "yield from delegates work to a sub-generator: it forwards values outward, relays send and throw inward, and catches its return value.",
+    "throw injects an exception at the yield point, close injects GeneratorExit; resource release belongs in finally.",
+    "contextlib.contextmanager and Python's early coroutines stand on this machinery, and a pausable generator still lives underneath async and await.",
+  ]}
+/>
+
+## References
+
+- [PEP 342 · Coroutines via Enhanced Generators](https://peps.python.org/pep-0342/)
+- [PEP 380 · Syntax for Delegating to a Subgenerator (yield from)](https://peps.python.org/pep-0380/)
+- [Python docs · generator.send, throw, close](https://docs.python.org/3/reference/expressions.html#generator.send)
+- [Python docs · contextlib.contextmanager](https://docs.python.org/3/library/contextlib.html#contextlib.contextmanager)

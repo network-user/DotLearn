@@ -1,0 +1,246 @@
+---
+conceptId: graphs
+title: Graphs and how to represent them
+estimatedMinutes: 17
+---
+
+# Graphs: vertices, edges, and two ways to store them
+
+Open a metro app and ask for a route from Kievskaya to Tretyakovskaya. The Moscow Metro map has more than three hundred stations, but your phone answers instantly: here's the path, here's the number of transfers. Yet the app doesn't store ready-made routes between every pair of stations: there are hundreds of thousands of such pairs, and opening a single new station would force a recalculation of the entire database. Instead it stores only the stations and the links between them, and computes the route on the fly.
+
+The same problem hides everywhere. pip figures out what order to install package dependencies in. A social network suggests "people you may know" by looking at your friends' friends. A recommendation service leads you from a movie you watched to similar ones. Under the hood it's the same data structure and the same traversal every time. By the end of this section you'll be building this structure in Python and finding the shortest path through it.
+
+## Mental model: points and connections
+
+A graph consists of vertices and edges. Vertices can be stations, users, packages; an edge records a connection between a pair of vertices. When the connection is mutual (a metro link runs both ways), the graph is called undirected. When the connection has a direction (the `requests` package depends on `urllib3`, but not the other way around), the graph is directed, and the edge is drawn as an arrow. If an edge carries a number (minutes between stations, the cost of a road), the graph is called weighted; in this section we work with unweighted ones.
+
+<MarginNote label="terminology">A vertex is also called a node, and an edge is, well, an edge. Problems and articles use these terms interchangeably.</MarginNote>
+
+A picture of circles and arrows is convenient for a human, but a computer needs a structure in memory. Look at the figure: on the left a directed graph of four vertices, next to it two ways to write it into memory. We'll keep coming back to this picture for the rest of the section.
+
+<Figure caption="The same directed graph in two representations: the adjacency list enumerates each vertex's outgoing edges, the matrix reserves a cell for every possible pair. The highlight shows the same information both ways: vertex 0's edges.">
+  <Sketch viewBox="0 0 560 240" title="A graph, its adjacency list, and its adjacency matrix">
+    <SketchLabel x={105} y={28} muted size={11}>graph</SketchLabel>
+    <SketchArrow from={[78, 68]} to={[146, 68]} accent />
+    <SketchArrow from={[68, 88]} to={[100, 122]} accent />
+    <SketchArrow from={[158, 88]} to={[126, 122]} />
+    <SketchArrow from={[113, 163]} to={[113, 191]} />
+    <SketchBox x={40} y={50} width={36} height={36} radius={18} accent fill="rgb(var(--surface-2))" />
+    <SketchLabel x={58} y={73} mono size={13} accent>0</SketchLabel>
+    <SketchBox x={150} y={50} width={36} height={36} radius={18} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={168} y={73} mono size={13}>1</SketchLabel>
+    <SketchBox x={95} y={125} width={36} height={36} radius={18} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={113} y={148} mono size={13}>2</SketchLabel>
+    <SketchBox x={95} y={195} width={36} height={36} radius={18} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={113} y={218} mono size={13}>3</SketchLabel>
+
+    <SketchLabel x={285} y={28} muted size={11}>adjacency list</SketchLabel>
+    <SketchHighlight x={226} y={54} width={82} height={21} />
+    <SketchLabel x={232} y={69} mono anchor="start">0: [1, 2]</SketchLabel>
+    <SketchLabel x={232} y={99} mono anchor="start">1: [2]</SketchLabel>
+    <SketchLabel x={232} y={129} mono anchor="start">2: [3]</SketchLabel>
+    <SketchLabel x={232} y={159} mono anchor="start">3: []</SketchLabel>
+
+    <SketchLabel x={462} y={28} muted size={11}>adjacency matrix</SketchLabel>
+    <SketchLabel x={420} y={69} mono muted anchor="start">0 1 2 3</SketchLabel>
+    <SketchLabel x={398} y={95} mono muted>0</SketchLabel>
+    <SketchHighlight x={414} y={80} width={62} height={21} />
+    <SketchLabel x={420} y={95} mono anchor="start">0 1 1 0</SketchLabel>
+    <SketchLabel x={398} y={121} mono muted>1</SketchLabel>
+    <SketchLabel x={420} y={121} mono anchor="start">0 0 1 0</SketchLabel>
+    <SketchLabel x={398} y={147} mono muted>2</SketchLabel>
+    <SketchLabel x={420} y={147} mono anchor="start">0 0 0 1</SketchLabel>
+    <SketchLabel x={398} y={173} mono muted>3</SketchLabel>
+    <SketchLabel x={420} y={173} mono anchor="start">0 0 0 0</SketchLabel>
+  </Sketch>
+</Figure>
+
+The adjacency list (in the middle) stores, for each vertex, a list of its neighbors. For vertex 0 that's `[1, 2]`; vertex 3's list is empty, since no edge leaves it. Memory usage is O(V + E): one entry per vertex plus one per edge. Iterating over neighbors is cheap, you just read the ready-made list. But the question "is there an edge from 1 to 3" requires walking vertex 1's list.
+
+The adjacency matrix (on the right) sets up a V-by-V table and puts a one in a cell whenever an edge exists. Answering "is there an edge" costs O(1): one lookup by two indices. The price of that speed: O(V²) of memory regardless of the number of edges, and iterating over neighbors costs O(V), scanning the entire row. Notice the matrix's asymmetry: a one at row 0, column 1 with no matching one at row 1 means the graph is directed. For an undirected graph the matrix is symmetric across the diagonal, and in an adjacency list each edge is recorded twice: u sits in v's list, and v sits in u's.
+
+## What to choose in practice
+
+<Compare
+  leftTitle="Adjacency list"
+  rightTitle="Adjacency matrix"
+  left={<>
+
+- Memory O(V + E), you pay only for edges that actually exist
+- A vertex's neighbors read instantly
+- Checking "is there an edge u, v" requires a search through the list
+- In Python: a dict of lists, or defaultdict(list)
+
+  </>}
+  right={<>
+
+- Memory O(V²) even for an empty graph
+- Checking "is there an edge u, v" in O(1)
+- Iterating over neighbors scans the whole row, O(V)
+- In Python: a list of lists of zeros and ones
+
+  </>}
+  verdict="Reach for an adjacency list by default. A matrix earns its keep on small or dense graphs, where the edge count is close to V² and the main question is 'is there an edge between u and v'."
+/>
+
+Real-world graphs are almost always sparse. A social network might have a million users, but each has hundreds of friends, not a million: on the order of 10⁸ edges against 10¹² matrix cells. That's the difference between gigabytes and a terabyte. So the standard interview answer starts with an adjacency list, and you mention the matrix as a deliberate trade of memory for faster edge checks.
+
+In Python an adjacency list is most often built as a dict, keyed by vertex, with a list of neighbors as the value. `defaultdict(list)` removes the need to check "does this key already exist":
+
+```python
+from collections import defaultdict
+
+edges = [("Kievskaya", "Smolenskaya"), ("Kievskaya", "Park Kultury")]
+graph = defaultdict(list)
+for u, v in edges:
+    graph[u].append(v)
+    graph[v].append(u)
+```
+
+Two `append` calls per edge are needed because the graph is undirected: the link is visible from both stations. For a directed graph only the first line would remain. When vertices are numbered 0 through n-1, a list of lists works instead of a dict: `[[] for _ in range(n)]`.
+
+## Breadth-first search: a wave from the start
+
+The representation is ready, now it's time to walk the graph. BFS (breadth-first search) moves out from the start vertex in waves: first every vertex one edge away from the start, then two edges away, then three. It spreads exactly like ripples on water. The algorithm keeps a queue of vertices waiting to be processed and a `visited` set holding vertices already seen.
+
+<GraphTraversalFigure />
+
+Run the traversal and follow the wave: the number above a vertex shows which level reached it. Every vertex at the same level is the same distance from the start, and that property is exactly what makes BFS the go-to tool for shortest-path problems.
+
+We take the queue from the `collections` module: `deque` can remove an element from the left in O(1), while `list.pop(0)` shifts the entire list in O(n).
+
+```python
+def bfs(graph, start):
+    visited = {start}
+    queue = deque([start])
+    while queue:
+        node = queue.popleft()
+        print(node)
+        for n in sorted(graph[node]):
+            if n not in visited:
+                visited.add(n)
+                queue.append(n)
+```
+
+Why does BFS find the shortest path in an unweighted graph? The queue processes vertices in strictly increasing order of distance: level k+1 never starts before level k finishes. So the moment a vertex first enters the queue, the path leading to it already has the minimum possible number of edges, and no shorter one can appear later. Just keep each vertex's distance alongside it, and the answer is ready.
+
+Trace the mechanics step by step: how vertices enter the queue and leave it.
+
+<PyStepper
+  title="BFS step by step: the queue and visited"
+  code={`from collections import deque
+
+graph = {1: [2, 3], 2: [1, 4], 3: [1, 4], 4: [2, 3]}
+start = 1
+visited = {start}
+queue = deque([start])
+order = []
+while queue:
+    node = queue.popleft()
+    order.append(node)
+    for n in graph[node]:
+        if n not in visited:
+            visited.add(n)
+            queue.append(n)
+print(order)`}
+/>
+
+<Checkpoint
+  q="In an unweighted metro map you need the route with the fewest stops. Which traversal do you use?"
+  choices={[
+    "BFS: it expands the graph level by level, so the first time a vertex is reached is always via the path with the fewest edges",
+    "DFS: it reaches distant vertices faster, so the path must be shorter",
+    "It doesn't matter: both traversals visit every vertex, so both find the shortest path",
+  ]}
+  answer={0}
+  explain="BFS walks the graph in waves: first every vertex one edge away, then two edges away. Reaching a vertex for the first time is guaranteed to happen via the shortest path. DFS dives deep and may reach the target by a long route, even though it visits the same vertices."
+/>
+
+## Depth-first search and a one-line difference
+
+DFS (depth-first search) behaves differently: it follows one path as far as it can go, and only backtracks to try a neighboring branch once it hits a dead end. That's how you'd find your way out of a maze: walk a corridor to its dead end, back up to the last fork, turn down the next one. The recursive version fits in a few lines:
+
+```python
+def dfs(graph, node, visited):
+    visited.add(node)
+    print(node)
+    for n in sorted(graph[node]):
+        if n not in visited:
+            dfs(graph, n, visited)
+```
+
+An explicit stack does the same job: push the start, pop the top element, print it, push its unvisited neighbors. The code nearly matches BFS, only `queue.popleft()` is replaced with `stack.pop()`. A stack removes the most recently added item, which is why the traversal dives deep instead of spreading in waves. Recursion is more elegant, but mind the limit: CPython allows about a thousand nested calls by default, and a long chain of vertices will crash a recursive DFS with `RecursionError`.
+
+<PullQuote>BFS and DFS differ by one line: where you take the next vertex from, the front of a queue or the top of a stack.</PullQuote>
+
+Both traversals rely on the `visited` set, and it's not decoration. Remove it, and the traversal loops forever even on a two-vertex graph: A queues B, B queues A again, and so on without end. Any cycle in the graph, and in an undirected graph a single edge already creates one, turns a traversal with no `visited` set into a perpetual motion machine.
+
+## Try it yourself
+
+Below is a fragment of the metro map as an adjacency list. Change the start station to Arbatskaya and see how the wave reshapes. Then replace `popleft()` with `pop()` and compare the order: the queue turns into a stack, and BFS turns into DFS.
+
+<PyDemo
+  title="BFS over a metro fragment: change the start station"
+  code={`from collections import deque
+
+graph = {
+    "Kievskaya": ["Smolenskaya", "Park Kultury"],
+    "Smolenskaya": ["Kievskaya", "Arbatskaya"],
+    "Park Kultury": ["Kievskaya", "Oktyabrskaya"],
+    "Arbatskaya": ["Smolenskaya"],
+    "Oktyabrskaya": ["Park Kultury"],
+}
+
+def bfs(start):
+    visited = {start}
+    queue = deque([start])
+    order = []
+    while queue:
+        node = queue.popleft()
+        order.append(node)
+        for n in sorted(graph[node]):
+            if n not in visited:
+                visited.add(n)
+                queue.append(n)
+    return order
+
+print(bfs("Kievskaya"))
+print(bfs("Oktyabrskaya"))`}
+/>
+
+## Edge cases
+
+- **A disconnected graph.** A traversal from one vertex only sees its own connected component: `len(visited)` ends up smaller than the total vertex count. To cover the whole graph, run a traversal from every not-yet-visited vertex; that's also how you count the number of components.
+- **A vertex with no edges.** Its neighbor list is empty, and a traversal from it finishes instantly. The trap hides in the representation: a dict built only from edges doesn't know about such a vertex at all, and `graph[v]` raises `KeyError`. A list of n empty lists is more reliable.
+- **A self-loop.** An edge from a vertex to itself. The check `n not in visited` filters out the repeat visit just fine, but when counting degrees and edges it's easy to count a self-loop twice.
+- **Start equals target.** In shortest-path problems the answer is zero, and it's better to return that before ever starting the queue than to trust the general logic to handle it.
+
+## Common mistakes
+
+- **`pop()` instead of `popleft()`.** `deque.pop()` removes the element from the right, the same end you just added to. The queue silently turns into a stack, BFS into DFS, and "shortest" paths stop being shortest. On tiny test graphs the bug might not even surface.
+- **Marking `visited` on removal instead of on addition.** While a vertex waits in the queue, its neighbors have time to push it in again several more times. The queue bloats with duplicates, and time and memory both grow. Keep the rule: the moment you push it, mark it.
+- **A one-sided undirected edge.** A forgotten `graph[v].append(u)` makes the connection visible from only one side: a path from A to B gets found, but not from B to A. Especially sneaky after reworking code from a directed version.
+- **Recursive DFS on a deep graph.** A chain of tens of thousands of vertices blows through CPython's recursion limit. For large graphs, write DFS with an explicit stack.
+
+<Detail summary="What if edges have weight: a quick word on weighted graphs">
+
+In a weighted graph the adjacency list stores a weight alongside each neighbor, for example pairs of the form `(neighbor, minutes)`. BFS no longer guarantees the shortest path here: a route of three fast hops can beat one slow hop, and BFS only counts edges. Dijkstra's algorithm solves this: the same wave, but with a priority queue from the `heapq` module instead of a plain queue, and vertices surface in order of accumulated cost. For a junior interview it's enough to know the algorithm's name and the boundary: BFS for unweighted graphs, Dijkstra for weighted graphs with nonnegative weights.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A graph consists of vertices and edges; an edge can have a direction (directed graph) and a weight (weighted).",
+    "An adjacency list takes O(V + E) and makes iterating over neighbors cheap; in Python that's a dict of lists or defaultdict(list).",
+    "An adjacency matrix spends O(V²) memory but answers 'is there an edge' in O(1); it earns its keep on dense graphs.",
+    "BFS walks in waves through deque and popleft(), finding the path with the fewest edges in an unweighted graph.",
+    "DFS dives deep through a stack or recursion; one line separates it from BFS: pop() instead of popleft().",
+    "A vertex gets marked in visited the moment it's added to the queue; without visited, any cycle traps the traversal forever, and a disconnected graph needs a restart from every unvisited vertex.",
+  ]}
+/>
+
+## References
+
+- [Python docs: collections, home of deque and defaultdict](https://docs.python.org/3/library/collections.html)
+- [Visualgo: interactive BFS and DFS animation](https://visualgo.net/en/dfsbfs)
+- [Python docs: heapq, priority queue algorithms for Dijkstra](https://docs.python.org/3/library/heapq.html)

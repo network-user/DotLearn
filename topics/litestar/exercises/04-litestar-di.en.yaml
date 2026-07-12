@@ -1,0 +1,250 @@
+exercises:
+  - id: litestar-di-binding-001
+    concept: litestar-di
+    type: theory-quiz
+    difficulty: 1
+    prompt: "By what does Litestar bind a dependency registered via `Provide` to a specific handler parameter?"
+    choices:
+      - id: a
+        text: "By name match: the key in the `dependencies` dict must match the handler parameter's name."
+      - id: b
+        text: "By type match: the factory's return type must match the parameter's annotation."
+      - id: c
+        text: "By order: the first dependency goes to the first parameter, the second to the second."
+      - id: d
+        text: "By a decorator on the parameter: each parameter is marked with `@inject`."
+    correct: [a]
+    explanation: "Binding in Litestar goes by name. A dependency is registered in the `dependencies` dict under a key, and a handler parameter picks it up by matching that key against its own name - not by type, and not by order."
+    variants:
+      - prompt: "What wraps a dependency factory when it's registered in Litestar?"
+        choices:
+          - id: a
+            text: "`Provide(factory)` from `litestar.di`."
+          - id: b
+            text: "`Depends(factory)` - same as FastAPI, there's no other way."
+          - id: c
+            text: "`Inject(factory)` - a built-in Litestar decorator."
+          - id: d
+            text: "Nothing: the factory is placed directly in the dict, unwrapped."
+        correct: [a]
+        explanation: "The factory is wrapped in `Provide(...)` from `litestar.di`. `Provide` is what carries the dependency's settings, e.g. `use_cache`. FastAPI uses `Depends`, but that's a different framework."
+      - prompt: "What can a dependency factory be in Litestar?"
+        choices:
+          - id: a
+            text: "Either `async def` (for I/O) or a regular `def` (for a ready-made value); the framework offloads a blocking sync factory to a thread pool."
+          - id: b
+            text: "Only `async def` - Litestar doesn't support sync factories."
+          - id: c
+            text: "Only a regular `def` - async factories aren't allowed."
+          - id: d
+            text: "Only an argument-less lambda."
+        correct: [a]
+        explanation: "A factory can be either async or sync. The framework awaits an async factory, runs a sync one directly, and offloads a blocking one to a thread pool - just like handlers. Async is the right choice when there's a real await inside."
+
+  - id: litestar-di-cache-danger-001
+    concept: litestar-di
+    type: theory-quiz
+    difficulty: 2
+    prompt: "For which dependency is turning on `use_cache=True` dangerous?"
+    choices:
+      - id: a
+        text: "For the \"current request user\": the cache lives for the whole app, and every request would see the user from the first call - a data leak."
+      - id: b
+        text: "For app config parsed at startup - that must never be cached under any circumstances."
+      - id: c
+        text: "For a status lookup table that's the same across requests - caching it is exactly what breaks."
+      - id: d
+        text: "`use_cache=True` is always safe: the cache is cleared after every request."
+    correct: [a]
+    explanation: "`use_cache=True` caches the factory's result for the whole application, not per request. For values that are the same across requests (config, lookup tables), that's appropriate. But for request-dependent values - the current user, an open transaction - the cache hands every request the value from the first call, and one user ends up seeing another's data."
+    hints:
+      - "A dependency's cache outlives a single request. Which values must never be reused across requests from different users?"
+      - "Split values into \"same for every request\" and \"unique per request.\" Which of these breaks when reused?"
+
+  - id: litestar-di-fill-provide-001
+    concept: litestar-di
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete registering the `db` dependency at the app level and receiving it in a handler."
+    template: |
+      from litestar import Litestar, get
+      from litestar.di import Provide
+
+      async def get_db() -> str:
+          return "connection"
+
+      @get("/orders")
+      async def list_orders({{param}}: str) -> dict:
+          return {"db": {{param}}}
+
+      app = Litestar(
+          route_handlers=[list_orders],
+          dependencies={"{{key}}": Provide(get_db)},
+      )
+    blanks:
+      param:
+        accept: ["db"]
+      key:
+        accept: ["db"]
+    variants:
+      - prompt: "Complete caching an expensive, unchanging dependency (config parsing)."
+        template: |
+          from litestar.di import Provide
+
+          def load_config() -> dict:
+              return {"page_size": 20}
+
+          provider = Provide(load_config, {{flag}}=True)
+        blanks:
+          flag:
+            accept: ["use_cache"]
+      - prompt: "Complete overriding the `repo` dependency at the controller level."
+        template: |
+          from litestar import Controller, get
+          from litestar.di import Provide
+
+          async def special_repo() -> str:
+              return "special"
+
+          class AdminController(Controller):
+              path = "/admin"
+              {{attr}} = {"repo": Provide(special_repo)}
+
+              @get("/")
+              async def index(self, repo: str) -> dict:
+                  return {"repo": repo}
+        blanks:
+          attr:
+            accept: ["dependencies"]
+
+  - id: litestar-di-predict-nested-001
+    concept: litestar-di
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It models nested dependencies: repo depends on session, session depends on engine, and the framework resolves the chain bottom-up."
+    snippet: |
+      def get_engine():
+          return "engine"
+
+      def get_session(engine):
+          return f"session({engine})"
+
+      def get_repo(session):
+          return f"repo[{session}]"
+
+      engine = get_engine()
+      session = get_session(engine)
+      repo = get_repo(session)
+      print(repo)
+    expected:
+      kind: stdout
+      value: "repo[session(engine)]"
+    hints:
+      - "Each factory depends on the one whose name sits in its parameter. Which dependency do you have to start with so there's something to plug into the next one?"
+      - "Resolve the chain bottom-up: engine first, its result into session, session's result into repo."
+    variants:
+      - snippet: |
+          def get_engine():
+              return "pg"
+
+          def get_session(engine):
+              return f"sess<{engine}>"
+
+          def get_repo(session):
+              return f"users:{session}"
+
+          print(get_repo(get_session(get_engine())))
+        expected:
+          kind: stdout
+          value: "users:sess<pg>"
+      - snippet: |
+          def base():
+              return "A"
+
+          def mid(base):
+              return base + "B"
+
+          def top(mid):
+              return mid + "C"
+
+          print(top(mid(base())))
+        expected:
+          kind: stdout
+          value: "ABC"
+
+  - id: litestar-di-predict-override-001
+    concept: litestar-di
+    type: predict-output
+    difficulty: 4
+    prompt: "What does the program print? It models resolving a dependency across layers: for each handler, the closest layer that declares the name wins (a lower layer overrides a higher one)."
+    snippet: |
+      app_deps = {"repo": "default", "db": "pool"}
+      controller_deps = {"repo": "special"}
+      handler_deps = {}
+
+      def resolve(name, layers):
+          for layer in reversed(layers):
+              if name in layer:
+                  return layer[name]
+          return None
+
+      layers = [app_deps, controller_deps, handler_deps]
+      print(resolve("repo", layers))
+      print(resolve("db", layers))
+      print(resolve("missing", layers))
+    expected:
+      kind: stdout
+      value: "special\npool\nNone"
+    hints:
+      - "Layers are listed top to bottom (app, controller, handler), and the one closest to the handler wins. From which end of the list should you search?"
+      - "Walk the layers from the bottom up and take the first value found for the name; if there's none anywhere, it's None."
+      - "`repo` is declared on both app and controller - which one is closer to the handler? `db` is only on app, `missing` is nowhere."
+
+  - id: litestar-di-predict-layer-challenge-001
+    concept: litestar-di
+    type: predict-output
+    difficulty: 5
+    prompt: "What does the program print? This works through a tricky case: overriding only kicks in on an EXACT key-name match, and a lower layer fully replaces rather than extends the one above it. Here the controller declares a dependency under a slightly different name."
+    snippet: |
+      app_deps = {"repo": "app_repo"}
+      controller_deps = {"repository": "ctrl_repo"}
+
+      def resolve(name, layers):
+          for layer in reversed(layers):
+              if name in layer:
+                  return layer[name]
+          return None
+
+      layers = [app_deps, controller_deps]
+      handler_a = resolve("repo", layers)
+      handler_b = resolve("repository", layers)
+      print(handler_a)
+      print(handler_b)
+      print(handler_a == handler_b)
+    expected:
+      kind: stdout
+      value: "app_repo\nctrl_repo\nFalse"
+    hints:
+      - "Overriding only kicks in if the keys on the layers match literally. Do `repo` and `repository` match?"
+      - "Resolve each name separately against the same layers: a `repo` parameter only picks up the `repo` key, a `repository` parameter only picks up `repository`."
+      - "Since the names differ, the controller did NOT override `repo` - it added a second, independent dependency, hence the different values."
+
+  - id: litestar-di-why-001
+    concept: litestar-di
+    type: theory-quiz
+    difficulty: 3
+    prompt: "The main practical benefit of getting a database connection through `Provide`, instead of creating it directly inside the handler, is:"
+    choices:
+      - id: a
+        text: "Testability: a test can register a fake factory under the same key, and the handler, none the wiser, works against the fake instead of a real database."
+      - id: b
+        text: "Speed: `Provide` creates a connection faster than a direct call inside the handler."
+      - id: c
+        text: "Type safety: only `Provide` can check the connection's type at compile time."
+      - id: d
+        text: "Nothing really changes - it's just different syntax for the same resource creation inside a handler."
+    correct: [a]
+    explanation: "When a handler creates its own connection, it can't be tested in isolation - the test spins up a real database. When the connection arrives through `Provide`, a test assembles a mini app and registers, under the same key, a factory that returns a fake. The handler declares a need rather than acquiring a resource - and it's easy to assemble in any configuration, including a test one."
+    hints:
+      - "Imagine testing the handler without spinning up a real database. What gets in the way if the connection is created right inside its body?"
+      - "DI flips the responsibility: who creates the resource - the handler, or whoever calls it? Where does it then become easy to swap the resource?"

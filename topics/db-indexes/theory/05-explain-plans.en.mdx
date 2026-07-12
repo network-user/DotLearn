@@ -1,0 +1,121 @@
+---
+conceptId: explain-plans
+title: "EXPLAIN: reading a query plan and catching N+1"
+estimatedMinutes: 13
+---
+
+# EXPLAIN: reading a query plan and catching N+1
+
+You already know when an index helps and when it silently sits idle. All that's left is to stop guessing. The database has a command that shows exactly how it plans to execute a query: which tables it'll read, in what order, and through which indexes. In SQLite that's `EXPLAIN QUERY PLAN`, and it returns not rows of data but the plan itself. One short block of text answers the question you used to have to measure blindly by timing: will this query walk an index, or read everything in sight.
+
+By the end of this chapter you'll read a plan like a dashboard: spotting `SCAN` and `SEARCH`, noticing `USING COVERING INDEX`, recognizing what a nested-loop join looks like, and picking out the N+1 problem in that picture: the very thing that turns tidy ORM code into hundreds of database queries. And you'll know how `EXPLAIN QUERY PLAN` in SQLite differs from `EXPLAIN ANALYZE` in Postgres.
+
+## The planner turns SQL into a plan
+
+SQL is a declarative language: you say what to return, not how to get it. The query planner decides the how. It looks at the tables, the available indexes, and the statistics, weighs the options, and picks a physical plan: which table to read first, by what method (scan or index), and how to join them. `EXPLAIN QUERY PLAN` prints that choice without actually running the query.
+
+<Figure caption="The planner turns SQL into a physical plan · EXPLAIN QUERY PLAN prints that plan without running the query.">
+  <PipelineFigure
+    title="From query to plan"
+    stages={[
+      { label: 'SQL', note: 'what to return' },
+      { label: 'Planner', note: 'indexes and order' },
+      { label: 'Physical plan', note: 'SCAN / SEARCH' },
+      { label: 'Execution', note: 'rows' },
+    ]}
+  />
+</Figure>
+
+Reading a SQLite plan comes down to three signals. `SCAN table` means a full scan: the engine reads every row. `SEARCH table USING INDEX name` means access via an index straight to the rows you need. And `SEARCH ... USING COVERING INDEX` means the answer was assembled from the index alone, with no table access at all. On a hot query you want to see `SEARCH`, and ideally `COVERING`.
+
+The planner almost always has several plans to choose from. It could satisfy the same selection with a scan, with one index or another, and it could join tables in different orders. It scores each option by estimated cost, based on statistics, and picks the cheapest one under its own model. That's why a freshly created index sometimes goes unused: the planner decided a scan was cheaper, and going by its data, it's often right. `EXPLAIN` shows the outcome of that choice, not the one you had pictured in your head.
+
+Try it live. Below is a join between `users` and `orders` with an index on `orders(user_id)`. Run it and read the plan: the outer table comes up as `SCAN`, and the inner one as `SEARCH ... USING INDEX`. Now add `DROP INDEX idx_orders_user;` as the first line and run it again: the inner `SEARCH` turns into `SCAN`, and that's exactly the degradation that kills a join on large tables.
+
+<SideSql
+  title="Join plan: SEARCH vs. SCAN"
+  editable
+  live
+  fixture={`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT);
+INSERT INTO users (email, city)
+WITH RECURSIVE seq(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 500
+)
+SELECT 'user' || n || '@mail.ru', CASE WHEN n % 2 = 0 THEN 'Moscow' ELSE 'Kazan' END
+FROM seq;
+CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER);
+INSERT INTO orders (user_id, amount)
+WITH RECURSIVE seq(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 3000
+)
+SELECT (n % 500) + 1, (n * 17) % 5000 FROM seq;
+CREATE INDEX idx_orders_user ON orders(user_id);`}
+  query={`EXPLAIN QUERY PLAN
+SELECT u.email, o.amount
+FROM users u
+JOIN orders o ON o.user_id = u.id
+WHERE u.city = 'Moscow';`}
+/>
+
+## A join is a nested loop
+
+To join two tables, the engine most often uses a nested loop: it picks one table as the outer one, walks its rows, and for each row looks for a match in the second table. That's why an index on the inner table is critical. If `orders(user_id)` has an index, finding the match is a cheap `SEARCH`. Without one, for every single row of the outer table the engine scans the entire inner table, and the cost turns from a sum into a product.
+
+<Figure caption="Nested loop: the outer table is read once · for each of its rows, an indexed point lookup runs against the inner table.">
+  <Sketch viewBox="0 0 440 190" title="Nested-loop join">
+    <SketchBox x={24} y={54} width={150} height={82} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={99} y={44} weight="bold">users · SCAN</SketchLabel>
+    <SketchLabel x={99} y={100} muted>every row</SketchLabel>
+    <SketchBox x={266} y={54} width={150} height={82} accent />
+    <SketchLabel x={341} y={44} weight="bold">orders · SEARCH</SketchLabel>
+    <SketchLabel x={341} y={100} accent>via index</SketchLabel>
+    <SketchArrow from={[176, 95]} to={[264, 95]} accent />
+    <SketchLabel x={220} y={80} muted>for each one</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Where N+1 hides in this picture
+
+Now connect the picture above to the `python-orm` topic. The N+1 problem looks like this: an ORM fetches a list of N users in one query, then lazily loads each user's orders with a separate query, one per user. That's one query for the list plus N queries for the children: N+1 round trips to the database where a single join would have been enough.
+
+In shape it's the same nested loop, just unrolled out into application code. Each lazy follow-up query is a point lookup on `user_id`, and inside the database it's cheap thanks to the index. The trouble is that now the network sits between loop iterations: each of the N queries is a separate round trip to the database server, with millisecond latency attached. A hundred users turn into a hundred-plus queries, and a page that should have taken one trip to the database takes a hundred instead. Each individual query is honestly fast: its plan is `SEARCH` via the index, and the database answers in a fraction of a millisecond. What kills you isn't the database's work, but the number of round trips and the network latency piling up between them. The fix is the same join: one query with `JOIN` (or one query with `IN` over a list of keys) instead of a loop. In an ORM that's eager loading: `select_related` and `joinedload`. `EXPLAIN` is your ally here: if underneath one "simple" data access you see not a single plan but a flood of identical point queries, you're looking at N+1.
+
+## SQLite vs. Postgres: estimate vs. measurement
+
+It's worth distinguishing between two tools. `EXPLAIN QUERY PLAN` in SQLite is terse and shows the access structure: which tables, which indexes, what order. It executes nothing and shows no real timing. The row counts in it are a rough structural estimate, not a measurement.
+
+Postgres gives you more. Its `EXPLAIN` prints a cost estimate and an expected row count for every node of the plan: `Seq Scan` (full scan), `Index Scan` (indexed access), `Index Only Scan` (a covering index, the equivalent of `COVERING`). And `EXPLAIN ANALYZE` goes further, actually running the query and showing the real time and real row count next to the estimate. The gap between estimate and reality is the first thing people check: if the planner expected a hundred rows and got a million, the statistics are stale and need refreshing. The underlying principle is the same in both databases; only the depth of the report differs. That gives rise to a working habit: run a suspicious query under `EXPLAIN ANALYZE` first, find the most expensive node in the plan, and fix exactly that, instead of bolting on indexes at random.
+
+<Callout type="warning">
+Don't read the row estimates in a SQLite plan as real numbers. EXPLAIN QUERY PLAN shows the shape of access, not measurements. Real figures (time, rows read, disk accesses) come from Postgres's EXPLAIN ANALYZE or from profiling against real data.
+</Callout>
+
+## Common mistakes
+
+**Reading a structural plan as a performance measurement.** A SQLite plan tells you which method a query will take, not how many milliseconds it will cost. For timing you need a real run against real data volumes.
+
+**Optimizing an already-fast query.** If the plan shows `SEARCH` and the query runs instantly, adding more indexes is pointless: they'll only slow down writes. `EXPLAIN` helps you choose what to fix, not fix everything in sight.
+
+**Creating an index without checking that it's actually used.** The planner can ignore an index because of low selectivity, a function over the column, or stale statistics. After `CREATE INDEX`, check `EXPLAIN` to see whether `SEARCH` shows up for it. If it's still `SCAN`, the index isn't doing anything.
+
+<Detail summary="What plain EXPLAIN (without QUERY PLAN) is">
+
+SQLite also has a bare `EXPLAIN` (without the words `QUERY PLAN`). Instead of an access tree, it prints the full list of instructions for SQLite's virtual machine: dozens of low-level opcodes like `OpenRead`, `Column`, `Next`. It's a tool for people debugging the engine itself or digging into execution internals, and it's overkill for everyday work. For tuning queries you almost always want `EXPLAIN QUERY PLAN`: it answers the practical question about indexes and table order without drowning you in opcodes.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "EXPLAIN QUERY PLAN shows how the DBMS will execute a query (tables, order, indexes) and returns a plan, not data.",
+    "Three signals in a SQLite plan: SCAN (full scan), SEARCH (indexed access), USING COVERING INDEX (an answer with no table access).",
+    "A join is a nested loop: the outer table is read once, and each of its rows triggers a lookup in the inner table; an index on the inner table keeps that cheap.",
+    "N+1 is that same nested loop moved into application code: one query for the list plus one query per child; the fix is a single JOIN or eager loading.",
+    "SQLite's EXPLAIN QUERY PLAN shows structure with no measurements; Postgres's EXPLAIN ANALYZE actually runs the query and reports real time and row counts.",
+  ]}
+/>
+
+## References
+
+- [SQLite: EXPLAIN QUERY PLAN](https://www.sqlite.org/eqp.html)
+- [PostgreSQL: Using EXPLAIN](https://www.postgresql.org/docs/current/using-explain.html)
+- [Use The Index, Luke: Execution Plans](https://use-the-index-luke.com/sql/explain-plan)

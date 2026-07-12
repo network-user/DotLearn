@@ -1,0 +1,104 @@
+---
+conceptId: quantifiers-and-greediness
+title: "Quantifiers and Greediness"
+estimatedMinutes: 15
+---
+
+# How Many Times to Repeat: From the Asterisk to Catastrophe
+
+A mobile phone number has eleven digits. You could write `\d\d\d\d\d\d\d\d\d\d\d`, but by the sixth digit your eyes glaze over, and you're guaranteed to drop one the next time you edit it. Regular expressions need a way to say "repeat the previous element this many times." That mechanism is called a quantifier, and along with it comes the single most misunderstood property of regexes: greediness.
+
+By the end of this section you'll comfortably use `*`, `+`, `?`, and `{n,m}`, understand why `".*"` grabs more than you wanted, and know when to fix that with a lazy quantifier and when to reach for an explicit character class instead.
+
+## Five Ways to Say "Repeat"
+
+A quantifier always follows an element and controls only that element: a single character, a class, or a group. The basic set: `*` means "zero or more times", `+` means "one or more", `?` means "zero or one" - the element is optional. Exact counts come from curly braces: `{11}` is exactly eleven repetitions, `{2,4}` is two to four, `{2,}` is two or more with no upper bound, `{,4}` is zero to four.
+
+The phone number example shrinks to `\d{11}`, a postal code to `\d{6}`, an optional minus sign before a number becomes `-?\d+`. Notice that a quantifier applies to the last element, not to the whole pattern. In `кот+`, the plus repeats only the letter "т", so it matches "кот", "котт", and "коттт", but not "коткот".
+
+```python
+import re
+
+print(re.findall(r"го+л", "гол гоол гооооол гл"))
+print(re.findall(r"а{2,3}", "ааааа"))
+print(re.findall(r"-?\d+", "температура -7, давление 758"))
+```
+
+The first call prints `['гол', 'гоол', 'гооооол']` (Russian for "goal", stretched out the way a sports commentator might draw it out): "гл" is dropped because `+` requires at least one "о". The second prints `['ааа', 'аа']`: out of five letters, the engine first grabs the maximum, three, then assembles another pair from what's left. The third finds `['-7', '758']`.
+
+## Greedy: Take the Max, Then Back Off
+
+The `['ааа', 'аа']` result above already shows the core rule: a quantifier is greedy - it grabs as many characters as it can, and only gives them back one at a time, starting from the end, if that leaves the rest of the pattern unable to match. That process of giving characters back is called backtracking. Figure 1 shows how the engine handles the pattern `".*"` on a string with two pairs of quotes.
+
+<Figure caption="A greedy .* first swallows everything to the end of the string, then backtracks until it finds a closing quote for the rest of the pattern. Result: a match up to the last quote, not the nearest one.">
+  <PipelineFigure
+    title="Backtracking a greedy quantifier"
+    stages={[
+      { label: 'found the first "', note: 'match starts here' },
+      { label: '.* grabs everything', note: 'up to the end of the string' },
+      { label: 'pattern still needs a "', note: 'but the string ran out' },
+      { label: 'backtrack one character', note: 'gives back what it grabbed', active: true },
+      { label: 'lands on the last "', note: 'match complete' },
+    ]}
+  />
+</Figure>
+
+That's exactly why `".*"` on the string `Она сказала "да", потом "нет"` ("She said "yes", then "no"") doesn't find two short matches - it finds one long one, from the first quote to the last, swallowing everything in between. The engine doesn't read your intent; it just executes the rule "maximum, then backtrack."
+
+## Lazy: Take the Minimum, Then Stretch as Needed
+
+A `?` placed right after a quantifier switches it into lazy mode: `*?`, `+?`, `??`, `{2,4}?`. A lazy quantifier starts from the minimum and grows one character at a time, only if the rest of the pattern otherwise fails to match. The pattern `".*?"` on that same string finds `"да"` and `"нет"` separately.
+
+Run the example and compare the three approaches. Then drop the question mark from the second pattern and watch the result glue itself back into one match.
+
+<PyDemo
+  title="Greedy, lazy, and an explicit class"
+  code={`import re
+
+text = 'Она сказала "да", потом "нет"'
+print(re.findall(r'".*"', text))
+print(re.findall(r'".*?"', text))
+print(re.findall(r'"[^"]*"', text))`}
+/>
+
+The third pattern, `"[^"]*"`, solves the same problem without laziness: "a quote, then any characters except a quote, then a quote." It reads more unambiguously and runs faster, because the engine never has to try alternatives - the class `[^"]` physically cannot step past the closing quote. For paired delimiters (quotes, brackets, tags), an explicit inverted class is almost always better than a lazy quantifier.
+
+## Where Quantifiers Surprise You
+
+The first surprise: `*` is happy with zero repetitions, so it matches even emptiness. `re.findall(r"а*", "ба")` returns `['', 'а', '']`: an empty match before "б", then "а", then an empty match at the end of the string. If you only want non-empty repeats, use `+`.
+
+The second surprise: a space inside curly braces disables the quantifier. The pattern `а{2, 4}` in Python searches for the literal substring `а{2, 4}`, because a spaced-out notation isn't recognized as a quantifier and turns into six literal characters instead. You won't get an error - you'll get a silently wrong search.
+
+The third surprise: laziness is local. A lazy quantifier only minimizes its own capture, not the length of the entire match, and it can't "pick the nearest pair." On the string `ab"cd"`, the pattern `".*?"` still starts its match at the first quote it finds, no matter which pair you were aiming for.
+
+## Common Mistakes
+
+- **`.*` between two markers.** The pattern `<b>.*</b>` on a string with two bold fragments glues them into one match. Why: greediness stretches to the last closing marker. Fix it with `.*?` or `[^<]*`.
+- **A quantifier meant for "the whole word."** `кот{2}` means "ко" plus two "т"s, not two occurrences of the word "кот". Repeating a sequence needs a group: `(?:кот){2}` - the next concept covers groups.
+- **Spaces in `{n,m}`.** `{2, 4}` silently becomes a literal. Curly braces have no room for spaces.
+- **Treating laziness as "find the shortest match."** A lazy quantifier doesn't search the whole string for the shortest match - it only grows minimally, left to right. For paired delimiters, an inverted class is more reliable.
+
+<Detail summary="Catastrophic backtracking: how a regex can hang a service">
+
+Backing off a greedy quantifier is usually cheap, but nested quantifiers can generate an exponential number of backtracking paths. The classic example: the pattern `(а+)+$` on a string of thirty "а" characters followed by one character that breaks the match. The outer and inner pluses split the string between them in every possible combination, the engine dutifully tries each one, and the check takes seconds, then minutes. This property is the basis of a ReDoS attack: an attacker sends a specially crafted string, and your service hangs inside a regex.
+
+The hygiene rules are simple. Don't nest a quantifier inside a quantifier unless you have to. Prefer precise classes (`[^"]*` instead of `.*?`). Don't run untrusted user input through complex patterns without a process-level timeout - the `re` module has no timeout of its own.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'A quantifier repeats only the preceding element: a character, a class, or a group.',
+    '* means zero or more, + means one or more, ? means zero or one, {n,m} is an exact repetition range.',
+    'Quantifiers are greedy: they grab the maximum, then backtrack if the rest of the pattern fails to match.',
+    'A trailing ? makes a quantifier lazy: it starts from the minimum and only grows when it has to.',
+    'For paired delimiters, an inverted class like "[^"]*" is more reliable than a lazy dot.',
+    'A space inside {n,m} turns the quantifier into a literal, and nested quantifiers lead to catastrophic backtracking.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Regular expression operations](https://docs.python.org/3/library/re.html)
+- [regular-expressions.info · Repetition with Star and Plus](https://www.regular-expressions.info/repeat.html)
+- [regular-expressions.info · Catastrophic Backtracking](https://www.regular-expressions.info/catastrophic.html)

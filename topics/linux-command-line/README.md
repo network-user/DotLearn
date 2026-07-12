@@ -23,3 +23,27 @@
 ## Среда выполнения
 
 `none`: тема теоретическая, команды показаны в детерминированных сессиях терминала, вывод которых вы учитесь предсказывать.
+
+---
+
+## English
+
+# Linux Command Line
+
+A practical course for anyone intimidated by the terminal. It covers the commands you actually need every day: moving around the filesystem, copying and deleting files, permissions, pipes and redirection, searching with `grep` and `find`, managing processes, and environment variables. By the end, the black window stops being scary: you know where you are, what each command does, and how to chain small utilities into pipelines.
+
+## Concepts
+
+1. **Filesystem and navigation**: directory tree, `pwd`, `ls`, `cd`, absolute and relative paths.
+2. **Working with files**: `mkdir`, `touch`, `cp`, `mv`, `rm`, `cat`, and why deletion is irreversible.
+3. **Permissions**: reading `ls -l` output, rwx triads, `chmod` in symbolic and octal notation.
+4. **Pipes and redirection**: stdin/stdout/stderr streams, the `>`, `>>`, `2>`, `|` operators, and pipelines.
+5. **Search**: `grep` searches inside files, `find` searches for files themselves; flags, patterns, pitfalls.
+6. **Processes**: PIDs, `ps`, `top`, signals, the difference between `kill` and `kill -9`.
+7. **Environment variables and PATH**: `export`, environment inheritance, how the shell locates commands.
+
+## Prerequisites
+
+None. Any computer with a terminal is enough: Linux, macOS, or WSL on Windows.
+
+Generated via `lesson-forge`.

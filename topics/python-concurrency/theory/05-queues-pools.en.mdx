@@ -1,0 +1,156 @@
+---
+conceptId: queues-pools
+title: "Queues and thread pools"
+estimatedMinutes: 10
+---
+
+# Hand the state to a queue and stop juggling locks
+
+Manually wrangling locks, as in the previous section, works, but it's easy to get wrong: forget a `release`, mix up the acquisition order, grab the wrong lock object, and the program either hangs or keeps corrupting data. The good news is that real-world multithreaded Python code rarely hand-writes locks. Instead of protecting shared mutable state yourself, you hand it over to a thread-safe queue or a thread pool and let them handle all the synchronization. The abstraction level goes up, and the number of ways to shoot yourself in the foot goes down.
+
+Let's look at two such tools: `queue.Queue` for passing work between threads, and `ThreadPoolExecutor` for running tasks concurrently and getting results back. Along the way we'll see how to shut things down cleanly, where exceptions quietly go missing, and why a pool of ten threads won't speed up a number cruncher.
+
+## A queue as a synchronization point
+
+`queue.Queue` is a thread-safe FIFO queue. Some threads (producers) put items into it via `put`, others (consumers) take them out via `get`. The beauty of it is that the queue already has a lock built in: it sorts out concurrent `put` and `get` calls from different threads on its own, and you don't need to lock anything yourself. What's more, `get` on an empty queue doesn't return garbage or crash; it blocks the calling thread until another thread puts an item in. The queue becomes a tidy meeting point between whoever produces the work and whoever does it.
+
+<Figure caption="A queue is a synchronization point: producers put items in via put, consumers take them out via get. The queue's internal lock handles the synchronization for you.">
+  <Sketch viewBox="0 0 470 185" title="Producer-consumer through a queue">
+    <SketchBox x={20} y={34} width={110} height={40} />
+    <SketchLabel x={75} y={58} weight="bold">Producer</SketchLabel>
+    <SketchBox x={20} y={104} width={110} height={40} />
+    <SketchLabel x={75} y={128} weight="bold">Producer</SketchLabel>
+
+    <SketchBox x={188} y={62} width={96} height={54} accent />
+    <SketchLabel x={236} y={84} weight="bold" accent>Queue</SketchLabel>
+    <SketchLabel x={236} y={102} size={10} muted>thread-safe</SketchLabel>
+
+    <SketchBox x={344} y={34} width={110} height={40} />
+    <SketchLabel x={399} y={58} weight="bold">Consumer</SketchLabel>
+    <SketchBox x={344} y={104} width={110} height={40} />
+    <SketchLabel x={399} y={128} weight="bold">Consumer</SketchLabel>
+
+    <SketchArrow from={[130, 56]} to={[188, 80]} />
+    <SketchArrow from={[130, 124]} to={[188, 98]} />
+    <SketchLabel x={158} y={72} size={9} mono>put</SketchLabel>
+    <SketchArrow from={[284, 80]} to={[344, 56]} accent />
+    <SketchArrow from={[284, 98]} to={[344, 124]} accent />
+    <SketchLabel x={312} y={74} size={9} mono>get</SketchLabel>
+  </Sketch>
+</Figure>
+
+Since `get` blocks on an empty queue, a question comes up: how do you tell a consumer that the work is done and it's time to exit? The answer is a sentinel, a special marker item (often `None`) that the producer puts in last. Once a consumer pulls the sentinel out, it recognizes the signal and breaks out of its loop.
+
+```python
+import queue, threading
+
+q = queue.Queue()
+
+def worker():
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        handle(item)
+
+t = threading.Thread(target=worker)
+t.start()
+
+for item in tasks:
+    q.put(item)
+q.put(None)
+t.join()
+```
+
+Here a single producer (the main thread) puts tasks in, then a `None` as the end marker, and the consumer loops until it hits that `None`. There's no `Lock` anywhere in this code, and that's not because we forgot about safety; it's because the queue is already thread-safe on the inside.
+
+## A thread pool and promises of results
+
+A queue is great when work flows in one direction. But often you need each task's result back, and that's where `ThreadPoolExecutor` from `concurrent.futures` comes in handy. It keeps a fixed number of worker threads and hands them tasks. The `submit` method drops a task into the pool and immediately returns a `Future`, a promise object: the result isn't ready yet, but you can come back for it later through `future.result()`, and that call will wait until the value shows up.
+
+<Figure caption="submit drops a task into the pool and immediately returns a Future, a promise of a result. A worker runs the task, and future.result() hands back the value once it's ready, or re-raises the exception if the task failed.">
+  <Sketch viewBox="0 0 470 195" title="ThreadPoolExecutor and Future">
+    <SketchBox x={20} y={78} width={92} height={44} />
+    <SketchLabel x={66} y={98} weight="bold">submit</SketchLabel>
+    <SketchLabel x={66} y={116} size={10} muted>task</SketchLabel>
+
+    <SketchBox x={162} y={34} width={140} height={130} />
+    <SketchLabel x={232} y={54} weight="bold">pool of N threads</SketchLabel>
+    <SketchBox x={182} y={74} width={100} height={26} accent />
+    <SketchLabel x={232} y={92} size={10} accent>worker</SketchLabel>
+    <SketchBox x={182} y={112} width={100} height={26} accent />
+    <SketchLabel x={232} y={130} size={10} accent>worker</SketchLabel>
+
+    <SketchBox x={352} y={78} width={100} height={44} hatched />
+    <SketchLabel x={402} y={98} weight="bold">Future</SketchLabel>
+    <SketchLabel x={402} y={116} size={10} muted>result()</SketchLabel>
+
+    <SketchArrow from={[112, 100]} to={[162, 100]} />
+    <SketchArrow from={[302, 100]} to={[352, 100]} accent />
+  </Sketch>
+</Figure>
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+with ThreadPoolExecutor(max_workers=5) as pool:
+    future = pool.submit(fetch, url)
+    result = future.result()
+```
+
+As a context manager, the pool takes care of shutting itself down: leaving the `with` block calls `shutdown(wait=True)`, which waits for every task that's already started. That's a clean way to stop everything without manually tracking sentinels.
+
+For a batch of similar tasks there are two styles of collecting results. The `map` method applies a function to each element and hands back results in the order of the input, just like the built-in `map`, only concurrent. `as_completed`, on the other hand, takes a set of `Future` objects and yields them as they finish, in completion order rather than submission order, which is handy when you want to process fast answers without waiting on slow ones.
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+with ThreadPoolExecutor(max_workers=5) as pool:
+    futures = [pool.submit(fetch, u) for u in urls]
+    for done in as_completed(futures):
+        handle(done.result())
+```
+
+## Edge cases
+
+The first trap is a lost sentinel. If there are several consumers but you only put in one sentinel, only one consumer will exit, and the rest will hang forever on `get` against an empty queue. The rule is: you need exactly as many sentinels as consumers, one per consumer. This is exactly why the pool's context manager is more convenient than a hand-rolled queue: it takes correct shutdown off your plate entirely.
+
+The second trap is subtler and more dangerous. An exception raised inside a pool task doesn't crash the program and doesn't print to the console. It gets caught and stored inside the `Future`, and only surfaces the moment you call `result()`. If you submit a task and never look at its `Future`, the exception vanishes silently, and you never even find out the task failed.
+
+```python
+future = pool.submit(risky)
+value = future.result()
+```
+
+The line `future.result()` re-raises that exact exception in the calling thread, where you can catch and handle it. Without ever touching the result, the error just dissolves, and that's one of the most common reasons for mysteriously "incomplete" work coming out of a pool.
+
+## Common mistakes
+
+- **Forgetting the sentinel, or putting in the wrong number of them.** A consumer hangs forever on `get` against an empty queue. Fix: one sentinel per consumer, or use a pool with its automatic `shutdown`.
+- **Never looking at the `Future`.** An exception inside a task sits in the `Future` and never surfaces until `result()` is called. Fix: always collect the result (via `result()`, `map`, or `as_completed`) so errors don't get lost.
+- **Running CPU-bound work through a ThreadPoolExecutor.** Because of the GIL, threads won't speed up computation; the pool just adds overhead. Fix: for CPU-bound work, use `ProcessPoolExecutor`, which shares the same interface.
+- **Confusing the result order of `map` and `as_completed`.** `map` yields results in input order, `as_completed` in completion order. Expecting input order from `as_completed` is a mistake. Fix: if you need input order, use `map`.
+
+<Detail summary="task_done and join: waiting for a queue to be drained">
+
+`queue.Queue` has a separate pair of methods for a different kind of waiting. After processing an item, a consumer calls `q.task_done()` to mark it complete. Any thread can then call `q.join()`, which blocks until the number of `task_done` calls matches the number of `put` calls, meaning everything that was queued has been handled. This is useful when you need to wait for all the work to finish without shutting the threads down themselves: the queue's `join` is about "all the work is done", while a sentinel is about "time to exit", and these are independent mechanisms.
+
+Besides the plain FIFO queue, the module also has `LifoQueue` (a stack, last in, first out) and `PriorityQueue` (hands out items by priority rather than insertion order). They share the same `put`/`get`/`task_done` interface; only the delivery order changes.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "queue.Queue is thread-safe on the inside: producers put via put, consumers take via get, no manual synchronization needed.",
+    "get blocks on an empty queue; to shut a consumer down cleanly, put in a sentinel (usually None), one per consumer.",
+    "ThreadPoolExecutor.submit returns a Future, a promise of a result; future.result() waits for the value or re-raises the task's exception.",
+    "An exception inside a task sits in the Future and only surfaces at result(); skip the result and you silently lose the error.",
+    "map yields results in input order, as_completed in completion order; for CPU-bound work use ProcessPoolExecutor instead of threads.",
+  ]}
+/>
+
+## References
+
+- [Python docs - queue](https://docs.python.org/3/library/queue.html)
+- [Python docs - concurrent.futures](https://docs.python.org/3/library/concurrent.futures.html)
+- [Python docs - ThreadPoolExecutor](https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor)

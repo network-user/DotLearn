@@ -1,0 +1,119 @@
+---
+conceptId: literals-and-classes
+title: "Literals and Character Classes"
+estimatedMinutes: 15
+---
+
+# Matching by Shape, Not by Exact Text
+
+A payment service log has ten thousand lines, and you need to pull every order number out of it: "order 8412", "order 907", "order 15630". Ctrl+F is useless here because it searches for exact text, and the number is different every time. What matches isn't the text - it's the shape: the word "order", a space, then a run of digits. A regular expression lets you write that shape as a single string and hand the search off to an engine.
+
+By the end of this section you'll read and write patterns like `order \d+` and `к[ои]т`, know which characters in a pattern are special, and see why `[а-я]` (a Cyrillic letter range) has a nasty surprise waiting inside it.
+
+## The Engine Tries the Pattern at Every Position
+
+A pattern reads like a description of one sample string. Ordinary characters in it are called literals and match themselves: the pattern `table` finds the substring "table" and nothing else. The special work is done by metacharacters, worth knowing by heart: `.`, `^`, `$`, `*`, `+`, `?`, `{`, `}`, `[`, `]`, `\`, `|`, `(`, `)`. Everything else, including non-Latin letters, spaces, and digits, the engine treats literally.
+
+The search itself is simple: the engine places the pattern at position 0, tries to match, and on failure shifts one character to the right and tries again, until it has walked the whole string. Every other behavior of regular expressions grows out of this mechanic, so keep it as your mental baseline.
+
+## Character Classes: One Character From a Set
+
+The most common need sounds like this: "at this position, allow not one specific character, but any of several." That's what a character class - square brackets - is for. The pattern `к[ои]т` reads: the letter "к", then exactly one character, either "о" or "и", then "т" - spelling either "кот" (cat) or "кит" (whale). Figure 1 shows which words pass through that filter.
+
+<Figure caption="The class [ои] allows exactly one character from the set in the middle position: 'кот' (cat) and 'кит' (whale) pass, 'кут' and 'ком' (not real words) are filtered out.">
+  <RowFilterFigure
+    title="Filter к[ои]т"
+    columns={['word']}
+    rows={[
+      { cells: ['кот'], kept: true },
+      { cells: ['кит'], kept: true },
+      { cells: ['кут'], kept: false },
+      { cells: ['ком'], kept: false },
+    ]}
+    condition="к[ои]т"
+  />
+</Figure>
+
+Listing characters one by one gets old fast, so ranges work inside a class too: `[0-9]` describes any digit, `[а-яё]` a lowercase Cyrillic letter, `[A-Za-z0-9_]` Latin letters, digits, and underscore all at once. A class can hold as many ranges as you like, and you can mix them with individual characters: `[0-9:.]` takes a digit, a colon, or a period.
+
+A class can also work by exclusion. If the first character inside the brackets is `^`, the class inverts: `[^0-9]` matches any single character that is not a digit. Notice the word "any": `[^0-9]` matches not only letters but also spaces, commas, and newlines.
+
+```python
+import re
+
+print(re.findall(r"к[ои]т", "кот, кит, кут"))
+print(re.findall(r"[0-9][0-9]:[0-9][0-9]", "рейс в 09:45, выход B12"))
+print(re.findall(r"[^а-яё ]", "цена 250 руб."))
+```
+
+The first call prints `['кот', 'кит']`, the second `['09:45']`, and the third `['2', '5', '0', '.']`: the inverted class picked up digits and the period, while lowercase Cyrillic letters and spaces slipped past it. Notice the digits came one at a time rather than as the number "250": without a quantifier, a class always takes exactly one character. If a regex result ever sparks an argument, don't debate it in your head - ask the engine. It's the fastest way to test a hypothesis.
+
+## Built-in Classes: \d, \w, \s
+
+Three sets show up so often that they got short names of their own. `\d` means a digit, the same as `[0-9]`. `\s` means a whitespace character: space, tab, newline. `\w` means a "word character": letters, digits, and underscore. The uppercase versions invert the meaning: `\D` is a non-digit, `\S` is non-whitespace, `\W` is a non-word-character.
+
+Here's a detail that matters the moment your text isn't plain ASCII: in Python, `\w` is Unicode-aware, so Cyrillic letters count just as much as Latin ones. The pattern `\w+` happily finds the name "Анна" ("Anna") in a Cyrillic-language record. Run the example below and look at the third call: the class `[а-яё]+` only picks up lowercase letters, so "Заказ" ("Order") loses its capital and comes back as "аказ", and "Анна" comes back as just "нна". Add the range `А-ЯЁ` to the class and watch the words glue back together whole.
+
+<PyDemo
+  title="Built-in classes on live text"
+  code={`import re
+
+text = "Заказ 8412 оплачен 09.05.2026, клиент Анна"
+print(re.findall(r"\\d+", text))
+print(re.findall(r"\\w+", text))
+print(re.findall(r"[а-яё]+", text))`}
+/>
+
+That example introduced the quantifier `+`, "one or more times." Quantifiers are covered in full in the next concept - for now the intuition is enough: `\d+` means "however many digits are in a row, take them all." And notice the `r` prefix in front of the strings: it turns off Python's own escape processing, so `\d` reaches the regex engine untouched. We'll get into why that matters in the concept on the `re` module.
+
+## The Dot and Escaping
+
+The metacharacter `.` matches any single character except a newline. That's convenient and treacherous at the same time. The pattern `3.12` matches not only "3.12" but also "3-12" and "3812": the dot honestly accepts any character in that spot. When you need a literal dot, escape it with a backslash: `3\.12`. The same rule applies to any metacharacter that must match literally: `2\+2`, `\[discount\]`, `\\` for a literal backslash itself.
+
+Inside a character class the rules are looser: almost every metacharacter loses its power there and just means itself. `[.]` is simply a dot, `[+*]` is a plus or an asterisk, no escaping needed. Only `]`, `^` in the first position, `-` between characters, and `\` keep special status inside a class.
+
+## Where Character Classes Surprise You
+
+The first surprise is Russian-specific, but worth knowing if your app ever touches Cyrillic text: the range `[а-я]` does not include the letter "ё", and `[А-Я]` does not include "Ё". In Unicode, "ё" lives outside the main Cyrillic alphabet block, so the pattern `[а-яё]+` (without the "ё") would cut the word "ёжик" ("hedgehog") down to "жик". If you're building a class for Cyrillic, add "ё" by hand: `[а-яё]`, `[А-ЯЁа-яё]`, or fall back to `\w` if its broader meaning works for your case.
+
+The second surprise involves the hyphen. Inside a class, `-` between two characters defines a range, so `[а-я]` and `[a-z]` work as expected - but a class meaning "letter, hyphen, or digit" needs care: put the hyphen first or last in the class, `[-а-яё0-9]`, or escape it.
+
+The third surprise: a class always describes exactly one character. `[абв]` will never match "абв" as a whole - it matches "а", or "б", or "в". To match three characters you need either a quantifier or three classes in a row.
+
+## Common Mistakes
+
+- **An unescaped dot in dates and version numbers.** The pattern `09.05` will happily match "09-05" and "09905" too. Why: a dot looks harmless, and its special meaning gets forgotten. Fix it with `09\.05` or `09[.]05`.
+- **Reading a class as a sequence.** `[кот]` matches one character, "к", "о", or "т" - not the word "кот". To search for the word, use the literal `кот` without brackets.
+- **A forgotten "ё" in a range.** `[а-я]` silently drops "ё", and the bug only surfaces on a word like "объём" ("volume"). Test Cyrillic classes against words that contain "ё".
+- **Over-escaping inside a class.** `[\.\+]` works, but it's harder to read; `[.+]` is enough inside a class. Fewer backslashes make for an easier review.
+
+<Detail summary="How far \w really reaches: Unicode in detail">
+
+By default, Python compiles patterns for `str` in Unicode mode. That means `\w` includes letters from every alphabet - Cyrillic, Greek, Arabic, CJK ideographs - and `\d` includes not just ASCII digits but, for example, Arabic-Indic digits "٠١٢" too. In practice this is almost always what you want for user-facing text, but when parsing strictly machine-generated formats (a web server log, HTTP headers) it's sometimes worth reaching for the `re.ASCII` flag, which narrows `\w`, `\d`, and `\s` down to ASCII. Flags get their own concept later in this topic.
+
+```python
+import re
+
+print(re.findall(r"\w+", "naïve кафе 東京"))
+```
+
+This prints `['naïve', 'кафе', '東京']`: all three words are made of "word characters" from Unicode's point of view.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    'Literals match themselves; the special characters . ^ $ * + ? { } [ ] \\ | ( ) need escaping outside a class.',
+    'A character class […] describes exactly one character from a set; ranges like [0-9а-яё] shorten the listing.',
+    '[^…] inverts the class and matches any single character outside the set, including spaces and punctuation.',
+    'Built-in classes: \\d is a digit, \\s is whitespace, \\w is a letter, digit, or underscore; the uppercase versions negate them.',
+    'In Python, \\w is Unicode-aware and includes Cyrillic, but the range [а-я] does not contain "ё" - add it by hand.',
+    'Inside a class most metacharacters are literal: [.] is just a dot, so escaping is rarely needed there.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Regular expression operations](https://docs.python.org/3/library/re.html)
+- [Python docs · Regular Expression HOWTO](https://docs.python.org/3/howto/regex.html)
+- [regular-expressions.info · Character Classes](https://www.regular-expressions.info/charclass.html)

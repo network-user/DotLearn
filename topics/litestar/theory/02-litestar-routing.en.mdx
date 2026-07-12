@@ -1,0 +1,180 @@
+---
+conceptId: litestar-routing
+title: "Routing: handlers, Router, and Controller"
+estimatedMinutes: 12
+---
+
+# How one address is assembled from four path fragments
+
+Open a large Litestar app and you won't find a flat list of handlers with full paths like `/api/v1/users/{user_id}/orders`. Instead the path gets cut into pieces spread across layers: prefix `/api/v1` on the router, `/users` on the controller, `/{user_id}/orders` on the method itself. To figure out which URL calls a given method, you have to mentally glue those pieces together top to bottom. Skip that step and it's easy to get it wrong: attach a handler to `/orders` and be surprised it answers on `/api/v1/users/orders` instead of the address printed right next to the method.
+
+That gluing is the heart of routing in Litestar. By the end of this section you'll be able to work out a handler's final path from its declaration and the layers above it, type path and query parameters so the framework coerces them automatically, and choose between grouping with a `Router` and grouping with a controller class.
+
+## Mental model: the path is assembled layer by layer
+
+Every layer in the hierarchy - app, router, controller, handler - can declare its own piece of the path. A handler's final path is the concatenation of every layer's piece above it, top to bottom, in nesting order. A router with `path="/api"`, containing a controller with `path="/users"`, containing a method `@get("/{user_id:int}")`, yields the address `/api/users/{user_id}`.
+
+<Figure caption="The final path is a top-to-bottom concatenation of pieces across layers. One layer's piece means nothing on its own; the address only emerges from the whole chain.">
+  <Sketch viewBox="0 0 440 230" title="Path assembly across layers">
+    <SketchBox x={40} y={16} width={150} height={32} />
+    <SketchLabel x={115} y={37} mono size={12}>Router  /api</SketchLabel>
+    <SketchBox x={70} y={68} width={170} height={32} />
+    <SketchLabel x={155} y={89} mono size={12}>Controller  /users</SketchLabel>
+    <SketchBox x={100} y={120} width={210} height={32} accent />
+    <SketchLabel x={205} y={141} mono accent size={11}>@get  /{`{user_id:int}`}</SketchLabel>
+
+    <SketchArrow from={[115, 48]} to={[140, 68]} />
+    <SketchArrow from={[155, 100]} to={[180, 120]} accent />
+
+    <SketchBox x={40} y={180} width={360} height={34} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={202} mono size={12}>result: /api/users/{`{user_id:int}`}</SketchLabel>
+    <SketchArrow from={[205, 152]} to={[210, 180]} dashed />
+  </Sketch>
+</Figure>
+
+This model gives you a practical skill right away: to find which URL a method answers on, don't just look at its own decorator - walk up the layers and glue the prefixes together. And the reverse holds too: add a prefix on the router, and you shift every nested address at once, without touching a single handler.
+
+## A handler for every method
+
+Litestar has a separate decorator-handler for each HTTP method: `@get`, `@post`, `@put`, `@delete`, `@patch`. This differs from FastAPI, where the method is a method name on an object (`@app.get`, `@app.post`). They're all imported from `litestar`.
+
+```python
+from litestar import get, post, delete
+
+@get("/items")
+async def list_items() -> list[dict]:
+    return [{"id": 1}]
+
+@post("/items")
+async def create_item() -> dict:
+    return {"created": True}
+
+@delete("/items/{item_id:int}")
+async def delete_item(item_id: int) -> None:
+    ...
+```
+
+Each decorator ties a function to a "method + path" pair. The decorator names differ, but the idea is the same as everywhere else: one path can be served by different methods through different handlers.
+
+## A path parameter with its type right in the template
+
+The main syntactic difference from FastAPI: a path parameter's type is specified **in the path template itself**, not only in the function's annotation. The template `/{item_id:int}` tells the router: this segment is an integer.
+
+```python
+@get("/items/{item_id:int}")
+async def read_item(item_id: int) -> dict:
+    return {"item_id": item_id}
+```
+
+A request to `GET /items/42` yields `item_id == 42` as an integer. Writing `:int` in the template does double duty: the router uses it to decide whether the route matches at all (it won't match `/items/abc` - that segment isn't a number), and then it coerces the value to that type. `int`, `str`, `float`, `uuid`, `path`, and others are all supported. The `item_id: int` annotation in the signature agrees with this type, and the auto-generated docs are built from it.
+
+<Callout type="info">
+In FastAPI a path parameter's type lives only in the function annotation (`item_id: int`), while the template has a bare `{item_id}`. Litestar moves the type into the template: `{item_id:int}`. The name still ties the path segment to the function parameter.
+</Callout>
+
+## Query parameters: by default, and through Parameter
+
+If a function parameter isn't mentioned in the path and has a primitive type, Litestar pulls it from the query string - same as FastAPI.
+
+```python
+@get("/items")
+async def list_items(limit: int = 10, offset: int = 0) -> dict:
+    return {"limit": limit, "offset": offset}
+```
+
+`GET /items?limit=5` yields `limit == 5`, `offset == 0` (from the default). When a query parameter needs finer control - bounds, a description for the docs, a different external name - reach for `Parameter`.
+
+```python
+from typing import Annotated
+from litestar import get
+from litestar.params import Parameter
+
+@get("/items")
+async def list_items(
+    limit: Annotated[int, Parameter(ge=1, le=100)] = 10,
+) -> dict:
+    return {"limit": limit}
+```
+
+`Parameter(ge=1, le=100)` restricts `limit` to the range 1 through 100; a request with `?limit=500` gets a validation error. `Annotated[int, Parameter(...)]` is how you attach extra rules to a type without losing the type itself. The idea matches `Query(...)` in FastAPI; the syntax goes through `Annotated`.
+
+## Grouping: Router and Controller
+
+There are two ways to group related handlers under a shared prefix. The first is `Router`: a container holding a path prefix and a list of handlers.
+
+```python
+from litestar import Litestar, Router, get
+
+@get("/")
+async def list_users() -> list:
+    return []
+
+users_router = Router(path="/users", route_handlers=[list_users])
+app = Litestar(route_handlers=[users_router])
+```
+
+The `list_users` handler, with path `/` under a router with `path="/users"`, ends up at `/users`. The second way is a **controller class**: a class with a `path` attribute whose handler methods inherit that prefix.
+
+```python
+from litestar import Controller, get, post
+
+class UserController(Controller):
+    path = "/users"
+
+    @get("/")
+    async def list_users(self) -> list:
+        return []
+
+    @post("/")
+    async def create_user(self) -> dict:
+        return {"created": True}
+```
+
+Both methods live under `/users`: `list_users` answers `GET /users`, `create_user` answers `POST /users`. A controller is convenient when handlers share not just a prefix but, as we'll see in later sections, dependencies or guards too. This is close to the class-based views pattern in other frameworks; FastAPI has no direct equivalent - there you group with `APIRouter` instead.
+
+<Figure caption="Router and Controller solve the same problem - a shared prefix for a group of handlers - but a controller also ties them together into one class with shared settings.">
+  <Compare
+    leftTitle="Router"
+    rightTitle="Controller"
+    left={<>A container holding a <code>path</code> and a list of function handlers. Handlers stay separate functions. Handy when you just need to group things and attach a shared prefix.</>}
+    right={<>A class with a <code>path</code> attribute; methods decorated with <code>@get</code>/<code>@post</code> are its handlers (with <code>self</code>). Bundles related operations on one resource, plus their shared settings, into a single class.</>}
+    verdict="Router groups functions, Controller groups methods of one class. For CRUD on a single resource a controller usually reads better; for a mixed bag of paths a router is enough."
+  />
+</Figure>
+
+## Edge cases
+
+**Double slashes and missing slashes.** Litestar normalizes path concatenation, but keep an eye on slashes mentally: a controller with `path="/users"` and a method `@get("")` both give `/users`, and so does `@get("/")` (a trailing slash gets normalized away). Surprises come up more often when a path fragment is accidentally written without a leading slash.
+
+**`:int` in the template changes route matching, not just the type.** Without `:int`, a segment matches any string, and the `int` coercion happens purely from the annotation. With `:int`, the router won't even match the route for a non-numeric segment - the request falls through to a 404 instead of a validation error. That's a different outcome for the client, and the type in the template is what decides it.
+
+**Route specificity order.** If both `/items/{item_id:int}` and `/items/new` exist, the static segment `new` shouldn't accidentally land in the parameter. Litestar resolves such conflicts by specificity, but design your paths deliberately so static and parametric segments don't overlap ambiguously.
+
+## Common mistakes
+
+- **Reading the path only from the handler's own decorator.** A method marked `@get("/orders")` sits inside a controller with `path="/users/{user_id:int}"`, so the real address is `/users/{user_id}/orders`. Always glue the layers together top to bottom before drawing conclusions about a URL.
+- **Typing in the annotation but forgetting the template.** `@get("/items/{item_id}")` with `item_id: int` still works (coercion happens via the annotation), but it's more idiomatic and precise in Litestar to put the type in the template: `{item_id:int}`. A mismatch between template and annotation is a common source of confusion when reading code.
+- **Repeating a prefix on every method.** If five methods all start with `/users`, don't repeat `/users` in every decorator - move it into the controller's or router's `path`. Duplication drifts out of sync at the first edit.
+
+<Detail summary="Why split the path across layers instead of just writing it out in full">
+
+Writing the full path in every decorator looks simpler at first: you can see the whole address at a glance. But it scales poorly. API versioning (`/api/v1` → `/api/v2`) with full paths means editing every handler; with a prefix on the router, it means editing one line. Moving a group of endpoints under a different base path is the same story: one layer changes instead of dozens of handlers. Settings shared across a group (dependencies, guards, exception handlers, docs tags) also naturally live on a layer instead of being copied into every method. Layered routing is just "don't repeat yourself" applied to addresses and settings: every fact about a group of endpoints is recorded in exactly one place. The cost is having to hold the hierarchy in your head while reading, which is why meaningful layer names and shallow nesting matter more here than almost anywhere else.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A handler's final path is the concatenation of path pieces from every layer above it (app → router → controller → handler), top to bottom.",
+    "Litestar gives every HTTP method its own decorator: @get, @post, @put, @delete, @patch - unlike FastAPI's @app.get.",
+    "A path parameter's type goes in the path template ({item_id:int}); it affects both route matching and value coercion.",
+    "Query parameters come from the query string based on the signature; fine-tuning (bounds, name, description) goes through Annotated[..., Parameter(...)].",
+    "Router groups function handlers under a shared prefix, Controller groups methods of one class with shared settings; both apply \"don't repeat yourself\" to paths.",
+  ]}
+/>
+
+## References
+
+- [Litestar - Route handlers](https://docs.litestar.dev/latest/usage/routing/handlers.html)
+- [Litestar - Routers and Controllers](https://docs.litestar.dev/latest/usage/routing/overview.html)
+- [Litestar - Parameters](https://docs.litestar.dev/latest/usage/routing/parameters.html)
+- [Litestar - Controllers](https://docs.litestar.dev/latest/usage/routing/overview.html#controllers)

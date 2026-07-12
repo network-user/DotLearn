@@ -1,0 +1,210 @@
+exercises:
+  - id: yield-expression-quiz-001
+    concept: advanced-generators
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does `x = yield value` do inside a coroutine?"
+    choices:
+      - id: a
+        text: "It sends `value` out and suspends; when the coroutine is resumed via `send(sent)`, `sent` becomes the result of `yield` and lands in `x`."
+      - id: b
+        text: "It assigns `value` to `x` and continues without stopping."
+      - id: c
+        text: "It returns `value` from the function, like a regular `return`."
+      - id: d
+        text: "It reads a value for `x` from standard input."
+    correct: [a]
+    explanation: "`yield` is an expression and works both ways: `value` goes outward, and the value sent via `send` becomes the result of `yield` and lands in `x`. This turns a generator into a two-way channel."
+    variants:
+      - prompt: "Why do you need to call `next` or `send(None)` before the first `send(value)`?"
+        choices:
+          - id: a
+            text: "To prime the coroutine up to the first `yield`: sending a non-None value to an unprimed coroutine raises `TypeError`."
+          - id: b
+            text: "To clear the generator's internal state."
+          - id: c
+            text: "It's not required, `send` works fine on a fresh coroutine too."
+          - id: d
+            text: "To close the generator after the first value."
+        correct: [a]
+        explanation: "A fresh coroutine is paused before its first `yield`, and there's nowhere yet to receive a value. `next` or `send(None)` bring it to the first `yield`; only then can `send` land in a ready expression."
+      - prompt: "What does `yield from subgen` do beyond simply forwarding values outward?"
+        choices:
+          - id: a
+            text: "It forwards `send` and `throw` inward, and captures the value the subgenerator returned via `return`."
+          - id: b
+            text: "It merely speeds up the same loop `for item in subgen: yield item`."
+          - id: c
+            text: "It sorts the subgenerator's values before yielding them."
+          - id: d
+            text: "It runs the subgenerator in a separate thread."
+        correct: [a]
+        explanation: "`yield from` is full delegation: values go outward, `send` and `throw` go inward, and the value the subgenerator returned becomes the result of the `yield from` expression itself. A manual loop loses all of that."
+
+  - id: send-sequence-predict-001
+    concept: advanced-generators
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? Trace what priming prints and what each `send` returns."
+    snippet: |
+      def running_total():
+          total = 0
+          while True:
+              x = yield total
+              total += x
+
+      acc = running_total()
+      print(next(acc))
+      print(acc.send(10))
+      print(acc.send(5))
+    expected:
+      kind: stdout
+      value: |-
+        0
+        10
+        15
+    hints:
+      - "`next(acc)` runs the coroutine up to the first `yield total` and returns the starting value. What will it be before a single `send`?"
+      - "Each `send(v)` puts `v` into `x`, adds it to `total`, and reaches `yield total` again, returning the updated sum."
+    variants:
+      - snippet: |
+          def inner():
+              yield 1
+              return 99
+
+          def outer():
+              r = yield from inner()
+              print("returned", r)
+
+          print(list(outer()))
+        expected:
+          kind: stdout
+          value: |-
+            returned 99
+            [1]
+      - snippet: |
+          def worker():
+              try:
+                  while True:
+                      task = yield
+                      print("doing", task)
+              finally:
+                  print("cleanup")
+
+          w = worker()
+          next(w)
+          w.send("A")
+          w.close()
+        expected:
+          kind: stdout
+          value: |-
+            doing A
+            cleanup
+
+  - id: coroutine-skeleton-blanks-001
+    concept: advanced-generators
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the accumulator coroutine: it yields the current total outward and adds the value sent via send to it."
+    template: |
+      def running_total():
+          total = 0
+          while True:
+              x = {{recv}} total
+              total {{op}} x
+    blanks:
+      recv:
+        accept: ["yield"]
+      op:
+        accept: ["+="]
+    variants:
+      - prompt: "Fill in the accumulator coroutine running_product: it yields the current product outward and multiplies it by the value sent via send."
+        template: |
+          def running_product():
+              total = 1
+              while True:
+                  x = {{recv}} total
+                  total {{op}} x
+        blanks:
+          recv:
+            accept: ["yield"]
+          op:
+            accept: ["*="]
+      - prompt: "Fill in the accumulator coroutine running_balance: it yields the current balance outward and subtracts the withdrawal sent via send from it."
+        template: |
+          def running_balance():
+              total = 0
+              while True:
+                  x = {{recv}} total
+                  total {{op}} x
+        blanks:
+          recv:
+            accept: ["yield"]
+          op:
+            accept: ["-="]
+
+  - id: run-accumulator-001
+    concept: advanced-generators
+    type: python-function
+    difficulty: 4
+    prompt: "Implement `run_accumulator(deltas)`. Inside, create a coroutine that keeps a running sum and, for each `delta` sent via `send`, yields the updated sum. Prime it, feed it all the `deltas` in order, and return the list of updated sums. For `[10, 5, 3]` the answer is `[10, 15, 18]`."
+    starter: |
+      def run_accumulator(deltas):
+          ...
+    cases:
+      - call: "run_accumulator([10, 5, 3])"
+        expect: [10, 15, 18]
+      - call: "run_accumulator([])"
+        expect: []
+      - call: "run_accumulator([7])"
+        expect: [7]
+      - call: "run_accumulator([1, -1, 5])"
+        expect: [1, 0, 5]
+    hints:
+      - "The coroutine needs an infinite loop with `x = yield total` to yield the sum and receive the next delta. Who primes it before the first send?"
+      - "Prime the coroutine with a single `next`, then in a loop over `deltas` append `co.send(delta)` to the results list."
+      - "The result of each `send` is already the updated sum, and that's what you collect into the list."
+    solution: |
+      def run_accumulator(deltas):
+          def acc():
+              total = 0
+              while True:
+                  x = yield total
+                  total += x
+          co = acc()
+          next(co)
+          result = []
+          for delta in deltas:
+              result.append(co.send(delta))
+          return result
+
+  - id: flatten-yield-from-001
+    concept: advanced-generators
+    type: python-function
+    difficulty: 5
+    prompt: "Implement the generator `flatten(nested)`, which unwraps arbitrarily nested lists into a single flat stream, preserving order. Yield non-lists as is, delegate nested lists via `yield from`. `[1, [2, [3, 4]], 5]` becomes `[1, 2, 3, 4, 5]`."
+    starter: |
+      def flatten(nested):
+          ...
+    cases:
+      - call: "list(flatten([1, [2, [3, 4]], 5]))"
+        expect: [1, 2, 3, 4, 5]
+      - call: "list(flatten([]))"
+        expect: []
+      - call: "list(flatten([[], [1], [[2]]]))"
+        expect: [1, 2]
+      - call: "list(flatten([1, 2, 3]))"
+        expect: [1, 2, 3]
+      - call: "list(flatten([[[[5]]]]))"
+        expect: [5]
+    hints:
+      - "Each element falls into two cases: either it's a list to descend into, or a ready value to yield. Recursion handles any depth on its own."
+      - "Iterate over `nested`: if `isinstance(item, list)`, do `yield from flatten(item)`, otherwise `yield item`."
+      - "The base case resolves itself: an empty list yields nothing, so the recursion neatly bottoms out."
+    solution: |
+      def flatten(nested):
+          for item in nested:
+              if isinstance(item, list):
+                  yield from flatten(item)
+              else:
+                  yield item

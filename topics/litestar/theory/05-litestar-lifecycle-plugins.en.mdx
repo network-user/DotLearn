@@ -1,0 +1,203 @@
+---
+conceptId: litestar-lifecycle-plugins
+title: "Lifecycle, guards, and plugins"
+estimatedMinutes: 15
+---
+
+# What happens around a handler while it's asleep
+
+A handler feels like the center of the world: a request comes in, the function runs, a response goes out. But between "comes in" and "the function runs" a lot happens, and the handler knows nothing about it. Someone checked whether the client is even allowed in here, and turned them away if not. Someone logged the request and started a timer. Someone, way back when the app started, long before the first request, opened a database connection pool so the handler would have somewhere to get data from. And when the app stops, someone carefully closes that pool. None of that is the handler's job: it's responsible for one business operation, while cross-cutting concerns live in the lifecycle layers around it.
+
+Litestar gives you several distinct points to hang these cross-cutting concerns on, and mixing them up is a common mistake. By the end of this section you'll be able to tell apart middleware (a wrapper around the whole ASGI call), guards (a permission check before the handler), request hooks (`before_request`/`after_request`/`after_response`), the application lifecycle (opening resources at startup, closing them at shutdown), plugins (for example, for SQLAlchemy), and exception handlers (turning an exception into a response) - and understand the order all of this fires in around a single request.
+
+## Mental model: a request passes through wrapper layers
+
+A request doesn't reach the handler directly. It passes through concentric layers, like going through customs: each layer can inspect it, turn it away, or add to it. On the way in the layers fire in one order; on the way out, in reverse.
+
+<Figure caption="A request travels from the outside in to the handler and back out. Middleware wraps everything; a guard decides whether to let it through; before_request is the last edit before the handler; after_request is the first thing to touch the response.">
+  <Sketch viewBox="0 0 480 210" title="Request lifecycle">
+    <SketchBox x={20} y={70} width={70} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={55} y={92} size={11}>request</SketchLabel>
+
+    <SketchBox x={104} y={64} width={86} height={52} />
+    <SketchLabel x={147} y={84} mono size={11}>middleware</SketchLabel>
+    <SketchLabel x={147} y={100} size={10} muted>ASGI wrapper</SketchLabel>
+
+    <SketchBox x={200} y={64} width={70} height={52} />
+    <SketchLabel x={235} y={84} mono size={11}>guard</SketchLabel>
+    <SketchLabel x={235} y={100} size={10} muted>allowed?</SketchLabel>
+
+    <SketchBox x={280} y={64} width={90} height={52} />
+    <SketchLabel x={325} y={82} mono size={10}>before_request</SketchLabel>
+    <SketchLabel x={325} y={100} size={10} muted>edit</SketchLabel>
+
+    <SketchBox x={380} y={66} width={80} height={48} accent />
+    <SketchLabel x={420} y={92} mono accent size={11}>handler</SketchLabel>
+
+    <SketchArrow from={[90, 90]} to={[104, 90]} />
+    <SketchArrow from={[190, 90]} to={[200, 90]} />
+    <SketchArrow from={[270, 90]} to={[280, 90]} />
+    <SketchArrow from={[370, 90]} to={[380, 90]} accent />
+
+    <SketchLabel x={240} y={150} size={11}>on the way out: handler → after_request → after_response → middleware → response</SketchLabel>
+    <SketchArrow from={[400, 130]} to={[120, 130]} dashed />
+  </Sketch>
+</Figure>
+
+The key takeaway: a guard sits **before** the handler. Authorization isn't the first line inside the function - it's a separate layer in front of it. If a guard rejects the request, the handler never runs at all. That separates "is this allowed at all" (the guard) from "what to do here" (the handler).
+
+## Middleware: a wrapper around the ASGI call
+
+Middleware is the outermost layer. It wraps the entire ASGI call: it sees the request before the framework has started parsing it, and the response after it's been built. This is where cross-cutting infrastructure lives: logging every request, timing, CORS headers, compression. Middleware knows nothing about any specific handler - it operates at the level of the "raw" request-response pass.
+
+```python
+from litestar import Litestar, get
+from litestar.middleware import AbstractMiddleware
+
+class TimingMiddleware(AbstractMiddleware):
+    async def __call__(self, scope, receive, send):
+        await self.app(scope, receive, send)
+
+@get("/")
+async def index() -> dict:
+    return {"ok": True}
+
+app = Litestar(route_handlers=[index], middleware=[TimingMiddleware])
+```
+
+Middleware receives the ASGI triple (`scope`, `receive`, `send`) and is required to call `self.app(...)` at some point - the nested layer. Everything before that call is "on the way in" logic, everything after is "on the way out." This gives you maximum reach, but also the lowest level: middleware works with raw ASGI events, not a parsed request object.
+
+## Guards: authorization before the handler
+
+A guard is a callable that receives the connection and the handler's description and decides whether to let the request through. By contract, a guard **returns nothing on approval** and **raises an exception on rejection** - `NotAuthorizedException` (no valid authentication) or `PermissionDeniedException` (authenticated, but lacking permission).
+
+```python
+from litestar import get
+from litestar.connection import ASGIConnection
+from litestar.handlers.base import BaseRouteHandler
+from litestar.exceptions import NotAuthorizedException
+
+def require_token(connection: ASGIConnection, handler: BaseRouteHandler) -> None:
+    if not connection.headers.get("authorization"):
+        raise NotAuthorizedException()
+
+@get("/secret", guards=[require_token])
+async def secret() -> dict:
+    return {"data": "secret"}
+```
+
+`require_token` checks the header and raises `NotAuthorizedException` if it's missing; otherwise it returns nothing - and the request proceeds to the handler. The key point: a guard runs **before** the handler, so on rejection the handler's body never executes at all. Guards, like dependencies and paths, can be attached to any layer - the app (protect everything), a controller (protect a group), or a handler (protect a single endpoint).
+
+<Callout type="warning">
+A guard's contract is "silent on success, raises on rejection" - not "returns True/False." A guard that does `return False` on rejection instead of `raise` forbids nothing: the absence of an exception is treated as approval, and the handler runs anyway. Rejection is only ever expressed through an exception.
+</Callout>
+
+## Request hooks: before_request, after_request, after_response
+
+Three hooks give you targeted access to the request and response at a higher level than middleware. `before_request` runs after the request is parsed but before the handler - and if it returns something, that becomes the response, and the handler never runs. `after_request` receives the handler's response and can modify it before it's sent. `after_response` fires **after** the response has already gone to the client - this is where you put work that shouldn't delay the response: background logging, metrics.
+
+```python
+from litestar import Litestar, Request, get
+
+async def log_before(request: Request) -> None:
+    print(f"incoming: {request.method} {request.url.path}")
+
+@get("/")
+async def index() -> dict:
+    return {"ok": True}
+
+app = Litestar(route_handlers=[index], before_request=log_before)
+```
+
+The difference between `after_request` and `after_response` is subtle but important: `after_request` can still influence the response (it runs before the response is sent), while `after_response` can no longer affect the response at all - the client already has it. Heavy, non-essential work (firing an analytics event) belongs in `after_response`, so it doesn't stretch out response time.
+
+## Application lifecycle: startup and shutdown
+
+Besides the lifetime of a single request, there's the lifetime of the application itself. Resources like a database connection pool get created **once at startup**, not on every request, and get closed **at shutdown**. Litestar offers `lifespan` for this - an async context manager where code before the `yield` runs at startup and code after the `yield` runs at shutdown.
+
+```python
+from contextlib import asynccontextmanager
+from litestar import Litestar
+
+@asynccontextmanager
+async def lifespan(app: Litestar):
+    app.state.pool = await open_db_pool()
+    yield
+    await app.state.pool.close()
+
+app = Litestar(route_handlers=[], lifespan=[lifespan])
+```
+
+The code before `yield` - opening the pool - runs exactly once, when the app comes up; then `yield` hands control back and the app serves requests; the code after `yield` - closing the pool - runs at shutdown. That way the pool lives for the app's whole run instead of getting rebuilt per request. There's also an older style using `on_startup`/`on_shutdown` lists - separate functions for startup and shutdown; `lifespan` is more convenient because it keeps the paired "open/close" logic together.
+
+<Callout type="info">
+The application lifecycle and dependency caching (`use_cache` from the previous section) solve a similar problem - "create it once" - but differently. `lifespan` is for resources with explicit open and close steps (a pool, a connection) that need to be properly shut down. `use_cache` is for pure values with nothing to release (a parsed config). A resource that needs closing belongs in `lifespan`, not in a dependency cache.
+</Callout>
+
+## Plugins and exception handlers
+
+**Plugins** integrate external libraries into the application lifecycle. The most common example is a SQLAlchemy plugin: it opens the engine and session at startup on its own, hands out the session through DI, and closes everything at shutdown, sparing you a manual `lifespan` for the database. A plugin is a "ready-made chunk of lifecycle" that you wire in with one line instead of hand-writing startup/shutdown and dependencies for an integration yourself.
+
+**Exception handlers** close the loop from the other side: they describe how to turn an exception into an HTTP response. You map an exception type (or a status code) to a function that builds the response.
+
+```python
+from litestar import Litestar, Request, Response, get
+
+class OrderNotFound(Exception):
+    ...
+
+def handle_not_found(request: Request, exc: OrderNotFound) -> Response:
+    return Response(content={"error": "order not found"}, status_code=404)
+
+@get("/orders/{order_id:int}")
+async def get_order(order_id: int) -> dict:
+    raise OrderNotFound()
+
+app = Litestar(
+    route_handlers=[get_order],
+    exception_handlers={OrderNotFound: handle_not_found},
+)
+```
+
+When the handler raises `OrderNotFound`, the framework doesn't return a generic 500 - it calls `handle_not_found` and returns its response: a 404 with a readable body. That moves the "domain exception → HTTP response" mapping out of every individual handler and into one central place: a handler just raises a meaningful exception, and how it looks to the client is up to the exception handler.
+
+## Edge cases
+
+**A guard doesn't return a response - it only lets the request through or raises.** Unlike `before_request`, which can *return* a ready-made response and stand in for the handler, a guard doesn't do that: its only outcomes are silence (allow) or an exception (reject). If you need "return a special response instead of the handler," that's `before_request`, not a guard.
+
+**`after_response` can't change a response that's already been sent.** The temptation to tweak a header in `after_response` is doomed: by that point the response is already with the client. For editing a response, there's `after_request` (it runs before sending). Mix them up and you write code that "does nothing."
+
+**Guard and dependency ordering.** A guard checks permissions before the handler runs, but if the guard needs a dependency to make that check (say, the current user), keep in mind: a guard receives the connection and the handler, not the handler's already-resolved DI parameters. "Fetch the user" logic inside a guard is usually implemented through the same mechanism, but don't expect the handler's parameters to already be assembled by the time the guard runs.
+
+## Common mistakes
+
+- **Writing authorization as the first line of the handler.** `if not user.is_admin: raise ...` inside every handler is duplication and an easy thing to forget. Authorization belongs in a guard on the right layer; the handler should do its job, not stand guard.
+- **Opening a DB pool inside a handler or dependency on every request.** Creating a connection on every request is expensive and wrong. Open a pool once in `lifespan` at startup and close it at shutdown.
+- **Writing a guard that returns `False`.** Rejection is expressed through an exception (`NotAuthorizedException`/`PermissionDeniedException`), not `return False`. The framework won't treat a `False` return as a rejection - the handler runs anyway.
+- **Confusing `after_request` and `after_response`.** Editing the response belongs in `after_request` (before it's sent); background work that doesn't affect the response belongs in `after_response` (after it's sent). Mix them up and you either slow down the response with extra work, or futilely edit a response that's already gone.
+
+<Detail summary="Why so many separate points when there's already middleware">
+
+Middleware covers everything, so why not do authorization, logging, and error handling there too? Because these points sit at different levels of access, and that's a deliberate split. Middleware works with raw ASGI events - at that level there's no parsed request yet, no knowledge of which handler was even chosen, and no access to its guards. A guard, by contrast, knows exactly which handler the request is headed for (it receives its description), so it can judge permissions specifically for that endpoint. The `before_request`/`after_request` hooks work with an already-parsed request and an already-built response - a convenient level for edits, one middleware can't reach without parsing things by hand. Exception handlers catch exceptions from any layer and centralize their translation into responses. Each point is its own level of abstraction and its own moment in the cycle; cramming them all into middleware means writing, at the lowest level available, something that has a higher-level tool built for it. The cost of this richness is having to remember the order (middleware → guard → before_request → handler → after_request → after_response) and not confuse neighboring points; in exchange, every concern lives exactly where it has the context it needs.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Layers fire around a handler: middleware (ASGI wrapper) → guard (permissions) → before_request (edit) → handler → after_request → after_response; the order reverses on the way out.",
+    "A guard is callable(connection, handler): silent on approval, raising NotAuthorizedException/PermissionDeniedException on rejection; it runs BEFORE the handler, so a rejection never runs the body.",
+    "Authorization belongs in a guard, not the first line of a handler; guards, like dependencies and paths, attach to any layer.",
+    "before_request can return a response instead of the handler; after_request edits the response before it's sent; after_response runs after that, for background work that doesn't affect the response.",
+    "Resources with open/close steps (a DB pool) get set up once in lifespan: code before yield runs at startup, code after yield runs at shutdown - never per request.",
+    "Plugins (like SQLAlchemy's) wire in a ready-made chunk of lifecycle with one line; exception handlers centrally turn a domain exception into the right HTTP response.",
+  ]}
+/>
+
+## References
+
+- [Litestar - Middleware](https://docs.litestar.dev/latest/usage/middleware/index.html)
+- [Litestar - Guards](https://docs.litestar.dev/latest/usage/security/guards.html)
+- [Litestar - Lifecycle hooks](https://docs.litestar.dev/latest/usage/lifecycle-hooks.html)
+- [Litestar - Application lifespan](https://docs.litestar.dev/latest/usage/applications.html#lifespan-context-managers)
+- [Litestar - Plugins](https://docs.litestar.dev/latest/usage/plugins/index.html)
+- [Litestar - Exception handling](https://docs.litestar.dev/latest/usage/exceptions.html)

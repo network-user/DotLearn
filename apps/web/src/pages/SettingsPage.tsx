@@ -27,7 +27,7 @@ import {
   type AccentId,
   type ReadingSize,
 } from '@/lib/settings';
-import { useSync } from '@/lib/sync/engine';
+import { suppressTombstonesDuring, useSync } from '@/lib/sync/engine';
 import { applyTheme, persistTheme, readStoredTheme, type Theme } from '@/lib/theme';
 import { useStorageHealth } from '@/lib/storage-health';
 
@@ -178,7 +178,9 @@ export const SettingsPage = () => {
   const handleReset = async (): Promise<void> => {
     setConfirmReset(false);
     try {
-      await clearAllProgress();
+      // Local-only reset: suppress deletion tombstones so this never propagates as per-record
+      // deletions. If sync is active the server copy re-merges back on the next cycle.
+      await suppressTombstonesDuring(clearAllProgress);
       toast.success(t('toast.cleared'));
     } catch {
       toast.error(t('toast.exportError'));

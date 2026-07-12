@@ -1,0 +1,158 @@
+exercises:
+  - id: fail-function-quiz
+    concept: when-indexes-fail
+    type: theory-quiz
+    difficulty: 1
+    prompt: "There is an index users(email). Which query will NOT be able to use it?"
+    choices:
+      - id: a
+        text: "WHERE lower(email) = 'anna@mail.ru' (a function over the column)."
+      - id: b
+        text: "WHERE email = 'anna@mail.ru'."
+      - id: c
+        text: "WHERE email LIKE 'anna%'."
+      - id: d
+        text: "WHERE email >= 'm'."
+    correct: [a]
+    explanation: "The index stores email values as-is. lower(email) computes a new value for every row, and a sorted lookup on that is impossible. An expression index on lower(email), or a pre-normalized column, would help."
+    variants:
+      - prompt: "Index users(created_at), dates stored as text in 'YYYY-MM-DD' format. Which filter will not land on the index?"
+        choices:
+          - id: a
+            text: "WHERE substr(created_at, 1, 7) = '2024-02' (a function slices part of the column)."
+          - id: b
+            text: "WHERE created_at >= '2024-02-01' AND created_at < '2024-03-01'."
+          - id: c
+            text: "WHERE created_at = '2024-02-15'."
+          - id: d
+            text: "WHERE created_at LIKE '2024-02%'."
+        correct: [a]
+        explanation: "substr(created_at, ...) turns the column into a new value, and the index on created_at does not apply. The same selection via a date range (option b) does use the index."
+      - prompt: "Which LIKE on column email (index users(email) exists) will not be able to use the index?"
+        choices:
+          - id: a
+            text: "WHERE email LIKE '%mail.ru' (leading percent)."
+          - id: b
+            text: "WHERE email LIKE 'anna%'."
+          - id: c
+            text: "WHERE email LIKE 'an%'."
+          - id: d
+            text: "WHERE email LIKE 'boris@%'."
+        correct: [a]
+        explanation: "The index is sorted by the start of the string. A known prefix (anna%) defines a contiguous range, while a leading percent means any start, so no range can be built and a full scan remains."
+
+  - id: fail-like-prefix
+    concept: when-indexes-fail
+    type: sql-query
+    difficulty: 2
+    prompt: "Return the email of users whose address starts with 'an', sorted by email ascending."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT, created_at TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Moscow', '2024-02-10'),
+        (2, 'boris@gmail.com', 'Kazan', '2024-02-15'),
+        (3, 'anton@mail.ru', 'Moscow', '2024-02-15'),
+        (4, 'vera@yandex.ru', 'Perm', '2024-03-01'),
+        (5, 'dmitry@mail.ru', 'Moscow', '2024-03-01'),
+        (6, 'elena@gmail.com', 'Kazan', '2024-03-15'),
+        (7, 'anatoly@yandex.ru', 'Sochi', '2024-04-01'),
+        (8, 'olga@mail.ru', 'Perm', '2024-04-02');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { email: 'anatoly@yandex.ru' }
+        - { email: 'anna@mail.ru' }
+        - { email: 'anton@mail.ru' }
+    solution: |
+      SELECT email FROM users
+      WHERE email LIKE 'an%'
+      ORDER BY email;
+    variants:
+      - prompt: "Return the email of users whose address starts with 'bo', sorted by email ascending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'boris@gmail.com' }
+        solution: |
+          SELECT email FROM users
+          WHERE email LIKE 'bo%'
+          ORDER BY email;
+      - prompt: "Return the email of users whose address starts with 'ol', sorted by email ascending."
+        expected:
+          kind: result-set
+          ordered: true
+          rows:
+            - { email: 'olga@mail.ru' }
+        solution: |
+          SELECT email FROM users
+          WHERE email LIKE 'ol%'
+          ORDER BY email;
+
+  - id: fail-sargable-blanks
+    concept: when-indexes-fail
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "The filter WHERE substr(created_at, 1, 7) = '2024-02' wraps the column in a function and breaks the index. Rewrite it as a half-open range on the bare created_at column. Enter the bounds as string literals in single quotes."
+    template: |
+      SELECT id FROM users
+      WHERE created_at >= {{lo}} AND created_at < {{hi}};
+    blanks:
+      lo:
+        accept: ["'2024-02-01'"]
+      hi:
+        accept: ["'2024-03-01'"]
+    variants:
+      - prompt: "Filter: WHERE substr(created_at, 1, 7) = '2024-03'. Rewrite as a half-open range on created_at. Fill in the bounds."
+        template: |
+          SELECT id FROM users
+          WHERE created_at >= {{lo}} AND created_at < {{hi}};
+        blanks:
+          lo:
+            accept: ["'2024-03-01'"]
+          hi:
+            accept: ["'2024-04-01'"]
+      - prompt: "Filter: WHERE substr(created_at, 1, 4) = '2024' (the whole year 2024). Rewrite as a half-open range on created_at. Fill in the bounds."
+        template: |
+          SELECT id FROM users
+          WHERE created_at >= {{lo}} AND created_at < {{hi}};
+        blanks:
+          lo:
+            accept: ["'2024-01-01'"]
+          hi:
+            accept: ["'2025-01-01'"]
+
+  - id: fail-or-to-union
+    concept: when-indexes-fail
+    type: sql-query
+    difficulty: 3
+    prompt: "An OR condition across different columns lands poorly on indexes. Return the id of users from Moscow OR registered in April 2024 (created_at from '2024-04-01' to '2024-04-30'), rewriting the query as a UNION of two indexable branches. Sort by id ascending."
+    fixture: |
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, city TEXT, created_at TEXT);
+      INSERT INTO users VALUES
+        (1, 'anna@mail.ru', 'Moscow', '2024-02-10'),
+        (2, 'boris@gmail.com', 'Kazan', '2024-02-15'),
+        (3, 'anton@mail.ru', 'Moscow', '2024-02-15'),
+        (4, 'vera@yandex.ru', 'Perm', '2024-03-01'),
+        (5, 'dmitry@mail.ru', 'Moscow', '2024-03-01'),
+        (6, 'elena@gmail.com', 'Kazan', '2024-03-15'),
+        (7, 'anatoly@yandex.ru', 'Sochi', '2024-04-01'),
+        (8, 'olga@mail.ru', 'Perm', '2024-04-02');
+    expected:
+      kind: result-set
+      ordered: true
+      rows:
+        - { id: 1 }
+        - { id: 3 }
+        - { id: 5 }
+        - { id: 7 }
+        - { id: 8 }
+    hints:
+      - "A single index cannot satisfy two OR conditions on different columns at once. Split the task into two independent ones, each closed by its own index, then combine the rows."
+      - "Write two SELECT id statements: one with city = 'Moscow', the other with the April date range, join them with UNION (it removes duplicates on its own), and finish with ORDER BY id."
+    solution: |
+      SELECT id FROM users WHERE city = 'Moscow'
+      UNION
+      SELECT id FROM users WHERE created_at BETWEEN '2024-04-01' AND '2024-04-30'
+      ORDER BY id;

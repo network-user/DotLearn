@@ -1,0 +1,153 @@
+---
+conceptId: sync-primitives
+title: "Synchronization primitives"
+estimatedMinutes: 10
+---
+
+# The lock that fixes a counter and hangs a program
+
+The racy counter from the previous section is cured with one line: wrap `counter += 1` in `with lock`, and eight threads finally add up to exactly eight million. But that same line, placed carelessly, can hang the program stone dead: two threads freeze, waiting on each other forever, and the process just sits there without a single error in the logs. A lock is both the cure for races and a new source of trouble, and the difference between the two outcomes comes down to discipline in how you use it.
+
+In this section we'll go through the synchronization tools in the `threading` module: `Lock` and its reentrant cousin `RLock`, `Semaphore` for capping how many workers run at once, `Event` for signaling, and `Condition` for waiting on a condition. The point isn't the list of methods; it's how to use these tools to protect state without walking into a deadlock.
+
+## A lock as the right to enter a critical section
+
+`Lock` is the simplest primitive: at any moment, no more than one thread owns it. A thread calls `acquire` to grab the lock and `release` to let it go; if the lock is already taken, the caller waits. The code between acquiring and releasing is called a critical section, and its defining property is that only one thread is ever inside it at a time.
+
+<Figure caption="Only one thread holds the lock. While A is in the critical section, B sits on acquire; the moment A releases the lock, B gets in.">
+  <Sketch viewBox="0 0 470 150" title="Mutual exclusion">
+    <SketchBox x={26} y={44} width={150} height={62} accent />
+    <SketchLabel x={101} y={70} weight="bold" accent>Thread A</SketchLabel>
+    <SketchLabel x={101} y={90} size={10}>in the critical section</SketchLabel>
+
+    <SketchBox x={206} y={54} width={68} height={42} hatched />
+    <SketchLabel x={240} y={80} mono weight="bold">lock</SketchLabel>
+    <SketchArrow from={[176, 75]} to={[206, 75]} accent />
+
+    <SketchBox x={306} y={44} width={148} height={62} />
+    <SketchLabel x={380} y={70} weight="bold">Thread B</SketchLabel>
+    <SketchLabel x={380} y={90} size={10} muted>waiting on acquire</SketchLabel>
+    <SketchArrow from={[306, 75]} to={[274, 75]} dashed />
+  </Sketch>
+</Figure>
+
+In practice nobody calls `acquire` and `release` by hand much; a lock is used as a context manager through `with`, and that's not just a style choice. The `with` protocol (covered in depth in the `python-context-managers` topic) guarantees `release` fires on the way out of the block no matter what, including when an exception hits inside the section. A manual `acquire`/`release` pair without `try/finally` leaves the lock held forever if an exception strikes, and every waiting thread hangs.
+
+```python
+import threading
+
+lock = threading.Lock()
+counter = 0
+
+def bump():
+    global counter
+    for _ in range(1_000_000):
+        with lock:
+            counter += 1
+```
+
+Now reading and writing `counter` happen under the lock, no interleaving can split them apart, and the result is deterministic. The price is serialization: while one thread is in the section, the rest wait, so this stretch of code has stopped being concurrent. That's a fundamental trade-off of synchronization, and we'll come back to it.
+
+## When a plain lock isn't enough: RLock
+
+An ordinary `Lock` isn't reentrant: if a thread that already owns the lock tries to acquire it again, it blocks itself forever, since the lock is taken and nobody is left to release it. This happens easily by accident, when a method holding a lock calls another method that also grabs the same lock.
+
+```python
+lock = threading.RLock()
+
+def transfer():
+    with lock:
+        withdraw()
+
+def withdraw():
+    with lock:
+        ...
+```
+
+With a plain `Lock`, calling `withdraw` from inside `transfer` would deadlock on the second `acquire`. `RLock` (a reentrant lock) remembers which thread owns it and tracks how many times it's been acquired: the same thread can acquire it again, and it only actually releases once `release` has been called as many times as `acquire` was. The rule is simple: if a critical section might re-enter the same lock, reach for `RLock`.
+
+## Semaphore and Event: more than mutual exclusion
+
+Not every coordination need is "let exactly one in." `Semaphore` holds a permit counter and lets up to N threads in at once, making everyone past that wait. That's exactly what you need to cap concurrent load: no more than five simultaneous calls to an external API, no more than ten open database connections.
+
+```python
+sem = threading.Semaphore(5)
+
+def call_api():
+    with sem:
+        do_request()
+```
+
+`Event` solves a different problem: sending a signal. It's a flag that threads wait on via `wait`, and another thread raises via `set`. While the flag is down, every waiter sits still; the moment `set` is called, they all move on at once. A typical scenario: worker threads wait on an `Event` while the main thread finishes setup, then all start at once on the signal.
+
+## Edge case: deadlock
+
+Locks solve the race problem but bring their own: deadlock. It happens when threads wait on resources in a cycle: A holds lock L1 and waits for L2, while B holds L2 and waits for L1. Neither will release what it has until it gets what the other holds, and both wait forever.
+
+<Figure caption="A waiting ring: A holds L1 and waits for L2, B holds L2 and waits for L1. Neither releases its own, so both wait forever.">
+  <Sketch viewBox="0 0 470 175" title="Deadlock">
+    <SketchBox x={40} y={58} width={140} height={62} />
+    <SketchLabel x={110} y={84} weight="bold">Thread A</SketchLabel>
+    <SketchLabel x={110} y={104} size={10} muted>holds L1</SketchLabel>
+
+    <SketchBox x={290} y={58} width={140} height={62} />
+    <SketchLabel x={360} y={84} weight="bold">Thread B</SketchLabel>
+    <SketchLabel x={360} y={104} size={10} muted>holds L2</SketchLabel>
+
+    <SketchArrow from={[180, 78]} to={[290, 78]} />
+    <SketchLabel x={235} y={68} size={10}>waits for L2</SketchLabel>
+    <SketchArrow from={[290, 104]} to={[180, 104]} />
+    <SketchLabel x={235} y={122} size={10}>waits for L1</SketchLabel>
+  </Sketch>
+</Figure>
+
+The cure for the ring is discipline in acquisition order: if every thread always grabs locks in the same global order (L1 first, then L2, never the reverse), a waiting cycle can't form. Whoever arrives second for L1 simply waits for it and never gets the chance to grab L2, so no mutual holding ever builds up. A second technique is acquiring with a timeout: `acquire(timeout=...)` lets you stop waiting instead of waiting forever and try again, though a consistent global order is the more reliable fix.
+
+This is also where the question of granularity comes from. One coarse lock over all your state is simple and deadlock-safe (there's only one lock, so no ring can ever form), but it kills concurrency: every thread queues up even for unrelated data. Many fine-grained locks over separate pieces of state bring back parallelism, but open the door to deadlocks and add overhead. You navigate between these two poles by protecting, separately, only what's genuinely independent.
+
+## Common mistakes
+
+- **Manual `acquire`/`release` without `try/finally`.** An exception inside the section skips `release`, the lock stays held, and every waiter hangs. Fix: use `with lock`, which releases no matter how you leave the block.
+- **Inconsistent acquisition order across the codebase.** One place grabs L1 then L2, another does the reverse, and sooner or later a ring forms. Fix: pick one global lock order and enforce it everywhere.
+- **A plain `Lock` where `RLock` belongs.** A method under a lock calls another method under the same lock and deadlocks itself. Fix: `RLock` for reentrant scenarios.
+- **Guarding shared data with different lock objects.** Two threads each grab their own `Lock` around the same data and think they're protected, but there's no mutual exclusion since the locks are different objects. Fix: use the same lock object for the same data, everywhere.
+
+<Detail summary="Condition: waiting on a condition, not just a flag">
+
+When a thread needs to wait not for a simple signal but for a condition over shared data to hold ("an item showed up in the queue"), reach for `Condition`. It bundles a lock together with a wait queue: a thread under the lock checks a predicate, and if it's false, calls `wait`, which atomically releases the lock and goes to sleep. Another thread changes the data and calls `notify`, waking one waiter.
+
+```python
+cond = threading.Condition()
+items = []
+
+def consumer():
+    with cond:
+        while not items:
+            cond.wait()
+        return items.pop()
+
+def producer(x):
+    with cond:
+        items.append(x)
+        cond.notify()
+```
+
+The key detail is `while not items`, not `if`. A woken thread must re-check the condition, because between waking up and re-acquiring the lock another thread might have emptied the queue again, and some implementations allow spurious wakeups anyway. Checking the predicate in a loop rather than once is a habit worth keeping whenever you work with `Condition`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Lock admits at most one thread into a critical section; use it through `with` so release fires even when an exception hits.",
+    "RLock is reentrant: the same thread can acquire it again, where a plain Lock would deadlock the thread against itself.",
+    "Semaphore(N) caps the number of concurrent workers; Event is a signal flag, waited on with wait and raised with set.",
+    "Deadlock is a ring of threads waiting on each other's locks; a single global acquisition order, followed everywhere, is the most reliable prevention.",
+    "Granularity is a trade-off: one coarse lock is deadlock-safe but chokes concurrency; many fine-grained locks restore parallelism at the cost of deadlock risk.",
+  ]}
+/>
+
+## References
+
+- [Python docs - threading (Lock, RLock, Semaphore, Event, Condition)](https://docs.python.org/3/library/threading.html)
+- [Python docs - Condition objects](https://docs.python.org/3/library/threading.html#condition-objects)
+- [Wikipedia - Deadlock](https://en.wikipedia.org/wiki/Deadlock)

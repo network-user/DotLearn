@@ -15,3 +15,25 @@
 `python-oop` - тема активно использует классы (контроллеры, `msgspec.Struct`, классы-исключения) и аннотации типов. Знакомство с FastAPI полезно как точка отсчёта, но не обязательно: все нужные понятия (ASGI, path/query, валидация) вводятся по ходу.
 
 Generated via `lesson-forge`.
+
+---
+
+## English
+
+# Litestar: Routing, DTOs, and Dependency Injection
+
+A topic for backend developers who already know FastAPI and want to understand Litestar - an ASGI framework with a layered architecture, msgspec serialization, and a built-in DTO system. We honestly compare the two frameworks: where Litestar offers a different code organization model (app → router → controller → handler), where DTOs replace a pair of Pydantic input/output models, and where the difference is just a matter of taste. After this topic you'll be able to read someone else's Litestar app, design routes with controller classes, separate internal data models from external representations via DTOs, and manage dependencies across layers.
+
+## Concepts
+
+1. **What Litestar is and how it differs from FastAPI** - ASGI, layered architecture (app/router/controller/handler), msgspec by default, DI and plugins out of the box; an honest comparison with FastAPI, no marketing.
+2. **Routing: handlers, Router, and Controller** - the `@get`/`@post`/`@put`/`@delete`/`@patch` decorators, typed path and query parameters, grouping via `Router` and controller classes, path composition across layers.
+3. **Models, DTOs, and validation** - `msgspec.Struct` as a data model, parsing request bodies via `data: Model`, DTOs for field filtering (include/exclude), separate representations for input and output, validation errors.
+4. **Dependency injection with Provide** - `Provide()`, dependencies at the app/router/controller/handler levels and overriding them, sync and async, caching (`use_cache`), injection by parameter name, nested dependencies.
+5. **Lifecycle, guards, and plugins** - middleware, guards for authorization, before/after request hooks, lifespan and on_startup/on_shutdown, plugins (SQLAlchemy) and exception handlers.
+
+## Prerequisites
+
+`python-oop` - the topic makes heavy use of classes (controllers, `msgspec.Struct`, exception classes) and type annotations. Familiarity with FastAPI is helpful as a reference point but not required: all the necessary concepts (ASGI, path/query, validation) are introduced along the way.
+
+Generated via `lesson-forge`.

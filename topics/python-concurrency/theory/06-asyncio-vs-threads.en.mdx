@@ -1,0 +1,192 @@
+---
+conceptId: asyncio-vs-threads
+title: "asyncio vs. threads"
+estimatedMinutes: 14
+---
+
+# Thousands of connections in one thread: event loop vs. threads
+
+Threads genuinely speed up network work, but they have a ceiling, and you hit it sooner than it looks. Every thread is an OS thread with its own stack of a few megabytes and a slot in the kernel's preemptive scheduler queue. With dozens of threads, everything's fine. But a web server, chat backend, or crawler that needs to hold ten thousand simultaneous connections would need ten thousand threads, and that's gigabytes of memory for stacks alone, plus a scheduler gasping under the weight of switching between mostly-sleeping threads. The tool built for concurrency becomes concurrency's own bottleneck.
+
+asyncio solves the same I/O problem from the other end: thousands of concurrent operations live inside a single thread, and the kernel never preempts any of them. In this section we'll look at how cooperative multitasking differs from preemptive multitasking, how one event loop drives thousands of coroutines, why a single-threaded asyncio program still needs its own lock, how to hand blocking work off to a pool with `run_in_executor`, and how to choose between `threading`, `asyncio`, and `multiprocessing`. It ties together everything we've covered about the GIL, races, and synchronization primitives.
+
+## One thread, voluntary handoffs
+
+Threads and coroutines solve the same problem (do something else while the current thing is waiting), but they hand off control in opposite ways. A thread is preempted by the kernel: the scheduler takes the CPU away from it between any two instructions, and the thread has no idea this is happening and gives no permission. A coroutine switches cooperatively: at an explicitly marked `await` point, it tells the event loop itself, "I have nothing to do right now, I'm waiting on the network, go handle something else." Between two consecutive `await`s, a coroutine runs start to finish, and nothing interrupts it partway through.
+
+<Figure caption="A thread is preempted by the kernel anywhere · a coroutine only yields at await. Between two awaits a coroutine runs uninterrupted.">
+  <Sketch viewBox="0 0 470 230" title="Preemption vs. cooperation">
+    <SketchLabel x={30} y={28} anchor="start" weight="bold" size={12}>Threads · preemptive</SketchLabel>
+    <SketchBox x={30} y={40} width={410} height={26} />
+    <SketchArrow from={[85, 92]} to={[85, 66]} />
+    <SketchArrow from={[160, 92]} to={[160, 66]} />
+    <SketchArrow from={[235, 92]} to={[235, 66]} />
+    <SketchArrow from={[310, 92]} to={[310, 66]} />
+    <SketchArrow from={[385, 92]} to={[385, 66]} />
+    <SketchLabel x={235} y={110} size={10} muted>a switch can land anywhere</SketchLabel>
+
+    <SketchLabel x={30} y={152} anchor="start" weight="bold" size={12}>Coroutines · cooperative</SketchLabel>
+    <SketchBox x={30} y={162} width={410} height={26} accent />
+    <SketchArrow from={[160, 214]} to={[160, 188]} accent />
+    <SketchArrow from={[300, 214]} to={[300, 188]} accent />
+    <SketchLabel x={160} y={226} size={10} mono>await</SketchLabel>
+    <SketchLabel x={300} y={226} size={10} mono>await</SketchLabel>
+  </Sketch>
+</Figure>
+
+This changes how you reason about the code. In the section on races we worried about a thread getting preempted mid-`counter += 1`; in asyncio, the points where you can get interrupted are known in advance and visible right there in the source, they're exactly the `await`s. Code with no `await` in it runs from start to finish without interruption. The price for that predictability is discipline: if no coroutine ever voluntarily yields, nothing else moves.
+
+## The event loop: who runs whom
+
+The heart of asyncio is the event loop, a single-threaded cycle that keeps a list of tasks ready to run. It picks one ready coroutine, runs it up to the nearest `await` on something not yet ready (a network response hasn't arrived, a timer hasn't fired), parks it, and moves on to the next ready one. When the awaited event happens, the parked task becomes ready again, and the loop will get back to it. There's no parallelism across cores here at all: at any instant, exactly one coroutine is actually running.
+
+<Figure caption="A single-threaded event loop picks a ready coroutine, runs it to an await, parks the one waiting on the network, and moves to the next. Only one coroutine actually runs at a time.">
+  <Sketch viewBox="0 0 470 260" title="Event loop and coroutines">
+    <SketchBox x={20} y={20} width={430} height={224} dashed />
+    <SketchLabel x={34} y={42} anchor="start" muted size={12}>One thread · one event loop</SketchLabel>
+
+    <SketchBox x={175} y={96} width={120} height={64} hatched />
+    <SketchLabel x={235} y={124} mono weight="bold">event loop</SketchLabel>
+    <SketchLabel x={235} y={144} size={10} muted>ready queue</SketchLabel>
+
+    <SketchBox x={40} y={100} width={110} height={56} accent />
+    <SketchLabel x={95} y={122} weight="bold" accent>Coroutine A</SketchLabel>
+    <SketchLabel x={95} y={141} size={10}>running to await</SketchLabel>
+
+    <SketchBox x={320} y={64} width={110} height={48} />
+    <SketchLabel x={375} y={84} weight="bold">Coroutine B</SketchLabel>
+    <SketchLabel x={375} y={101} size={10} muted>ready, waiting for a slot</SketchLabel>
+
+    <SketchBox x={320} y={150} width={110} height={48} />
+    <SketchLabel x={375} y={170} weight="bold">Coroutine C</SketchLabel>
+    <SketchLabel x={375} y={188} size={10} muted>await network · parked</SketchLabel>
+
+    <SketchArrow from={[175, 128]} to={[150, 128]} accent />
+    <SketchArrow from={[295, 116]} to={[320, 86]} />
+    <SketchArrow from={[320, 174]} to={[295, 150]} dashed />
+  </Sketch>
+</Figure>
+
+In practice, it looks like this. A function defined with `async def` is a coroutine function; calling it doesn't run its body, it returns a coroutine object that only starts working once you `await` it or hand it to the loop as a task. `asyncio.run` spins up a loop and runs it until the coroutine you passed in finishes.
+
+```python
+import asyncio
+
+async def fetch(name):
+    print(f"starting {name}")
+    await asyncio.sleep(1)
+    print(f"done {name}")
+    return name
+
+async def main():
+    return await asyncio.gather(fetch("A"), fetch("B"), fetch("C"))
+
+print(asyncio.run(main()))
+```
+
+`asyncio.gather` runs all three coroutines concurrently. All three print "starting", then each one hits `await asyncio.sleep(1)` and parks, handing the thread over to its neighbors. A second later, all three wake up and print "done". Three seconds of waiting collapsed into one, and all of it happened in a single thread, without a single OS thread per task. The key detail here is `await asyncio.sleep`, not `time.sleep`: only an async sleep hands control back to the loop; a plain sleep would freeze the whole thread.
+
+<MarginNote label="History">The `async`/`await` syntax landed in Python 3.5 (PEP 492, 2015). Before that, coroutines were written with generators and `yield from`, which read noticeably worse.</MarginNote>
+
+## Why you still need a lock with only one thread
+
+Since there's only one thread and a coroutine is never preempted mid-operation, it's tempting to conclude that the races from the threading section can't happen here and synchronization is unnecessary. That's only half true. A compound operation with no `await` inside it genuinely can't be split apart by anything. But the moment an `await` shows up inside a critical section, the loop is free to switch to another task at exactly that point, and that task can see intermediate, not-yet-consistent state.
+
+```python
+balance = 100
+
+async def withdraw(amount):
+    global balance
+    if balance >= amount:
+        await log_to_db(amount)
+        balance -= amount
+```
+
+<Figure caption="An await inside the section is a switch point: while task A waits on await, the loop lets task B run, and it passes the same balance check. The withdrawal happens twice.">
+  <Sketch viewBox="0 0 470 235" title="A race through await">
+    <SketchLabel x={110} y={22} weight="bold">Task A</SketchLabel>
+    <SketchLabel x={360} y={22} weight="bold">Task B</SketchLabel>
+
+    <SketchBox x={30} y={38} width={160} height={40} />
+    <SketchLabel x={110} y={62} mono size={11}>balance sufficient? yes</SketchLabel>
+
+    <SketchBox x={30} y={95} width={160} height={36} hatched />
+    <SketchLabel x={110} y={117} mono size={10}>await · yields to loop</SketchLabel>
+
+    <SketchBox x={280} y={95} width={160} height={40} />
+    <SketchLabel x={360} y={119} mono size={11}>balance sufficient? yes</SketchLabel>
+
+    <SketchBox x={30} y={150} width={160} height={40} accent />
+    <SketchLabel x={110} y={174} mono size={11} accent>balance -= amount</SketchLabel>
+
+    <SketchBox x={280} y={150} width={160} height={40} accent />
+    <SketchLabel x={360} y={174} mono size={11} accent>balance -= amount</SketchLabel>
+
+    <SketchArrow from={[110, 131]} to={[280, 115]} dashed />
+    <SketchLabel x={235} y={216} size={11} muted>the withdrawal happened twice</SketchLabel>
+  </Sketch>
+</Figure>
+
+Between the `balance >= amount` check and the actual withdrawal sits an `await`, and right there the loop can hand control to a second task. That task checks the same balance (the first hasn't subtracted anything yet), also passes the check, and now both withdraw money. This is the same check-then-act race from the threading section, except the switch point isn't "anywhere", it's exactly at the `await`. The invariant still needs protecting, and for that there's `asyncio.Lock`: its `async with` keeps two tasks from entering the section at once. The difference from a thread `Lock` is that `asyncio.Lock`, when contended, doesn't block a thread; it parks the task and hands control back to the loop so it can get on with other work.
+
+## When one coroutine hangs the whole server
+
+A single thread is both asyncio's strength and its Achilles' heel. If a coroutine calls a blocking operation, a plain `time.sleep`, a synchronous `requests.get`, a heavy pure-Python computation, it never reaches an `await` and never hands control back to the loop. And since the loop runs in that same thread, every one of its tasks freezes at once, all its thousands of connections included. One careless synchronous call hangs the entire server, and from the outside it looks like an unexplained pause where absolutely nothing responds.
+
+<Callout type="warning">
+Anything that shares the event loop needs to be non-blocking. A synchronous call inside a coroutine stops not just one task, but the whole loop.
+</Callout>
+
+There are two fixes. If an async version of the library exists (`aiohttp` instead of `requests`, `asyncio.sleep` instead of `time.sleep`), use it; it's built to yield control at `await`. If there's no async version and the blocking call is unavoidable, push it off into a separate thread with `run_in_executor`, so the loop stays free.
+
+## How to choose: threading, asyncio, or multiprocessing
+
+The three tools cover three different niches, and the choice is dictated by the nature of the workload, not fashion. Neither threads nor asyncio can rescue CPU-bound work; both end up bottlenecked on the GIL and running on a single core regardless. For thousands of connections, asyncio is lighter than threads because it doesn't pay for an OS thread per task. For moderate I/O with ordinary synchronous libraries, threads are simpler: no need to rewrite your code around `async`.
+
+| Tool | When to use it | Why it works |
+| --- | --- | --- |
+| `threading` | IO-bound, tens to hundreds of tasks, synchronous libraries | a thread releases the GIL during I/O and waits in parallel, no code rewrite needed |
+| `asyncio` | IO-bound, thousands of tasks, async libraries available | a single thread holds thousands of connections without the weight of OS threads |
+| `multiprocessing` | CPU-bound computation | each process gets its own GIL, real parallelism across cores |
+
+The table isn't about one tool being better than another; it's about matching the tool to the job. Ask yourself: what's the actual bottleneck, CPU or time spent waiting on the network? And do the libraries you need have async versions? The answers almost always point unambiguously to one row.
+
+## Common mistakes
+
+- **A blocking call inside a coroutine.** `time.sleep`, synchronous `requests`, a heavy loop never reach an `await` and freeze the whole loop, taking every task down with it. Fix: use async libraries, or push the blocking call into `run_in_executor`.
+- **Assuming that one thread means no synchronization needed.** An `await` inside a critical section is a switch point, and check-then-act through `await` is a full-blown race. Fix: `asyncio.Lock` via `async with` around any invariant that spans an `await`.
+- **Forgetting `await`.** Calling a coroutine function without `await` returns a coroutine object and never runs its body; Python warns "coroutine was never awaited". Fix: `await` the coroutine, or schedule it as a task with `asyncio.create_task`.
+- **Running CPU-bound work through asyncio.** A heavy computation never yields to the loop and gets no speedup, and it freezes every other task besides. Fix: `multiprocessing`, or `run_in_executor` with a `ProcessPoolExecutor`.
+
+<Detail summary="run_in_executor: bridging async code and blocking code">
+
+When a blocking call is unavoidable (an old library with no async version), the event loop can hand it off to a pool without freezing itself. `loop.run_in_executor(None, blocking_fn, arg)` runs `blocking_fn` in a separate thread from a shared `ThreadPoolExecutor` (the first argument, `None`, means "use the default pool") and returns an awaitable. The coroutine just `await`s the result while the loop keeps running other tasks.
+
+```python
+import asyncio, requests
+
+async def fetch(url):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, requests.get, url)
+```
+
+This way the blocking `requests.get` moves off to a thread while the loop stays free. For CPU-bound work, pass a `ProcessPoolExecutor` instead of a thread: the heavy computation then runs in a separate process with its own GIL, and the event loop never stalls. It's a bridge between two worlds: an async application core and synchronous libraries coexist, because anything blocking always gets moved off the event loop into a pool.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Threads switch preemptively (the kernel, at any moment); coroutines switch cooperatively (only at await); between two awaits a coroutine runs uninterrupted.",
+    "An event loop drives thousands of coroutines in one thread: only one actually runs at a time, and the win comes from overlapping waits, without the weight of an OS thread per task.",
+    "An await inside a critical section is a switch point, so check-then-act breaks in asyncio too; asyncio.Lock via async with protects it by parking the task instead of blocking the thread.",
+    "A blocking call (time.sleep, synchronous requests, a heavy loop) inside a coroutine freezes the whole loop; move blocking work into run_in_executor.",
+    "Choosing a tool: threading for moderate I/O with synchronous libraries, asyncio for thousands of connections, multiprocessing for CPU-bound work.",
+  ]}
+/>
+
+## References
+
+- [Python docs - asyncio](https://docs.python.org/3/library/asyncio.html)
+- [Python docs - Coroutines and Tasks](https://docs.python.org/3/library/asyncio-task.html)
+- [Python docs - loop.run_in_executor](https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.run_in_executor)
+- [PEP 492 - async/await syntax](https://peps.python.org/pep-0492/)

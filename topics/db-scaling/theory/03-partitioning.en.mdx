@@ -1,0 +1,111 @@
+---
+conceptId: partitioning
+title: Single-Node Table Partitioning
+estimatedMinutes: 11
+---
+
+# Partitioning: one table sliced into manageable chunks
+
+The `events` table has been growing for three years and just crossed two billion rows. Queries against recent data are still tolerable, but everything around them has started to hurt: the index has bloated, `VACUUM` can't keep up, and the worst part happens at night, when a cleanup job tries to delete data older than a year. One giant `DELETE` locks the table, generates mountains of dead row versions, and drags on for hours. Yet the logical task is simple: keep the recent data, drop the old. Partitioning is exactly for this. It slices one logical table into several physical pieces inside the same node, and suddenly "delete the old stuff" turns from a nightly horror show into an instant operation.
+
+## One logical table, many physical partitions
+
+Partitioning splits one table into partitions based on the value of a partition key. From the application's point of view the table stays a single table: the same `INSERT`s, the same `SELECT`s, the same shape. Under the hood the database keeps several physical pieces and, based on the key value, knows which one to write a row into and which one to search. It's important not to confuse this with sharding: every partition lives on the same node. Partitioning doesn't add hardware capacity, it brings order inside a single server.
+
+<Figure caption="The planner prunes irrelevant partitions by key · a query filtered on June reads only the June partition and never even opens the others.">
+  <Sketch viewBox="0 0 560 210" title="Partition pruning">
+    <SketchLabel x={280} y={22} mono>query for June</SketchLabel>
+    <SketchArrow from={[280, 32]} to={[335, 78]} accent />
+    <SketchLabel x={54} y={54} muted anchor="start">events (one logical table)</SketchLabel>
+    <SketchBox x={44} y={62} width={480} height={104} />
+    <SketchBox x={60} y={84} width={100} height={58} dashed />
+    <SketchLabel x={110} y={117} mono muted>April</SketchLabel>
+    <SketchBox x={172} y={84} width={100} height={58} dashed />
+    <SketchLabel x={222} y={117} mono muted>May</SketchLabel>
+    <SketchBox x={284} y={84} width={100} height={58} accent />
+    <SketchLabel x={334} y={117} mono accent>June</SketchLabel>
+    <SketchBox x={396} y={84} width={100} height={58} dashed />
+    <SketchLabel x={446} y={117} mono muted>July</SketchLabel>
+    <SketchLabel x={334} y={186} muted>only this one gets read</SketchLabel>
+  </Sketch>
+</Figure>
+
+## Three ways to slice: range, list, and hash
+
+The partition key is sliced by one of three rules, and the choice is dictated by how you usually query the data.
+
+Range partitioning puts a contiguous interval of an ordered key into each partition: one partition per month by date, ranges of ids, price bands. It's the most common choice for time-based data, because queries against that kind of data almost always include a date range.
+
+List partitioning assigns a partition based on an explicit set of values: one partition for region `US`, another for `EU`, another for everything else. It fits when the key is a small set of categories with clear meaning.
+
+Hash partitioning places a row into one of `N` partitions using `hash(key) % N`. There's no natural range, but the load spreads evenly. It's the choice when you just need to slice a large table evenly without any tie to time or category.
+
+## Partition pruning: where the speedup comes from
+
+The main speed benefit of partitioning is called partition pruning. When a query includes a condition on the partition key, the planner figures out ahead of time which partitions could even contain the matching rows, and never opens the rest. A query like `WHERE created_at >= '2026-06-01'` against a table sliced by month reads one June partition instead of all thirty-six. Less data gets read, the cache hits more precisely, and the plan is simpler.
+
+This property has a flip side people forget. Pruning only works when the query actually has a filter on the partition key. A query like `WHERE user_id = 42` against a table sliced by date can't prune anything: that user could have left rows in any month, so the planner scans every partition. If queries like that are your bread and butter, partitioning by date won't speed them up, and the small overhead of having many partitions will even slow them down slightly. Pick a partition key that matches the shape of your frequent queries, not at random.
+
+## Partitions and indexes solve different problems
+
+They're easy to mix up because both speed up queries, but they work differently and don't replace each other. An index is a secondary structure that quickly finds matching rows anywhere in the table for a selective condition. A partition is a physical split of the data by key. You still build indexes inside partitions: partitioning doesn't replace them, it complements them. A selective lookup like `WHERE email = ...` gets faster from an index; pruning by date and cheap lifecycle management come from partitioning.
+
+<Compare
+  leftTitle="Index"
+  rightTitle="Partition"
+  left={"A secondary structure on top of the table. Quickly finds rows by a selective condition anywhere in the table. You still need indexes inside every partition."}
+  right={"A physical split of data by key. Delivers pruning on the partition key and instant lifecycle management (dropping a whole chunk)."}
+  verdict="They don't replace each other: indexes speed up point lookups, partitions speed up queries on the partition key and make data rotation cheap."
+/>
+
+## Time and lifecycle: where partitions really pay off
+
+The strongest reason to partition isn't read speed, it's data lifecycle management. Back to the nightly `DELETE` from the opening. In an ordinary table, deleting an old month's worth of data reads and marks millions of rows, holds locks, spawns dead row versions, and then `VACUUM` has to chase after them. In a table sliced by month, dropping an old month means detaching or dropping an entire partition: a metadata operation, nearly instant, with no load on the rest of the data. Want to move it to cold storage instead of deleting it? Detach the partition and export it separately. The "keep a year, archive the rest" rotation becomes trivial on time-based partitions, and that alone is often the whole reason teams partition in the first place.
+
+## Declarative partitioning in Postgres
+
+In PostgreSQL this gets declared right in the schema, hence the name declarative partitioning. You declare the parent table partitioned by a key (say, by range on `created_at`), then create child partitions for specific intervals: one per month. The application reads and writes the parent table like an ordinary one, and the planner routes rows to the right partition and prunes the rest on reads. A new month means creating a new child partition; a month aging out of the retention window means detaching the old one. Teams often set up automation that creates partitions several periods ahead of time, so an insert never hits a missing partition.
+
+## Edge cases
+
+- **A query with no partition key filter.** There's nothing to prune, and the planner scans every partition. With many partitions this can even be slightly more expensive than an ordinary table. The shape of your frequent queries needs to include the partition key, or there's no payoff.
+- **Too many partitions.** Thousands of tiny partitions inflate planning time and the planner's memory use. Pick a sane granularity, usually a month or a week, not an hour.
+- **Global uniqueness.** A uniqueness constraint that doesn't include the partition key is hard: the database has to check it separately in every partition. It helps to build the unique key so it includes the partition key.
+- **Skew between partitions.** A promo month can balloon several times over. On a single node this isn't the disaster it would be with sharding, but queries against that period get slower and maintenance gets heavier.
+
+<Figure caption="Partition skew · the June promo month absorbed several times more rows than its neighbors, so queries and maintenance on it are heavier.">
+  <BarChart
+    title="Rows per monthly partition, millions"
+    data={[
+      { label: 'Mar', value: 12 },
+      { label: 'Apr', value: 14 },
+      { label: 'May', value: 13 },
+      { label: 'Jun', value: 58 },
+      { label: 'Jul', value: 15 },
+    ]}
+    unit="M"
+    highlight={['Jun']}
+  />
+</Figure>
+
+## Common mistakes
+
+- **Partitioning by the wrong key.** If frequent queries filter on `user_id` but the table is sliced by date, pruning won't kick in. Pick the key to match the queries.
+- **Expecting partitions to do an index's job.** Partitions don't speed up a point selective lookup on their own. You still need indexes inside partitions.
+- **Deleting old data with a plain DELETE in a partitioned table.** The whole point of time-based partitions is detaching and dropping an entire partition, not running a row-by-row delete.
+- **Slicing too finely.** Hourly partitions across years of history means tens of thousands of chunks and a slow planner. Start with a month.
+
+<KeyTakeaways
+  items={[
+    "Partitioning cuts one logical table into physical partitions inside a single node; it adds no hardware capacity.",
+    "You can slice by range (most often by time), by a list of values, or by hashing the key for an even split.",
+    "Partition pruning speeds up a query by skipping irrelevant partitions, but only when the query filters on the partition key.",
+    "Partitions and indexes don't replace each other: indexes speed up point lookups, partitions deliver pruning and cheap data rotation.",
+    "The biggest reason to partition by time is instant deletion and archival of a whole partition instead of a heavy row-by-row DELETE.",
+  ]}
+/>
+
+## References
+
+- [PostgreSQL: Table Partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html)
+- [Martin Kleppmann, Designing Data-Intensive Applications, chapter 6](https://dataintensive.net/)

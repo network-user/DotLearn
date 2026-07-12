@@ -1,0 +1,218 @@
+exercises:
+  - id: litestar-overview-what-is-001
+    concept: litestar-overview
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What do Litestar and FastAPI have in common at the deployment level?"
+    choices:
+      - id: a
+        text: "Both are ASGI applications, so they run under the same server, e.g. `uvicorn module:app`."
+      - id: b
+        text: "Both use msgspec by default to serialize request bodies."
+      - id: c
+        text: "Both require controller classes to register any route."
+      - id: d
+        text: "Both only work synchronously and don't support async handlers."
+    correct: [a]
+    explanation: "Both Litestar and FastAPI implement the ASGI contract, so you run them with the same ASGI server. They differ in how they turn an ASGI call into a call to your function, not in how you start them."
+    variants:
+      - prompt: "Which serialization library does Litestar use by default?"
+        choices:
+          - id: a
+            text: "msgspec - a serialization and validation library built for speed."
+          - id: b
+            text: "Pydantic, just like FastAPI; Litestar has no alternative."
+          - id: c
+            text: "The standard `json` module, without any validation."
+          - id: d
+            text: "marshmallow - Litestar is built around it."
+        correct: [a]
+        explanation: "By default Litestar uses msgspec. It can also work with Pydantic, dataclasses, and TypedDict - msgspec is just the default."
+      - prompt: "How does Litestar treat sync (`def`) handlers?"
+        choices:
+          - id: a
+            text: "It supports them and offloads blocking code to a thread pool, just like FastAPI."
+          - id: b
+            text: "It forbids them: only `async def` handlers are allowed in Litestar."
+          - id: c
+            text: "It runs them right on the event loop thread, blocking the whole server."
+          - id: d
+            text: "It ignores them and returns 404 for such routes."
+        correct: [a]
+        explanation: "Litestar is designed to be asynchronous, but it supports regular `def` handlers and offloads them to a thread pool so their blocking code doesn't freeze the event loop - the same way FastAPI does."
+
+  - id: litestar-overview-register-001
+    concept: litestar-overview
+    type: theory-quiz
+    difficulty: 2
+    prompt: "A handler is decorated with `@get(\"/items\")`, but not passed to `route_handlers` or any router/controller. What will `GET /items` return?"
+    choices:
+      - id: a
+        text: "404: the `@get` decorator alone doesn't register the handler with the app - it needs an explicit entry in `route_handlers`."
+      - id: b
+        text: "200: the `@get` decorator automatically attaches the handler to the nearest app."
+      - id: c
+        text: "500: Litestar will crash on startup because of an unregistered handler."
+      - id: d
+        text: "The handler will run, but without parameter validation."
+    correct: [a]
+    explanation: "Unlike `@app.get` in FastAPI, the `@get` decorator in Litestar returns a standalone handler object and tells the app nothing. Without explicit registration through `route_handlers` (directly or via a router/controller), the path doesn't exist - hence the 404."
+    hints:
+      - "Recall how handler registration in Litestar differs from `@app.get` in FastAPI. Who \"sees\" whom?"
+      - "The `@get` decorator creates a handler object, but the link to the app only forms in one place."
+
+  - id: litestar-overview-fill-app-001
+    concept: litestar-overview
+    type: fill-in-blanks
+    difficulty: 1
+    prompt: "Complete a minimal Litestar app with one handler at the root."
+    template: |
+      from litestar import Litestar, get
+
+      @{{decorator}}("/")
+      async def index() -> dict:
+          return {"hello": "world"}
+
+      app = Litestar({{param}}=[index])
+    blanks:
+      decorator:
+        accept: ["get"]
+      param:
+        accept: ["route_handlers"]
+    variants:
+      - prompt: "Complete the registration of a `create` handler decorated for creating a resource."
+        template: |
+          from litestar import Litestar, post
+
+          @{{decorator}}("/items")
+          async def create() -> dict:
+              return {"created": True}
+
+          app = Litestar(route_handlers=[{{handler}}])
+        blanks:
+          decorator:
+            accept: ["post"]
+          handler:
+            accept: ["create"]
+      - prompt: "Complete the decorator import and the app for a handler that lists items."
+        template: |
+          from litestar import Litestar, {{decorator}}
+
+          @get("/items")
+          async def list_items() -> list:
+              return []
+
+          app = {{cls}}(route_handlers=[list_items])
+        blanks:
+          decorator:
+            accept: ["get"]
+          cls:
+            accept: ["Litestar"]
+
+  - id: litestar-overview-predict-register-001
+    concept: litestar-overview
+    type: predict-output
+    difficulty: 2
+    prompt: "What does the program print? It models handler registration: a path exists only if its handler made it into `route_handlers`."
+    snippet: |
+      route_handlers = ["index", "create"]
+      requested = ["/", "/items", "/missing"]
+      routes = {"index": "/", "create": "/items"}
+
+      registered_paths = {routes[h] for h in route_handlers}
+      for path in requested:
+          print(path, 200 if path in registered_paths else 404)
+    expected:
+      kind: stdout
+      value: "/ 200\n/items 200\n/missing 404"
+    hints:
+      - "Only paths whose handlers are listed in `route_handlers` are registered. Which paths land in `registered_paths`?"
+      - "Build the set of paths from the two registered handlers, then check membership for each requested path."
+    variants:
+      - snippet: |
+          route_handlers = ["health"]
+          requested = ["/health", "/"]
+          routes = {"health": "/health", "index": "/"}
+
+          registered_paths = {routes[h] for h in route_handlers}
+          for path in requested:
+              print(path, 200 if path in registered_paths else 404)
+        expected:
+          kind: stdout
+          value: "/health 200\n/ 404"
+      - snippet: |
+          route_handlers = ["a", "b", "c"]
+          routes = {"a": "/a", "b": "/b", "c": "/c"}
+          requested = ["/b", "/x"]
+
+          registered_paths = {routes[h] for h in route_handlers}
+          for path in requested:
+              print(path, 200 if path in registered_paths else 404)
+        expected:
+          kind: stdout
+          value: "/b 200\n/x 404"
+
+  - id: litestar-overview-predict-classify-001
+    concept: litestar-overview
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? It formalizes when `async def` actually pays off: only when there's an await on I/O inside."
+    snippet: |
+      def benefit(is_async, has_await_io):
+          if is_async and has_await_io:
+              return "async pays off"
+          if is_async and not has_await_io:
+              return "async with no benefit"
+          return "plain def"
+
+      print(benefit(True, True))
+      print(benefit(True, False))
+      print(benefit(False, False))
+    expected:
+      kind: stdout
+      value: "async pays off\nasync with no benefit\nplain def"
+    hints:
+      - "Async only wins while waiting on I/O. What happens to an `async def` with no await inside it at all?"
+      - "Apply the conditions in the order written: first async with await on I/O, then async without it, then everything else."
+    variants:
+      - snippet: |
+          def benefit(is_async, has_await_io):
+              if is_async and has_await_io:
+                  return "async pays off"
+              if is_async and not has_await_io:
+                  return "async with no benefit"
+              return "plain def"
+
+          print(benefit(False, True))
+          print(benefit(True, True))
+        expected:
+          kind: stdout
+          value: "plain def\nasync pays off"
+      - snippet: |
+          def serializer(use_pydantic):
+              return "pydantic" if use_pydantic else "msgspec"
+
+          print(serializer(False), serializer(True))
+        expected:
+          kind: stdout
+          value: "msgspec pydantic"
+
+  - id: litestar-overview-differences-001
+    concept: litestar-overview
+    type: theory-quiz
+    difficulty: 4
+    prompt: "A colleague claims: \"Let's switch to Litestar because it's always faster than FastAPI.\" What's a fair, substantive objection?"
+    choices:
+      - id: a
+        text: "msgspec's edge is real on JSON serialization, but on a typical service that hits a database and the network, it gets lost in overall response time - choosing a framework on that basis alone isn't sound."
+      - id: b
+        text: "There's no objection: Litestar handles requests faster in every scenario thanks to async."
+      - id: c
+        text: "Litestar is slower than FastAPI across the board because its layered architecture adds overhead on every request."
+      - id: d
+        text: "Speed depends only on the Python version, not the framework, so there's no difference between them at all."
+    correct: [a]
+    explanation: "\"Litestar is faster\" is a claim about defaults (msgspec) and serializer microbenchmarks. Under real I/O-bound load, the bottleneck is usually the database or the network, and the serializer's edge dissolves. Picking a framework purely on serialization benchmarks is optimizing the wrong thing; what matters is the code organization model, the ecosystem, and how comfortable it is for the team."
+    hints:
+      - "Ask exactly where Litestar is faster and what share of response time that part takes on a real service."
+      - "What usually takes longer: parsing JSON, or waiting on a database response over the network?"

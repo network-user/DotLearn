@@ -1,0 +1,112 @@
+---
+conceptId: caching
+title: "Caching: How the Web Avoids Asking Twice"
+estimatedMinutes: 15
+---
+
+# Caching: how the web avoids fetching the same thing twice
+
+The team ships a new version of the site. The tester sees it, half the users see it too, and the other half keeps staring at the old version for a week and files bugs like "nothing changed for me." Nobody's really at fault, somewhere the server's old responses got saved, in browsers, in a CDN, and kept getting served without ever asking the server again. Caching is the web's single biggest performance win, and its single biggest source of mystery bugs, and both are controlled by the same set of headers.
+
+## Mental model: fresh, or worth checking
+
+A cache is a warehouse of previously received responses. When the browser is about to repeat a request, it checks the warehouse and decides using the flow in Figure 1, and the whole thing boils down to two questions.
+
+**Question 1: is the response still fresh?** Every stored response has an expiration the server set with a header. Until that expires, the cache hands back the copy instantly, without contacting the server at all. This state is called fresh.
+
+**Question 2: if it's expired, is the copy still correct?** An expired (stale) copy doesn't get thrown away. The cache asks the server: "I have version X, is it still current?" That's called validation: if the content hasn't changed, the server answers with a short `304 Not Modified` and no body, and the cache keeps using its copy. The body only travels over the network when it's genuinely new.
+
+<Figure caption="How a cache decides: serve a fresh copy immediately, validate a stale one, and only send the body over the network when something actually changed.">
+  <PipelineFigure
+    title="What happens on a repeat request"
+    stages={[
+      { label: 'Request', note: 'a copy exists in the warehouse' },
+      { label: 'Fresh?', note: "max-age hasn't expired, serve it", active: true },
+      { label: 'Validate', note: 'If-None-Match sent to server' },
+      { label: '304', note: 'unchanged, keep the copy', active: true },
+      { label: '200', note: 'changed, new body' },
+    ]}
+  />
+</Figure>
+
+## Cache-Control: instructions for every warehouse
+
+The expiration date and storage rules are governed by the response's `Cache-Control` header. Its directives are a small vocabulary worth knowing by heart:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/css
+Cache-Control: public, max-age=31536000, immutable
+
+body { color: #222; }
+```
+
+**`max-age=31536000`** means the response stays fresh for that many seconds (a year, here). **`public`** means any cache can store it, including CDNs and proxies; **`private`** means only the user's own browser, the way personal pages get marked. **`immutable`** means "this will never change, don't even bother checking."
+
+The pair people mix up most often: **`no-cache`** and **`no-store`**. Despite the name, `no-cache` doesn't forbid caching at all, it means "you may store this, but validate with the server before every use." **`no-store`** is the one that really means "don't save a single byte anywhere," used for things like bank statements and anything that shouldn't sit in any warehouse along the way.
+
+## Validation: ETag and conditional requests
+
+For a cache to ask "has this changed," the server needs a way to identify a version of the content. That's what an **ETag** is for, a short fingerprint of the body, usually a hash, sent alongside the response:
+
+```http
+HTTP/1.1 200 OK
+ETag: "a3f5c9"
+Cache-Control: max-age=60
+
+{"stock": 14}
+```
+
+A minute later the copy has expired. The browser repeats the request, this time attaching the fingerprint in a conditional header, `If-None-Match`:
+
+```http
+GET /api/products/77 HTTP/1.1
+Host: api.example.com
+If-None-Match: "a3f5c9"
+```
+
+Two outcomes from here. If the product hasn't changed, the server replies `304 Not Modified` with no body, and the browser keeps using the old copy for another `max-age` seconds. If it has changed, an ordinary `200` comes back with a new body and a new ETag. The savings are obvious: instead of the whole body, only a few dozen bytes travel over the network.
+
+ETag has an older sibling, `Last-Modified` (a modification date) paired with the conditional header `If-Modified-Since` - the same idea, but less precise: only second-level granularity, and no protection against "the file was rewritten with identical content." When both are present, ETag wins.
+
+## Where caches live
+
+Between a user in Denver and a server in Virginia there are several warehouses along the way: the browser's cache on the user's disk, a CDN node near Denver, sometimes a corporate proxy in between. One `Cache-Control` header controls all of them at once, which is exactly why `public` versus `private` matters so much: a personal page that leaks into a shared CDN is someone else's private data showing up in another user's response.
+
+This is also where the `Vary` header from the [[headers]] concept comes back: if a server returns different responses for the same URL, a Russian version and an English one, a compressed one and an uncompressed one, it must declare `Vary: Accept-Language` or `Vary: Accept-Encoding`, so a shared cache doesn't hand the Russian HTML to an English-speaking client.
+
+## What will surprise you
+
+**Caching happens even if you never configured it.** A response with no `Cache-Control` is still fair game for browsers to cache heuristically, typically for a fraction of the time since its last modification. "I never set up caching, so where's this stale copy coming from" - this is where.
+
+**A 301 sticks around forever.** A permanent redirect with no explicit lifetime gets remembered by browsers for a very long time, and changing your mind later is nearly impossible: there's no button users can press to "clear someone else's redirect."
+
+**F5 and Ctrl+F5 are different requests.** A regular reload sends conditional requests (validation); a hard reload sends requests with `Cache-Control: no-cache` from the client, demanding everything fresh. So "it only shows up after a hard refresh" is a diagnosis pointing straight at caching.
+
+## Common mistakes
+
+**Reading no-cache as "don't cache."** For "don't store at all," that's `no-store`. `no-cache` means "store it, but check first" - the copy still sits on disk, which is already a problem for sensitive data.
+
+**A long max-age on HTML.** A page served with `max-age=31536000` will permanently stick users with the old version: the browser won't even bother asking the server. The right pattern, covered in the deep dive below, is a short lifetime on HTML and a long one on files with a hash in their name.
+
+**Forgetting Vary during negotiation.** A server that returns different representations for one URL without `Vary` will eventually serve the wrong version out of a shared cache, and you'll end up debugging it from scattered user complaints.
+
+<Detail summary="The pattern every frontend runs on">
+  Bundlers like Vite and Webpack put a content hash directly in the filename: styles.a3f5c9.css. A file like that can safely get a year-long max-age and immutable: if the content changes, the filename changes too, and the HTML just points to the new file. The HTML itself gets a short cache lifetime, or no-cache. The result is instant repeat loads with never an "I'm seeing an old version" complaint: updating the HTML atomically switches every reference over to fresh assets.
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A cache answers two questions: is the copy still fresh (max-age), and if not, is it still correct (validation via ETag).",
+    "304 Not Modified is a bodyless response meaning 'your copy is still good, keep using it.'",
+    "no-cache means 'store it, but validate before use'; no-store means 'don't save it anywhere at all.'",
+    "private limits storage to the user's own browser; public allows shared caches like a CDN.",
+    "The standard pattern: a short lifetime on HTML, a year-long max-age plus immutable on hashed asset filenames.",
+  ]}
+/>
+
+## References
+
+- [MDN: HTTP caching](https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching)
+- [RFC 9111: HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111)
+- [web.dev: Love your cache](https://web.dev/articles/love-your-cache)

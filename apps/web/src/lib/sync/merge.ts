@@ -20,8 +20,24 @@
 
 import type { ProgressExport } from '../progress-io';
 
-/** The blob the engine pushes: a v5 progress export plus an optional top-level device tag. */
-export type SyncSnapshot = ProgressExport & { syncDeviceId?: string };
+/** A propagated per-record deletion. `id` is `${table}:${recordKey}`; `deletedAt` is ISO. */
+export interface Tombstone {
+  id: string;
+  table: string;
+  recordKey: string;
+  deletedAt: string;
+}
+
+/**
+ * The blob the engine pushes: a v5 progress export plus an optional top-level device tag and an
+ * optional top-level tombstone list. Tombstones ride at the top level (not inside `data`) so
+ * importProgress keeps ignoring them; snapshots written before deletions-sync omit the field
+ * entirely (treated as empty).
+ */
+export type SyncSnapshot = ProgressExport & {
+  syncDeviceId?: string;
+  tombstones?: Tombstone[];
+};
 
 type Rec = Record<string, unknown>;
 
@@ -470,6 +486,8 @@ const attemptEventSpec: ContentSpec = {
   cap: ATTEMPT_EVENT_CAP,
 };
 
+const CHECKPOINT_RESULT_CAP = 4000;
+
 const checkpointSpec: ContentSpec = {
   parse: (raw) => {
     if (!isObject(raw)) return null;
@@ -493,6 +511,7 @@ const checkpointSpec: ContentSpec = {
       rec.confidence ?? '',
       rec.conceptTitle ?? '',
     ].join(' '),
+  cap: CHECKPOINT_RESULT_CAP,
 };
 
 // --- settings ---------------------------------------------------------------------------------
@@ -536,6 +555,107 @@ const settingsWinner = (a: SyncSnapshot, b: SyncSnapshot): SyncSnapshot => {
     return ca <= cb ? a : b;
   }
   return snapshotTieWinner(a, b);
+};
+
+// --- tombstones (deletion propagation) --------------------------------------------------------
+
+// The synced tables that carry genuine per-record USER deletions, mapped to the timestamp field
+// that marks a record's freshness. A tombstone kills a record iff deletedAt >= that field, so a
+// record re-created *after* the deletion (freshness strictly newer) survives. Every other synced
+// table stays purely additive (a deleted row is resurrected from whichever device still has it).
+const TOMBSTONE_FRESHNESS: Readonly<Record<string, string>> = {
+  bookmarks: 'createdAt',
+  highlights: 'createdAt',
+  conceptNotes: 'updatedAt',
+  userCards: 'createdAt',
+  interviewStudied: 'studiedAt',
+  conceptRead: 'readAt',
+};
+
+const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000; // prune deletions older than 90 days
+const TOMBSTONE_CAP = 2000; // and keep at most the newest 2000
+
+// Identity of a tracked record as a tombstone id. Every tracked table is keyed by `id` (a string
+// for all but interviewStudied, whose numeric id is stringified — matching how the engine's
+// 'deleting' hook stores recordKey).
+const trackedRecordTombstoneId = (table: string, rec: Rec): string => `${table}:${String(rec.id)}`;
+
+const parseTombstone = (raw: unknown): Tombstone | null => {
+  if (!isObject(raw)) return null;
+  const { id, table, recordKey, deletedAt } = raw;
+  if (!isString(id) || !isString(table) || !isString(recordKey) || !isString(deletedAt))
+    return null;
+  return { id, table, recordKey, deletedAt };
+};
+
+const tombstonesOf = (snap: SyncSnapshot): Tombstone[] => {
+  const raw = (snap as { tombstones?: unknown }).tombstones;
+  if (!Array.isArray(raw)) return [];
+  const out: Tombstone[] = [];
+  for (const entry of raw) {
+    const parsed = parseTombstone(entry);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+};
+
+// Union two tombstone lists by id keeping the later deletedAt (ties broken canonically so the
+// choice is symmetric), then prune: drop anything older than the TTL relative to `nowRef` and cap
+// to the newest N. `nowRef` is the later of the two snapshots' exportedAt (a deterministic proxy
+// for "now" — keeps this module pure so symmetry/idempotency hold without a wall clock).
+const mergeTombstones = (a: SyncSnapshot, b: SyncSnapshot, nowRef: number): Tombstone[] => {
+  const byId = new Map<string, Tombstone>();
+  const consume = (t: Tombstone): void => {
+    const existing = byId.get(t.id);
+    if (!existing) {
+      byId.set(t.id, t);
+      return;
+    }
+    const te = parseTime(existing.deletedAt, 0);
+    const tt = parseTime(t.deletedAt, 0);
+    if (tt > te) byId.set(t.id, t);
+    else if (tt === te && stableStringify(t) < stableStringify(existing)) byId.set(t.id, t);
+  };
+  for (const t of tombstonesOf(a)) consume(t);
+  for (const t of tombstonesOf(b)) consume(t);
+
+  let list = [...byId.values()];
+  if (nowRef > 0) {
+    const cutoff = nowRef - TOMBSTONE_TTL_MS;
+    list = list.filter((t) => parseTime(t.deletedAt, 0) >= cutoff);
+  }
+  if (list.length > TOMBSTONE_CAP) {
+    // Keep the newest by deletedAt; id break for a deterministic boundary, same idea as the
+    // attemptEvents cap.
+    list.sort((x, y) => {
+      const tx = parseTime(x.deletedAt, 0);
+      const ty = parseTime(y.deletedAt, 0);
+      if (tx !== ty) return ty - tx; // newest first
+      return x.id < y.id ? -1 : x.id > y.id ? 1 : 0;
+    });
+    list = list.slice(0, TOMBSTONE_CAP);
+  }
+  // Canonical order (by id) so the merged snapshot serializes byte-identically regardless of input
+  // order — required for symmetry and the engine's fingerprint.
+  list.sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  return list;
+};
+
+// Removes from each tracked table any record a tombstone kills (deletedAt >= the record's freshness
+// timestamp). Mutates `data` in place; untracked tables are left untouched (still additive).
+const applyTombstones = (data: Record<string, Rec[]>, tombstones: Tombstone[]): void => {
+  if (tombstones.length === 0) return;
+  const deadAt = new Map<string, number>();
+  for (const t of tombstones) deadAt.set(t.id, parseTime(t.deletedAt, 0));
+  for (const [table, freshnessField] of Object.entries(TOMBSTONE_FRESHNESS)) {
+    const rows = data[table];
+    if (!rows || rows.length === 0) continue;
+    data[table] = rows.filter((rec) => {
+      const dead = deadAt.get(trackedRecordTombstoneId(table, rec));
+      if (dead === undefined) return true;
+      return parseTime(rec[freshnessField], 0) > dead; // survive iff re-created after the deletion
+    });
+  }
 };
 
 // --- entry point ------------------------------------------------------------------------------
@@ -603,6 +723,14 @@ export const mergeSnapshots = (a: SyncSnapshot, b: SyncSnapshot): SyncSnapshot =
     ),
   };
 
+  // Union + prune deletion tombstones, then let them remove killed records from the tracked tables.
+  const nowRef = Math.max(
+    parseTime(a.exportedAt, Number.NEGATIVE_INFINITY),
+    parseTime(b.exportedAt, Number.NEGATIVE_INFINITY),
+  );
+  const tombstones = mergeTombstones(a, b, Number.isFinite(nowRef) ? nowRef : 0);
+  applyTombstones(data, tombstones);
+
   const winner = settingsWinner(a, b);
   const merged: SyncSnapshot = {
     app: 'dotlearn',
@@ -615,5 +743,6 @@ export const mergeSnapshots = (a: SyncSnapshot, b: SyncSnapshot): SyncSnapshot =
   if (hasSettings(winner))
     merged.settings = winner.settings as Exclude<ProgressExport['settings'], undefined>;
   if (winner.syncDeviceId !== undefined) merged.syncDeviceId = winner.syncDeviceId;
+  if (tombstones.length > 0) merged.tombstones = tombstones;
   return merged;
 };

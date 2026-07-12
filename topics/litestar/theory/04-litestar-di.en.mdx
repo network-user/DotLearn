@@ -1,0 +1,199 @@
+---
+conceptId: litestar-di
+title: "Dependency injection through Provide"
+estimatedMinutes: 14
+---
+
+# A handler asks for what it needs, instead of fetching it itself
+
+A handler that lists orders needs a database connection. The most direct approach is to open that connection right inside the function: build a client, hit the database, return the result. The trouble is that now every handler is responsible for creating its own resource, meaning it knows the connection string, repeats initialization code, and drags along the whole settings tree. Change how connections get created, and you're editing ten functions. And in tests there's nowhere to swap the real database for a fake - the handler builds it internally, on its own.
+
+Dependency injection (DI) flips this around. A handler doesn't fetch a connection - it declares in its signature that it needs a parameter with a given name, and the framework creates it and hands it over. Litestar does this through `Provide`: you register which function is responsible for a parameter, and the framework calls it before the handler, passing in the result. By the end of this section you'll understand how `Provide` ties a parameter name to a factory, which layers dependencies get declared on and how a lower layer overrides a higher one, how a sync dependency differs from an async one, when `use_cache` caching helps and when it quietly breaks your logic, and how one dependency can depend on another.
+
+## Mental model: binding by parameter name
+
+DI in Litestar is built around a single correspondence: **the key name in the dependency dictionary equals the handler's parameter name**. You register a dictionary `dependencies={"db": Provide(get_db)}`, and any handler (at this layer or below) whose signature includes a `db` parameter receives the result of calling `get_db()`. The link goes by matching names, not types.
+
+```python
+from litestar import Litestar, get
+from litestar.di import Provide
+
+async def get_db() -> str:
+    return "database connection"
+
+@get("/orders")
+async def list_orders(db: str) -> dict:
+    return {"db": db}
+
+app = Litestar(route_handlers=[list_orders], dependencies={"db": Provide(get_db)})
+```
+
+`Provide(get_db)` wraps the factory. The key `"db"` in the dependency dictionary matches the parameter name `db` in the handler - so the framework calls `get_db()` and puts the result into `db`. The handler has no idea how the connection actually gets built; it just receives a finished one.
+
+<Callout type="info">
+Compare this with FastAPI: there a dependency is injected via `Depends(get_db)` right in the parameter's default value (`db = Depends(get_db)`), and the link goes through the `Depends` object itself. In Litestar the link goes by name: the factory is registered in the `dependencies` dictionary under a key, and the handler's parameter picks it up by matching that key against its own name.
+</Callout>
+
+## Dependencies live on layers
+
+The most important thing about DI in Litestar: dependencies can be declared at any of the four hierarchy layers (application, router, controller, handler), just like the path prefixes from the routing section. A dependency declared on a layer is available to that layer and everything nested inside it.
+
+<Figure caption="The db dependency is declared on the app and visible to every layer below it. The user_repo dependency is declared on the controller and visible only to its handlers. Resolution runs top to bottom through the same hierarchy as routes.">
+  <Sketch viewBox="0 0 460 250" title="Dependency graph across layers">
+    <SketchBox x={70} y={14} width={320} height={40} />
+    <SketchLabel x={230} y={31} mono size={12}>Litestar(app)</SketchLabel>
+    <SketchLabel x={230} y={47} mono accent size={11}>dependencies: db</SketchLabel>
+
+    <SketchBox x={100} y={76} width={260} height={40} />
+    <SketchLabel x={230} y={93} mono size={12}>Controller /users</SketchLabel>
+    <SketchLabel x={230} y={109} mono accent size={11}>dependencies: user_repo</SketchLabel>
+
+    <SketchBox x={130} y={138} width={200} height={36} accent />
+    <SketchLabel x={230} y={160} mono accent size={11}>@get handler (db, user_repo)</SketchLabel>
+
+    <SketchArrow from={[230, 54]} to={[230, 76]} />
+    <SketchArrow from={[230, 116]} to={[230, 138]} accent />
+
+    <SketchBox x={40} y={196} width={380} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={230} y={212} size={11}>the handler sees both: db (from app) and user_repo (from controller)</SketchLabel>
+    <SketchLabel x={230} y={228} size={11}>a neighboring controller without user_repo wouldn't see it</SketchLabel>
+  </Sketch>
+</Figure>
+
+This layering gives you a practical rule of thumb: put an app-wide dependency (a DB pool, config) on `Litestar`, and something specific to a group of endpoints (a user repository) on their controller. To figure out where a handler's dependency comes from, walk up the layers - the same way you read a path.
+
+## A lower layer overrides a higher one
+
+If the same dependency name is declared at several layers, the one closest to the handler wins - a lower layer overrides a higher one. That lets you set a default dependency on the app and swap it out for a specific controller or handler.
+
+```python
+from litestar import Litestar, Controller, get
+from litestar.di import Provide
+
+async def default_repo() -> str:
+    return "default repository"
+
+async def special_repo() -> str:
+    return "special repository"
+
+class AdminController(Controller):
+    path = "/admin"
+    dependencies = {"repo": Provide(special_repo)}
+
+    @get("/")
+    async def index(self, repo: str) -> dict:
+        return {"repo": repo}
+
+app = Litestar(
+    route_handlers=[AdminController],
+    dependencies={"repo": Provide(default_repo)},
+)
+```
+
+At the app level, `repo` points to `default_repo`, but `AdminController` overrides that same `repo` key with its own `special_repo`. The `index` handler inside the controller gets `"special repository"` - the lower layer won. A handler anywhere else in the app, with no override, would get `default_repo`.
+
+<Callout type="warning">
+Overriding works by matching **key names**. Declare a dependency on the controller under a slightly different name (`repository` instead of `repo`), and no override happens - it becomes a second, independent dependency, and a handler with a `repo` parameter still gets the version from the layer above. Name drift is the usual cause of "why didn't this get overridden."
+</Callout>
+
+## Sync and async dependencies
+
+A dependency factory can be either `async def` or plain `def`. The framework awaits an async factory, and runs a sync one directly (offloading a blocking one to a thread pool, just like handlers). The choice follows the nature of the work: async for I/O (a database call, an HTTP request), sync for a pure computation or reading an already-available value.
+
+```python
+async def get_session() -> str:
+    return await open_db_session()
+
+def get_settings() -> dict:
+    return {"page_size": 20}
+```
+
+`get_session` is async because there's real I/O waiting inside. `get_settings` is sync - it just hands back a ready-made dict, no `await` needed. Declaring a dependency `async` "for consistency" when there's no `await` inside doesn't gain you anything - same as with handlers.
+
+## Caching: use_cache and its danger
+
+By default a dependency factory gets called fresh on every request. The `use_cache=True` flag changes that: the factory's result gets cached and reused. That saves work for values that are expensive but unchanging.
+
+```python
+from litestar.di import Provide
+
+Provide(load_config, use_cache=True)
+```
+
+Caching makes sense for values that really are the same across requests: a parsed config, a lookup table, a pool connection. But it's dangerous for anything tied to a specific request or that needs to be fresh: cache "the current user" or "the open transaction," and every request starts seeing the value from the very first call - one user gets shown another's data, transactions get crossed. Dependency caching means "compute once for the whole app," not "once per request."
+
+<PullQuote>
+use_cache says "this value is the same for every request." If that's not true, you just showed one user's data to everyone else.
+</PullQuote>
+
+## Nested dependencies
+
+A dependency can itself depend on another: its factory declares a parameter in its own signature named after another dependency, and the framework resolves the chain. This is how layers get built: a "session" depends on an "engine," a "repository" depends on a "session."
+
+```python
+from litestar import Litestar, get
+from litestar.di import Provide
+
+async def get_engine() -> str:
+    return "engine"
+
+async def get_session(engine: str) -> str:
+    return f"session({engine})"
+
+async def get_repo(session: str) -> str:
+    return f"repo[{session}]"
+
+@get("/users")
+async def list_users(repo: str) -> dict:
+    return {"repo": repo}
+
+app = Litestar(
+    route_handlers=[list_users],
+    dependencies={
+        "engine": Provide(get_engine),
+        "session": Provide(get_session),
+        "repo": Provide(get_repo),
+    },
+)
+```
+
+The handler only asks for `repo`. But `get_repo` declares a `session` parameter, and `get_session` declares an `engine` parameter. The framework resolves the chain bottom-up: it builds `engine`, passes it into `get_session`, passes that result into `get_repo`, and hands the finished `repo` to the handler. A parameter on one factory that matches another dependency's key by name is exactly how you declare "I depend on this."
+
+## Edge cases
+
+**Overriding replaces entirely - it doesn't "add on."** A lower layer doesn't combine its factory with the one above it - it completely displaces it for its subtree. Override `repo` on a controller, and the upper factory simply never runs for its handlers; there's no way back to it within that subtree.
+
+**`use_cache` caches for the whole app, not per request.** A common misconception is that the cache lives within a single request. It doesn't: a cached value outlives the request and gets served to every one after it. For "compute once per request," you don't want caching at all - just an ordinary (uncached) dependency, since within one request nothing calls it twice unnecessarily, and it's rebuilt fresh between requests anyway.
+
+**A parameter name is a contract.** Since binding happens by name, renaming a handler's parameter (`db` → `database`) silently breaks its link to the `db` dependency: the framework can no longer find the key under the new name. No type annotation saves you here - it's name matching, not type matching.
+
+## Common mistakes
+
+- **Creating a resource inside the handler instead of a dependency.** Opening a connection right in the handler body means duplicating initialization and losing the ability to swap the resource in tests. The resource should arrive through `Provide`, so a test can substitute a fake factory.
+- **Declaring a dependency at the wrong layer.** A dependency only one controller needs shouldn't sit on the whole app (it clutters the global namespace); one shared by everyone shouldn't be duplicated on every controller. Pick the layer based on the dependency's actual scope.
+- **Caching a request-dependent value.** `use_cache=True` on "the current user," "the session," "the request time" is a recipe for data leaking between requests. Only cache things that are genuinely the same for everyone.
+- **Letting the key name and the parameter name drift apart.** A dependency registered as `"user_repo"`, with a parameter named `repo` - there's no link, the framework won't inject anything. The key name and the parameter name have to match exactly.
+
+<Detail summary="Why layered DI, and how it relates to testability">
+
+Layered DI applies the same principle as layered routing: a fact about a group of endpoints gets recorded in one place, at the right level. A shared app-wide dependency isn't repeated in every handler; a controller-specific one doesn't pollute the rest of the app. But DI's real payoff is testing. When a handler creates its own database connection, you can't test it in isolation - the test inevitably spins up a real database. When the connection arrives through `Provide`, a test can assemble a mini app and register a factory under the same key that returns a fake, and the handler, none the wiser, works against the fake. That's exactly why DI and explicit handler registration (from the first section) are two sides of the same idea: code that declares what it needs declaratively, instead of fetching it itself, is easy to assemble in any configuration, including a test one. The cost is indirection: to know what actually lands in `db`, you have to find which layer and which factory declared that dependency, and not confuse it with an override further down.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "DI ties a dependency to a handler by matching names: the key in the dependencies dict must match the handler's parameter name; Provide(factory) wraps the factory.",
+    "Dependencies are declared at any of the four layers (app/router/controller/handler) and are visible to nested layers - just like path prefixes.",
+    "With the same name at different layers, the lower layer fully overrides the higher one (not merges with it); the override only kicks in on an exact key-name match.",
+    "A factory can be async (for I/O) or sync (for a ready value/computation); go async only when there's a real await inside.",
+    "use_cache=True caches the result for the whole app, not per request; caching a request-dependent value (current user, session) leaks data between requests.",
+    "A dependency can depend on another: a parameter on its factory that matches another dependency's key by name declares a nested dependency, and the framework resolves the chain.",
+  ]}
+/>
+
+## References
+
+- [Litestar - Dependency Injection](https://docs.litestar.dev/latest/usage/dependency-injection.html)
+- [Litestar - Provide and use_cache](https://docs.litestar.dev/latest/usage/dependency-injection.html#dependency-caching)
+- [Litestar - Dependencies across layers](https://docs.litestar.dev/latest/usage/dependency-injection.html#overriding-dependencies)
+- [FastAPI - Dependencies (for comparison)](https://fastapi.tiangolo.com/tutorial/dependencies/)

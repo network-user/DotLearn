@@ -1,0 +1,141 @@
+---
+conceptId: s3-object-model
+title: "Object storage explained: buckets, objects, and keys"
+estimatedMinutes: 14
+---
+
+# S3 has no folders, even though you see them every day
+
+Open the web console of any cloud storage service and you'll see a familiar picture: a folder `users/`, inside it `42/`, inside that, `avatar.png`. You click through folders like in a file explorer. Then you read the docs and hit a strange sentence: "S3 has no directories, it's a flat namespace." Is someone lying? The folders are right there on the screen.
+
+No one's lying. There really are no folders - there's just a single object named `users/42/avatar.png`, where the slashes are part of the name, exactly like the letters. The console paints the illusion of a tree by splitting names on slashes, but the storage itself has no directory nodes and no nesting. By the end of this section you'll understand why it's built this way, how object storage differs from a filesystem and a block device, and why "moving a folder" in S3 actually means copying and deleting every file one by one.
+
+## Mental model: a giant dictionary from key to bytes
+
+The easiest way to think about object storage is as a huge dictionary spread across a data center. The key is a string (the object's name), the value is the file's content plus its metadata. That's it. No inodes, no blocks, no directory tree. You put bytes under a string key and get them back with that same key.
+
+Three concepts define the whole model. A **bucket** is a named top-level container that objects live in; a bucket name is globally unique within the provider. An **object** is the data plus its metadata. A **key** is the object's full string name inside the bucket - it's the key you pass to write or read it. Any object's address is just the pair "bucket + key," nothing more.
+
+<Figure caption="A bucket is a flat mapping from a string key to bytes. Slashes in the key are ordinary characters, not transitions between directories.">
+  <Sketch viewBox="0 0 460 220" title="Bucket as a key-to-object mapping">
+    <SketchBox x={20} y={20} width={120} height={180} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={80} y={40} weight="bold">bucket</SketchLabel>
+    <SketchLabel x={80} y={58} mono size={11}>ozon-media</SketchLabel>
+
+    <SketchBox x={180} y={30} width={150} height={28} accent />
+    <SketchLabel x={255} y={49} mono size={11}>users/42/avatar.png</SketchLabel>
+    <SketchBox x={180} y={96} width={150} height={28} accent />
+    <SketchLabel x={255} y={115} mono size={11}>users/7/avatar.png</SketchLabel>
+    <SketchBox x={180} y={162} width={150} height={28} accent />
+    <SketchLabel x={255} y={181} mono size={11}>logs/2026/06/app.log</SketchLabel>
+
+    <SketchBox x={370} y={30} width={70} height={28} />
+    <SketchLabel x={405} y={49} mono size={10}>bytes</SketchLabel>
+    <SketchBox x={370} y={96} width={70} height={28} />
+    <SketchLabel x={405} y={115} mono size={10}>bytes</SketchLabel>
+    <SketchBox x={370} y={162} width={70} height={28} />
+    <SketchLabel x={405} y={181} mono size={10}>bytes</SketchLabel>
+
+    <SketchArrow from={[330, 44]} to={[370, 44]} accent />
+    <SketchArrow from={[330, 110]} to={[370, 110]} accent />
+    <SketchArrow from={[330, 176]} to={[370, 176]} accent />
+  </Sketch>
+</Figure>
+
+Look at the keys in the diagram: `users/42/avatar.png` and `users/7/avatar.png` are two independent keys in one flat list. Their shared start, `users/`, doesn't create any directory - it's just a matching string prefix. Storage doesn't "go into the users folder"; it looks for an exact key match.
+
+## Object vs. file vs. block storage
+
+To see why this unusual model exists, compare three ways of storing data. Block storage (a regular disk, an EBS volume) hands you raw fixed-size blocks, and the operating system builds a filesystem on top. File storage (NFS, a network share) gives you a directory tree and files you can open, append to in the middle, and lock for writing. Object storage gives you neither: an object is written and read whole, you can't open it and append in the middle, and you can't mount it as a disk.
+
+<Compare
+  leftTitle="Filesystem"
+  rightTitle="Object storage (S3)"
+  left={<>
+
+- A directory tree, real nesting
+- Files are opened and read/written in chunks
+- You can append into the middle of a file
+- Grows up to the size of the disk
+- Accessed by a path in the tree
+
+  </>}
+  right={<>
+
+- A flat list of keys, folders are an illusion
+- Objects are written and read whole
+- You can't edit part of an object, only re-upload it
+- Grows with virtually no limit
+- Accessed over an HTTP API, the key is the address
+
+  </>}
+  verdict="A filesystem suits mutable data under load; object storage trades away nesting and partial writes for near-unlimited scale and network access."
+/>
+
+The price of these constraints buys you scale and durability. By giving up the directory tree and locking, object storage spreads its flat list of keys across thousands of servers and keeps several copies of each object in different places. That's how S3 holds trillions of objects while your network share doesn't. For user avatars, backups, receipts, video, and logs - data written once and read many times - that trade-off pays off.
+
+## Regions: where the bytes physically live
+
+A bucket is created in a specific **region** - a geographic area of data centers (say, `eu-central-1` on AWS or `ru-central1` on Yandex Cloud). You pick a region for two reasons: latency (closer to your users is faster) and data residency requirements (personal data often has to stay inside a country). An object physically lives in the region you chose until you explicitly set up replication to another one.
+
+Within a region, the provider keeps copies of an object across several independent availability zones - separate facilities with their own power and networking. Losing one facility doesn't lose the data. That redundancy is exactly what gives you the next property.
+
+## Durability vs. availability: different "nines"
+
+Two words that are easy to mix up mean very different things. **Durability** is the probability that an object is never lost for good. **Availability** is the probability that you can read it right now. An object can be alive but temporarily unreachable - these are separate axes.
+
+S3 Standard advertises "eleven nines" of durability - 99.999999999% per year. In practice: store ten million objects, and statistically you'd expect to lose roughly one object every ten thousand years. That's achieved by copying each object across zones many times over. Availability is a more modest 99.99% (four nines): the service can be unreachable for reads for a few dozen minutes a year, while the data underneath stays intact.
+
+<Callout type="info">
+Eleven nines of durability doesn't mean you can't lose data. You can delete an object yourself, overwrite it, or let a broken access policy wipe it out. The "nines" protect you against the provider's hardware failing, not against your own mistakes - for that there's versioning, covered in section five.
+</Callout>
+
+## Metadata: what travels alongside the bytes
+
+Along with its content, an object carries metadata - key-value pairs. Some of it is system-managed: `Content-Type` (affects how a browser opens the file), `Content-Length` (size), `ETag` (usually an MD5 hash of the content, used to verify integrity), a last-modified date, and the storage class. Some of it you set yourself - custom metadata prefixed with `x-amz-meta-`, for example `x-amz-meta-author: Anna`.
+
+Metadata can be read separately from the body. A `HEAD` request against a key returns only the metadata without downloading the content - that's how you find out a file's size and type without paying to transfer gigabytes.
+
+## Edge case: "renaming a folder" means copying everything
+
+This is where filesystem intuition fails hardest. In a file explorer, renaming the folder `users/` to `clients/` is instant: one entry in the tree changes. In S3 there's no `users/` directory at all, just objects whose keys happen to start with `users/`. To "rename a folder," the storage has to create a copy of every one of those objects under a new key and delete the old one. A thousand objects under a prefix means a thousand copies and a thousand deletes.
+
+The same goes for "moving" an object - there's no move operation at all. The key is an immutable part of the address; changing it only happens through copy + delete. That's why bulk renames in object storage are slow and cost money in requests, while in a filesystem they're free.
+
+## Surprise: consistency is strong now
+
+For years, S3 was eventually consistent for reads after writes: you'd write an object, immediately request it, and might get a stale version or a `404` until the copies synced up. That broke people's intuition and caused subtle bugs. Since December 2020, S3 gives you **strong read-after-write consistency**: right after a successful `PUT`, any `GET` or `LIST` is guaranteed to see the new data. Write it, and you read exactly what you wrote, with no propagation delay.
+
+<Callout type="warning">
+Old articles and forum answers still warn about "eventual consistency in S3" and suggest workarounds like retrying reads with a delay. For modern S3, that's outdated advice. But do check S3-compatible stores separately: the consistency level in MinIO, Yandex Object Storage, or VK Cloud is defined by their own implementation and doesn't have to match AWS.
+</Callout>
+
+## Common mistakes
+
+- **Treating S3 like a network drive.** You can't mount a bucket and append to the middle of a file the way you would on a regular disk. Changing an object means re-uploading it whole under the same key. Tools like `s3fs` simulate a filesystem, but every "append" hides a full object rewrite underneath.
+- **Thinking a prefix is a folder with a fixed traversal cost.** Getting the "contents of a folder" means listing every key with that prefix, an operation that gets more expensive the more objects there are. There's no directory in S3 that instantly hands you a list of children.
+- **Confusing durability and availability.** "Eleven nines" is about the object never disappearing, not about it always being reachable this very second. Availability is lower by several orders of magnitude, and you need to plan for both numbers separately.
+
+<Detail summary="Where the name S3 actually comes from, and why its API became a standard">
+
+S3 stands for Simple Storage Service - three words starting with S. Amazon launched it in 2006, and it was one of the very first public cloud products. Its HTTP API turned out to be so successful and widely adopted that it became a de facto standard for object storage: dozens of other storage systems implement the same protocol so that clients and libraries (boto3 included) can talk to them without any rewriting. That's why MinIO (which you can run on your own server), Yandex Object Storage, VK Cloud, Selectel, and many others call themselves "S3-compatible": you swap the endpoint and access keys, and the code stays the same. Almost everything you know about S3's model carries over - only details like the consistency level and the set of storage classes differ.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "S3 is a flat dictionary from key to bytes, not a directory tree: slashes in a key are ordinary characters, and folders are just something the console draws.",
+    "An object's address is the pair \"bucket + key\"; objects are written and read whole, and partial writes or mounting as a disk aren't possible.",
+    "A bucket lives in a specific region; within that region, copies of an object are spread across availability zones, which is what gives you durability.",
+    "Durability (the object won't be lost, \"eleven nines\") and availability (the object is reachable right now, ~four nines) are different axes - don't conflate them.",
+    "\"Renaming a folder\" means copy + delete for every object under that prefix - a slow, billable operation, not an instant move.",
+    "Since 2020, AWS S3 gives you strong read-after-write consistency; for S3-compatible stores you need to check the consistency level separately.",
+  ]}
+/>
+
+## References
+
+- [Amazon S3 - How S3 works](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html)
+- [Amazon S3 - Organizing objects using prefixes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-prefixes.html)
+- [Amazon S3 - Data consistency model](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel)
+- [Yandex Object Storage - S3 API compatibility](https://yandex.cloud/en/docs/storage/s3/)

@@ -1,0 +1,135 @@
+---
+conceptId: btree-internals
+title: "B-trees under the hood: why searching a million rows takes three reads"
+estimatedMinutes: 12
+---
+
+# B-trees under the hood: why searching a million rows takes three reads
+
+In the previous chapter, the index found the right rows without ever looking at the rest. Now it's time to answer honestly how. The naive guess goes like this: since the index values are sorted, the database just does a binary search over them. For a million rows that's around twenty comparisons. Fast, but the guess hides a problem: the data lives on disk, not in an in-memory array, and every binary-search jump to a random spot is a separate disk read. Twenty random reads for a single lookup is already expensive, and a million rows is a modest size for a database.
+
+A real index is cleverer than that. It finds the same million rows in three or four disk accesses, not twenty. The secret is a structure called a B-tree: a balanced tree where each node isn't a single value but an entire page holding hundreds of keys. By the end of this chapter you'll understand why such a tree's height is a logarithm with a huge base, why it's equally good at point lookups and range scans, why an `ORDER BY` on an indexed column needs no separate sort, and why a hash index, for all its speed, can't replace a B-tree.
+
+## A tree of pages, not numbers
+
+A database doesn't read or write the disk one value at a time; it works in fixed-size pages (4096 bytes by default in SQLite). That page is its unit of exchange: even to fetch a single number, it pulls an entire page off disk. A B-tree is built around that fact. Every node in the tree is one page, and a page holds not one key but hundreds: sorted keys plus references to the pages one level down.
+
+The search goes top to bottom. The topmost page (the root) holds a handful of separator values and tells you which lower page to descend into. That page, in turn, sends you a level lower still. After a few hops you land on the bottommost page (a leaf), which holds the key you're after and a reference to the table row.
+
+<Figure caption="Descending for key 55: the root routes to the middle leaf, skipping the other two. The separators on a page decide which branch to take.">
+  <Sketch viewBox="0 0 440 210" title="Descending a B-tree for key 55">
+    <SketchBox x={160} y={18} width={120} height={30} accent />
+    <SketchLabel x={220} y={38} mono accent>40 · 70</SketchLabel>
+    <SketchBox x={16} y={140} width={116} height={32} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={74} y={160} mono>10·20·30</SketchLabel>
+    <SketchBox x={162} y={140} width={116} height={32} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={160} mono>40·50·60</SketchLabel>
+    <SketchBox x={308} y={140} width={116} height={32} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={366} y={160} mono>70·80·90</SketchLabel>
+    <SketchHighlight x={158} y={136} width={124} height={40} />
+    <SketchArrow from={[196, 48]} to={[74, 138]} curve dashed />
+    <SketchArrow from={[220, 48]} to={[220, 138]} accent />
+    <SketchArrow from={[244, 48]} to={[366, 138]} curve dashed />
+    <SketchLabel x={120} y={100} muted>under 40</SketchLabel>
+    <SketchLabel x={236} y={96} accent>40..70</SketchLabel>
+    <SketchLabel x={352} y={100} muted>70+</SketchLabel>
+  </Sketch>
+</Figure>
+
+In the diagram, key 55 falls between the separators 40 and 70, so the root routes straight to the middle leaf. The other two leaves never get read at all. This is how a tree eliminates almost the whole table in just a handful of pages.
+
+## Height is a logarithm with a large base
+
+The key metric for a B-tree is fanout: how many references fit on one page. If a page holds around two hundred keys, each level you descend narrows the search space not by half, as in binary search, but by a factor of two hundred. That's where the height comes from: it equals the logarithm of the row count, with the fanout as the base.
+
+Do the math on your fingers. One level above the leaves covers 200 pages, two levels is 200 squared, around forty thousand, three levels is eight million. So a tree three or four pages tall can address millions of rows. The non-obvious consequence: height grows agonizingly slowly.
+
+<Figure caption="Tree height grows logarithmically · a thousandfold increase in row count adds only one or two levels. Values are illustrative, assuming a fanout of hundreds of keys per page.">
+  <LineChart
+    title="B-tree height vs. row count"
+    xLabel="rows, 10 to the power of x"
+    yLabel="height, levels"
+    series={[
+      {
+        name: 'height',
+        points: [
+          { x: 3, y: 2 },
+          { x: 6, y: 3 },
+          { x: 9, y: 4 },
+          { x: 12, y: 5 },
+        ],
+      },
+    ]}
+  />
+</Figure>
+
+The chart above makes the main point: raising the height by one level requires multiplying the row count by hundreds. A table with a million rows and one with a billion differ in point-lookup cost by only one or two extra reads. That's exactly why indexes scale: they barely notice data growth.
+
+## One mechanism for both points and ranges
+
+You've already seen point lookups: descending from root to leaf for a specific key. But a B-tree has a second ability that hash indexes lack: ranges. The tree's leaves aren't scattered; they're linked into a sorted chain. To run `amount BETWEEN 500 AND 800`, the engine descends to the first leaf holding a value at or above 500, then simply walks the leaf chain in order, handing back rows until the value passes 800. Not a single wasted leaf.
+
+That same sortedness gives you `ORDER BY` for free. If a query asks for rows in the order of an indexed column, the engine doesn't need to collect every row and sort it: it just reads the leaf chain, which is already in ascending key order. You can spot this in the plan by the absence of `USE TEMP B-TREE FOR ORDER BY`, a line that only shows up when the order had to be produced by a separate sort.
+
+Try it live. Below is an `orders` table with fifteen hundred rows and an index on `amount`. The query takes a range and asks for order on that same column. Run it and read the plan: you'll see `SEARCH ... USING INDEX` and no temporary sort. Now delete the `CREATE INDEX` line and run it again: the plan switches to `SCAN`, and `ORDER BY` picks up a `USE TEMP B-TREE`.
+
+<SideSql
+  title="Range and order from an index"
+  editable
+  live
+  fixture={`CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, amount INTEGER);
+INSERT INTO orders (user_id, amount)
+WITH RECURSIVE seq(n) AS (
+  SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1500
+)
+SELECT n % 300, (n * 37) % 2000 FROM seq;
+CREATE INDEX idx_orders_amount ON orders(amount);`}
+  query={`EXPLAIN QUERY PLAN
+SELECT id, amount FROM orders
+WHERE amount BETWEEN 500 AND 800
+ORDER BY amount;`}
+/>
+
+## Why not hash
+
+If a hash table finds a value in one step on average, and a B-tree needs a logarithm's worth of steps, why do indexes default to trees? Because a hash table trades order for speed. It scatters keys into buckets by hash value, so keys that are neighbors in value end up at opposite ends of the structure. A hash index handles point equality beautifully, but ranges, sorting, and prefix search are simply impossible for it: it has no notion of "the next key."
+
+<Compare
+  leftTitle="B-tree"
+  rightTitle="Hash index"
+  left="Keys are stored in order. Handles equality, ranges, BETWEEN, prefix search with LIKE 'abc%', and ORDER BY with no separate sort. Point lookups cost a logarithm of the row count."
+  right="Keys are scattered into buckets by hash. Handles only strict equality. Ranges, sorting, and prefix search are impossible: key order is lost. In exchange, point lookups average a single step."
+  verdict="SQLite only builds B-trees. Postgres also supports hash indexes, but in practice they're rarely chosen: a B-tree barely loses on equality and covers ranges and sorting on top."
+/>
+
+The practical takeaway is simple: the universal choice is a B-tree, which is exactly why a plain `CREATE INDEX` builds a tree. Hash only makes sense where queries are pure equality and the column never appears in a sort or a range.
+
+## Common mistakes
+
+**Treating an index lookup as instant.** A dictionary lookup in memory is `O(1)`, while descending a B-tree is `O(log n)` with a disk access at every level. The difference between a million rows and a billion is small, but it's real, and on a very hot path you can sometimes feel it.
+
+**Expecting a hash index to always be faster.** It's only faster on strict equality, and only when the data is already in memory. The very first query with a range or a sort will run into its inability to produce order, forcing you back to a tree.
+
+**Assuming ORDER BY always means a separate sort.** If the requested order matches a suitable index's column, there's no sort at all: rows arrive already ordered. A `USE TEMP B-TREE FOR ORDER BY` showing up in the plan is a signal that no index backs that sort.
+
+<Detail summary="B-trees, B+trees, and why leaves are linked into a list">
+
+Strictly speaking, relational databases use a variant called a B+tree. The difference: all the real data (keys with row references) lives only in the leaves, while internal pages hold nothing but navigation separators. This has two effects. First, internal pages are more compact, so more separators fit, fanout is higher, and the tree ends up even shorter. Second, the leaves are linked into a sorted list, so a range scan after descending is just walking the chain with no trips back to the root. That chain is exactly what makes both `BETWEEN` and a sort-free `ORDER BY` possible. A classic B-tree would store data in internal nodes too, and a range scan would cost more.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "An index is a B-tree: a balanced tree of pages, where a node is a page holding hundreds of sorted keys, not a single value.",
+    "Tree height is the logarithm of the row count with the fanout as its base; with hundreds of keys per page, millions of rows means 3-4 levels.",
+    "Height grows very slowly: a thousandfold increase in data adds only one or two reads, which is why indexes scale.",
+    "Leaves linked in order enable range queries (BETWEEN) and an indexed ORDER BY with no separate sort.",
+    "A hash index is faster on strict equality but loses order entirely: no ranges, no sorting, no prefixes. SQLite only builds B-trees.",
+  ]}
+/>
+
+## References
+
+- [SQLite Query Planner](https://www.sqlite.org/queryplanner.html)
+- [Database Page Layout (SQLite file format)](https://www.sqlite.org/fileformat2.html)
+- [Use The Index, Luke: the tree](https://use-the-index-luke.com/sql/anatomy/the-tree)

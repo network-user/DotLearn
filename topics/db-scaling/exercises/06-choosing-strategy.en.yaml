@@ -1,0 +1,218 @@
+exercises:
+  - id: choosing-read-heavy-001
+    concept: choosing-strategy
+    type: theory-quiz
+    difficulty: 1
+    prompt: "A product catalog is read hundreds of times more often than it's written, and it's hit a read ceiling. What's the cheapest first move?"
+    choices:
+      - id: a
+        text: "Cache hot reads and add read replicas, leaving writes on the leader."
+      - id: b
+        text: "Shard the data across ten nodes."
+      - id: c
+        text: "Switch to multi-leader replication across data centers."
+      - id: d
+        text: "Partition the table by key hash."
+    correct: [a]
+    explanation: "The bottleneck is reading, and that scales cheaply: a cache absorbs hot queries, replicas take the rest of the reads, writes stay on the leader. Sharding and multi-leader are expensive and solve write or geography problems, not read problems; hash partitions don't relieve read load either."
+    variants:
+      - prompt: "Which of these does NOT help relieve read load specifically, in a read-heavy service?"
+        choices:
+          - id: a
+            text: "Sharding by the write key, for write scale and volume."
+          - id: b
+            text: "A cache of hot keys in front of the database."
+          - id: c
+            text: "Read replicas that reads get moved to."
+          - id: d
+            text: "Denormalized read views in the spirit of CQRS."
+        correct: [a]
+        explanation: "Cache, replicas, and denormalized views all work on the read path. Sharding scales writes and volume beyond a single node and has nothing to do with the read problem, so here it's overkill and expensive."
+      - prompt: "Where does the CQRS idea naturally fit in a read-heavy scenario?"
+        choices:
+          - id: a
+            text: "Feeds and dashboards are built as separate denormalized read views and read from replicas, without interfering with normalized writes on the leader."
+          - id: b
+            text: "All writes are moved to replicas, and reads go to the leader."
+          - id: c
+            text: "Writes are disabled during peak reads."
+          - id: d
+            text: "Reads and writes are stored in one table with no indexes."
+        correct: [a]
+        explanation: "CQRS separates the write model from the read model. It fits read-heavy perfectly: denormalized views are assembled once on write and cheaply served for reads from replicas. The price is the same lagging consistency (lag between the write and the view update)."
+
+  - id: choosing-write-heavy-001
+    concept: choosing-strategy
+    type: theory-quiz
+    difficulty: 2
+    prompt: "A metrics stream is written continuously and grows over time, and queries almost always target a recent range. What's a sensible way to start scaling?"
+    choices:
+      - id: a
+        text: "Partition by time with TTL or archiving; shard only once a single node can no longer handle the write stream."
+      - id: b
+        text: "Immediately add more read replicas."
+      - id: c
+        text: "Shard by hash and skip partitioning."
+      - id: d
+        text: "Switch to synchronous replication across all nodes."
+    correct: [a]
+    explanation: "The pain is writes and volume, not reads, so replicas barely help. Time partitions give pruning on recent ranges and cheap rotation of old data via TTL, and a single node lives a long time on such a scheme. Sharding gets added later, once writes outgrow the node, usually on top of partitions."
+    variants:
+      - prompt: "For write-heavy time-series data, in what order are partitioning and sharding introduced?"
+        choices:
+          - id: a
+            text: "First time partitions (cheap, rotation and pruning), then sharding once one node stops being enough; inside each shard, partitions again."
+          - id: b
+            text: "Sharding first, partitions aren't needed at all."
+          - id: c
+            text: "Both at once and only together, otherwise it doesn't work."
+          - id: d
+            text: "Neither: vertical growth is enough forever."
+        correct: [a]
+        explanation: "Partitions are cheaper and handle rotation and pruning within a single node, so they come first. Sharding is expensive and only needed once the write stream or volume outgrows the node; a typical production layer is hash sharding by source plus range partitions by time inside each shard."
+      - prompt: "Why do read replicas barely help a write-heavy metrics stream?"
+        choices:
+          - id: a
+            text: "Every replica still replays the leader's entire write stream, so it doesn't relieve write load."
+          - id: b
+            text: "Replicas can't store numeric metrics."
+          - id: c
+            text: "Replicas slow down reads of recent ranges."
+          - id: d
+            text: "Replicas are forbidden for tables with TTL."
+        correct: [a]
+        explanation: "Replicas scale reads, and metrics hurt on writes. Every replica replays the same change stream as the leader, so the write stream isn't reduced by them. Writes are addressed by splitting: by time (partitions) and by node (sharding)."
+
+  - id: choosing-checklist-blanks-001
+    concept: choosing-strategy
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks about matching a load profile to a strategy."
+    template: |
+      If reads hurt, they get moved to {{read}} and cache, while writes stay on the leader.
+      If writes hurt over time, data is first {{part}} by time with TTL, and sharding is added only once a node stops being enough.
+      A multi-tenant SaaS is naturally sharded by {{tenant}}, because almost every query already knows the tenant.
+      Before any added complexity, first measure which {{resource}} actually ran out, and exhaust the cheap moves.
+    blanks:
+      read:
+        accept: ["replicas", "read replicas", "copies"]
+      part:
+        accept: ["partitioned", "split", "sliced"]
+      tenant:
+        accept: ["tenant_id", "the tenant", "the tenant key"]
+      resource:
+        accept: ["resource", "which resource ran out"]
+    variants:
+      - template: |
+          A candidate sharding key is a field that {{most}} queries know: then a query lands on a single shard.
+          If the system needs ranges and aggregates, be careful with {{hash}} distribution: it scatters neighboring keys across every node.
+        blanks:
+          most:
+            accept: ["almost all", "most"]
+          hash:
+            accept: ["hash"]
+      - template: |
+          A large tenant eating a disproportionate share of load is called a {{whale}} and is moved to a dedicated shard or split up.
+          Cross-tenant analytics across all clients is kept in a separate {{olap}} store, so every report doesn't trigger a scatter-gather across shards.
+        blanks:
+          whale:
+            accept: ["whale"]
+          olap:
+            accept: ["OLAP", "analytical", "an analytical"]
+
+  - id: choosing-plan-predict-001
+    concept: choosing-strategy
+    type: predict-output
+    difficulty: 3
+    prompt: "What does the program print? This is a simplified model of the first move: replicas are added if reads exceed a node's read capacity; sharding, if writes exceed a node's write capacity."
+    snippet: |
+      def plan(read_qps, write_qps, cap_read, cap_write):
+          steps = []
+          if read_qps > cap_read:
+              steps.append("replicas")
+          if write_qps > cap_write:
+              steps.append("shard")
+          if not steps:
+              steps.append("single")
+          return ",".join(steps)
+
+      print(plan(9000, 400, 3000, 1000))
+    expected:
+      kind: stdout
+      value: "replicas"
+    hints:
+      - "Check each condition in turn: did reads exceed read capacity, did writes exceed write capacity? A step only gets added to the list for a condition that triggered."
+      - "Reads of 9000 exceed 3000, so replicas gets added. Writes of 400 don't exceed 1000, so shard isn't added. There's one step in the list, and join prints it as is."
+    variants:
+      - prompt: "What does the program print? Now the profile is write-heavy."
+        snippet: |
+          def plan(read_qps, write_qps, cap_read, cap_write):
+              steps = []
+              if read_qps > cap_read:
+                  steps.append("replicas")
+              if write_qps > cap_write:
+                  steps.append("shard")
+              if not steps:
+                  steps.append("single")
+              return ",".join(steps)
+
+          print(plan(2000, 5000, 3000, 1000))
+        expected:
+          kind: stdout
+          value: "shard"
+      - prompt: "What does the program print? Now both reads and writes exceed the node's capacity."
+        snippet: |
+          def plan(read_qps, write_qps, cap_read, cap_write):
+              steps = []
+              if read_qps > cap_read:
+                  steps.append("replicas")
+              if write_qps > cap_write:
+                  steps.append("shard")
+              if not steps:
+                  steps.append("single")
+              return ",".join(steps)
+
+          print(plan(9000, 5000, 3000, 1000))
+        expected:
+          kind: stdout
+          value: "replicas,shard"
+
+  - id: choosing-multitenant-whale-001
+    concept: choosing-strategy
+    type: theory-quiz
+    difficulty: 3
+    prompt: "A SaaS is sharded by tenant_id. One large customer generates 40% of all load, and its shard is overloaded while neighboring shards are idle. What kind of problem is this, and how is it usually solved?"
+    choices:
+      - id: a
+        text: "This is a hot key (a whale): all traffic for one tenant_id flows into a single shard. The whale gets moved to a dedicated shard or has its data split by a secondary key."
+      - id: b
+        text: "This is replication lag, fixed with synchronous replication."
+      - id: c
+        text: "This is split-brain, fixed with quorum and fencing."
+      - id: d
+        text: "The tenant_id key was chosen wrong, and everything urgently needs to be re-sharded by time."
+    correct: [a]
+    explanation: "Sharding by tenant_id keeps a customer's data together, but it doesn't help when the customer itself is huge: all of its traffic goes into one shard, which is exactly the hot-key problem. It's fixed by moving the whale to its own shard or splitting its data with an additional key. Replication and split-brain are irrelevant here, and re-sharding by time would break fast queries within a tenant."
+    hints:
+      - "Where does all the traffic for a single value of the sharding key go, even with a perfect hash? Which earlier problem does this resemble?"
+      - "Separate ordinary tenants from the one giant. What can be done specifically with the giant, so it doesn't share resources with hundreds of small neighbors?"
+
+  - id: choosing-layered-capstone-001
+    concept: choosing-strategy
+    type: theory-quiz
+    difficulty: 4
+    prompt: "A multi-tenant SaaS: dashboards are read 30 times more often than written, billing events are written frequently and grow over time, and one customer accounts for 40% of the load. How do you layer the strategies instead of picking one?"
+    choices:
+      - id: a
+        text: "Dashboard reads go to cache and replicas; shard by tenant_id with a dedicated shard for the whale; partition billing events by time with TTL inside each shard. Layers stack, you don't pick just one."
+      - id: b
+        text: "Sharding by tenant_id is enough, everything else will sort itself out."
+      - id: c
+        text: "Adding read replicas is enough: they'll cover both dashboard reads and the growth of billing events."
+      - id: d
+        text: "One big server with fast disks is enough, no distribution needed."
+    correct: [a]
+    explanation: "There are three different problems here at once, and each calls for its own layer. Frequent dashboard reads are handled by cache and replicas (the read path). Splitting customers apart and scaling writes come from sharding by tenant_id, but a 40% whale needs a dedicated shard, otherwise it drowns its neighbors. Billing events growing over time call for time partitions with TTL inside a shard. Replicas alone won't save you from write growth, sharding alone won't relieve read load or solve the whale, and one big server survives neither write growth nor a failure."
+    hints:
+      - "Break the scenario into separate problems: frequent reads, writes growing over time, and one giant customer. Does one strategy cover all three, or does each need its own tool?"
+      - "Recall the ladder and the order of layers: what's done about reads, what's done about growth over time, what's done about a hot tenant. Assemble the answer from several layers, not one."

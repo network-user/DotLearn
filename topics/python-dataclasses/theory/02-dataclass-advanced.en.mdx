@@ -1,0 +1,191 @@
+---
+conceptId: dataclass-advanced
+title: frozen, slots, and inheritance
+estimatedMinutes: 11
+---
+
+# frozen, slots, and inheritance: where dataclass shows its edges
+
+A plain `@dataclass` covers the "this class is basically data" case just fine. But the moment you make a value genuinely immutable, try to save memory across millions of objects, or build out a hierarchy, the sharp corners show up. You write normalization logic in `__post_init__` on an immutable class and get a `FrozenInstanceError`. You add `slots=True` and break inheritance. You subclass a dataclass that has a default field and suddenly can't add a required field in the child.
+
+This section covers four mechanisms that turn a data container into a real modeling tool: `frozen`, `slots`, field inheritance, and the `replace`/`asdict`/`astuple` family. Each one saves you code, and each has a cost worth knowing up front.
+
+## frozen builds a wall around assignment, it doesn't freeze the object
+
+`@dataclass(frozen=True)` doesn't make an object deeply immutable. It only replaces `__setattr__` and `__delattr__` with versions that raise `FrozenInstanceError` on any attempt to assign or delete an attribute. Everything inside the object stays exactly as it was: if a field holds a list, you can still append to that list. What's frozen is the reference, not whatever it points to.
+
+<Figure caption="A plain self.value assignment bounces off with FrozenInstanceError · object.__setattr__ goes around the wall, which is why __post_init__ uses it.">
+  <Sketch viewBox="0 0 440 200" title="frozen blocks assignment">
+    <SketchBox x={180} y={60} width={150} height={90} />
+    <SketchLabel x={255} y={95} mono>instance</SketchLabel>
+    <SketchLabel x={255} y={120} mono muted>value</SketchLabel>
+    <SketchArrow from={[70, 45]} to={[178, 80]} />
+    <SketchLabel x={70} y={34} size={12} mono>self.value = 5</SketchLabel>
+    <SketchLabel x={128} y={64} accent size={12}>error</SketchLabel>
+    <SketchArrow from={[70, 165]} to={[178, 130]} accent curve />
+    <SketchLabel x={70} y={182} size={12} mono accent>object.__setattr__</SketchLabel>
+  </Sketch>
+</Figure>
+
+That leaves exactly one legitimate way to set a field inside `__post_init__` on an immutable class: bypass your own `__setattr__` through `object.__setattr__`. That's the very call the generated `__init__` itself falls back to once a class is frozen.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Percent:
+    value: float
+
+    def __post_init__(self):
+        clamped = min(100.0, max(0.0, self.value))
+        object.__setattr__(self, "value", round(clamped, 1))
+```
+
+A direct `self.value = ...` here would raise `FrozenInstanceError`; `object.__setattr__` writes the value around the wall.
+
+## frozen, eq, and __hash__: the three combinations
+
+Whether a dataclass is hashable depends on the `eq` and `frozen` flags together, and there are exactly three combinations. Understanding this table clears up most "why is my object suddenly unhashable" questions.
+
+<Compare
+  leftTitle="eq=True, frozen=False (default)"
+  rightTitle="eq=True, frozen=True"
+  left={`__hash__ = None
+object is unhashable:
+can't go in a set or be a dict key`}
+  right={`__hash__ is synthesized
+object is hashable:
+works as a set element or dict key`}
+  verdict="The third case: eq=False leaves __hash__ inherited from object (by id). The object is hashable, but equality is by identity, not by value."
+/>
+
+The logic is straightforward. A mutable object that compares by value is dangerous to put in a set: change a field, its hash changes, and the object "gets lost" in its own bucket. So that kind of dataclass gets `__hash__ = None`. `frozen=True` resolves the contradiction: fields never change, the hash stays stable, and Python synthesizes it.
+
+Check the combination hands-on. Run the code, then remove `frozen=True` and run it again: the `hash()` line will fail with `TypeError`, because the object just became unhashable.
+
+<PyDemo
+  title="frozen, hash, and replace"
+  code={`from dataclasses import dataclass, replace
+
+@dataclass(frozen=True)
+class Money:
+    amount: int
+    currency: str
+
+a = Money(100, "RUB")
+b = replace(a, amount=250)
+print(a, b)
+print(len({Money(100, "RUB"), Money(100, "RUB")}))
+print(hash(a) == hash(Money(100, "RUB")))`}
+/>
+
+## slots=True: less memory at the cost of flexibility
+
+`@dataclass(slots=True)` generates `__slots__` from the field names and removes the `__dict__` from instances. On large numbers of objects that's a real memory saving and slightly faster attribute access: values sit in fixed slots instead of a hash table.
+
+The price is flexibility:
+
+- assigning a new attribute that wasn't declared as a field raises `AttributeError`, so `obj.extra = 1` fails;
+- weak references (`weakref`) need their own `__weakref__` slot, or they simply don't work;
+- multiple inheritance from several slotted classes conflicts over slot layout;
+- the decorator rebuilds the class from scratch (you can't bolt `__slots__` onto an existing one), so any reference to the original class object captured before `@dataclass` ran now points at a different class.
+
+Reach for `slots=True` deliberately, for the "lots of small objects, memory matters more than flexibility" profile. For a single configuration instance, there's nothing to gain.
+
+## Inheritance: field order and the defaults problem
+
+When a dataclass inherits, fields are collected from base classes down to subclasses: base fields first in declaration order, then the subclass's own fields. That keeps the `__init__` signature predictable.
+
+But that same ordering creates a classic trap. If a base field has a default and the subclass adds a required field, you get "a required argument following a default argument," which a function signature simply doesn't allow:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Base:
+    created_at: str = "2024"
+
+@dataclass
+class Event(Base):
+    name: str
+```
+
+This code raises `TypeError: non-default argument 'name' follows default argument` right when `Event` is defined. `kw_only` saves you: a field declared keyword-only drops out of the positional ordering, so the conflict disappears.
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Event(Base):
+    name: str = field(kw_only=True)
+```
+
+Now `Event(name="click")` works fine, and `created_at` falls back to the base's default. `@dataclass(kw_only=True)` on the whole class has the same effect.
+
+## frozen can't be mixed across a hierarchy
+
+You choose freezing for an entire branch of a hierarchy, not for one class in isolation. If `@dataclass(frozen=True)` inherits from a plain dataclass, Python raises `TypeError: cannot inherit frozen dataclass from a non-frozen one`. The reverse, a plain subclass of a frozen base, is forbidden too, with a matching error.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Base:
+    x: int
+
+@dataclass(frozen=True)
+class Sub(Base):
+    y: int
+```
+
+The reason is contract consistency. A frozen class keeps a `__setattr__` that raises, plus a synthesized `__hash__` that assumes fields never change. A plain subclass could mutate fields right around that, and the hash would stop being trustworthy. So the decision about `frozen` gets made once for the whole hierarchy, not per class inside it. If a base class is meant to anchor immutable subclasses, freeze the base itself.
+
+## replace, asdict, and astuple: copies, not references
+
+`dataclasses.replace(obj, **changes)` doesn't mutate the object, it builds a new one: it takes the current field values, layers your changes on top, and calls `__init__` again. That means `__post_init__` runs again too, and fields with `init=False` can't be passed to `replace` (you'll get a `ValueError`), since they get recomputed inside. For immutable objects, `replace` is the standard way to "change" a value: get back a copy with the edit applied.
+
+`asdict(obj)` and `astuple(obj)` unfold a dataclass into a dict and a tuple, and they do it **recursively**: nested dataclasses, lists, dicts, and tuples are all copied all the way down.
+
+```python
+from dataclasses import dataclass, asdict
+
+@dataclass
+class Line:
+    sku: str
+    qty: int
+
+@dataclass
+class Order:
+    id: int
+    lines: list
+
+asdict(Order(1, [Line("a", 2), Line("b", 3)]))
+```
+
+The result is `{'id': 1, 'lines': [{'sku': 'a', 'qty': 2}, {'sku': 'b', 'qty': 3}]}`: fresh dicts, fresh lists, a deep copy. In a hot loop that's not free: `asdict` on a large tree walks and copies the whole thing, it's not a cheap view.
+
+## Common mistakes
+
+- **`self.x = ...` in `__post_init__` on a frozen class.** A direct assignment raises `FrozenInstanceError`. Write through `object.__setattr__(self, "x", value)` instead.
+- **Expecting `frozen` to freeze a nested list.** frozen is shallow: `obj.items.append(...)` still works if `items` is mutable. For true immutability, store tuples instead of lists.
+- **A required field in a subclass after a defaulted base field.** That's a `TypeError` at class definition time. Mark the field `kw_only=True`, or make the whole subclass `kw_only`.
+- **`asdict` on a hot path.** It's a deep copy. If you only need a couple of fields, reach for them directly instead of unfolding the whole object.
+
+<Detail summary="Why replace calls __init__ and __post_init__ again">
+`replace` deliberately doesn't copy the object byte for byte. It builds an argument dict from the current fields, swaps in the ones you specified, and calls `type(obj)(**kwargs)`. That path guarantees the new object goes through the same validation and normalization as any other: if `__post_init__` clamps a range or recomputes a derived field, the copy gets the same invariants. The flip side: fields with `init=False` never appear among the `__init__` arguments, so they can't be passed to `replace` either, they get recomputed from scratch.
+</Detail>
+
+<KeyTakeaways items={[
+  "frozen replaces __setattr__ with a version that raises FrozenInstanceError; the reference is frozen, but nested mutable objects stay mutable.",
+  "Inside __post_init__ on a frozen class, set a field through object.__setattr__ to go around the wall.",
+  "eq=True without frozen makes an object unhashable (__hash__ = None); frozen=True restores hashability.",
+  "slots=True saves memory but forbids new attributes and complicates weakref and multiple inheritance.",
+  "On inheritance, base fields come first; a required field after a defaulted one breaks __init__, kw_only is the fix.",
+  "replace builds a new object through __init__ (and __post_init__); asdict/astuple copy recursively and cost a full traversal.",
+]} />
+
+## References
+
+- [dataclasses - Python documentation](https://docs.python.org/3/library/dataclasses.html)
+- [dataclasses.replace](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace)
+- [PEP 557 - Data Classes](https://peps.python.org/pep-0557/)

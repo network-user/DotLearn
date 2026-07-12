@@ -1,0 +1,163 @@
+---
+conceptId: dataclass-internals
+title: How @dataclass actually works
+estimatedMinutes: 11
+---
+
+# What the @dataclass decorator adds to your class
+
+You've put `@dataclass` on a class before and gotten a free `__init__`, `__repr__`, and `__eq__`. As long as everything works, you don't need to know how the decorator does it. The trouble starts when a field silently disappears from the constructor, `__hash__` turns out to be `None` out of nowhere, or a `ClassVar` annotation leaks somewhere it shouldn't. That's when you need to see the machinery under the hood instead of guessing.
+
+This section opens up the decorator. You'll learn exactly what it builds and generates, how to inspect the result through `fields()` and `__dataclass_fields__`, the full surface of the `field()` function, every flag the decorator itself accepts, and two special declarations that don't behave like fields at all: `InitVar` and `ClassVar`. This is the level where "what's actually happening here" stops being a question that slows you down.
+
+## The decorator is a code generator, not a runtime wrapper
+
+The key idea: `@dataclass` runs once, when the class is created, and never touches your calls again afterward. It walks the annotated class variables, builds a `Field` descriptor for each one, collects them into a `__dataclass_fields__` dictionary, then synthesizes methods as ordinary Python source and executes it. What's left afterward is a plain class with honest methods, as if you'd written them by hand.
+
+<Figure caption="The decorator reads annotations, collects fields into __dataclass_fields__, and synthesizes methods · all of this happens once, at class definition time.">
+  <PipelineFigure
+    stages={[
+      { label: 'Annotated fields', note: 'x: int, y: int = 0' },
+      { label: 'Collected into __dataclass_fields__', note: 'a Field per field' },
+      { label: 'Methods synthesized', note: '__init__ · __repr__ · __eq__' },
+      { label: 'Finished class', note: 'ordinary methods, no magic' },
+    ]}
+  />
+</Figure>
+
+That leads to a practical takeaway: it's the type annotation that defines a field. `x: int` creates a field, while `count = 0` without an annotation stays a plain class variable and never makes it into the generated methods. The annotation is the only signal the decorator uses to recognize a field.
+
+## fields() and __dataclass_fields__: inspecting the result
+
+The collected fields are open to introspection. The public entry point is `dataclasses.fields()`: it returns a tuple of `Field` objects in declaration order, each with `.name`, `.type`, `.default`, `.default_factory`, `.repr`, `.compare`, and `.metadata`.
+
+```python
+from dataclasses import dataclass, field, fields
+
+@dataclass
+class Account:
+    login: str
+    balance: int = 0
+
+for f in fields(Account):
+    print(f.name, f.type, f.default)
+```
+
+The same data also lives in the `__dataclass_fields__` attribute, but `fields()` is the one to reach for: it returns a stable tuple and filters out internal bookkeeping entries. Keep the distinction straight: `fields()` returns a tuple, `__dataclass_fields__` is a dict keyed by name. To check whether something is a dataclass at all, use `dataclasses.is_dataclass(obj)`.
+
+## The full surface of field()
+
+Assigning a default right in the declaration covers the simple case. Everything else is configured through the `field()` function. It doesn't set a value itself, it describes how the field should behave:
+
+- `default` sets the same kind of default as a plain assignment, just alongside the other settings.
+- `default_factory` calls a factory when each instance is created. It's the only correct way to give a field a mutable default (a list, dict, or set).
+- `repr=False` drops the field from `__repr__`. Handy for long or secret values like a token.
+- `compare=False` excludes the field from `__eq__` and ordering. A cache or timestamp that shouldn't affect equality behaves this way.
+- `kw_only=True` makes the field keyword-only in the constructor.
+- `metadata` accepts a dict of arbitrary data for third-party tools. The dataclass machinery itself never reads it.
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Account:
+    login: str
+    password: str = field(repr=False)
+    balance: int = 0
+    _cache: dict = field(default_factory=dict, compare=False, repr=False)
+    weight_kg: float = field(default=0.0, metadata={"unit": "kg"})
+```
+
+Here `__repr__` won't show `password` or `_cache`, two accounts with the same `login` and `balance` will be equal regardless of a different `_cache`, and `metadata` tells a serializer that weight is measured in kilograms. Metadata is read-only: `fields(Account)[3].metadata` returns a `MappingProxyType`, and you can't mutate it.
+
+See field introspection in action. Run the code, then flip `compare=True` to `compare=False` on any field and run it again: watch the `compare` column change.
+
+<PyDemo
+  title="Inspecting fields with fields()"
+  code={`from dataclasses import dataclass, field, fields
+
+@dataclass
+class Account:
+    login: str
+    password: str = field(repr=False)
+    balance: int = 0
+    tags: list = field(default_factory=list, compare=False)
+
+for f in fields(Account):
+    factory = getattr(f.default_factory, "__name__", None)
+    print(f"{f.name:10} repr={f.repr!s:5} compare={f.compare!s:5} factory={factory}")`}
+/>
+
+## Decorator flags
+
+The parentheses after `@dataclass` switch entire methods on and off:
+
+- `init` (default `True`): whether to generate `__init__`.
+- `repr`, `eq` (default `True`): whether to generate the matching methods. Turn off `repr` if you're writing your own.
+- `order` (default `False`): add `<`, `<=`, `>`, `>=`. Comparison is lexicographic over the field tuple.
+- `frozen` (default `False`): forbid assigning to fields after creation.
+- `unsafe_hash` (default `False`): force-synthesize `__hash__`. The name is a warning: you're taking responsibility for keeping the hash stable.
+- `slots` (default `False`): generate `__slots__` instead of `__dict__`.
+- `kw_only` (default `False`): make every field keyword-only.
+- `match_args` (default `True`): generate `__match_args__` for `match` statements.
+
+`frozen`, `slots`, inheritance, and `kw_only` deserve a closer look of their own, and that's the next section. For now, just remember the set of levers.
+
+## Two declarations that aren't fields: ClassVar and InitVar
+
+An annotation normally creates a field, but two markers are the exception.
+
+`typing.ClassVar` marks an attribute as belonging to the class, not to instances. The decorator recognizes it and excludes it entirely: that name won't appear in `__init__`, `fields()`, or `__eq__`. It's a way to keep a constant shared by every instance next to your fields without turning it into one.
+
+`dataclasses.InitVar` describes a pseudo-field: the value arrives through `__init__` and is passed on to `__post_init__`, but it's never stored as an attribute and never shows up in `fields()`. It's a convenient way to pass in input that's only needed during initialization.
+
+```python
+from dataclasses import dataclass, InitVar, field
+from typing import ClassVar
+
+@dataclass
+class User:
+    name: str
+    version: ClassVar[int] = 2
+    seed: InitVar[int] = 0
+    token: str = field(init=False, default="")
+
+    def __post_init__(self, seed: int):
+        self.token = f"{self.name}-{seed}"
+```
+
+Here `version` is shared by everyone and never appears in the constructor, `seed` reaches `__post_init__` as the first argument after `self` but never becomes an attribute, and `token` is computed inside and excluded from `__init__` thanks to `init=False`.
+
+<Callout type="warning">
+`InitVar` arguments reach `__post_init__` in declaration order. If you forget a parameter in the `__post_init__` signature, Python raises a `TypeError` about an extra positional argument. The number and order of `InitVar` fields must match the `__post_init__` parameters exactly.
+</Callout>
+
+## The mutable-default trap, briefly
+
+There's one gotcha worth keeping in mind even for casual dataclass work. `items: list = []` won't fly: the decorator raises `ValueError` right at class definition time. The reason is a classic Python one: the default is evaluated once, and every instance would end up sharing the same list. There's exactly one fix, `field(default_factory=list)`: the factory creates a fresh object for every instance. This trap gets a full walkthrough in the intro dataclass section of the OOP course; here it's enough to remember the recipe.
+
+## Common mistakes
+
+- **Expecting `ClassVar` in the constructor.** A field annotated `ClassVar` never reaches `__init__` and never shows up in `fields()`. If a value needs to come through the constructor, `ClassVar` is the wrong tool.
+- **Confusing `fields()` with `__dataclass_fields__`.** The former returns a tuple and is the public API; the latter is an internal dict. Use `fields()` for iteration.
+- **Mutating `metadata`.** Field metadata is read-only, exposed through `MappingProxyType`. You can't assign into it, set the dict up front with `field(metadata=...)`.
+- **Forgetting an `InitVar` argument in `__post_init__`.** Either the value never arrives, or the constructor blows up on a signature mismatch.
+
+<Detail summary="How the decorator actually synthesizes methods">
+Under the hood, `dataclasses` assembles the method body as an ordinary string and runs it through a helper `exec`. For `__init__`, for instance, it builds a string like `def __init__(self, x, y=0): self.x = x; self.y = y` and compiles it into a real function bound to the class. That's why fields have a strict order, and why defaults have to come after required fields: those are the rules of an ordinary function signature, not something dataclass invented. Default values themselves are tucked away in the generator's closure, so each field references its own object.
+</Detail>
+
+<KeyTakeaways items={[
+  "@dataclass is a code generator: it collects fields and synthesizes methods once, at class creation, and stays out of the way afterward.",
+  "A type annotation is what creates a field; without one, a name stays a plain class variable.",
+  "fields() returns a tuple of Field objects in declaration order; __dataclass_fields__ is the internal dict keyed by name.",
+  "field() controls the default, default_factory, repr visibility, participation in comparison, kw_only, and metadata.",
+  "ClassVar is excluded from fields entirely; InitVar reaches __post_init__ but never becomes an attribute.",
+  "A mutable default can only be set through field(default_factory=...), otherwise the decorator raises ValueError.",
+]} />
+
+## References
+
+- [dataclasses - Python documentation](https://docs.python.org/3/library/dataclasses.html)
+- [PEP 557 - Data Classes](https://peps.python.org/pep-0557/)
+- [typing.ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)

@@ -13,7 +13,10 @@ const indexHtml = join(distDir, 'index.html');
 // Baseline at introduction was ~329 KB gzip; budget sits ~10% above as a
 // regression guard. Re-measure with `pnpm check:bundle` and raise deliberately
 // if the shell legitimately grows.
-const INITIAL_JS_GZIP_BUDGET = 360 * 1024;
+// 2026-07-11: 360 -> 368 after the next-action/tracks banner landed in the
+// HomePage entry chunk (~363 KB). Shrink path if needed: React.lazy the
+// NextActionBanner on HomePage or split the topics loader off the entry graph.
+const INITIAL_JS_GZIP_BUDGET = 368 * 1024;
 const HEAVY = /(monaco|pyodide|sqljs|sql-wasm)/i;
 
 let html;

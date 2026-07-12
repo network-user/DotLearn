@@ -1,0 +1,197 @@
+---
+conceptId: litestar-dto-validation
+title: "Models, DTOs, and validation"
+estimatedMinutes: 15
+---
+
+# One object inside, different faces outside
+
+Picture a users table: `id`, `name`, `email`, `password_hash`, `created_at`. That object lives inside the app in full - business logic works with it, it's what gets stored in the database. But it shouldn't go out as-is in a JSON response: the client has no business seeing the password hash, and `created_at` is stamped by the server, so accepting it in the body of a create request would let a client rewrite its own registration date. So the same data model needs to look different depending on whether it's being read, created, or updated. Solve this the brute-force way - manually stripping fields in every handler - and the code fills up with copy-pasted `del data["password_hash"]` calls, and the moment you add one field, some handler forgets to strip it.
+
+Litestar answers this with two distinct mechanisms, and it matters not to mix them up. The first is the data model plus automatic request body parsing: you declare a type, the framework parses the JSON, validates it, and hands the handler a ready-made object. The second is the DTO (Data Transfer Object): a separate layer that decides which fields of a model to include or exclude on input and on output. By the end of this section you'll understand how a typed `data` parameter turns a request body into an object, why DTOs exist on top of an already-defined model, and how to configure them with include/exclude so the internal data shape doesn't dictate the external JSON.
+
+## Mental model: the model is the shape, the DTO is the filter
+
+A data model describes an object's full shape: every field and its type. In Litestar it's declared by default as a `msgspec.Struct` - a fast dataclass-like type with validation. Pydantic models work too, if that's more familiar. A model answers "what fields does this object even have."
+
+A DTO answers a different question - "which of these fields cross the app's boundary, in this particular direction." A DTO doesn't describe a new structure; it takes an existing model and lays a filter over it: include these fields, exclude those, rename this one. The filter can differ between input and output.
+
+<Figure caption="A full model from the database passes through a DTO filter: password_hash is dropped, the rest reach the JSON. A DTO doesn't create a new model - it selects fields from an existing one.">
+  <RowFilterFigure
+    columns={['field', 'value']}
+    rows={[
+      { cells: ['id', '7'], kept: true },
+      { cells: ['name', 'Anna'], kept: true },
+      { cells: ['email', 'anna@example.com'], kept: true },
+      { cells: ['password_hash', 'a3f9...'], kept: false },
+      { cells: ['created_at', '2026-01-10'], kept: true },
+    ]}
+    condition="DTO excludes password_hash"
+    title="DB model → DTO → response JSON"
+  />
+</Figure>
+
+That picture gives you the core division of labor: the model is about what the object is; the DTO is about how it's shown at the boundary. One model can have several DTOs for different operations, and they can change independently of each other.
+
+## Typed handler parameters
+
+Before touching the request body, recall that Litestar already infers a parameter's source from its signature, as we saw in routing: mentioned in the path means a path parameter, a primitive not in the path means query. The request body works the same way, just with a reserved name.
+
+```python
+from msgspec import Struct
+from litestar import post
+
+class CreateUser(Struct):
+    name: str
+    email: str
+
+@post("/users")
+async def create_user(data: CreateUser) -> CreateUser:
+    return data
+```
+
+A parameter named `data`, typed as a model, is a signal: "take the request body, parse it as `CreateUser`, validate it, and put the finished object here." No manual `request.json()` needed - by the time you're inside the handler's body, `data` is already a typed `CreateUser` object with checked fields. The `-> CreateUser` return annotation tells Litestar how to serialize the response back to JSON.
+
+<Callout type="info">
+The name `data` is Litestar's convention for the request body, the same way `self` is a convention for a method. The framework ties the body specifically to a parameter with that name; change `data`'s type, and you change what the body gets parsed into. It's the equivalent of a `body: Model` parameter in FastAPI's signature, except the name here is fixed.
+</Callout>
+
+## msgspec.Struct as the default model
+
+A model is declared by subclassing `msgspec.Struct`. Fields are annotated class attributes; a default value makes a field optional.
+
+```python
+from msgspec import Struct
+
+class Product(Struct):
+    title: str
+    price: float
+    in_stock: bool = True
+```
+
+`title` and `price` are required, `in_stock` is not (defaulting to `True`). The shape looks like a dataclass, but msgspec also validates types while parsing JSON and encodes objects back very fast - that's the whole point compared to a plain dataclass. If a project already standardizes on Pydantic, models can be declared as `BaseModel` instead: Litestar supports it too, and the choice is the team's. Switching the default to Pydantic should be a deliberate call, made for its validator ecosystem, not "just in case."
+
+## DTOs: why a separate layer
+
+It might seem like a few models are enough for different views - `UserIn`, `UserOut`, as is common in FastAPI. DTOs win when there's one large model and many views of it: instead of copying fields into three near-identical classes (and having them drift apart on the next edit), you keep one model and hang filters on it.
+
+```python
+from dataclasses import dataclass
+from litestar import get
+from litestar.dto import DataclassDTO, DTOConfig
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+    password_hash: str
+
+class UserReadDTO(DataclassDTO[User]):
+    config = DTOConfig(exclude={"password_hash"})
+
+@get("/users/{user_id:int}", return_dto=UserReadDTO)
+async def get_user(user_id: int) -> User:
+    return User(id=user_id, name="Anna", email="anna@example.com", password_hash="secret")
+```
+
+The handler returns a full `User` object, password hash included. But `return_dto=UserReadDTO` with `exclude={"password_hash"}` filters that field out on the way out: the JSON gets `id`, `name`, `email`, but not the hash. Business logic works with the full object; the app boundary sees the trimmed one. `DataclassDTO` is a DTO factory for dataclass models; there's `MsgspecDTO` for `msgspec.Struct` and `PydanticDTO` for Pydantic.
+
+### include vs. exclude and rename
+
+`DTOConfig` accepts several filtering fields. `exclude` lists fields to drop; `include` does the opposite, keeping only the listed fields (everything else is dropped); `rename_fields` changes external field names without touching the internal ones.
+
+```python
+class UserPublicDTO(DataclassDTO[User]):
+    config = DTOConfig(
+        include={"id", "name"},
+        rename_fields={"id": "userId"},
+    )
+```
+
+Here only `id` and `name` make it out, and `id` shows up in the JSON as `userId`. Internally the field is still `id` - the rename only lives at the boundary. Reach for `include` when a small slice of a big model goes out (listing what's allowed is shorter and safer: add a field to the model later and it won't leak on its own), and for `exclude` when only one or two fields out of many need hiding.
+
+<Callout type="warning">
+`include` and `exclude` are mutually exclusive ways to describe the same filter. Enumerate fields with one or the other, not both at once: using them together is a contradictory configuration, and it's best avoided.
+</Callout>
+
+## Input and output - different DTOs
+
+The real power of this mechanism is that you can attach different filters for receiving the body and for sending the response. On input, exclude fields the client shouldn't be allowed to set (server-side `id`, `created_at`); on output, exclude fields it shouldn't see (`password_hash`).
+
+```python
+class UserCreateDTO(DataclassDTO[User]):
+    config = DTOConfig(exclude={"id", "password_hash"})
+
+class UserReadDTO(DataclassDTO[User]):
+    config = DTOConfig(exclude={"password_hash"})
+
+@post("/users", dto=UserCreateDTO, return_dto=UserReadDTO)
+async def create_user(data: User) -> User:
+    return data
+```
+
+`dto=UserCreateDTO` governs body parsing: the client can't send `id` or `password_hash`, since those fields are excluded on the input DTO. `return_dto=UserReadDTO` governs the response: `password_hash` won't come back, but `id` (set by the server) will. One `User` model, two directions, two filters.
+
+## DTOData: getting parsed data without assembling an object
+
+Sometimes a handler needs not a finished model instance, but exactly the fields the client actually sent - for example on a partial update (PATCH), where the client only sends the fields that are changing. For that, wrap the parameter type in `DTOData`.
+
+```python
+from litestar import patch
+from litestar.dto import DataclassDTO, DTOData, DTOConfig
+
+class UserPatchDTO(DataclassDTO[User]):
+    config = DTOConfig(exclude={"id", "password_hash"}, partial=True)
+
+@patch("/users/{user_id:int}", dto=UserPatchDTO)
+async def update_user(user_id: int, data: DTOData[User]) -> dict:
+    changes = data.as_builtins()
+    return {"user_id": user_id, "changed_fields": list(changes.keys())}
+```
+
+`DTOData[User]` gives access to the submitted data as-is, without requiring the client to send every required field of the model. `partial=True` in the config makes all fields optional - exactly what PATCH needs. `data.as_builtins()` returns the parsed fields as a dict, and the handler decides for itself how to apply them to the existing record. Without `DTOData`, the framework would try to build a full `User` and demand every required field.
+
+## Validation errors: 422
+
+If a request body fails validation - a required field is missing, a type is wrong, a constraint is violated - Litestar never calls the handler, and returns `400 Bad Request` for most client errors, or `422 Unprocessable Entity` for a semantically invalid body, describing the offending field. The handler doesn't need to check anything by hand: only a valid object ever reaches it, and otherwise the client gets a structured error pointing at exactly what's wrong.
+
+## Edge cases
+
+**msgspec is stricter than Pydantic about type coercion.** As noted in the overview, msgspec by default won't silently turn the string `"42"` into a number for an `int` field. A body of `{"price": "10.5"}` for a `price: float` field triggers a validation error instead of quiet coercion. This surprises people used to lenient Pydantic v1 behavior: what "just worked" there fails here honestly, with a 422.
+
+**A field excluded on the input DTO is rejected, not silently dropped.** If the input DTO excludes `id` but the client sends `id` in the body anyway, the field isn't quietly ignored everywhere - under a strict configuration, the extra field triggers an error. Don't rely on "extra fields just get dropped"; design your input contract explicitly.
+
+**`include`/`exclude` match by field name, not by presence.** A typo in a field name inside `exclude={"pasword_hash"}` won't raise a "no such field" error - the filter simply excludes nothing, and the hash leaks into the response. Field names in a DTO config are "magic strings," and it's easy for them to drift out of sync with the model after a rename.
+
+## Common mistakes
+
+- **Not putting the body in `data`.** A parameter with an arbitrary name (`payload: CreateUser`) won't get tied to the request body the way `data` does. `data` is Litestar's convention for the body; any other name gets interpreted differently.
+- **Confusing `dto` and `return_dto`.** `dto` filters the **input** (body parsing), `return_dto` filters the **output** (response serialization). Attach a password-hiding filter to `dto` instead of `return_dto`, and you'll protect the input while the password still leaks out in the response. The direction has to be chosen deliberately.
+- **Hiding `password_hash` by dropping it from the model.** Remove a field from the model itself, and business logic (password checks) can't work with it either. The field belongs in the model; hiding it is `return_dto`'s job, not a matter of trimming the model.
+- **Accepting server-side fields on input.** Without an input DTO excluding `id`/`created_at`, a client can send those fields and overwrite what the server is supposed to set. Server-side fields get excluded on the input DTO.
+
+<Detail summary="Why DTOs beat ad-hoc manual filtering">
+
+The temptation is real: why bother with a DTO when a handler can just do `d = asdict(user); del d["password_hash"]; return d`? On a single endpoint that's genuinely shorter. The problem comes down to three things. First, manual filtering gets repeated in every handler that returns a user, and when a new secret field gets added, someone forgets to strip it in one of ten places - a classic leak. A DTO defines the filter once and applies it everywhere it's referenced. Second, Litestar generates the OpenAPI schema from DTOs: the docs automatically show the trimmed shape, while a manual `del` is invisible to the docs generator - the schema lies. Third, DTOs work on input too: a manual input filter would have to be written separately and validated by hand. A DTO is a declarative, documented, bidirectional way of saying "here is the boundary contract," while manual filtering is imperative and easy to let drift. The cost of a DTO is one more layer of abstraction and its API to learn; it pays for itself exactly when a model has more than one representation.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A model (msgspec.Struct by default) describes an object's full shape; a DTO is a filter on top of a model, deciding which fields cross the boundary.",
+    "The request body is parsed automatically into a parameter named data: data: Model in the signature gives a ready, validated object, no manual request.json() needed.",
+    "DTOConfig filters fields: exclude drops the listed ones, include keeps only them, rename_fields changes the external name; include and exclude are mutually exclusive.",
+    "dto filters the input (body parsing), return_dto filters the output (response); hide password_hash via return_dto, and exclude server-side fields on the input dto.",
+    "An invalid body is rejected by the framework before the handler runs (422 naming the field); msgspec is stricter than Pydantic and won't coerce \"42\" to int silently.",
+    "DTOData[Model] (plus partial=True) gives you the submitted fields without assembling a full object - exactly what a partial update (PATCH) needs.",
+  ]}
+/>
+
+## References
+
+- [Litestar - Data Transfer Objects (DTO)](https://docs.litestar.dev/latest/usage/dto/index.html)
+- [Litestar - DTOConfig](https://docs.litestar.dev/latest/usage/dto/0-basic-use.html)
+- [Litestar - Request data](https://docs.litestar.dev/latest/usage/requests.html)
+- [msgspec - Structs](https://jcristharif.com/msgspec/structs.html)
+- [Litestar - DTOData and partial updates](https://docs.litestar.dev/latest/usage/dto/1-creating-custom-dtos.html)

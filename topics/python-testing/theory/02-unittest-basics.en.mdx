@@ -1,0 +1,161 @@
+---
+conceptId: unittest-basics
+title: "unittest: TestCase, assert methods, setUp/tearDown"
+estimatedMinutes: 11
+---
+
+# Tests organized into classes, standard-library style
+
+A bare `assert` from the previous section explains the idea of checking a result perfectly well, but once you have a hundred tests, awkward questions start piling up. Where do you get a report of how many passed and how many failed? How do you check that a function raises the right exception without wrapping every call in `try/except` by hand? Where does the setup code go when it repeats across ten tests in a row? Python has a built-in answer to all of this: the `unittest` module, part of the standard library with nothing to install.
+
+`unittest` is the first test framework you'll run into in any Python project, because it's always there. It comes from the xUnit family (the same lineage as JUnit in Java), which is why its tests are methods on a class. By the end of this section you'll be able to write a `TestCase`, pick the right assert method for a given check, set up and tear down an environment cleanly with `setUp`/`tearDown`, and run everything with a single command.
+
+## Mental model: a test is a method on a TestCase subclass
+
+In `unittest` you group tests into a class that inherits from `unittest.TestCase`. Any method whose name starts with `test` is treated as a separate test and run in isolation. Methods named anything else are just helper code.
+
+```python
+import unittest
+
+
+class TestShipping(unittest.TestCase):
+    def test_free_above_3000(self):
+        self.assertEqual(shipping_cost(3500), 0)
+
+    def test_paid_below_3000(self):
+        self.assertEqual(shipping_cost(1500), 500)
+```
+
+You don't write checks as a bare `assert` but as `self.assert...` methods. The reason is feedback: `self.assertEqual(a, b)` prints both values on failure - what you got and what you expected - while a plain `assert a == b` just tells you "false." It's exactly for those informative messages that xUnit frameworks grew dozens of specialized assert methods.
+
+## The assert methods you'll actually use
+
+There are a lot of them, but daily work needs only a handful. `assertEqual(a, b)` checks equality and prints both operands on failure. `assertTrue(x)` and `assertFalse(x)` check truthiness. `assertIn(item, container)` checks membership - handy for lists, strings, and dicts.
+
+```python
+self.assertEqual(total, 100)
+self.assertTrue(user.is_active)
+self.assertFalse(cart.is_empty())
+self.assertIn("Анна", names)
+```
+
+Two methods deserve special attention because each has a catch. The first is `assertAlmostEqual(a, b)`: it compares floating-point numbers not for strict equality but with rounding (7 decimal places by default). It saves you from the perpetual pain of float arithmetic, where `0.1 + 0.2` doesn't equal `0.3`.
+
+<Callout type="warning">
+Never compare floats with `assertEqual`: `0.1 + 0.2 == 0.3` is false, because the number is stored approximately. For fractional results, use `assertAlmostEqual`, which compares up to a given number of decimal places.
+</Callout>
+
+The second is `assertRaises`. To check that code raises an exception, use it as a context manager: the block inside `with` must raise the given error class, or the test fails.
+
+```python
+def test_negative_total_rejected(self):
+    with self.assertRaises(ValueError):
+        shipping_cost(-100)
+```
+
+If no exception is raised inside `with` (or a different type is raised), the test fails. That's far cleaner than a manual `try/except` with a flag for "did we reach the line that was supposed to blow up."
+
+## setUp and tearDown: setup around every test
+
+Often several tests start with the same setup: create an object, fill it with data. Duplicating that in every method is tedious and fragile. That's what `setUp` is for - the framework calls it **before every** test method - and `tearDown`, called **after every** test method, even if the test failed.
+
+```python
+class TestCart(unittest.TestCase):
+    def setUp(self):
+        self.cart = Cart()
+        self.cart.add("книга", price=500)
+
+    def test_total(self):
+        self.assertEqual(self.cart.total(), 500)
+
+    def test_add_increases_count(self):
+        self.cart.add("ручка", price=50)
+        self.assertEqual(self.cart.count(), 2)
+```
+
+The key detail: `setUp` runs fresh for every test, so `self.cart` in the second method is a brand-new object, not whatever was left over from the first. That's isolation in practice - tests don't share state and don't depend on run order.
+
+Sometimes setup is expensive - opening a connection, loading a big file - and repeating it before every test is wasteful. That's when you reach for `setUpClass` and `tearDownClass`: they run **once for the whole class**, before the first test and after the last. They're class methods, so they're marked `@classmethod`.
+
+<Figure caption="Call order: setUpClass runs once, then each test runs its own setUp -> test -> tearDown pair, and tearDownClass runs at the very end.">
+  <Sketch viewBox="0 0 460 230" title="TestCase lifecycle">
+    <SketchBox x={150} y={14} width={160} height={34} accent />
+    <SketchLabel x={230} y={35} mono size={11} accent>setUpClass()</SketchLabel>
+
+    <SketchBox x={40} y={66} width={380} height={108} fill="rgb(var(--surface-2))" dashed />
+    <SketchLabel x={230} y={82} size={10} muted>for every test method</SketchLabel>
+
+    <SketchBox x={60} y={96} width={100} height={32} />
+    <SketchLabel x={110} y={116} mono size={11}>setUp()</SketchLabel>
+    <SketchBox x={180} y={96} width={100} height={32} accent />
+    <SketchLabel x={230} y={116} mono size={11} accent>test_x()</SketchLabel>
+    <SketchBox x={300} y={96} width={100} height={32} />
+    <SketchLabel x={350} y={116} mono size={11}>tearDown()</SketchLabel>
+    <SketchArrow from={[160, 112]} to={[180, 112]} />
+    <SketchArrow from={[280, 112]} to={[300, 112]} />
+    <SketchArrow from={[350, 132]} to={[230, 152]} dashed curve={-0.4} />
+    <SketchLabel x={230} y={166} size={10} muted>repeats for test_y, test_z...</SketchLabel>
+
+    <SketchBox x={150} y={188} width={160} height={34} accent />
+    <SketchLabel x={230} y={209} mono size={11} accent>tearDownClass()</SketchLabel>
+    <SketchArrow from={[230, 48]} to={[230, 66]} />
+    <SketchArrow from={[230, 174]} to={[230, 188]} />
+  </Sketch>
+</Figure>
+
+## Running tests and auto-discovery
+
+You don't run tests by hand - the module has a built-in runner. The command `python -m unittest` triggers **discovery**: the interpreter walks the directory itself, finds files named `test_*.py`, then `TestCase` subclasses inside them, then `test_*` methods inside those, and runs all of it. You can narrow the run to a single class or method with a dotted path:
+
+```text
+python -m unittest                       every test found
+python -m unittest test_cart             just the test_cart file/module
+python -m unittest test_cart.TestCart    a single class
+python -m unittest -v                    verbose output per test
+```
+
+In the report, each dot is a passed test, `F` is a failure (an assert didn't hold), and `E` is an error (an unexpected exception blew up). The difference between `F` and `E` matters: a failure means the code ran but didn't behave as the test expected; an error means the code broke somewhere along the way.
+
+## Skipping tests
+
+Sometimes you need to disable a test temporarily - a feature still in progress, a bug not yet fixed, a check that doesn't make sense on the current platform. Deleting or commenting out the test is a bad idea: it silently vanishes from the report. Instead, mark it with the `@unittest.skip("reason")` decorator, and it shows up in the report as skipped (`s`), with the reason visible.
+
+```python
+@unittest.skip("ждём фикса бага PAY-142")
+def test_refund_partial(self):
+    ...
+```
+
+There's also a conditional version, `@unittest.skipIf(condition, "reason")`, which skips the test only when the condition is true (for example, on an old Python version). A skipped test stays honestly visible in the report, unlike a commented-out one.
+
+## Edge case: tearDown runs even after a failure
+
+Here's a pleasant surprise. If a test method fails an assert or raises an exception, `tearDown` still gets called. That's deliberate: cleanup (closing a file, rolling back a transaction, deleting a temp folder) has to happen regardless of the test's outcome, or leftovers from a failed test would leak into the next one and corrupt it. But if `setUp` itself fails, the test method never runs at all - setup didn't succeed, so there's nothing to check - and in that case `tearDown` isn't called either, because there was nothing to clean up.
+
+## Common mistakes
+
+- **A test method named without the `test` prefix.** You named it `check_total` instead of `test_total`, and the runner silently ignores it - the test never runs and never shows up in the report. A green run gives you false confidence. Fix: every test's name starts with `test`.
+- **Comparing floats with `assertEqual`.** `self.assertEqual(0.1 + 0.2, 0.3)` fails because of binary fraction representation. Fix: use `assertAlmostEqual` for fractional numbers.
+- **Setup in `__init__` instead of `setUp`.** It seems logical to build data in the class constructor, but `unittest` creates a separate instance per test and doesn't guarantee the behavior you'd expect from that. Fix: keep all setup in `setUp` and all cleanup in `tearDown`.
+
+<Detail summary="assertEqual is smarter than it looks">
+
+`assertEqual` doesn't just call `==`. For common types it plugs in specialized diffs: comparing two lists shows exactly which elements diverged; for dicts, which keys; for multiline strings, a line-by-line diff with `+`/`-`. That's why, when comparing collections, you should prefer `assertEqual(got, expected)` over a manual loop - the failure message will be far more useful. These diffs are registered through `addTypeEqualityFunc`, and you can wire up your own for custom types too, though the built-in ones cover most projects.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "Tests in unittest are methods prefixed with test_ inside a class that subclasses unittest.TestCase; a method without that prefix never runs.",
+    "Check results with assert methods (assertEqual, assertTrue/assertFalse, assertIn) rather than a bare assert: on failure they print both the actual and expected values.",
+    "assertRaises as a context manager checks that a block raises the right exception; assertAlmostEqual compares floats with rounding.",
+    "setUp/tearDown run around every test (and tearDown even after a failure); setUpClass/tearDownClass run once per class for expensive setup.",
+    "python -m unittest runs discovery and finds test_*.py on its own; @unittest.skip disables a test without hiding it from the report.",
+  ]}
+/>
+
+## References
+
+- [Python docs - unittest](https://docs.python.org/3/library/unittest.html)
+- [Python docs - unittest.TestCase.assert*](https://docs.python.org/3/library/unittest.html#assert-methods)
+- [Python docs - skipping tests](https://docs.python.org/3/library/unittest.html#skipping-tests-and-expected-failures)

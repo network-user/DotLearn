@@ -1,0 +1,204 @@
+---
+conceptId: linked-lists
+title: Linked lists
+estimatedMinutes: 16
+---
+
+# Linked lists: the structure you write for interviews, not for production
+
+Insert an element at the front of a million-element Python list, and the interpreter silently shifts all million of them one slot to the right. Every such `insert(0, x)` costs O(n), and a queue built on `list` slows down for exactly this reason: removing the first element is as expensive as rewriting everything else. Yet there is a structure where inserting at the front costs a couple of assignments, whether you have a million elements or a billion, and nothing ever gets shifted.
+
+The paradox is that across years of commercial Python development you will probably never write this structure by hand: `list` and `collections.deque` have long since taken over its niches in application code. Yet in interviews a linked list shows up almost for certain, and "reverse the list" belongs on every shortlist of questions. Let's break down how it works, what's cheap on it, what's expensive, and why interviewers refuse to let it go.
+
+## Mental model: a chain of nodes
+
+A linked list is assembled from nodes. A node holds two fields: a value and a `next` reference to the following node. The last node has `None` in `next`, marking the end of the chain. From the outside, the whole structure hangs off a single variable, the list's head (`head`), pointing at the first node. Lose the head, and the garbage collector takes the entire chain with it.
+
+<Figure caption="A singly linked list: each node holds a value and a next reference, the head points to the first node, and the last node points to None.">
+  <Sketch viewBox="0 0 560 150" title="Linked list nodes joined by next arrows">
+    <SketchLabel x={38} y={48} mono accent>head</SketchLabel>
+    <SketchArrow from={[44, 56]} to={[92, 72]} curve accent />
+
+    <SketchBox x={95} y={60} width={48} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={119} y={83} mono>17</SketchLabel>
+    <SketchBox x={143} y={60} width={26} height={36} />
+    <SketchLabel x={119} y={52} muted>value</SketchLabel>
+    <SketchLabel x={158} y={52} muted>next</SketchLabel>
+    <SketchArrow from={[156, 78]} to={[213, 78]} />
+
+    <SketchBox x={215} y={60} width={48} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={239} y={83} mono>42</SketchLabel>
+    <SketchBox x={263} y={60} width={26} height={36} />
+    <SketchArrow from={[276, 78]} to={[333, 78]} />
+
+    <SketchBox x={335} y={60} width={48} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={359} y={83} mono>8</SketchLabel>
+    <SketchBox x={383} y={60} width={26} height={36} />
+    <SketchArrow from={[396, 78]} to={[450, 78]} dashed />
+    <SketchLabel x={457} y={83} mono muted anchor="start">None</SketchLabel>
+  </Sketch>
+</Figure>
+
+The key difference from an array is hidden in memory layout. An array occupies one contiguous block, so the address of the element at index i is computed with arithmetic, and `a[500000]` reads in a single step. Linked list nodes are scattered across the heap wherever the allocator puts them, and there is no way to compute the address of the tenth node in principle: the only route to it runs from the head through nine references. That gives two mirror-image consequences:
+
+- indexed access costs O(n): reaching the i-th node takes i hops along references;
+- inserting or deleting next to a node you already hold costs O(1): a couple of references get rewritten, and nothing downstream shifts.
+
+<Compare
+  leftTitle="Array (list)"
+  rightTitle="Singly linked list"
+  left="Contiguous memory. Indexed access O(1); inserting or deleting in the middle O(n) with a shift of the tail. Traversal is fast: elements sit back to back and play well with the CPU cache."
+  right="Nodes scattered across the heap. Indexed access O(n); insertion and deletion at a known node O(1). Traversal is formally O(n), but noticeably slower than an array's in practice."
+  verdict="In application code the array almost always wins; you reach for a linked list when insertions and deletions at known spots matter more than indexed access."
+/>
+
+A node in Python takes three lines, and a LinkedList class isn't even required: a head and an agreed-upon `next` field are already enough for the structure to work.
+
+```python
+class Node:
+    def __init__(self, value, next=None):
+        self.value = value
+        self.next = next
+
+head = Node(17, Node(42, Node(8)))
+print(head.value)
+print(head.next.next.value)
+print(head.next.next.next is None)
+```
+
+The expression `head.next.next.value` reads like a route: two hops from the head, then the value. That's what all work with a linked list looks like: hops, not indices.
+
+## Traversal: the one and only route
+
+A standard traversal boils down to three ideas: set a runner `node = head`, loop while `node is not None`, and at the end of every iteration hop forward with `node = node.next`. No `range(len(...))`: you can't even learn the length of the list without walking it. Step through the trace and watch the runner jump from node to node while the sum accumulates.
+
+<PyStepper title="Traversing the list: node hops along next references" code={`class Node:
+    def __init__(self, value, next=None):
+        self.value = value
+        self.next = next
+
+head = Node(17, Node(42, Node(8)))
+node = head
+total = 0
+while node is not None:
+    total += node.value
+    node = node.next
+print(total)`} />
+
+Traversal costs O(n), and that is the honest price of any question you ask a linked list: length, search, sum, print. An uncomfortable truth hides right here: an array covers the same O(n) noticeably faster, because its elements sit back to back in memory, while list nodes force the processor to jump around the heap, missing the cache. The asymptotics match; the constant factor differs by a wide margin.
+
+## O(1) insertion and the price of that trick
+
+Say you're holding a reference to a node `spot`, and you need a new node right after it. Two assignments are enough:
+
+```python
+new = Node(99)
+new.next = spot.next
+spot.next = new
+```
+
+Order is critical. First the newcomer hooks onto the rest of the chain, and only then does `spot` get retargeted onto it. Do the assignments in the opposite order and the tail leaks: `spot.next` is already overwritten, and nobody saved the old reference. Deletion is symmetric: `spot.next = spot.next.next` drops the next node out of the chain, and the garbage collector reclaims the memory.
+
+<Callout type="warning">
+O(1) holds only when you already have the node in hand. If the insertion point first has to be found by traversal, the whole operation costs O(n). Cheap insertions pay off where node references are kept outside the list; that's exactly what functools.lru_cache does, covered below.
+</Callout>
+
+## Reversal: the problem interviewers calibrate candidates with
+
+A classic: reverse a singly linked list in a single pass with no extra memory. The idea rests on three pointers. `prev` looks at the already-reversed part, `node` at the current node, and `nxt` rescues the rest of the chain before the `next` reference gets flipped backward. Run the code and look at the list before and after reversal. Then swap the lines `nxt = node.next` and `node.next = prev` inside the loop and see what's left of the list: the tail gets lost purely because of assignment order.
+
+<PyDemo title="Reversing a list with three pointers" code={`class Node:
+    def __init__(self, value, next=None):
+        self.value = value
+        self.next = next
+
+def build(values):
+    head = None
+    for value in reversed(values):
+        head = Node(value, head)
+    return head
+
+def show(head):
+    parts = []
+    node = head
+    while node is not None:
+        parts.append(str(node.value))
+        node = node.next
+    print(" -> ".join(parts) if parts else "empty")
+
+def reverse(head):
+    prev = None
+    node = head
+    while node is not None:
+        nxt = node.next
+        node.next = prev
+        prev = node
+        node = nxt
+    return prev
+
+head = build([1, 2, 3, 4])
+show(head)
+show(reverse(head))`} />
+
+Look closely at the return value. After the loop, `node` has reached `None`, and `prev` stopped on the former tail: that's the new head, which is why the function returns `prev`. Returning `head` would be a bug: after reversal the old head has become the tail, and traversing from it would show a single element.
+
+Why interviewers love this problem so much: in five minutes it shows whether someone can handle references - keeping the loop invariant, not losing the tail, surviving an empty list, returning the correct head. No framework and no library knowledge saves you here. The same skill matters in real work when debugging object graphs, circular references, and parent-child structures.
+
+<PullQuote>A linked list in Python lives in exactly two places: inside the interpreter itself, and in interviews.</PullQuote>
+
+## Singly linked, doubly linked, and where this all lives in Python
+
+In a doubly linked list a node holds two references, `next` and `prev`. That gives traversal in both directions and the main payoff: you can delete a node holding only a reference to itself, with no need to find the previous one. The cost is modest but constant: one extra reference per node and roughly twice the bookkeeping on every rearrangement.
+
+In the standard library, linked lists live in places beginners don't usually look:
+
+- `collections.deque` is built as a doubly linked list of 64-element blocks: a compromise between cheap operations at both ends and staying friendly with the CPU cache;
+- `functools.lru_cache` keeps a circular doubly linked list so it can move a just-used entry to the end and evict the oldest one, both in O(1);
+- collision chains in hash tables are built from the same kind of linked nodes: textbook dict implementations put colliding keys into exactly this sort of chain.
+
+<MarginNote label="deque">The block-based design explains why deque doesn't give O(1) indexed access: internally you still hop from block to block.</MarginNote>
+
+In practice, application Python code almost never writes a linked list by hand, and that's worth saying plainly in an interview. Every node costs a full object with a header of dozens of bytes, references kill cache locality, and `list` with `deque` win in almost every real scenario. Interviewers ask about it not as a working tool but as a proving ground: it shows how a candidate reasons about references and the order of operations.
+
+## Edge cases
+
+- **An empty list.** The head is `None`, and a correct traversal must survive that from the first step: the loop `while node is not None` simply never runs. Reversing an empty list returns `None`, and that's the correct answer, not a bug.
+- **A single node.** Reversal changes nothing, but the code still has to return that same node instead of crashing while reading `next`.
+- **A cycle in the list.** The nastiest case: if some `next` reference loops back to an already-visited node, traversal doesn't raise an exception, it silently hangs forever, because the condition `node is not None` never fires again. The program doesn't report an error, it just stops responding. Checking a list for a cycle has grown into its own classic problem, covered in the Detail below.
+
+## Common mistakes
+
+- **Losing the tail during insertion.** `spot.next = new` runs before `new.next` has received the old continuation. Fix: first `new.next = spot.next`, then `spot.next = new`.
+- **Forgetting the step `node = node.next`.** A `while node is not None` loop without the step spins forever on the first node. Fix: the step goes on the last line of the loop body, and your eye should learn to look for it there automatically.
+- **Returning the old head after reversal.** `head` now points at the tail; traversing from it shows a single element. Fix: return `prev`.
+- **Comparing the node instead of the value.** The condition `if node == target` compares a node object with a number and silently returns `False`. Fix: compare `node.value == target`.
+
+<Checkpoint
+  q="You're holding a reference to a node in the middle of a singly linked list. What does inserting a new node right after it cost?"
+  choices={["O(1): rewrite two references", "O(n): you'd have to shift the whole tail", "O(log n): the insertion point is found by halving", "O(n): you'd have to recompute every node's index"]}
+  answer={0}
+  explain="There are no shifts or indices in a linked list: the new node hooks onto the continuation, and the known node gets retargeted onto the newcomer. O(n) would only appear if the node still had to be found by traversal."
+/>
+
+<Detail summary="How to catch a cycle in a list: tortoise and hare">
+
+Floyd's algorithm sends two runners down the list: a slow one that steps one node at a time, and a fast one that steps two. If the list has a cycle, the fast runner sooner or later catches up with the slow one inside the loop, and they meet on the same node. If there's no cycle, the fast runner reaches `None` first. It needs O(1) memory and O(n) time. After reversal, this is the second most popular linked-list interview question.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A node holds a value and a next reference; the entire list hangs off a single head variable.",
+    "There's no O(1) indexed access: a node's address can't be computed, you reach it by following references from the head in O(n).",
+    "Insertion and deletion at a known node cost O(1): a couple of references get rewritten, nothing shifts.",
+    "Reversal uses three pointers, prev, node, nxt; prev becomes the new head.",
+    "deque, lru_cache, and hash table collision chains use linked lists internally; in application code, reach for list and deque.",
+    "Interviews love linked lists as a proving ground: they test careful handling of references, not library knowledge.",
+  ]}
+/>
+
+## References
+
+- [Python docs: collections.deque](https://docs.python.org/3/library/collections.html#collections.deque)
+- [Python docs: functools.lru_cache](https://docs.python.org/3/library/functools.html#functools.lru_cache)
+- [Python Wiki: TimeComplexity](https://wiki.python.org/moin/TimeComplexity)

@@ -1,0 +1,202 @@
+---
+conceptId: django-views-urls
+title: "Views and URLconf: routing a request"
+estimatedMinutes: 13
+---
+
+# How Django knows who gets the request
+
+A request arrives as the string `GET /orders/42/`, and somewhere a match has to happen: that address needs to find the one function that knows how to show order number 42. There's no magic here - there's a list of rules you wrote yourself, and a mechanism that walks that list top to bottom and takes the first rule that fits. Understanding routing means understanding two things: how that list is built, and what ends up in your function once a rule matches.
+
+The problem URLconf solves is decoupling addresses from code. The browser knows nothing about your functions; it only knows URLs. You, meanwhile, think in functions. Something needs to translate between them: a table of "this address goes to that handler," one that can also pull variable pieces out of the address - an order id, an article slug. By the end of this section you'll read `urls.py` fluently, understand path converters, tell function-based and class-based views apart, and know why the order of rules in the list decides everything.
+
+## Mental model: URLconf is a list of rules, checked in order
+
+Routing in Django is `urlpatterns`, a plain list. Each entry is a pair: "path pattern -> handler." When a request comes in, the resolver takes the path (the part after the domain) and walks the list **top to bottom**, trying to match the path against each pattern. The first match wins: its handler gets called, and the resolver stops looking. If nothing matches, Django returns a 404.
+
+```python
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("orders/", views.order_list),
+    path("orders/<int:pk>/", views.order_detail),
+]
+```
+
+<Figure caption="The resolver tries the path against patterns top to bottom; the first match wins and hands control to its view. Captured path segments are passed to the view as arguments.">
+  <Sketch viewBox="0 0 480 230" title="Dispatching through the route table">
+    <SketchBox x={16} y={100} width={96} height={36} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={64} y={122} mono size={10}>/orders/42/</SketchLabel>
+
+    <SketchBox x={150} y={30} width={170} height={170} />
+    <SketchLabel x={235} y={22} mono size={11}>urlpatterns</SketchLabel>
+    <SketchLabel x={164} y={62} mono muted size={9} anchor="start">orders/</SketchLabel>
+    <SketchLabel x={164} y={90} mono muted size={9} anchor="start">orders/&lt;int:pk&gt;/</SketchLabel>
+    <SketchLabel x={164} y={118} mono muted size={9} anchor="start">articles/&lt;slug&gt;/</SketchLabel>
+    <SketchArrow from={[112, 118]} to={[150, 100]} />
+
+    <SketchHighlight x={158} y={78} width={154} height={22} />
+    <SketchLabel x={235} y={150} muted size={9}>first match</SketchLabel>
+
+    <SketchBox x={360} y={70} width={104} height={50} accent />
+    <SketchLabel x={412} y={90} mono accent size={10}>order_detail</SketchLabel>
+    <SketchLabel x={412} y={108} muted size={9}>pk=42</SketchLabel>
+    <SketchArrow from={[320, 90]} to={[360, 90]} accent />
+  </Sketch>
+</Figure>
+
+The key point in this picture: the list is ordered, and the check isn't "find the best match," it's "take the first one that fits." That gives you a practical rule: put more specific patterns above more general ones. If `orders/<int:pk>/` sits below `orders/<path:rest>/`, which catches everything after `orders/`, the specific pattern will never get a chance to run.
+
+## Converters: how variable pieces come out of a path
+
+In the pattern `orders/<int:pk>/`, the angle brackets are a **capture**. `<int:pk>` means: "an integer goes here, pass it to the view under the name `pk`." The part before the colon is the **converter** (the type), the part after is the argument name.
+
+```python
+path("orders/<int:pk>/", views.order_detail)
+path("articles/<slug:slug>/", views.article_detail)
+path("users/<str:username>/", views.profile)
+```
+
+A converter doesn't just extract a value, it also **validates** its shape and casts the type. `<int:pk>` only matches digits and hands the view a real `int`, not a string. `<slug:...>` accepts letters, digits, hyphens, and underscores (the stuff "human-readable" addresses like `how-orm-works` are made of). `<str:...>` matches any non-empty string without a slash. There's also `<uuid:...>` and `<path:...>` (the latter allows slashes, so it swallows the rest of the path).
+
+When the built-in converters aren't enough, there's `re_path` - a route based on a regular expression. It's more powerful but harder on the eyes: capturing happens through named groups.
+
+```python
+from django.urls import re_path
+
+re_path(r"^orders/(?P<year>[0-9]{4})/$", views.orders_by_year)
+```
+
+<Callout type="tip">
+Start with `path` and converters - they cover almost everything and read like plain text. Reach for `re_path` only when you need something converters can't do: a fixed length, a list of alternatives, a complex format.
+</Callout>
+
+## Function-based view: a request in, a response out
+
+The most direct kind of handler is a function. Its contract is simple: it gets `HttpRequest` as its first argument, followed by whatever was captured from the URL, and it must return an `HttpResponse` (or a subclass of it).
+
+```python
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
+from .models import Order
+
+def order_detail(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    return HttpResponse(f"Order {order.pk} for {order.amount}")
+```
+
+The `request` object carries everything about the request: `request.method` is the method (`"GET"`, `"POST"`), `request.GET` holds query-string parameters (`?page=2`), `request.POST` holds submitted form data, `request.user` is the current user. Notice `get_object_or_404`: a convenient helper that does `get(...)` and, if the object isn't found, raises a 404 itself instead of `DoesNotExist` - exactly the case from the previous section where `get` could blow up.
+
+Branching on method is a common pattern: GET shows something, POST processes a submission.
+
+```python
+def create_order(request):
+    if request.method == "POST":
+        return HttpResponse("created", status=201)
+    return HttpResponse("form")
+```
+
+## Class-based view: the same contract, split into methods
+
+As logic grows, it's convenient to split a function into class methods. A **class-based view** (CBV) subclasses `View`; instead of branching on `request.method`, you write separate `get`, `post` methods, and Django calls the right one based on the request method.
+
+```python
+from django.views import View
+from django.http import HttpResponse
+
+class OrderView(View):
+    def get(self, request, pk):
+        return HttpResponse(f"showing order {pk}")
+
+    def post(self, request, pk):
+        return HttpResponse("updated", status=200)
+```
+
+In `urls.py`, a class is wired up via `.as_view()`, which returns a function - exactly what `urlpatterns` expects.
+
+```python
+path("orders/<int:pk>/", OrderView.as_view())
+```
+
+On top of `View`, Django ships **generic views** - ready-made CBVs for typical tasks. `ListView` shows a list of model objects, `DetailView` shows a single object by primary key. You provide the model and the template, and the generic view handles iteration and lookup.
+
+```python
+from django.views.generic import ListView, DetailView
+from .models import Order
+
+class OrderList(ListView):
+    model = Order
+
+class OrderDetail(DetailView):
+    model = Order
+```
+
+<Compare
+  leftTitle="Function-based view"
+  rightTitle="Class-based view"
+  left={<>
+    <p>A plain function; branches on <code>request.method</code> by hand.</p>
+    <p>Transparent: the whole flow reads top to bottom.</p>
+    <p>Good for simple or nonstandard logic.</p>
+  </>}
+  right={<>
+    <p>A class with <code>get</code>/<code>post</code> methods; dispatching by method is automatic.</p>
+    <p>Generic views (<code>ListView</code>, <code>DetailView</code>) remove boilerplate.</p>
+    <p>Good for typical CRUD pages and reuse through inheritance.</p>
+  </>}
+  verdict="It's not 'better/worse,' it's a choice per task: nonstandard logic reads clearer as a function, a typical list/detail page as a generic view. In urls.py, CBVs are wired up via .as_view()."
+/>
+
+## HttpResponse and friends: status codes
+
+A view returns a response, and the response carries a status code - a number the server uses to report the outcome. `HttpResponse(...)` defaults to `200` (success). For APIs, `JsonResponse(...)` is handy: it serializes a dict to JSON and sets the right header.
+
+```python
+from django.http import JsonResponse
+
+def order_json(request, pk):
+    return JsonResponse({"pk": pk, "status": "paid"})
+```
+
+It's worth knowing status codes at least roughly: `200` success, `201` created (after a successful POST), `301`/`302` redirect (permanent/temporary), `400` bad request from the client, `403` forbidden, `404` not found, `500` server error. When an object doesn't exist, the correct response is `404`, not `200` with an empty body - otherwise the client thinks everything's fine.
+
+## Edge cases
+
+**Rule order decides everything.** Since the first match wins, a general pattern placed above a specific one intercepts requests meant for the specific one. If `orders/new/` sits **below** `orders/<str:pk>/`, then `/orders/new/` triggers the second pattern (it accepts `new` as `pk`), and the request never reaches the creation page. Specific goes above general.
+
+**The `int` converter rejects negative numbers and letters.** `<int:pk>` matches only a sequence of digits. `/orders/-5/` or `/orders/abc/` won't match that pattern - the resolver just keeps looking down the list and, finding nothing, returns a 404. That's useful: addresses that don't look like an id get filtered out before the view even runs.
+
+**A view must return an `HttpResponse`.** If a function runs and returns nothing (`None`), Django raises an error. Every branch in a view has to end in a returned response - including the branch that's easy to forget about (what if the method is neither GET nor POST?).
+
+## Common mistakes
+
+- **A general route above a specific one.** A pattern that catches a lot (`<str:...>`, `<path:...>`) placed before an exact one intercepts requests meant for it. Put specific paths above general ones.
+- **Returning data instead of an `HttpResponse`.** `return {"pk": 1}` from a view is an error: a dict isn't a response. Wrap it in `JsonResponse`, and HTML in `HttpResponse` or `render(...)`.
+- **`200` instead of `404` for a missing object.** Returning an empty page with `200` when the order doesn't exist lies to the client. Use `get_object_or_404`, which raises a proper `404`.
+- **Confusing `request.GET` and `request.POST`.** Query-string parameters (`?q=...`) live in `request.GET` regardless of method; submitted form data lives in `request.POST`. Looking for form data in `request.GET` is a common cause of "why is nothing coming through."
+
+<Detail summary="What as_view() actually returns">
+
+`OrderView.as_view()` doesn't return the class itself or an instance - it returns a **function**. On every request, that function builds a fresh view instance, stores `request` and the captured arguments on it, then calls the `dispatch` method, which picks `get`, `post`, and so on based on `request.method`. That's why `urlpatterns` always sees "something callable like a function" in the handler slot, whether you wrote a function or a class. And that's why state from one request never leaks into another: each request gets its own instance.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "URLconf is a urlpatterns list of 'pattern -> handler' pairs; the resolver walks it top to bottom and takes the first match, otherwise 404.",
+    "Converters in <type:name> capture part of the path, validate its shape, and cast the type: <int:pk> yields an int, <slug:...> a human-readable identifier; re_path handles complex formats.",
+    "Function-based view: a function (request, ...captures) -> HttpResponse, branching on request.method by hand; request carries method, GET, POST, user.",
+    "Class-based view subclasses View and splits logic into get/post methods; generic views ListView/DetailView remove boilerplate; wired up via .as_view().",
+    "A response carries a status code: 200 success, 201 created, 301/302 redirect, 400/403/404 client errors, 500 server error; 404 is correct for a missing object.",
+    "Rule order is critical: put specific paths above general ones, or the general pattern intercepts the request first.",
+  ]}
+/>
+
+## References
+
+- [Django - URL dispatcher](https://docs.djangoproject.com/en/stable/topics/http/urls/)
+- [Django - Path converters](https://docs.djangoproject.com/en/stable/topics/http/urls/#path-converters)
+- [Django - Writing views](https://docs.djangoproject.com/en/stable/topics/http/views/)
+- [Django - Class-based views](https://docs.djangoproject.com/en/stable/topics/class-based-views/)
+- [Django - Request and response objects](https://docs.djangoproject.com/en/stable/ref/request-response/)

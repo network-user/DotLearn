@@ -1,0 +1,158 @@
+---
+conceptId: comprehensions
+title: "Comprehensions: lists, dicts, and sets in one expression"
+estimatedMinutes: 12
+---
+
+# How to fold a for-loop-with-append into one readable expression
+
+Almost any code that builds a new list looks the same: start an empty list, loop over a source, compute something, call `append`. Four lines for a single idea, "transform each item." A comprehension folds those four lines into one expression that reads like a sentence: "take `x*x` for every `x` in `nums`." Calling it mere syntactic sugar sells it short, though. A comprehension has its own scope, its own specialized bytecode, and a handful of traps that catch experienced developers too.
+
+By the end of this section you will write comprehensions for lists, dicts, and sets, add a filter condition without confusing it with a conditional expression, unroll nested comprehensions in the right order, and explain why the loop variable does not leak outside.
+
+## Reading order: source, then filter, then expression
+
+Although the transform expression sits at the start of the line, it runs last. A comprehension reads most naturally right to left by meaning: first `for` walks the source, then `if` throws away what does not qualify, and only then does the expression on the left apply to the survivors. The figure below breaks this pipeline into steps.
+
+<Figure caption="A comprehension works like a pipeline: source first, then filter, then the expression over the survivors.">
+  <PipelineFigure
+    title="How to read a comprehension"
+    stages={[
+      { label: 'for x in nums', note: 'source, one at a time' },
+      { label: 'if x % 2', note: 'filter drops items', active: true },
+      { label: 'x * x', note: 'expression transforms' },
+      { label: '[ ... ]', note: 'collect into a list' },
+    ]}
+  />
+</Figure>
+
+The plain form with no condition just transforms every item. Take some prices and mark them up by 20 percent:
+
+```python
+prices = [100, 250, 90]
+with_markup = [p * 1.2 for p in prices]
+print(with_markup)
+```
+
+This prints `[120.0, 300.0, 108.0]`. A hand-written loop with `append` would give the same result, but the comprehension is shorter and, more importantly, states the intent at a glance: "a new list from the same items, each multiplied by 1.2."
+
+A condition after `for` turns the comprehension into a filter. It decides whether an item ever reaches the expression on the left:
+
+```python
+users = ["Anna", "Boris", "Vera", "Artem"]
+on_a = [name for name in users if name.startswith("A")]
+print(on_a)
+```
+
+That leaves `['Anna', 'Artem']`. Items that fail the `if` never reach the `name` expression and never make it into the result.
+
+## Not just lists: dicts and sets too
+
+The same bracketed form builds dicts and sets - only the outer brackets change. Curly braces with a colon, `{key: value for ...}`, build a dict; curly braces without a colon, `{item for ...}`, build a set. Collect each name's length, then keep only the distinct lengths:
+
+```python
+names = ["Anna", "Boris", "Vera"]
+lengths = {name: len(name) for name in names}
+unique = {len(name) for name in names}
+print(lengths)
+print(unique)
+```
+
+This prints `{'Anna': 4, 'Boris': 5, 'Vera': 4}` and `{4, 5}`. The dict kept insertion order; the set collapsed the two fours into one and makes no promise about order.
+
+Run the example and change the condition: add `if len(word) > 3` to both comprehensions and watch the short words drop out of the dict and the set. Then try building the reverse dict `{length: word}` and see that matching lengths overwrite each other, leaving only the last word.
+
+<PyDemo
+  title="A dict and a set from one expression"
+  code={`words = ["cat", "wolf", "lion", "ox", "rabbit"]
+by_length = {w: len(w) for w in words}
+lengths = {len(w) for w in words}
+print(by_length)
+print(sorted(lengths))`}
+/>
+
+## Nesting: two for clauses read as nested loops
+
+With two sources, a comprehension unrolls into nested loops in the same order the `for` clauses are written: the leftmost `for` is the outer loop, the rightmost is the inner one. A pair of `for` clauses flattens a matrix into a plain list:
+
+```python
+matrix = [[1, 2], [3, 4], [5, 6]]
+flat = [x for row in matrix for x in row]
+print(flat)
+```
+
+This gives `[1, 2, 3, 4, 5, 6]`. Read it as "for each `row` in `matrix`, for each `x` in `row`, take `x`." The order `for row ... for x ...` matches the order of nested `for` loops in an ordinary loop, not the reverse, and that is the first thing to check when a result comes out flipped.
+
+<Callout type="warning">
+Do not confuse the flat `[x for row in matrix for x in row]` with the nested `[[x for x in row] for row in matrix]`. The first gives one flat list, the second preserves the structure and returns a list of lists. The brackets decide everything.
+</Callout>
+
+## Where comprehensions surprise people
+
+The loop variable lives only inside the comprehension and never leaks outward. This is where a comprehension in Python 3 differs from an ordinary `for`, where the variable stays visible after the loop ends.
+
+```python
+squares = [i * i for i in range(3)]
+print(squares)
+print(i)
+```
+
+The first line prints `[0, 1, 4]`; the second fails with `NameError: name 'i' is not defined`. The reason is that a comprehension runs inside its own hidden function: the interpreter wraps it in a separate scope, and `i` stays local to that scope. The upside: a comprehension never clobbers an `i` that may already exist elsewhere in your code.
+
+That hidden function has a downside too. Inside a comprehension written in a class body, names defined at the class level are not visible, because the hidden function does not capture them. And if a comprehension needs to both compute a value and reuse it, the walrus operator `:=` steps in to assign right inside the expression.
+
+<MarginNote label="Related topic">
+The walrus `:=` lets you capture an intermediate value right inside a comprehension, for example `[y for x in data if (y := f(x)) > 0]`. It gets its own course, "The walrus operator."
+</MarginNote>
+
+One more subtlety concerns where the condition sits. A condition after `for` filters; a conditional expression `A if cond else B` before `for` transforms and drops nothing:
+
+```python
+data = [4, -2, 7, -5]
+kept = [x for x in data if x > 0]
+clamped = [x if x > 0 else 0 for x in data]
+print(kept)
+print(clamped)
+```
+
+`kept` is `[4, 7]`, because the filter dropped the negatives. `clamped` is `[4, 0, 7, 0]`, because the ternary expression kept the list's length the same, swapping negatives for zero. Same `if`, but the meaning depends on whether it sits before the expression or after the source.
+
+## Common mistakes
+
+Below are the slip-ups that come up most often.
+
+- **A mixed-up order of nested `for` clauses.** If a flattened list comes out reversed, the `for` order is almost always to blame: it reads left to right as outer then inner loop, not the other way around.
+- **A comprehension for its side effect.** Writing `[print(x) for x in xs]` prints the items, but also builds and discards a list of `None`s. For a pure side effect, use an ordinary `for`, not a comprehension.
+- **A filter where you meant a ternary.** If you want to replace items rather than drop them, you need the conditional expression `x if cond else y` before `for`, not an `if` after the source. Mix them up and you either shorten the list or hit a syntax error.
+- **Nesting too deep.** A comprehension with three `for` clauses and two `if` clauses is harder to read than an ordinary loop. Once the expression stops fitting in your head, unroll it back into a loop or a generator.
+
+<Detail summary="Why a comprehension beats a hand-written append loop">
+
+It is not magic, it is bytecode. An ordinary loop looks up the `append` attribute on the list on every iteration and calls it like any other method: a name lookup plus a function call, repeated on every step. A comprehension compiles to a specialized `LIST_APPEND` instruction that adds the item directly, with no attribute lookup and no method-call overhead.
+
+```python
+import dis
+dis.dis("[x for x in nums]")
+```
+
+The disassembly shows a `LIST_APPEND` instruction instead of the pair "load the append method, call it." On large lists this difference adds up, which is why a comprehension is usually noticeably faster than the equivalent loop with a manual `append`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A comprehension reads like a pipeline: the for source first, then the if filter, then the expression on the left over the survivors.",
+    "The same bracketed form builds lists, dicts (key: value), and sets - only the bracket type changes.",
+    "Nested for clauses read left to right as outer then inner loop; it is easy to get the order backwards.",
+    "A condition after for filters items; a ternary expression before for replaces them and keeps the list's length.",
+    "The loop variable never leaks outward, because a comprehension runs inside its own hidden function.",
+    "A deeply nested comprehension is usually better unrolled into an ordinary loop for readability.",
+  ]}
+/>
+
+## References
+
+- [Python docs · List Comprehensions](https://docs.python.org/3/tutorial/datastructures.html#list-comprehensions)
+- [Python docs · Dictionary and Set comprehensions](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)
+- [PEP 572 · Assignment Expressions (walrus)](https://peps.python.org/pep-0572/)
+- [Python docs · displays for lists, sets and dictionaries](https://docs.python.org/3/reference/expressions.html#displays-for-lists-sets-and-dictionaries)

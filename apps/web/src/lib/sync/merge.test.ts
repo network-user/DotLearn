@@ -7,7 +7,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { canonicalStringify, mergeSnapshots, snapshotHash, type SyncSnapshot } from './merge';
+import {
+  canonicalStringify,
+  mergeSnapshots,
+  snapshotHash,
+  type SyncSnapshot,
+  type Tombstone,
+} from './merge';
 import type { ProgressExport } from '../progress-io';
 import type { AppSettingsBackup } from '../settings';
 
@@ -762,6 +768,36 @@ describe('checkpointResults (content-keyed ++id)', () => {
     const ats = rows.map((r) => r.at);
     expect(ats).toEqual([...ats].sort());
   });
+
+  it('caps at 4000 keeping the newest by at', () => {
+    const many = Array.from({ length: 4200 }, (_, i) => ({
+      id: i,
+      topicSlug: 't',
+      conceptId: 'c',
+      status: 'pass' as const,
+      at: new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString(),
+    }));
+    const rows = table(
+      mergeSnapshots(snap({ checkpointResults: many }), snap()),
+      'checkpointResults',
+    );
+    expect(rows).toHaveLength(4000);
+    expect(rows[rows.length - 1]?.at).toBe(many[many.length - 1]?.at);
+    expect(rows[0]?.at).toBe(many[200]?.at);
+  });
+
+  it('the 4000 cap stays idempotent under re-merge', () => {
+    const many = Array.from({ length: 4200 }, (_, i) => ({
+      id: i,
+      topicSlug: 't',
+      conceptId: 'c',
+      status: 'pass' as const,
+      at: new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString(),
+    }));
+    const a = snap({ checkpointResults: many });
+    const merged = mergeSnapshots(a, snap());
+    expect(canon(mergeSnapshots(merged, a))).toBe(canon(merged));
+  });
 });
 
 describe('settings (snapshot LWW by exportedAt)', () => {
@@ -920,5 +956,114 @@ describe('snapshotHash', () => {
 
   it('returns 16 hex chars', () => {
     expect(snapshotHash(snap())).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe('tombstones (deletion propagation)', () => {
+  const iso = (day: string): string => `${day}T00:00:00.000Z`;
+  const bookmark = (id: string, createdAt: string): Row => ({
+    id,
+    topicSlug: 't',
+    conceptId: id,
+    createdAt: iso(createdAt),
+  });
+  const tomb = (tbl: string, recordKey: string, deletedAt: string): Tombstone => ({
+    id: `${tbl}:${recordKey}`,
+    table: tbl,
+    recordKey,
+    deletedAt: iso(deletedAt),
+  });
+  // Attach tombstones + set a recent exportedAt so the 90-day TTL (measured from exportedAt) keeps
+  // them, unless a test deliberately sets an old one.
+  const withTombstones = (
+    data: PartialData,
+    tombstones: Tombstone[],
+    exportedAt = iso('2026-02-10'),
+  ): SyncSnapshot => {
+    const base = snap(data, { exportedAt });
+    return tombstones.length > 0 ? { ...base, tombstones } : base;
+  };
+
+  it('a tombstone deletes a record across devices (kill on deletedAt >= createdAt)', () => {
+    const withRecord = withTombstones({ bookmarks: [bookmark('t:c1', '2026-02-01')] }, []);
+    const withTomb = withTombstones({}, [tomb('bookmarks', 't:c1', '2026-02-05')]);
+    const merged = mergeSnapshots(withRecord, withTomb);
+    expect(table(merged, 'bookmarks')).toEqual([]);
+    expect(merged.tombstones).toHaveLength(1);
+    // symmetric
+    expect(canon(mergeSnapshots(withTomb, withRecord))).toBe(canon(merged));
+  });
+
+  it('a record re-created AFTER the deletion survives (createdAt > deletedAt)', () => {
+    const withTomb = withTombstones({}, [tomb('bookmarks', 't:c1', '2026-02-05')]);
+    const recreated = withTombstones({ bookmarks: [bookmark('t:c1', '2026-02-08')] }, []);
+    const merged = mergeSnapshots(withTomb, recreated);
+    expect(table(merged, 'bookmarks')).toHaveLength(1);
+    expect(byId(table(merged, 'bookmarks'), 't:c1')?.createdAt).toBe(iso('2026-02-08'));
+  });
+
+  it('propagates deletions for a numeric-keyed table (interviewStudied)', () => {
+    const withRecord = withTombstones(
+      { interviewStudied: [{ id: 5, studiedAt: iso('2026-02-01') }] },
+      [],
+    );
+    const withTomb = withTombstones({}, [tomb('interviewStudied', '5', '2026-02-05')]);
+    expect(table(mergeSnapshots(withRecord, withTomb), 'interviewStudied')).toEqual([]);
+  });
+
+  it('WITHOUT a tombstone, a deleted tracked record is still resurrected (additive)', () => {
+    const deletedLocally = withTombstones({}, []); // bookmark gone, no tombstone
+    const stillHasIt = withTombstones({ bookmarks: [bookmark('t:c1', '2026-02-01')] }, []);
+    expect(table(mergeSnapshots(deletedLocally, stillHasIt), 'bookmarks')).toHaveLength(1);
+  });
+
+  it('ignores a tombstone aimed at an untracked table (conceptScroll never gets killed)', () => {
+    const scrollRow: Row = {
+      id: 't:c1',
+      topicSlug: 't',
+      conceptId: 'c1',
+      anchorOffset: 5,
+      ratio: 0.5,
+      updatedAt: iso('2026-02-01'),
+    };
+    const a = withTombstones({ conceptScroll: [scrollRow] }, []);
+    const b = withTombstones({}, [tomb('conceptScroll', 't:c1', '2026-02-05')]);
+    expect(table(mergeSnapshots(a, b), 'conceptScroll')).toHaveLength(1);
+  });
+
+  it('unions tombstones by id keeping the later deletedAt, symmetrically', () => {
+    const a = withTombstones({}, [tomb('bookmarks', 't:c1', '2026-02-03')]);
+    const b = withTombstones({}, [tomb('bookmarks', 't:c1', '2026-02-07')]);
+    const merged = mergeSnapshots(a, b);
+    expect(merged.tombstones).toHaveLength(1);
+    expect(merged.tombstones?.[0]?.deletedAt).toBe(iso('2026-02-07'));
+    expect(canon(mergeSnapshots(a, b))).toBe(canon(mergeSnapshots(b, a)));
+  });
+
+  it('prunes tombstones past the 90-day TTL, sparing the record they would have killed', () => {
+    // exportedAt 2026-06-01, deletion 2026-01-01 (>90d earlier) -> tombstone pruned, record kept
+    // even though createdAt (2025-12-01) predates the deletion.
+    const withRecord = withTombstones(
+      { bookmarks: [bookmark('t:c1', '2025-12-01')] },
+      [],
+      iso('2026-06-01'),
+    );
+    const withTomb = withTombstones(
+      {},
+      [tomb('bookmarks', 't:c1', '2026-01-01')],
+      iso('2026-06-01'),
+    );
+    const merged = mergeSnapshots(withRecord, withTomb);
+    expect(merged.tombstones).toBeUndefined();
+    expect(table(merged, 'bookmarks')).toHaveLength(1);
+  });
+
+  it('stays idempotent under re-merge with either input', () => {
+    const withRecord = withTombstones({ bookmarks: [bookmark('t:c1', '2026-02-01')] }, []);
+    const withTomb = withTombstones({}, [tomb('bookmarks', 't:c1', '2026-02-05')]);
+    const merged = mergeSnapshots(withRecord, withTomb);
+    expect(canon(mergeSnapshots(merged, withRecord))).toBe(canon(merged));
+    expect(canon(mergeSnapshots(merged, withTomb))).toBe(canon(merged));
+    expect(canon(mergeSnapshots(merged, merged))).toBe(canon(merged));
   });
 });

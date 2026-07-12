@@ -1,0 +1,174 @@
+---
+conceptId: re-in-python
+title: "The re Module: Functions and Pitfalls"
+estimatedMinutes: 17
+---
+
+# More Than a Pattern: How Python Calls the Engine
+
+Over six concepts you've learned to write the patterns themselves: character classes, quantifiers, groups, anchors, lookaround, flags. But the examples so far mostly used `re.search` and `re.findall`, as if those were the only way to apply a pattern to a string. In practice the `re` module ships about a dozen functions, and the choice isn't between a "right" one and a "wrong" one - it's between different questions you're asking the text: does a match exist anywhere, does the string start with it, does the whole string equal it, how many matches are there, and what do you do with them next.
+
+By the end of this section you'll confidently choose between `search`, `match`, `fullmatch`, `findall`, and `finditer`, compile a pattern once instead of rebuilding it on every call, replace text with `sub` using both a string and a function, and sidestep the module's trickiest pitfall - Python strings and regex patterns living by different escaping rules.
+
+## search, match, and fullmatch: Three Different Questions
+
+`re.search(pattern, text)` looks for a match anywhere in the string and returns the first one it finds. `re.match(pattern, text)` also starts at position 0, but unlike `fullmatch` it doesn't require the match to reach the end of the string - whatever tail follows can be anything at all. `re.fullmatch(pattern, text)` is the strictest of the three: the entire string, first character to last, must fit the pattern.
+
+<Figure caption="The same pattern \d{11} on the same string gives a different result depending on which function you call.">
+  <RowFilterFigure
+    title="\\d{11} on the string 'тел: 89261234567'"
+    columns={['call', 'result']}
+    rows={[
+      { cells: ['re.match(pattern, text)', 'None'], kept: false },
+      { cells: ['re.search(pattern, text)', '<Match: 89261234567>'], kept: true },
+      { cells: ['re.fullmatch(pattern, text)', 'None'], kept: false },
+    ]}
+    condition={'\\d{11}'}
+  />
+</Figure>
+
+```python
+import re
+
+text = "тел: 89261234567"
+print(re.match(r"\d{11}", text))
+print(re.search(r"\d{11}", text))
+print(re.fullmatch(r"\d{11}", "89261234567"))
+```
+
+`re.match` prints `None`, because the string starts with "тел" ("tel", a common Russian abbreviation for "phone"), not a digit. `re.search` finds the number in the middle and returns a match object. `re.fullmatch`, applied to the bare number without the prefix, also finds a match - because now the entire string is exactly equal to it.
+
+The most common mistake here is validating a format with `re.match`. If the task is "confirm the whole string is a valid email", not "find an email somewhere inside arbitrary text", `re.match` is the wrong tool: it stays silent about garbage after the match. `re.match(r"\d{11}", "89261234567abc")` returns a match, even though the string is clearly not "just a number". For checking that an entire string fits a format, you need `re.fullmatch`.
+
+## findall and finditer: A List of Strings vs. a Stream of Matches
+
+`re.findall` returns a list - but, as you saw in the concept on groups, the shape of its elements depends on the number of groups in the pattern: no groups gives full matches, one group gives its captures, two or more give tuples. Because of that, `findall` is awkward whenever you need not just the matched text but also its position in the string.
+
+`re.finditer` solves that problem: it always returns an iterator of `Match` objects, no matter how many groups the pattern has. Each object exposes `.group()`, `.start()`, `.end()`, and `.span()`.
+
+```python
+import re
+
+text = "Иванов И.И.: 89261234567, Петрова А.С.: 84951234567"
+for m in re.finditer(r"\d{11}", text):
+    print(m.group(), m.span())
+```
+
+This prints `89261234567 (13, 24)` and `84951234567 (40, 51)`. `findall` with the same group-free pattern would have returned just `['89261234567', '84951234567']` - text with no positions. If you don't need the position, `findall` is shorter; if you need the position, or the match object itself (say, to later call `.groupdict()`), reach for `finditer`.
+
+## re.compile: Compile Once, Call Many Times
+
+Every call to `re.search(pattern, text)` requires Python to parse the `pattern` string into a regex object. The `re` module caches recently compiled patterns, so a single call isn't a disaster, but inside a loop over thousands of strings with the same pattern, compiling explicitly reads more clearly and doesn't depend on the size of the internal cache.
+
+```python
+import re
+
+PHONE_RE = re.compile(r"\d{11}")
+
+customers = ["89261234567", "не указан", "84951234567"]
+valid = [c for c in customers if PHONE_RE.fullmatch(c)]
+print(valid)
+```
+
+This prints `['89261234567', '84951234567']` (the middle entry, "не указан" - "not specified" - is filtered out since it isn't numeric). `PHONE_RE` is compiled once outside the loop, and inside the loop its methods `.fullmatch()`, `.search()`, `.findall()` get called - the same functions as before, but as object methods, without the pattern as the first argument. This matters especially together with `re.VERBOSE` from the previous concept: a multiline, commented pattern is almost always worth assembling once via `re.compile` at module level, rather than rebuilding it on every call.
+
+## re.sub: Replacing With a String and With a Function
+
+`re.sub(pattern, repl, text)` replaces every match with `repl`. If `repl` is a string, it can reference captured groups with `\g<1>` or the short form `\1`:
+
+```python
+import re
+
+date = "Победа: 09.05.1945"
+iso = re.sub(r"(\d\d)\.(\d\d)\.(\d{4})", r"\g<3>-\g<2>-\g<1>", date)
+print(iso)
+```
+
+This prints `Победа: 1945-05-09` ("Победа" - "Victory" - is the label on the date). The form `\g<3>` is preferable to the short `\3` for a concrete reason: if a digit is supposed to follow the group number right away in the replacement string, `\g<3>` is unambiguous, while the engine reads `\30` as "group number 30", not "group 3, then the character 0". `\g<3>0` doesn't have that problem.
+
+When a replacement isn't just rearranging pieces, pass a function instead of a string for `repl` - it receives the `Match` object and returns the replacement string:
+
+```python
+import re
+
+def mask(m):
+    digits = m.group()
+    return digits[:4] + "*" * (len(digits) - 4)
+
+text = "карта 4276123456781234, код 89261234567"
+print(re.sub(r"\d{11,}", mask, text))
+```
+
+This prints `карта 4276************, код 8926*******` ("карта" - "card" - and "код" - "code"), because each match is processed by the function independently: the first four digits stay, the rest turn into `*`. The function gives access to the whole match object - `m.start()`, `m.group("name")`, and so on - not just the matched text, which a string replacement can't do.
+
+## re.split: Splits the String Without Losing the Groups
+
+`re.split(pattern, text)` cuts a string at every match of the pattern and returns the list of pieces in between. A non-obvious detail: if the pattern has capturing groups, their content also lands in the result - between the text chunks, as the separators you might actually want to keep.
+
+```python
+import re
+
+text = "Иванов,Петров;Сидоров"
+print(re.split(r"[,;]", text))
+print(re.split(r"([,;])", text))
+```
+
+The first call prints `['Иванов', 'Петров', 'Сидоров']` - a plain split, no groups. The second, with a group around the class, prints `['Иванов', ',', 'Петров', ';', 'Сидоров']`: the separators are in the list too, each in its own slot. That's useful when you need to remember exactly which character separated two neighboring chunks after splitting, and a nasty surprise when nobody planned for it and index-based code downstream suddenly shifts.
+
+## Where re in Python Surprises You
+
+The most dangerous surprise isn't about the pattern itself, but about the Python string it's written in. `\b` inside an ordinary (non-raw) string isn't a "word boundary" for the engine - it's the backspace control character, because `\b` is one of Python's standard escape sequences, right alongside `\n` and `\t`. The pattern gets built wrong before it ever reaches the `re` module:
+
+```python
+import re
+
+pattern_bad = "\bкот\b"
+pattern_good = r"\bкот\b"
+print(re.findall(pattern_bad, "домашний кот спит"))
+print(re.findall(pattern_good, "домашний кот спит"))
+```
+
+The first call prints `[]`: the string `pattern_bad` actually consists of a backspace character, the word "кот" ("cat"), and another backspace, and there's obviously no such sequence in the text "домашний кот спит" ("a house cat sleeps"). The second prints `['кот']`, because the `r` prefix turns off Python's interpretation of `\b` as an escape sequence and passes the engine exactly two characters: a backslash and the letter "b". The rule is simple: write every `re` pattern as a raw string, `r"..."`, no exceptions - even if it doesn't contain `\b` today, someone will add it on the next edit.
+
+The second surprise already showed up in the concept on groups, but it's especially easy to trip over here: adding a "harmless" group to a pattern changes the shape of a `findall` result from a list of strings to a list of tuples, and code that expected `for phone in re.findall(...)` suddenly gets tuples instead of strings.
+
+The third surprise is `re.match` vs. `re.fullmatch` for format validation, covered above: `match` checks only the start, not the end, and a validator built on it lets garbage through at the tail of the string.
+
+## Common Mistakes
+
+- **`re.match` instead of `re.fullmatch` for validation.** `match` doesn't check that the string ends where the match does - "89261234567garbage" passes a `\d{11}` check. When the whole string must fit, you need `fullmatch`.
+- **A pattern in an ordinary string, not a raw one.** `\b`, and sometimes other sequences that coincide with Python escape codes, silently turn into different characters before `re` ever sees them. Always write patterns as `r"..."`.
+- **`\1` in a replacement string right before a digit.** `re.sub(pattern, r"\1" + "0", text)` works, but `re.sub(pattern, r"\10", text)` doesn't, because `\10` reads as group 10. Use `\g<1>0`.
+- **Rebuilding the same pattern inside a loop.** It works thanks to `re`'s internal cache, but it's less explicit and less predictable than a single `re.compile` at module level with the resulting object reused.
+
+<Detail summary="The re module cache: why re.search(pattern, ...) in a loop isn't a disaster, but isn't ideal either">
+
+The `re` module keeps an internal cache of recently compiled patterns (a historical limit of a few hundred entries), so a repeated call to `re.search("same pattern", text)` usually pulls a ready object from the cache instead of rebuilding it. That saves you from disaster if code calls the module's functions directly inside a loop, but it doesn't save you from two smaller downsides: the cache dictionary is shared across the whole process and can evict your pattern under enough regex variety, and looking the cache up by the pattern string is itself slightly more expensive than calling a method on an already-compiled object. An explicit `re.compile` at module level, outside functions and loops, removes both concerns and additionally documents: here's where a regex is used, and with which flags.
+
+```python
+import re
+
+TAG_RE = re.compile(r"<(\w+)>")
+print(TAG_RE.findall("<div><span></span></div>"))
+```
+
+This prints `['div', 'span']` - the compiled object's `.findall()` method does exactly what the module-level function `re.findall(TAG_RE.pattern, text)` would, but without hitting the cache on every call.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    're.search looks anywhere, re.match anchors only to the start, re.fullmatch requires the whole string to match - format validation needs fullmatch specifically.',
+    're.findall changes result shape by group count; re.finditer always returns Match objects with .group(), .start(), .end(), .span().',
+    're.compile once outside a loop reads more clearly and does not depend on the size of the module cache - especially useful together with flags like re.VERBOSE.',
+    're.sub accepts a replacement string with \\g<N> (safer than \\N before a digit) or a function that receives the whole Match object.',
+    're.split with capturing groups in the pattern keeps the separators themselves in the resulting list.',
+    'Always write a pattern as a raw string r"...": \\b and other sequences in an ordinary Python string are interpreted as escape codes before re ever sees them.',
+  ]}
+/>
+
+## References
+
+- [Python docs · re - Module contents](https://docs.python.org/3/library/re.html#module-contents)
+- [Python docs · re - Regular Expression HOWTO](https://docs.python.org/3/howto/regex.html)
+- [Python docs · re.sub replacement syntax](https://docs.python.org/3/library/re.html#re.sub)

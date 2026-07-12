@@ -1,0 +1,183 @@
+exercises:
+  - id: queues-get-quiz-001
+    concept: queues-pools
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does `queue.Queue.get()` do by default if the queue is empty?"
+    choices:
+      - id: a
+        text: "Blocks the calling thread until another thread puts an item via put()."
+      - id: b
+        text: "Immediately returns None."
+      - id: c
+        text: "Immediately raises an Empty exception."
+      - id: d
+        text: "Returns the last item that was already handed out."
+    correct: [a]
+    explanation: "By default get() is blocking: the thread waits on an empty queue until an item shows up. That is exactly what makes a queue a convenient meeting point for producers and consumers."
+    variants:
+      - prompt: "What does it mean that `queue.Queue` is thread-safe?"
+        choices:
+          - id: a
+            text: "It has an internal lock, so concurrent put and get calls from different threads are correct without any manual synchronization on your part."
+          - id: b
+            text: "It can only be used from a single thread."
+          - id: c
+            text: "It keeps a separate copy of the data for each thread."
+          - id: d
+            text: "It disables the GIL while it is being accessed."
+        correct: [a]
+        explanation: "The queue synchronizes access with its internal lock. That is exactly why, once you hand state over to a queue, you stop writing Lock code by hand."
+      - prompt: "What does `q.task_done()` do?"
+        choices:
+          - id: a
+            text: "Marks an item taken from the queue as processed; together with q.join() it lets you wait until all the work has been drained."
+          - id: b
+            text: "Removes the queue from memory."
+          - id: c
+            text: "Puts a sentinel into the queue."
+          - id: d
+            text: "Stops all consumer threads."
+        correct: [a]
+        explanation: "task_done() increments the count of completed tasks. q.join() blocks until the number of task_done calls matches the number of put calls, meaning the queue has been fully drained."
+
+  - id: queues-executor-blanks-001
+    concept: queues-pools
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks: submit a task to a pool and retrieve the result."
+    template: |
+      with ThreadPoolExecutor(max_workers=4) as pool:
+          future = pool.{{submit}}(work, 10)
+          value = future.{{result}}()
+    blanks:
+      submit:
+        accept: ["submit"]
+      result:
+        accept: ["result"]
+    variants:
+      - prompt: "Fill in the blank: apply a function to every item concurrently, keeping the input order."
+        template: |
+          with ThreadPoolExecutor() as pool:
+              for result in pool.{{map}}(fetch, urls):
+                  handle(result)
+        blanks:
+          map:
+            accept: ["map"]
+      - prompt: "Fill in the blank: a consumer exits on a sentinel."
+        template: |
+          while True:
+              item = q.get()
+              if item is {{sentinel}}:
+                  break
+        blanks:
+          sentinel:
+            accept: ["None"]
+
+  - id: queues-sentinel-predict-001
+    concept: queues-pools
+    type: predict-output
+    difficulty: 3
+    prompt: "The snippet models a consumer on a sentinel-terminated queue: items are taken one by one, and None is the signal that work is over. What does the program print?"
+    snippet: |
+      q = ["a", "b", "c", None]
+      consumed = []
+
+      def get():
+          return q.pop(0)
+
+      while True:
+          item = get()
+          if item is None:
+              break
+          consumed.append(item)
+
+      print(len(consumed), consumed)
+    expected:
+      kind: stdout
+      value: "3 ['a', 'b', 'c']"
+    hints:
+      - "None here is the sentinel: an exit signal. Which item breaks the loop, and what has already made it into consumed by then?"
+      - "Three real items get processed, then None breaks the loop before being appended. So the length is 3, and the list is ['a', 'b', 'c']."
+    variants:
+      - prompt: "The sentinel sits in the middle: whatever comes after it never reaches the consumer. What does the program print?"
+        snippet: |
+          q = ["x", None, "y"]
+          consumed = []
+
+          def get():
+              return q.pop(0)
+
+          while True:
+              item = get()
+              if item is None:
+                  break
+              consumed.append(item)
+
+          print(len(consumed), consumed)
+        expected:
+          kind: stdout
+          value: "1 ['x']"
+      - prompt: "Four numeric items and a sentinel at the end. What does the program print?"
+        snippet: |
+          q = [1, 2, 3, 4, None]
+          consumed = []
+
+          def get():
+              return q.pop(0)
+
+          while True:
+              item = get()
+              if item is None:
+                  break
+              consumed.append(item)
+
+          print(len(consumed), consumed)
+        expected:
+          kind: stdout
+          value: "4 [1, 2, 3, 4]"
+
+  - id: queues-as-completed-order-predict-001
+    concept: queues-pools
+    type: predict-output
+    difficulty: 3
+    prompt: "The snippet contrasts submit order with as_completed order: tasks finish in increasing order of duration, not in submission order. It prints the submission list and the readiness-order list. What does the program print?"
+    snippet: |
+      submitted = ["A", "B", "C"]
+      durations = {"A": 30, "B": 10, "C": 20}
+
+      as_completed = sorted(submitted, key=lambda name: durations[name])
+      print(submitted, as_completed)
+    expected:
+      kind: stdout
+      value: "['A', 'B', 'C'] ['B', 'C', 'A']"
+    hints:
+      - "map would return results in input order. as_completed yields Futures as they finish, i.e. by time, not by submit order."
+      - "Sort by duration: B(10), C(20), A(30). The submit list stays the same, and the readiness order is ['B', 'C', 'A']."
+
+  - id: queues-future-exception-predict-001
+    concept: queues-pools
+    type: predict-output
+    difficulty: 3
+    prompt: "The snippet models how a Future catches a task's exception: the error does not crash the program, it gets stored and surfaces when you inspect the result. What does the program print?"
+    snippet: |
+      def run(task):
+          try:
+              return ("ok", task())
+          except Exception as exc:
+              return ("error", type(exc).__name__)
+
+      def good():
+          return 42
+
+      def bad():
+          raise ValueError("boom")
+
+      results = [run(good), run(bad)]
+      print(results)
+    expected:
+      kind: stdout
+      value: "[('ok', 42), ('error', 'ValueError')]"
+    hints:
+      - "An exception inside a task does not fly out right away: the Future catches and stores it. What does processing each of the two tasks return?"
+      - "good() gives ('ok', 42). bad() raises ValueError, the handler catches it and returns ('error', 'ValueError'). The result is a list of these two tuples."

@@ -1,0 +1,204 @@
+---
+conceptId: drf-serializers
+title: "Serializers: object vs. JSON, validation, save"
+estimatedMinutes: 13
+---
+
+# The boundary where objects turn into text
+
+Inside a delivery service, an order is a living Python object: it has an `id`, a linked user, a date, a list of line items, methods. Outside, on the HTTP wire, the order doesn't exist - there's only text, flat JSON that knows nothing about your classes or your database. Something has to translate across that boundary in both directions: turning an object into a dict on the way out, turning an incoming dict into a validated, save-ready set of data on the way in. In DRF, this translator-and-customs-officer combined is called a serializer.
+
+The newcomer's temptation is to translate by hand: `{"id": order.id, "name": order.name}` on the way out, `Order(name=request.data["name"])` on the way in. That works fine right up until the first related model, the first optional field, and the first "email must be valid" check. From there, hand-rolled translation turns into a pile of `if` statements, drifts apart between endpoints, and quietly forgets one field or another. A serializer collects translation and validation into a single declared object. By the end of this section you'll understand how `Serializer` differs from `ModelSerializer`, how the same class works in both directions, where validation lives, and why `save()` decides on its own whether to create or update.
+
+## Mental model: one class, two roads
+
+A serializer looks like a Django form, but it serves an API rather than HTML. It has fields, and each field knows how to travel in both directions. One road is **serialization**: take an object (or a queryset), read its attributes, hand back a dict of primitives through the `.data` property. The other road is **deserialization**: take an input dict, run it through `.is_valid()`, get back cleaned `validated_data`, and save it via `.save()`. The same set of fields serves both roads, so the API contract lives in one place.
+
+<Figure caption="One serializer works in both directions. Down - serialization: an object passes through the fields and becomes .data (a dict of primitives). Up - deserialization: an input dict goes through is_valid(), produces validated_data, and is saved via save().">
+  <Sketch viewBox="0 0 470 220" title="Object vs. JSON through a serializer">
+    <SketchBox x={20} y={86} width={96} height={48} accent />
+    <SketchLabel x={68} y={106} mono accent size={11}>Order</SketchLabel>
+    <SketchLabel x={68} y={122} muted size={9}>object</SketchLabel>
+
+    <SketchBox x={188} y={70} width={96} height={80} />
+    <SketchLabel x={236} y={96} mono size={11}>serializer</SketchLabel>
+    <SketchLabel x={236} y={114} muted size={9}>fields</SketchLabel>
+    <SketchLabel x={236} y={129} muted size={9}>validate</SketchLabel>
+
+    <SketchBox x={356} y={86} width={96} height={48} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={404} y={106} mono size={11}>JSON</SketchLabel>
+    <SketchLabel x={404} y={122} muted size={9}>dict</SketchLabel>
+
+    <SketchArrow from={[116, 100]} to={[188, 100]} />
+    <SketchLabel x={150} y={92} muted size={9}>.data</SketchLabel>
+
+    <SketchArrow from={[284, 100]} to={[356, 100]} />
+
+    <SketchArrow from={[356, 124]} to={[284, 124]} accent />
+    <SketchArrow from={[188, 124]} to={[116, 124]} accent />
+    <SketchLabel x={150} y={142} accent size={9}>save()</SketchLabel>
+    <SketchLabel x={320} y={142} accent size={9}>is_valid()</SketchLabel>
+  </Sketch>
+</Figure>
+
+Remember the direction: on the way out you hold a ready object and ask for `.data`; on the way in you hold a raw dict, pass it as `data=...`, must call `.is_valid()`, and only then are allowed to touch `validated_data`. Skipping `.is_valid()` and reading `validated_data` straight away is a bug - there's simply no cleaned data before the check runs.
+
+## Serializer vs. ModelSerializer
+
+You describe a `Serializer` field by field - it knows nothing about your model. A `ModelSerializer` looks at the model and builds the fields for you, the same way `ModelForm` relates to `Form`.
+
+<Compare
+  leftTitle="Serializer (manual)"
+  rightTitle="ModelSerializer (from the model)"
+  left={
+    <>
+      <p>Every field is declared explicitly; you write <code>create</code> yourself:</p>
+      <pre><code>{`class OrderSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    title = serializers.CharField(max_length=120)
+    amount = serializers.IntegerField()
+
+    def create(self, validated_data):
+        return Order.objects.create(**validated_data)`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Fields and <code>create</code>/<code>update</code> are derived from the model:</p>
+      <pre><code>{`class OrderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = ["id", "title", "amount"]`}</code></pre>
+    </>
+  }
+  verdict="ModelSerializer removes the busywork for model CRUD; a plain Serializer is for when the input doesn't map one-to-one onto a table."
+/>
+
+`ModelSerializer` generates the fields for you, marks `id` as `read_only`, picks up the model's constraints (`max_length`, `unique`), and gives you working `create()`/`update()`. A plain `Serializer` still earns its keep when the shape of the data doesn't equal a single table - say, the input is two numbers and what gets saved is a computed third object.
+
+## Serialization: object into dict
+
+```python
+order = Order.objects.get(pk=1)
+serializer = OrderSerializer(order)
+serializer.data
+```
+
+`serializer.data` returns `{"id": 1, "title": "Delivery", "amount": 540}` - a dict of primitives, ready to go into a `Response`. For a list, add `many=True`: `OrderSerializer(orders, many=True).data` returns a list of dicts. On this road, validation never runs: an object that came from the database is already assumed to be correct.
+
+## Deserialization: dict into a saved object
+
+The inbound road is longer and strictly ordered.
+
+<Steps>
+  <li>Create a serializer with the incoming data: <code>serializer = OrderSerializer(data=request.data)</code>.</li>
+  <li>Call <code>serializer.is_valid(raise_exception=True)</code> - this runs every field's checks.</li>
+  <li>Read the cleaned result from <code>serializer.validated_data</code> (only after a successful check).</li>
+  <li>Save via <code>serializer.save()</code> - it calls <code>create()</code> or <code>update()</code> for you.</li>
+</Steps>
+
+```python
+serializer = OrderSerializer(data=request.data)
+serializer.is_valid(raise_exception=True)
+order = serializer.save()
+return Response(serializer.data, status=status.HTTP_201_CREATED)
+```
+
+`save()` picks the road on its own: if the serializer was created **without** an object (`data=...`), it calls `create(validated_data)`; if it was created **with** an object (`OrderSerializer(order, data=request.data)`), it calls `update(order, validated_data)`. Whether an `instance` was passed in is the switch between "create" and "update".
+
+## Validation: three levels
+
+Input checking lives in three places, and the order between them matters.
+
+- **Field level - built-in rules and validators.** `CharField(max_length=120)`, `EmailField()`, `IntegerField(min_value=0)`, plus a `validators=[...]` list. This is the first line: type, length, format, uniqueness.
+- **Single-field level - the `validate_<field>` method.** `validate_amount(self, value)` receives the already-coerced value of the `amount` field, can check or adjust it, and must return it. It raises `serializers.ValidationError` if the value doesn't pass.
+- **Whole-object level - the `validate(self, attrs)` method.** Receives the dict of all fields at once. This is where checks that need several fields together live: "end date can't be before start date", "either phone or email must be filled in".
+
+```python
+class OrderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = ["id", "title", "amount", "discount"]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("amount must be positive")
+        return value
+
+    def validate(self, attrs):
+        if attrs["discount"] > attrs["amount"]:
+            raise serializers.ValidationError("discount is greater than the amount")
+        return attrs
+```
+
+Field-level validators run first, one field at a time; then `validate(attrs)` runs exactly once for cross-field checks. If a field failed its own check, it won't be in `attrs`, so you can't write `validate` as if every key is unconditionally present.
+
+## read_only, write_only, and source
+
+A field doesn't have to be symmetric. `read_only=True` means "outbound only": it appears in `.data` but is ignored on input - typical for `id` and server-set dates. `write_only=True` is the opposite, "inbound only": accepted on write but never returned in the response - this is how `password` is hidden. And `source` decouples the JSON field name from the object's attribute name: `owner_name = serializers.CharField(source="owner.username")` returns the owner's `username` under the key `owner_name`.
+
+<Callout type="tip">
+`write_only=True` on a password field isn't about storage security, it's about the contract: the server accepts a password on registration but never puts it back into a JSON response. Hashing is the model's/manager's job; the serializer only guarantees the field never "leaks" back out.
+</Callout>
+
+## Nested serializers
+
+An object inside an object is described by a serializer inside a serializer.
+
+```python
+class ItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Item
+        fields = ["sku", "qty"]
+
+class OrderSerializer(serializers.ModelSerializer):
+    items = ItemSerializer(many=True, read_only=True)
+    class Meta:
+        model = Order
+        fields = ["id", "title", "items"]
+```
+
+On the way out, `items` expands into a list of nested dicts. Notice the `read_only=True`: writing nested objects doesn't work out of the box. DRF has no built-in way to create an order together with its line items in a single `save()` - that has to be written by hand in `create()`. So nested-for-reading is free, nested-for-writing is explicit work on your part.
+
+## Edge cases
+
+**`validated_data` doesn't exist before `is_valid()`.** Accessing it earlier raises `AssertionError`. The contract is strict: check first, then access the cleaned data - otherwise unvalidated values would end up in your code disguised as validated ones.
+
+**`partial=True` changes what "required" means.** For `PATCH`, the serializer is created with `partial=True`, and then missing fields aren't treated as errors - only what was sent gets updated. Without that flag, `PATCH` demands every required field just like `PUT`, and partial updates break.
+
+**Extra fields in the input are silently dropped.** If the client sends `is_admin: true` and `fields` has no such entry, DRF just ignores it - it never makes it into `validated_data`. That's both a protection (you can't write what isn't in the contract) and a trap: a typo in a field name won't raise an error, the value just vanishes.
+
+<Callout type="warning">
+Surprise: `validate_<field>` is **not called** if the field failed its built-in check or is missing from the input entirely. You can't rely on your `validate_email` always running - on empty or malformed input, DRF never reaches it. Checks that must fire unconditionally belong in `validate(attrs)`, guarded by a careful check for the key's presence.
+</Callout>
+
+## Common mistakes
+
+- **Reading `validated_data` without `is_valid()`.** There's no cleaned data before the check; call `.is_valid()` first, then access it. Otherwise you get an `AssertionError` or end up working with raw input instead of validated values.
+- **Returning `request.data` in the response instead of `serializer.data`.** The response should carry the serialized object, not the input dict: only `serializer.data` reflects the actual saved state, including server-set fields like `id`.
+- **Forgetting `return` in `validate_<field>` or `validate`.** The method must return a value (the field or `attrs`). Without `return`, the field silently becomes `None` and the check quietly corrupts the data.
+- **Expecting a nested serializer to write itself.** Nested-for-writing needs an explicit `create()`/`update()`. It's marked `read_only=True` by default, otherwise `save()` either fails or ignores the nested data.
+
+<Detail summary="Why save() correctly guesses between create and update">
+
+There's no magic to it: `save()` looks at `self.instance`. If the serializer was created as `OrderSerializer(data=...)`, `instance` is `None`, and `save()` calls `self.create(validated_data)`. If it was created as `OrderSerializer(order, data=...)`, `instance` holds the object, and `save()` calls `self.update(instance, validated_data)`. This is also why `PUT` and `PATCH` views first fetch the object and pass it into the serializer - that's exactly how `save()` knows it's an update. `ModelSerializer` implements both methods for you on top of the ORM: `create` does `Model.objects.create(**validated_data)`, `update` assigns the attributes and calls `instance.save()`. A plain `Serializer` leaves both methods empty - if you don't write them yourself, `save()` raises `NotImplementedError`.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A serializer is a two-way translator between an object and JSON: down via .data for serialization, up via is_valid() → validated_data → save() for deserialization.",
+    "ModelSerializer derives fields and create/update from the model; a plain Serializer is for when the input doesn't map to a single table.",
+    "validated_data is only available after is_valid(); save() calls create() if there's no instance, and update() if an object was passed in.",
+    "Validation runs on three levels: field rules and validators, then validate_<field> per field, then validate(attrs) for cross-field checks.",
+    "read_only is outbound only, write_only is inbound only, source decouples the JSON name from the attribute name; nested-for-reading is free, nested-for-writing needs a manual create.",
+  ]}
+/>
+
+## Links
+
+- [DRF - Serializers](https://www.django-rest-framework.org/api-guide/serializers/)
+- [DRF - Serializer fields](https://www.django-rest-framework.org/api-guide/fields/)
+- [DRF - Validators](https://www.django-rest-framework.org/api-guide/validators/)
+- [DRF - ModelSerializer](https://www.django-rest-framework.org/api-guide/serializers/#modelserializer)
+- [DRF - Nested relationships](https://www.django-rest-framework.org/api-guide/relations/#nested-relationships)

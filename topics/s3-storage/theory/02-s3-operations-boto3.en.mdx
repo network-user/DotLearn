@@ -1,0 +1,179 @@
+---
+conceptId: s3-operations-boto3
+title: "S3 operations with boto3: uploads, downloads, and pagination"
+estimatedMinutes: 13
+---
+
+# Why `list_objects_v2` won't give you all your files
+
+You wrote code that lists the names of every object in a bucket: one call to `list_objects_v2`, loop over the result, done. On a test bucket with a dozen files, it works fine. A month later there are forty thousand objects in production, and your code stubbornly sees exactly a thousand of them - always the same thousand, as if the rest had vanished. Nothing vanished: S3 physically never returns more than a thousand keys in a single call, and it tells you so honestly in the response, through a flag your code ignored.
+
+boto3 is AWS's official Python library, and working with S3 through it comes down to a handful of methods you can learn in an evening. But two spots in this API routinely trip people up: listings that come back paginated, and uploading large files, which you can't do in one shot. By the end of this section you'll confidently put and get objects, read a listing to the end via pagination, and know when a plain upload needs to give way to multipart.
+
+## Mental model: the client is a map of S3's HTTP calls
+
+boto3 gives you two levels of access to S3. The low-level one is `client`: each of its methods maps to a single HTTP request against the S3 API. `put_object` is a `PUT`, `get_object` is a `GET`, `list_objects_v2` is a `GET` with a list. Names and parameters mirror the S3 protocol one to one. The high-level one is `resource`: an object-oriented wrapper (`bucket.objects.all()`, `obj.download_file(...)`) that hides some of the details.
+
+```python
+import boto3
+
+client = boto3.client("s3")
+resource = boto3.resource("s3")
+```
+
+The practical rule is simple: reach for `client` when you want predictability and access to every parameter; `resource` is convenient for short scripts, but AWS has effectively frozen its development, and new code is usually written against `client`. The rest of this section sticks with `client`, since its behavior is exactly what you need to understand to avoid getting bitten by pagination.
+
+## Putting and getting an object
+
+The basic pair of operations is writing and reading an object by key.
+
+```python
+client.put_object(Bucket="ozon-media", Key="users/42/note.txt", Body=b"hello")
+
+resp = client.get_object(Bucket="ozon-media", Key="users/42/note.txt")
+data = resp["Body"].read()
+print(data.decode())
+```
+
+`put_object` accepts `Body` - bytes, a string, or a file object - and stores it under the key. `get_object` returns a dict where the `Body` key holds not the raw bytes but a **StreamingBody** - a streaming object. That's an important detail: the body isn't loaded into memory in full at call time. You read it yourself - `.read()` pulls everything at once, but for a large object it's better to read it in chunks so you don't take down the process on a gigabyte-sized file. The stream is closed once you're done reading.
+
+<Callout type="info">
+`resp["Body"]` is a stream, not a ready-made string. A common trap is printing `resp["Body"]` and being surprised to see a `StreamingBody` object instead of the content. Data only shows up after `.read()` (or `.iter_chunks()` for reading in pieces).
+</Callout>
+
+## HEAD: metadata without the body
+
+Sometimes you just need to know about an object without downloading it: does it exist, how big is it, what type is it. That's what `head_object` is for - it returns only metadata.
+
+```python
+meta = client.head_object(Bucket="ozon-media", Key="users/42/note.txt")
+print(meta["ContentLength"], meta["ContentType"])
+```
+
+`HEAD` never transfers the body, so it's cheap and fast even for a huge object. It also doubles as an existence check: if the object isn't there, `head_object` raises an exception with a `404` code. There's no need to download a gigabyte just to learn its size.
+
+## Listing and pagination: where the bug from the intro hides
+
+`list_objects_v2` returns a bucket's objects, but a single call returns **no more than 1000 keys** - that's a hard S3 limit. If there are more objects than that, the response gets truncated, and S3 flags it honestly with `IsTruncated: True`, attaching a `NextContinuationToken` - a bookmark to request the next page with.
+
+<Figure caption="list_objects_v2 returns pages of up to MaxKeys keys. As long as IsTruncated is true, take NextContinuationToken and ask for the next page; otherwise the listing is done.">
+  <PipelineFigure
+    stages={[
+      { label: "list_objects_v2", note: "first page, up to 1000 keys" },
+      { label: "IsTruncated?", note: "any keys left?", active: true },
+      { label: "ContinuationToken", note: "bookmark for the next page" },
+      { label: "call again", note: "while IsTruncated == True" },
+      { label: "listing done", note: "IsTruncated == False" },
+    ]}
+  />
+</Figure>
+
+The `MaxKeys` parameter sets the page size (the default and the maximum are both 1000). You can lower it; you can't raise it past 1000. To get every key, you loop the listing, passing in the previous page's token, until `IsTruncated` turns false.
+
+```python
+token = None
+keys = []
+while True:
+    params = {"Bucket": "ozon-media", "Prefix": "users/"}
+    if token:
+        params["ContinuationToken"] = token
+    resp = client.list_objects_v2(**params)
+    keys += [o["Key"] for o in resp.get("Contents", [])]
+    if not resp["IsTruncated"]:
+        break
+    token = resp["NextContinuationToken"]
+```
+
+boto3's built-in **paginator** wraps exactly this logic and scrolls through pages for you:
+
+```python
+paginator = client.get_paginator("list_objects_v2")
+for page in paginator.paginate(Bucket="ozon-media", Prefix="users/"):
+    for obj in page.get("Contents", []):
+        print(obj["Key"])
+```
+
+A paginator spares you the manual token-juggling and never drops a page. `Prefix` filters keys by their starting string (the same "entering a folder" trick from section one), and `Delimiter="/"` groups shared prefixes into `CommonPrefixes` - which is how the console draws "folders" in the first place.
+
+<Callout type="warning">
+An empty bucket or a prefix with no objects won't include a `Contents` key at all. That's why you write `resp.get("Contents", [])` instead of `resp["Contents"]` - a direct lookup raises `KeyError` on an empty result. This is the second most common S3-in-Python mistake, right after ignoring `IsTruncated`.
+</Callout>
+
+## Deleting: one at a time or in bulk
+
+Deleting a single object is `delete_object` by key. Deleting many in one request is `delete_objects`, which takes a list of keys (up to 1000 per call).
+
+```python
+client.delete_object(Bucket="ozon-media", Key="users/42/note.txt")
+
+client.delete_objects(
+    Bucket="ozon-media",
+    Delete={"Objects": [{"Key": "a.txt"}, {"Key": "b.txt"}]},
+)
+```
+
+Batch deletion saves network round trips: a thousand separate `delete_object` calls means a thousand requests, while one `delete_objects` with a list of a thousand keys is a single request. Deleting a key that doesn't exist, incidentally, isn't treated as an error - S3 responds with success, as if the object had been there and was removed.
+
+## High-level helpers: upload_file and download_file
+
+For working with files on disk, there's a convenient pair built on top of `client`: `upload_file` and `download_file`. They take a local file path and figure out how to transfer it themselves.
+
+```python
+client.upload_file("/tmp/big.zip", "ozon-media", "backups/big.zip")
+client.download_file("ozon-media", "backups/big.zip", "/tmp/restored.zip")
+```
+
+Their main advantage isn't brevity. These methods automatically switch to **multipart** for large files, uploading them in parallel chunks with automatic retries for any part that fails. You don't have to decide whether to slice the file yourself - the library does it for you based on a size threshold.
+
+## Multipart upload: shipping a large file in pieces
+
+An object up to 5 GB can be uploaded in a single `put_object` call. Beyond that, it's physically impossible - that's the hard ceiling on one upload. For larger objects there's multipart upload: the file is cut into parts (at least 5 MB each, except the last), each part is uploaded separately, and at the end you ask S3 to stitch them into a single object.
+
+<Figure caption="Multipart: the file is sliced into parts, each uploaded as its own request (in parallel, with retries for any that fail), then CompleteMultipartUpload stitches them into a single object.">
+  <PipelineFigure
+    stages={[
+      { label: "CreateMultipartUpload", note: "S3 issues an UploadId" },
+      { label: "split into parts", note: "each >= 5 MB" },
+      { label: "UploadPart x N", note: "in parallel, with retries", active: true },
+      { label: "CompleteMultipartUpload", note: "stitched into one object" },
+    ]}
+  />
+</Figure>
+
+Why bother with this beyond dodging the 5 GB limit. First, resumability: if a part fails to land, you retry just that part, not the whole file from scratch. Second, parallelism: parts upload at the same time, saturating your bandwidth. Third, resilience to network drops on multi-gigabyte uploads. The price for all this is added complexity - and one nasty gotcha.
+
+## Surprise: an abandoned multipart upload sticks around and costs money
+
+If you start a multipart upload (`CreateMultipartUpload`), push up some of the parts, but never call `CompleteMultipartUpload` and never explicitly abort it, the uploaded parts **don't disappear on their own**. They sit in the bucket as an incomplete upload, invisible in a normal object listing, but they take up space and get billed as storage. A crashed deploy or a script that died mid-run can pile up such "shrapnel" for months, quietly inflating your bill, while the bucket owner never even sees it among their objects.
+
+The fix is a lifecycle rule that says "delete incomplete multipart uploads older than N days" (more on lifecycle in section five) plus an explicit `abort_multipart_upload` in your error handling.
+
+## Common mistakes
+
+- **Ignoring `IsTruncated` and only reading the first page.** The single most common S3-in-Python mistake: the code sees exactly 1000 (or `MaxKeys`) objects and assumes that's all of them. Always read a listing to the end, either via the token or, better, via a paginator.
+- **Treating `resp["Body"]` as ready-made data.** It's a `StreamingBody` stream. The content only appears after `.read()`; forget to read it, and you're left holding a stream object instead of bytes.
+- **Sending gigabytes in a single `put_object`.** Above 5 GB it simply won't work, and above a few hundred megabytes it's fragile on an unstable network. For large files, use `upload_file` (which switches to multipart automatically) or drive multipart directly.
+
+<Detail summary="Why exactly 1000 keys and 5 GB - where these numbers come from">
+
+Both limits are engineering trade-offs baked into the protocol. The 1000-key cap on a listing page bounds the size of a single XML response and how long it takes to build: without a ceiling, listing a bucket with a hundred million objects would produce a giant response and stall the server. Pagination shifts the traversal onto the client, in small chunks. The 5 GB cap on a single `PUT` bounds an object that has to travel as one request body; the object itself can still be huge (up to 5 TB) - assembling anything past 5 GB just has to go through multipart, where every part stays a manageable size. It's handy to just remember "a thousand keys per listing, five gigabytes per single PUT."
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "boto3 gives you client (one method, one S3 HTTP call) and resource (an OOP wrapper); new code is usually written against client.",
+    "put_object stores bytes under a key; get_object returns a StreamingBody - the data only shows up after .read().",
+    "list_objects_v2 returns at most 1000 keys per call; while IsTruncated is true, keep reading via ContinuationToken or, better, a paginator.",
+    "head_object returns metadata without the body - a cheap way to learn an object's size, type, or whether it exists at all.",
+    "upload_file/download_file work with files on disk and switch to multipart automatically for large files; delete_objects removes up to 1000 keys per request.",
+    "Multipart slices a large file into parts (>= 5 MB) for resumability and parallelism; an abandoned incomplete upload sticks around and gets billed, so clean it up with a lifecycle rule.",
+  ]}
+/>
+
+## References
+
+- [boto3 - S3 client reference](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html)
+- [boto3 - Paginators](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/paginators.html)
+- [Amazon S3 - Uploading and copying objects using multipart upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html)
+- [Amazon S3 - ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html)

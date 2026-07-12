@@ -1,0 +1,93 @@
+---
+conceptId: sharding
+title: Sharding
+estimatedMinutes: 12
+---
+
+# Sharding: different data on different nodes
+
+Replicas are maxed out, the heavy tables are already partitioned, and the leader is still drowning: the write stream no longer fits on one node, or the data has outgrown its disk. That's the exact wall behind which sharding begins. It spreads different data across different nodes so that each node (a shard) holds its own slice and is the write owner for that slice. It's the only way to scale writes and volume past a single server, and at the same time the most expensive technique in this whole topic to operate. From here, almost everything hinges on one decision made at the start and nearly impossible to change later: which key to slice by.
+
+## Key, router, and independent shards
+
+Sharding rests on three parts. The shard key is the field data gets distributed by (`user_id`, `tenant_id`, an order id). A routing function turns a key value into a shard number. And the shards themselves are independent databases, each with its own data, and usually with its own replicas and partitions inside too. In other words, sharding doesn't replace the earlier layers, it builds on top of them.
+
+<Figure caption="The router picks a shard based on the shard key · each shard is an independent database with its own writes and usually its own replicas.">
+  <Sketch viewBox="0 0 600 214" title="Sharding by key">
+    <SketchLabel x={28} y={92} muted anchor="start">request by key</SketchLabel>
+    <SketchArrow from={[24, 104]} to={[58, 104]} accent />
+    <SketchBox x={60} y={80} width={110} height={52} accent />
+    <SketchLabel x={115} y={102} mono accent>router</SketchLabel>
+    <SketchLabel x={115} y={120} mono muted>shard(key)</SketchLabel>
+    <SketchArrow from={[170, 96]} to={[372, 44]} />
+    <SketchArrow from={[170, 106]} to={[372, 108]} />
+    <SketchArrow from={[170, 116]} to={[372, 172]} />
+    <SketchBox x={374} y={22} width={150} height={44} />
+    <SketchLabel x={449} y={49} mono>shard 0 · user 0..3</SketchLabel>
+    <SketchBox x={374} y={86} width={150} height={44} accent />
+    <SketchLabel x={449} y={113} mono accent>shard 1 · user 4..7</SketchLabel>
+    <SketchBox x={374} y={150} width={150} height={44} />
+    <SketchLabel x={449} y={177} mono>shard 2 · user 8..11</SketchLabel>
+  </Sketch>
+</Figure>
+
+## The shard key choice decides almost everything
+
+The shard key is the most consequential decision here, and the hardest one to change later. A good key has three properties. High cardinality: enough distinct values that data splits finely (`user_id` works, `country` with five values doesn't). Uniformity: values land on shards evenly, with no obvious favorites. And presence in most queries: if nearly every request knows the key, the router sends it straight to the right shard and the query stays inside one node. For many products that key is `user_id` (almost everything a user does touches their own data) or `tenant_id` in a multi-tenant SaaS. A bad key dooms the system to skew and constant cross-shard queries, and fixing it means effectively resharding everything from scratch.
+
+## Hash sharding vs. range sharding
+
+Exactly how a key turns into a shard number splits into two different worlds. With hash sharding, you take `hash(key)` and spread it across shards (in its naive form, `hash % N`). Load spreads evenly, but range queries lose out entirely: keys that are adjacent in value get deliberately scattered across different shards, so "all of today's orders" turns into polling every shard. On top of that, naive `hash % N` catastrophically reshuffles data whenever the number of shards changes, which is exactly why the next section of this topic is devoted to consistent hashing.
+
+With range sharding, a shard owns a contiguous interval of the key. Range queries survive (adjacent keys sit next to each other on one shard), but you pick up the risk of a hot range: if the key grows monotonically (a timestamp, an auto-increment), all the fresh traffic pours into the one newest shard while the rest sit idle. Range sharding requires actively watching balance and being able to split a range that's grown too large.
+
+<Compare
+  leftTitle="Hash sharding"
+  rightTitle="Range sharding"
+  left={"Spreads keys evenly, load is balanced. Kills range queries (adjacent keys land on different shards), and naive hash % N reshuffles almost everything when the number of shards changes."}
+  right={"Stores contiguous intervals, so range queries work. But a monotonic key creates a hot range: all the fresh traffic lands on one shard."}
+  verdict="Hash for even load with no range queries; range for range queries at the cost of hot-range risk and manual rebalancing."
+/>
+
+## Hot keys and hot shards
+
+Even a perfect hash function can't save you if the key itself is distributed unevenly. The classic case is the celebrity problem: one big customer's `tenant_id`, or one viral user, generates a disproportionate share of traffic, and their shard overheats while the rest sit idle. Hashing is powerless here: it spreads different keys evenly, but all the traffic for one key still lands on one shard. Three fixes: move the whale onto its own dedicated shard; split its data further with a secondary key (say, `tenant_id` plus a date range) so one customer spans several shards; or mix in artificial randomness for the hottest values. The underlying point: even load is a property of the key and the data, not something a hash function magics into existence.
+
+## Cross-shard queries and transactions
+
+As long as a query knows the shard key, it lands on one shard and costs the same as an ordinary query. The trouble starts when a query needs data from many shards. An aggregate like "how many orders total in the system" has to run as scatter-gather: fan a sub-query out to every shard and merge the answers in the application or the router. That's slower, and a join across data on different shards becomes its own headache. Transactions spanning several shards are worse still: atomicity across nodes needs a distributed commit (two-phase commit), which is slow and fragile, because it hangs if the coordinator or a participant dies at the wrong moment. So systems get designed so related data sits under one key on one shard (co-location), keeping the vast majority of operations inside a single shard. Cross-shard work gets reserved for rare operations like nightly analytics.
+
+<Callout type="warning">
+If your typical user scenario needs data from several shards, the shard key was chosen wrong. The right key keeps related data together instead of scattering it.
+</Callout>
+
+## Resharding: the operational nightmare
+
+Data grows, and eventually the shards you have won't be enough. Adding a shard means moving part of the data onto it, and that's the most painful operation of all. Naive `hash % N`, when moving from `N` to `N + 1`, changes the remainder for almost every key, meaning almost the entire database has to move: hours and terabytes. Consistent hashing (next section) moves only a small fraction. With range sharding you move and split specific ranges, which is more targeted, but still needs care. In practice resharding gets done online and gradually: turn on dual writes to the old and new locations, backfill history in the background, verify it, then cut reads over and remove the old copy. It's exactly the fear of resharding that makes teams put off sharding as long as possible, and it's a healthy fear.
+
+## Who knows where each shard is: three places to route
+
+The `shard(key)` function has to live somewhere, and there are three options. Routing in the application: the client library computes the shard number itself and goes straight to the right node. Simple, with no extra network hop, but the logic is smeared across every client, and changing it (say, during resharding) has to be rolled out to every service at once. Routing through a proxy: a separate layer between clients and shards (Vitess for MySQL, ProxySQL) accepts a request and routes it itself. Clients know nothing about the topology, routing logic lives in one place, but you add a network hop and one more component to operate. Routing inside the database itself: the cluster knows its own topology and accepts a request on any node (the `mongos` coordinator in MongoDB, any node in Cassandra). Convenient because it's built in, but it ties you to that specific system.
+
+## Common mistakes
+
+- **Sharding by a low-cardinality key.** A key like `country` or `status` produces a handful of huge, skewed shards. The key needs many values and needs to land evenly.
+- **Ignoring hot keys.** A perfect hash won't save you from a whale: one giant customer will overheat its own shard. Whales get moved off or split out separately.
+- **Designing so ordinary queries go cross-shard.** If a routine scenario polls every shard, the key was chosen wrong. Keep related data under one key.
+- **Relying on distributed transactions as the norm.** Two-phase commit across shards is slow and fragile. Build the logic so a transaction lives inside a single shard.
+
+<KeyTakeaways
+  items={[
+    "Sharding spreads different data across different nodes where each shard owns its own writes; it's the only way to scale writes and volume past a single node.",
+    "The shard key is the most consequential decision: it needs high cardinality, even distribution, and presence in most queries (often user_id or tenant_id).",
+    "Hash sharding spreads load evenly but kills range queries; range sharding keeps ranges intact but risks a hot range with a monotonic key.",
+    "A hot key (a whale) overheats one shard even with a perfect hash; fixed by isolating it, splitting it, or mixing in randomness.",
+    "Cross-shard queries (scatter-gather) and distributed transactions (2PC) are slow and fragile, and resharding with hash % N moves nearly everything, so data gets co-located under one key and node counts change through consistent hashing instead.",
+  ]}
+/>
+
+## References
+
+- [Martin Kleppmann, Designing Data-Intensive Applications, chapter 6](https://dataintensive.net/)
+- [Vitess: horizontal sharding for MySQL](https://vitess.io/docs/concepts/sharding/)
+- [MongoDB: sharding](https://www.mongodb.com/docs/manual/sharding/)

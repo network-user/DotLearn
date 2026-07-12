@@ -1,0 +1,201 @@
+exercises:
+  - id: races-join-quiz-001
+    concept: races-threading
+    type: theory-quiz
+    difficulty: 1
+    prompt: "What does the `join()` method of a Thread object do?"
+    choices:
+      - id: a
+        text: "Blocks the calling thread until the target thread finishes."
+      - id: b
+        text: "Starts the thread, creating a new OS thread."
+      - id: c
+        text: "Turns the thread into a daemon."
+      - id: d
+        text: "Forcibly kills the target thread."
+    correct: [a]
+    explanation: "join() is a wait point: the calling thread blocks on it until the target finishes. start() launches the thread, and there is no supported way to kill another thread in Python."
+    variants:
+      - prompt: "How does `start()` differ from calling `run()` directly on a Thread?"
+        choices:
+          - id: a
+            text: "start() creates a new OS thread and runs target inside it; run() just calls target in the current thread, with no new thread."
+          - id: b
+            text: "There is no difference, they are two names for the same method."
+          - id: c
+            text: "run() creates the thread, and start() only prepares it."
+          - id: d
+            text: "start() creates a process, and run() creates a thread."
+        correct: [a]
+        explanation: "A real OS thread is only born in start(). Calling run() directly executes the body in the calling thread, no concurrency happens, a common beginner mistake."
+      - prompt: "What is a daemon thread?"
+        choices:
+          - id: a
+            text: "A background thread that does not keep the process alive: once only daemons remain, the interpreter exits without waiting for them."
+          - id: b
+            text: "A thread with the highest scheduling priority."
+          - id: c
+            text: "A thread that cannot be stopped with join()."
+          - id: d
+            text: "A system thread created by the kernel, not the program."
+        correct: [a]
+        explanation: "daemon=True makes a thread run in the background: it does not block the process from exiting. Handy for never-ending housekeeping tasks, dangerous for work that should not be cut off mid-way."
+
+  - id: races-thread-api-blanks-001
+    concept: races-threading
+    type: fill-in-blanks
+    difficulty: 2
+    prompt: "Fill in the blanks: starting a thread and waiting for it to finish."
+    template: |
+      t = Thread(target=work, args=(3,))
+      t.{{start}}()
+      t.{{join}}()
+    blanks:
+      start:
+        accept: ["start"]
+      join:
+        accept: ["join"]
+    variants:
+      - prompt: "Fill in the blanks: a background thread."
+        template: |
+          t = Thread(target=loop)
+          t.{{daemon}} = True
+          t.start()
+        blanks:
+          daemon:
+            accept: ["daemon"]
+      - prompt: "Fill in the blanks: starting several threads in a loop."
+        template: |
+          threads = []
+          for i in range(3):
+              t = Thread(target=work, args=({{arg}},))
+              t.start()
+              threads.{{append}}(t)
+        blanks:
+          arg:
+            accept: ["i"]
+          append:
+            accept: ["append"]
+
+  - id: races-lost-debit-predict-001
+    concept: races-threading
+    type: predict-output
+    difficulty: 3
+    prompt: "The snippet models a race on a balance: two withdrawals read the balance BEFORE either one writes the result. What does the program print?"
+    snippet: |
+      balance = 100
+      snapshots = []
+
+      def read_balance():
+          snapshots.append(balance)
+
+      def write_balance(amount):
+          global balance
+          balance = amount
+
+      read_balance()
+      read_balance()
+      write_balance(snapshots[0] - 30)
+      write_balance(snapshots[1] - 50)
+      print(balance)
+    expected:
+      kind: stdout
+      value: "50"
+    hints:
+      - "Both withdrawals took a snapshot of the balance earlier than either one wrote a new value. What number does each start from?"
+      - "Both start at 100. The first writes 70, the second writes 100-50=50 on top. The 30 withdrawal is lost: with honest sequencing it would have been 20."
+    variants:
+      - prompt: "Same interleaving, balance 200, withdrawals of 40 and 70. What does the program print?"
+        snippet: |
+          balance = 200
+          snapshots = []
+
+          def read_balance():
+              snapshots.append(balance)
+
+          def write_balance(amount):
+              global balance
+              balance = amount
+
+          read_balance()
+          read_balance()
+          write_balance(snapshots[0] - 40)
+          write_balance(snapshots[1] - 70)
+          print(balance)
+        expected:
+          kind: stdout
+          value: "130"
+      - prompt: "Now two deposits of +10 and +25, both reading balance 100 before writing. What does the program print?"
+        snippet: |
+          balance = 100
+          snapshots = []
+
+          def read_balance():
+              snapshots.append(balance)
+
+          def write_balance(amount):
+              global balance
+              balance = amount
+
+          read_balance()
+          read_balance()
+          write_balance(snapshots[0] + 10)
+          write_balance(snapshots[1] + 25)
+          print(balance)
+        expected:
+          kind: stdout
+          value: "125"
+
+  - id: races-cache-stampede-predict-001
+    concept: races-threading
+    type: predict-output
+    difficulty: 4
+    prompt: "The snippet models a check-then-act race in a lazy cache: both threads run the `not in cache` check BEFORE either writes a value. It prints how many times compute ran and what ended up in the cache."
+    snippet: |
+      cache = {}
+      computed = []
+
+      def check_absent(key):
+          return key not in cache
+
+      def compute(key):
+          computed.append(key)
+          return key.upper()
+
+      def fill(key, value):
+          cache[key] = value
+
+      a_absent = check_absent("user")
+      b_absent = check_absent("user")
+      if a_absent:
+          fill("user", compute("user"))
+      if b_absent:
+          fill("user", compute("user"))
+      print(len(computed), cache["user"])
+    expected:
+      kind: stdout
+      value: "2 USER"
+    hints:
+      - "Both check_absent calls run back to back, before any fill. What does the second check return if the first has not written anything yet?"
+      - "Both threads see an empty cache and both enter their if body. How many times does compute get called then?"
+      - "compute runs twice: neither thread saw the other's write in time. Result: len(computed) = 2, and the cache correctly holds 'USER'. The value is correct, but the work happened twice, that is a cache stampede."
+
+  - id: races-condition-checklist-quiz-001
+    concept: races-threading
+    type: theory-quiz
+    difficulty: 3
+    prompt: "Three threads only READ a shared settings list and nobody modifies it. Is there a data race here?"
+    choices:
+      - id: a
+        text: "No: a race needs at least one writer. If everyone only reads immutable data, no synchronization is required."
+      - id: b
+        text: "Yes: any concurrent access to a shared object from multiple threads is a race."
+      - id: c
+        text: "Yes, because reading from a list also changes its internal state."
+      - id: d
+        text: "You cannot say without running it under load."
+    correct: [a]
+    explanation: "A race requires three conditions to coincide: shared mutable state, at least one writer, and no synchronization. Concurrent reads with no writes are safe, the \"writer\" condition is missing."
+    hints:
+      - "Recall the three-condition race checklist. Which one is not satisfied here?"
+      - "The data is shared, but nobody writes it. Is that enough for a race?"

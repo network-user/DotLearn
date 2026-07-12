@@ -1,0 +1,152 @@
+---
+conceptId: drf-overview
+title: "Why DRF on top of Django: APIView, Request, Response"
+estimatedMinutes: 11
+---
+
+# Why plain Django gets tired of serving JSON
+
+An e-commerce catalog service needs to serve products not to a browser but to a mobile app - which means JSON, not HTML. In plain Django you write a view that manually fetches the data, manually serializes it into `JsonResponse`, manually reads the request body via `json.loads(request.body)`, manually checks what came in, and manually decides what status code to return on error. One view is tolerable. Twenty endpoints, and half the codebase turns into repeated body parsing, identical `try/except` blocks around `json.loads`, and sprawling field checks copy-pasted from the neighboring view.
+
+The problem isn't that Django can't do something. The problem is that a JSON API is the same set of steps on every endpoint: parse the input regardless of its format, validate the data, turn objects into primitives, pick a response format, set a status code. Django REST Framework pulls these steps into reusable layers. By the end of this section you'll understand what `APIView` gives you over a plain view, why `request.data` is uniform for JSON and forms alike, and how `Response` picks its own format without you ever calling `json.dumps`.
+
+## Mental model: DRF is a layer between HTTP and your logic
+
+A plain Django view receives a "raw" `HttpRequest` and must return an `HttpResponse` with an already-built string body. Everything in between - parsing, validation, serialization - is your job. DRF inserts a thin layer between HTTP and your code: the request arrives already parsed into `request.data`, and you hand back a plain Python dict that the renderer turns into whatever format is needed.
+
+<Figure caption="DRF adds three reusable layers on top of Django: the parser turns the body into request.data, the serializer validates and converts the data, the renderer picks the response format. Your code works with Python objects, not bytes.">
+  <Sketch viewBox="0 0 460 150" title="Request pipeline in APIView">
+    <SketchBox x={10} y={56} width={66} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={43} y={80} mono size={11}>HTTP</SketchLabel>
+
+    <SketchBox x={96} y={56} width={70} height={40} />
+    <SketchLabel x={131} y={74} mono size={11}>parser</SketchLabel>
+    <SketchLabel x={131} y={89} muted size={9}>.data</SketchLabel>
+
+    <SketchBox x={186} y={56} width={84} height={40} accent />
+    <SketchLabel x={228} y={74} mono accent size={11}>serializer</SketchLabel>
+    <SketchLabel x={228} y={89} muted size={9}>validation</SketchLabel>
+
+    <SketchBox x={290} y={56} width={70} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={325} y={80} mono size={11}>view</SketchLabel>
+
+    <SketchBox x={380} y={56} width={70} height={40} />
+    <SketchLabel x={415} y={74} mono size={11}>renderer</SketchLabel>
+    <SketchLabel x={415} y={89} muted size={9}>format</SketchLabel>
+
+    <SketchArrow from={[76, 76]} to={[96, 76]} />
+    <SketchArrow from={[166, 76]} to={[186, 76]} accent />
+    <SketchArrow from={[270, 76]} to={[290, 76]} accent />
+    <SketchArrow from={[360, 76]} to={[380, 76]} />
+  </Sketch>
+</Figure>
+
+The key point of this model: you stop touching bytes. The input is `request.data`, a dict built from the body no matter whether the client sent JSON or a form. The output is `Response(data)`, where `data` is a plain Python structure, and the actual format (JSON, browsable HTML) is chosen by the framework based on the `Accept` header. In between, your logic speaks the language of objects, not strings.
+
+## A plain view vs. APIView
+
+Compare two versions of the same endpoint - returning a list of products. Plain Django on the left, DRF on the right.
+
+<Compare
+  leftTitle="Plain Django"
+  rightTitle="DRF APIView"
+  left={
+    <>
+      <p>Manual serialization, the body is read from <code>request.body</code>, format and status are hardcoded:</p>
+      <pre><code>{`def items(request):
+    data = [{"id": i.id, "name": i.name}
+            for i in Item.objects.all()]
+    return JsonResponse(data, safe=False)`}</code></pre>
+    </>
+  }
+  right={
+    <>
+      <p>Data comes back as a dict; <code>Response</code> picks the format and sets the status itself:</p>
+      <pre><code>{`class ItemList(APIView):
+    def get(self, request):
+        items = Item.objects.all()
+        data = ItemSerializer(items, many=True).data
+        return Response(data)`}</code></pre>
+    </>
+  }
+  verdict="APIView removes manual JSON rendering and gives you a single request.data; the renderer decides the response format, not you."
+/>
+
+`APIView` is a subclass of Django's `View` that wraps the incoming request in a DRF `Request` and expects a `Response` back. Methods are named after the HTTP verb: `get`, `post`, `put`, `patch`, `delete`. Inside, you no longer think about parsing and rendering - just logic.
+
+## request.data: one input for JSON and forms
+
+In plain Django, reading a JSON body means writing `json.loads(request.body)`, while reading form data means reaching into `request.POST`. Two different places for two formats. DRF hides all of that behind `request.data`.
+
+```python
+class CreateItem(APIView):
+    def post(self, request):
+        name = request.data["name"]
+        return Response({"created": name})
+```
+
+If the client sent `{"name": "hat"}` with `Content-Type: application/json`, `request.data` will be `{"name": "hat"}`. If the same client sent an HTML form with a field `name=hat`, `request.data` will be exactly the same dict. Your code doesn't care which parser handled the body - the input is uniform either way. Nearby lives `request.query_params`, a cleaner name for the query string (in Django this was `request.GET`, which was a bit confusing since query strings also show up on POST requests).
+
+## Response and content negotiation
+
+`Response` takes Python data and defers the format choice until the last possible moment. Which renderer actually runs is decided by content negotiation - a negotiation over the `Accept` header.
+
+```python
+from rest_framework.response import Response
+from rest_framework import status
+
+class Ping(APIView):
+    def get(self, request):
+        return Response({"pong": True}, status=status.HTTP_200_OK)
+```
+
+If the client sent `Accept: application/json`, that same `Response` renders as JSON. If the request came from a browser with `Accept: text/html`, the browsable renderer kicks in and returns a human-readable HTML page with the same response, a form for submitting requests, and clickable links. The same code serves both a machine and a human - this is the browsable API, DRF's signature feature for poking around by hand.
+
+<Callout type="tip">
+The `rest_framework.status` module holds named status constants: `status.HTTP_201_CREATED`, `status.HTTP_404_NOT_FOUND`. They read better than bare numbers: `201` is easy to mistake for `200`, but `HTTP_201_CREATED` isn't.
+</Callout>
+
+## Edge cases
+
+A few places where DRF doesn't behave the way a newcomer from plain Django expects.
+
+**`request.data` isn't a stream you can read twice with the same eyes.** DRF parses the body once and caches the result, so accessing `request.data` repeatedly is safe - but reaching for `request.body` afterward is too late, the stream has already been consumed. Pick one level: either `request.data` or the raw `body`, never both.
+
+**A `Response` without an explicit status is always 200.** If you create a resource via `POST` and forget `status=status.HTTP_201_CREATED`, the client gets `200 OK` instead of `201 Created`. Semantically that's a lie: the resource was created, but the code just says "fine". Status is part of the contract, and it should be set on purpose.
+
+**The browsable API is a DEBUG-mode convenience, not a production feature.** It's on by default and handy during development, but it's usually disabled or locked down in production - it's extra surface area and extra rendering. Debugging convenience shouldn't leak into the production response.
+
+<Callout type="warning">
+`APIView` does not validate input for you. `request.data["name"]` raises `KeyError` if the field is missing. Validating data is the serializer's job, covered in the next section - not the view's. `APIView` only gives you a convenient way in and out.
+</Callout>
+
+## Common mistakes
+
+- **Returning `JsonResponse` from an `APIView`.** Inside a DRF view you should return `Response`, not Django's `JsonResponse`. With `JsonResponse`, content negotiation and the browsable API stop working - you're back to manual rendering, the very thing DRF was supposed to save you from.
+- **Reading the body via `json.loads(request.body)` inside an `APIView`.** This bypasses the parser and breaks on forms. `request.data` already did the parsing - use it.
+- **Bare status numbers.** `return Response(data, status=204)` works, but `status.HTTP_204_NO_CONTENT` documents itself and guards against a typo in the number.
+- **Expecting `APIView` to validate data on its own.** It won't. Without a serializer, `request.data` is just a dict exactly as the client sent it, gaps, extra fields, and all.
+
+<Detail summary="Why does DRF have its own Request if Django already has HttpRequest">
+
+DRF doesn't replace Django's `HttpRequest`, it wraps it. The `rest_framework.request.Request` class holds the original `HttpRequest` inside and adds lazy properties on top: `request.data` runs the appropriate parser on first access and caches the result, and `request.query_params` is just a more honest name for `request.GET`. Which parser gets used depends on the `Content-Type` header and the view's `parser_classes` list (JSON, form, and multipart by default). Symmetrically, on the way out `Response` holds unserialized `data` until the very end of processing: the renderer is chosen by the `Accept` header in the final middleware layer, so the same view can return either JSON or HTML without a single line of code changing. This deferred rendering is exactly why you return objects, not strings.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "DRF adds reusable parser, serializer, and renderer layers on top of Django, so the view works with objects instead of bytes.",
+    "APIView wraps the request in a DRF Request and expects a Response back; methods are named after the HTTP verb: get, post, put, patch, delete.",
+    "request.data uniformly returns the parsed body for both JSON and forms, and request.query_params is the query string.",
+    "Response takes Python data and defers the format choice: content negotiation on the Accept header picks JSON or browsable HTML.",
+    "The status module gives named status code constants; APIView does not validate input itself - that is the serializer's job.",
+  ]}
+/>
+
+## Links
+
+- [DRF - Requests](https://www.django-rest-framework.org/api-guide/requests/)
+- [DRF - Responses](https://www.django-rest-framework.org/api-guide/responses/)
+- [DRF - Views (APIView)](https://www.django-rest-framework.org/api-guide/views/)
+- [DRF - Content negotiation](https://www.django-rest-framework.org/api-guide/content-negotiation/)
+- [DRF - Status codes](https://www.django-rest-framework.org/api-guide/status-codes/)

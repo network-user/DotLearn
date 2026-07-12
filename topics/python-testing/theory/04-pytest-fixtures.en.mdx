@@ -1,0 +1,184 @@
+---
+conceptId: pytest-fixtures
+title: "pytest fixtures: scope, conftest, yield"
+estimatedMinutes: 12
+---
+
+# Environment a test asks for by name
+
+Ten tests around a shopping cart all start the same way: create an empty cart, drop a couple of items in it, connect a test database. In `unittest` you'd hang that on `setUp`, and it applies to every test in the class whether it needs it or not. But what if one test needs a cart, another needs a database, a third needs both, and a fourth needs nothing at all? `setUp` is blunt here - it's one thing per class, and it can't hand each test exactly what it asked for.
+
+pytest fixtures solve this elegantly. A fixture is a named piece of environment, and a test **requests** it just by naming it among its arguments. pytest sees the request, prepares the piece, hands over the result, and cleans up once the test is done. By the end of this section you'll declare fixtures, control how often they run via `scope`, share them across files through `conftest.py`, write fixtures with cleanup via `yield`, and build factory and parametrized fixtures.
+
+## Mental model: a test requests a fixture by argument name
+
+You declare a fixture as a function with the `@pytest.fixture` decorator. Its name is the fixture's "name." To get it in a test, add an argument with that same name: pytest matches the argument name to the fixture, runs it, and passes in the returned value.
+
+```python
+import pytest
+
+
+@pytest.fixture
+def cart():
+    c = Cart()
+    c.add("книга", price=500)
+    return c
+
+
+def test_total(cart):
+    assert cart.total() == 500
+```
+
+This is dependency injection in its purest form: the test doesn't build `Cart` itself and doesn't know how it's assembled - it just declares "I need `cart`," and pytest delivers a ready-made object. A test that doesn't need a cart simply doesn't mention it in its arguments, and never pays for its setup.
+
+<Figure caption="A test declares the fixture it needs as an argument; pytest runs setup up to yield, hands the value to the test, then finishes the fixture after the test - running teardown.">
+  <Sketch viewBox="0 0 470 200" title="yield fixture lifecycle">
+    <SketchBox x={20} y={70} width={110} height={48} accent />
+    <SketchLabel x={75} y={90} mono size={11} accent>test_total</SketchLabel>
+    <SketchLabel x={75} y={107} size={9} muted>requests cart</SketchLabel>
+
+    <SketchBox x={185} y={20} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={245} y={44} mono size={10}>setup (before yield)</SketchLabel>
+
+    <SketchBox x={185} y={78} width={120} height={36} accent />
+    <SketchLabel x={245} y={100} mono size={10} accent>yield cart</SketchLabel>
+
+    <SketchBox x={185} y={132} width={120} height={40} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={245} y={156} mono size={10}>teardown (after)</SketchLabel>
+
+    <SketchArrow from={[130, 88]} to={[185, 70]} curve={-0.3} />
+    <SketchLabel x={150} y={62} size={9} muted>request</SketchLabel>
+    <SketchArrow from={[245, 60]} to={[245, 78]} />
+    <SketchArrow from={[185, 96]} to={[130, 96]} accent />
+    <SketchLabel x={150} y={128} size={9} muted>value</SketchLabel>
+    <SketchArrow from={[110, 118]} to={[185, 140]} curve={0.3} dashed />
+    <SketchLabel x={140} y={166} size={9} muted>test finished</SketchLabel>
+  </Sketch>
+</Figure>
+
+## yield fixtures: setup and teardown in one function
+
+Returning with `return` is fine when there's nothing to clean up. But if a fixture opened a connection or created a temp file, it needs to close it after the test. That's what `yield` is for: everything **before** `yield` is setup, the yielded value is what the test receives, and everything **after** `yield` is teardown, which pytest runs once the test has finished.
+
+```python
+@pytest.fixture
+def db():
+    connection = connect("test.db")
+    yield connection
+    connection.close()
+```
+
+The test gets `connection`, works with it, and the `connection.close()` line runs automatically after the test. This is neater than `setUp`/`tearDown` because the setup and teardown for one resource sit together in a single function instead of being split across two methods.
+
+## scope: how often a fixture runs
+
+By default a fixture runs fresh **for every test** that requests it. That's safe (full isolation), but sometimes expensive - there's no need to open a database connection before every one of a hundred tests. The `scope` parameter controls how often a fixture is prepared and how long it lives between tests:
+
+```python
+@pytest.fixture(scope="module")
+def db():
+    connection = connect("test.db")
+    yield connection
+    connection.close()
+```
+
+- `function` (the default) - a fresh instance for every test;
+- `class` - one per test class;
+- `module` - one for the whole file;
+- `session` - one for the entire pytest run.
+
+The wider the scope, the fewer times setup runs, but the more tests share the same object - which raises the risk that one test corrupts state for another. Expensive, read-only resources (a connection, a config) are safe to widen; mutable ones are better kept at `function` scope, so every test gets a clean copy.
+
+<Callout type="warning">
+A wide scope (`module`, `session`) saves time, but breaks isolation if a test mutates the shared object. Only widen the scope for things tests read but don't mutate, or you're right back to the order-dependent tests you were trying to avoid in the first place.
+</Callout>
+
+## conftest.py: shared fixtures without importing
+
+A fixture needed by many files isn't duplicated or imported by hand. It goes into a special `conftest.py` file, and pytest makes it available to every test in that directory and its subdirectories - automatically, with no `import`.
+
+```python
+@pytest.fixture
+def cart():
+    c = Cart()
+    c.add("книга", price=500)
+    return c
+```
+
+Drop this into `tests/conftest.py`, and any test under `tests/` can request `cart` without knowing where the fixture is defined. This is the mechanism teams use to share a common test environment: fixtures for the database, the app client, and test data live in `conftest.py` and are available to the whole tree beneath it.
+
+## Factory and parametrized fixtures
+
+Sometimes a test doesn't need one ready-made object - it needs the ability to create several with different parameters, right inside the test body. That's when a fixture returns a **function** instead - a "factory":
+
+```python
+@pytest.fixture
+def make_user():
+    def _make(name, age=30):
+        return User(name=name, age=age)
+    return _make
+
+
+def test_two_users(make_user):
+    anna = make_user("Анна", age=25)
+    boris = make_user("Борис")
+    assert anna.age != boris.age
+```
+
+The test gets `make_user` and calls it as many times as it needs, with whatever arguments it wants. Notice: the test requests the factory, but calls it itself - the fixture just hands over the tool.
+
+Another technique is the **parametrized fixture**: passing `params=[...]` makes pytest run every test that requests it once per value. You access the current value through `request.param`.
+
+```python
+@pytest.fixture(params=["sqlite", "postgres"])
+def db_engine(request):
+    return make_engine(request.param)
+```
+
+Any test with a `db_engine` argument now runs twice - once for sqlite, once for postgres. The difference from `parametrize`: a parametrized fixture multiplies **every** test that uses it, not just one marked test.
+
+## Built-in fixtures: tmp_path, monkeypatch, capsys
+
+pytest ships with ready-made fixtures you don't need to declare - just request them by name. `tmp_path` gives you a unique temporary directory (a `Path` object) that pytest creates and removes for you - ideal for tests that write files. `monkeypatch` temporarily swaps out attributes, environment variables, and dict entries, rolling everything back after the test (more on it in the next section). `capsys` captures whatever the test printed to `stdout`/`stderr`, so you can check it.
+
+```python
+def test_writes_report(tmp_path):
+    target = tmp_path / "report.txt"
+    save_report(target, data="итог")
+    assert target.read_text() == "итог"
+```
+
+Here `tmp_path` is a clean directory scoped to this test, and there's nothing to clean up by hand.
+
+## Edge case: a fixture that fails during setup
+
+There's a subtlety worth knowing. If a fixture fails **before** `yield` (during setup - say, the connection never opened), the test itself is marked not as a failure but as an **error**: there was nothing to check, because the environment never came together. In that case the fixture's teardown code (after `yield`) never runs either - execution never reached `yield`, so there's no resource to close. But fixtures that **did** finish their setup before this one still run their own teardown. That's why you should open a resource as close to `yield` as possible: the less code between acquiring the resource and `yield`, the smaller the chance of failing with a resource already grabbed but never released.
+
+## Common mistakes
+
+- **Argument name doesn't match the fixture name.** The fixture is called `cart`, but the test signature says `def test_x(card)` - pytest can't find a fixture called `card` and raises "fixture not found." Fix: the argument name must match the fixture name exactly.
+- **Cleanup via `return` instead of `yield`.** You wrote `return connection`, and there's nowhere to hang the close call - teardown never runs, resources leak. Fix: the moment a fixture needs teardown, switch it to `yield`.
+- **Too wide a scope for a mutable object.** You set `scope="session"` on a cart that tests fill with items, and tests started seeing each other's items. Fix: keep mutable environments at `function` scope, and only widen scope for read-only resources.
+
+<Detail summary="Fixtures can depend on fixtures">
+
+A fixture can request another fixture, just by naming it in its own arguments. pytest builds a dependency graph and prepares them in the right order. For example, a `cart` fixture might depend on a `db` fixture: `def cart(db): ...`. Then requesting `cart` in a test automatically pulls in `db` too. This lets you assemble a complex environment out of small, reusable pieces, each responsible for its own resource and its own cleanup. Teardown order is the reverse of setup order (like a stack): whatever was created last gets closed first, which makes sense for dependent resources.
+
+</Detail>
+
+<KeyTakeaways
+  items={[
+    "A fixture is a piece of environment declared with @pytest.fixture; a test gets it by declaring an argument with the same name (injection by name).",
+    "A yield fixture holds setup before yield and teardown after; this is neater than setUp/tearDown because a resource's setup and cleanup sit together.",
+    "scope (function/class/module/session) controls how often a fixture runs; a wide scope saves time but breaks isolation for mutable objects.",
+    "conftest.py distributes shared fixtures to a whole directory tree with no import; a factory fixture returns a function, and params=[...] multiplies every test that requests it.",
+    "Built-in fixtures tmp_path/monkeypatch/capsys give you a temp directory, a temporary patch, and captured output with no manual declaration or cleanup.",
+  ]}
+/>
+
+## References
+
+- [pytest - About fixtures](https://docs.pytest.org/en/stable/explanation/fixtures.html)
+- [pytest - How to use fixtures](https://docs.pytest.org/en/stable/how-to/fixtures.html)
+- [pytest - conftest.py: local plugins](https://docs.pytest.org/en/stable/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files)
+- [pytest - Temporary directories and files](https://docs.pytest.org/en/stable/how-to/tmp_path.html)

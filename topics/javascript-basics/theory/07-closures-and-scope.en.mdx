@@ -1,0 +1,223 @@
+---
+conceptId: closures-and-scope
+title: Scope and Closures
+estimatedMinutes: 15
+---
+
+# A Function That Remembers
+
+Picture an online store you're building in JavaScript. Every product has an "add to cart" button, and you need to count clicks. The first idea comes naturally: set up one variable at the top of the file and bump it on every click. While there's a single product, it works flawlessly. But the catalog grows, there are twenty products now, each with its own button, and all twenty write into one shared counter. The number "7" in it no longer tells you anything: maybe a customer picked a kettle seven times, or clicked once on seven different products.
+
+Setting up twenty global variables isn't a solution either. You'd have to invent twenty names, make sure no other code accidentally overwrites them, and at a hundred products the scheme falls apart completely. What you actually want is different: each button gets a private counter that no outside code can read or corrupt. JavaScript doesn't need classes or libraries for that. Functions you already know how to write are enough, plus two rules about where variables live. Let's work through those rules, then build a counter factory that solves the cart problem in six lines of code.
+
+## Boxes inside boxes
+
+Scope answers one question: from which parts of the code is a variable reachable. For `let` and `const`, the rule is short: a variable lives inside the nearest curly-brace block and doesn't exist outside it. A block can be an `if` body, a `for` loop body, or even just a pair of braces added for tidiness.
+
+```js
+if (true) {
+  let secret = 42;
+  console.log(secret);
+}
+console.log(secret);
+```
+
+The first `console.log` prints 42, the second crashes the program with `ReferenceError: secret is not defined`. Outside the block, there simply is no `secret`. It isn't empty and it isn't "not created yet," it doesn't exist as a name at all, and referencing it counts as a typo.
+
+Why is the language this strict? It's protecting you from yourself. Throwaway names like `i`, `temp`, or `item` are only needed for five lines, and block scope guarantees that a hundred lines later nobody accidentally collides with them. The shorter a variable's life, the less code can break it, and the easier the program is to read: spot a declaration inside a block, and you know you never need to look past the end of that block.
+
+Functions work the same way, only their "box" holds more. A function's body sees its own variables, its parameters, and on top of that, everything declared outside it: in enclosing functions and at the top level of the file. The view only works in one direction, inside out. You can't peek from outside in.
+
+```js
+function greet() {
+  const name = 'Анна';
+  function shout() {
+    console.log(name.toUpperCase());
+  }
+  shout();
+}
+greet();
+```
+
+The nested function `shout` never declared `name`, but it freely reads it from `greet`'s surroundings and prints "АННА." Trying to reach `name` after calling `greet()`, though, ends in the same `ReferenceError`: a function's local variables aren't visible from outside, no matter how many times you call it.
+
+That leaves the third rule, the most important one in this chapter. Which variables a function can see is decided at the moment it's declared, by its position in the program's text, not at the moment it's called. Wherever a function was born is where it looks.
+
+```js
+const rate = 90;
+function toRub(usd) {
+  return usd * rate;
+}
+
+function report() {
+  const rate = 100;
+  return toRub(10);
+}
+console.log(report());
+```
+
+It prints 900, not 1000. `toRub` is declared at the top level, so its `rate` comes from the top level. The local `rate` inside `report` doesn't exist as far as `toRub` is concerned, even though the call happened right there. This principle is called lexical scoping: "lexical" hints that everything is decided by the program's text. To figure out which variable a function will see, reading the code with your eyes is enough, nothing needs to run.
+
+<PullQuote>A function looks toward where it was born, not toward wherever it was called from.</PullQuote>
+
+## A backpack on a function's back
+
+Now for the main trick. A function isn't just callable on the spot, it can also be returned from another function, stored in a variable, passed into `map`, or wired up to a button handler. And when a function leaves its home environment, it takes that environment with it. A function together with its remembered environment is called a closure. A handy image: a backpack. The moment it's declared, a function packs every outside variable it uses into a backpack, and carries it along wherever it gets handed off to.
+
+<MarginNote label="History">Peter Landin coined the term closure in 1964, and the Scheme language made it popular in the 1970s. JavaScript inherited the mechanism from there.</MarginNote>
+
+```js
+function makeCounter() {
+  let count = 0;
+  return function () {
+    count += 1;
+    return count;
+  };
+}
+
+const clicks = makeCounter();
+console.log(clicks());
+console.log(clicks());
+```
+
+Calling `makeCounter()` creates the variable `count`, gives birth to an inner function, and returns it outward. You'd expect `makeCounter` to finish its work and its local variables to vanish. But the inner function references `count`, so JavaScript keeps the environment alive: the engine never deletes variables while at least one function still refers to them. The first call to `clicks()` prints 1, the second prints 2. The variable outlives the calls and accumulates state. The diagram below shows this pair: the big box represents the environment of the factory call, the small box inside it represents the returned function, and the arrow shows the reference from its backpack to the captured variable.
+
+<Figure caption="The returned function holds a reference to the variable count from the factory's environment, so that environment stays alive as long as the function does.">
+  <Sketch viewBox="0 0 440 240" title="A closure: a function and its environment">
+    <SketchBox x={15} y={40} width={410} height={180} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={220} y={28} muted>environment of the makeCounter() call</SketchLabel>
+    <SketchBox x={45} y={100} width={130} height={50} />
+    <SketchLabel x={110} y={130} mono>let count = 2</SketchLabel>
+    <SketchHighlight x={38} y={93} width={144} height={64} />
+    <SketchBox x={255} y={90} width={150} height={70} accent />
+    <SketchLabel x={330} y={118} accent>returned</SketchLabel>
+    <SketchLabel x={330} y={136} accent>function</SketchLabel>
+    <SketchArrow from={[255, 125]} to={[185, 125]} accent />
+    <SketchLabel x={220} y={112} size={11} muted>remembers</SketchLabel>
+  </Sketch>
+</Figure>
+
+Notice what's missing from the diagram: not a single global variable. There's no way to reach `count` from outside, period. The language has no syntax that lets you read or overwrite someone else's local variable. The only way to affect it is through the returned function itself. What you get is private state, exactly what the buttons from the intro were missing: a counter that's impossible to corrupt from the outside.
+
+## A function factory
+
+A function that configures and returns another function is called a factory. `makeCounter` is already a factory, but the trick becomes clearer once the factory takes a parameter.
+
+```js
+function makeMultiplier(factor) {
+  return function (x) {
+    return x * factor;
+  };
+}
+
+const double = makeMultiplier(2);
+const triple = makeMultiplier(3);
+console.log(double(7));
+console.log(triple(7));
+```
+
+`makeMultiplier` doesn't multiply anything itself. Its job is assembly: take `factor`, pack it into the new function's backpack, and hand that function out. `double` prints 14, `triple` prints 21. The outer function's parameter behaves like any other variable in its environment, so every function created this way remembers its own value of `factor`.
+
+You've likely already used this trick without noticing. When you write `prices.map(p => p * rate)`, the arrow function reads `rate` from the surrounding code, and that's a closure too. Callbacks in `map` and `filter`, event handlers, delayed calls, all of them constantly carry variables from the place where they were declared. Without closures, you'd have to thread every value through arguments by hand.
+
+## Two counters that don't collide
+
+Back to the store. Twenty products, each needing a private counter. With a factory, the task takes one line per product: call `makeCounter()`, get an independent counter back.
+
+```js
+const teapots = makeCounter();
+const books = makeCounter();
+teapots();
+teapots();
+console.log(teapots());
+console.log(books());
+```
+
+It prints 3, then 1. Every call to the factory creates a fresh environment with its own `count` variable, so `teapots` and `books` count without stepping on each other. The backpacks never overlap, as the next diagram shows: two pairs of boxes, and not a single arrow shared between them.
+
+<Figure caption="Two calls to the same factory create two separate environments: teapots and books change different count variables.">
+  <Sketch viewBox="0 0 440 250" title="Two independent counters">
+    <SketchBox x={15} y={45} width={195} height={185} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={112} y={32} muted>first factory call</SketchLabel>
+    <SketchBox x={45} y={70} width={135} height={44} />
+    <SketchLabel x={112} y={97} mono>count = 3</SketchLabel>
+    <SketchBox x={45} y={160} width={135} height={48} accent />
+    <SketchLabel x={112} y={188} mono accent>teapots</SketchLabel>
+    <SketchArrow from={[112, 158]} to={[112, 118]} accent />
+    <SketchBox x={230} y={45} width={195} height={185} fill="rgb(var(--surface-2))" />
+    <SketchLabel x={327} y={32} muted>second factory call</SketchLabel>
+    <SketchBox x={260} y={70} width={135} height={44} />
+    <SketchLabel x={327} y={97} mono>count = 1</SketchLabel>
+    <SketchBox x={260} y={160} width={135} height={48} accent />
+    <SketchLabel x={327} y={188} mono accent>books</SketchLabel>
+    <SketchArrow from={[327, 158]} to={[327, 118]} accent />
+  </Sketch>
+</Figure>
+
+The twenty products from the intro have stopped being a problem. Walk the product array with the method from the previous chapter, call the factory for each one, and hook the resulting function onto its button. No global variables, no manually invented names, no chance whatsoever that kettles get counted as books. This same idea powers a mountain of real-world code: ID generators, caches, wiring up handlers, modules with private data. Everywhere, it's the same pair: a factory and a backpack.
+
+## A live reference, not a snapshot
+
+The most common misconception about closures goes: "the function took a photograph of the variable's value at the moment it was declared." No. What's in the backpack is a live reference to the variable itself, not a copy of its value. If the variable changes after the function is declared, the function sees the new value the next time it runs.
+
+```js
+let discount = 10;
+function finalPrice(price) {
+  return price - (price * discount) / 100;
+}
+
+console.log(finalPrice(1000));
+discount = 50;
+console.log(finalPrice(1000));
+```
+
+The first call prints 900. Then the store announces a sale, `discount` changes, and that same call, `finalPrice(1000)`, now returns 500. The function didn't remember "ten percent," it remembered the variable `discount` itself and rereads it every time. Look back at the first diagram and notice: the arrow points at the variable's box, not at the number inside it. The number in the box can change as many times as it likes, the arrow keeps pointing at the same place.
+
+Usually that's exactly what you want: the counter from `makeCounter` works precisely because every call looks at the same live `count`. But a live reference has a well-known dark side that has tripped up even experienced developers for years.
+
+<Detail summary="The var-in-a-loop trap">
+
+Before `let` existed, variables were declared with `var`, and `var` has no block scope: one shared variable exists for the whole loop.
+
+```js
+for (var i = 0; i < 3; i++) {
+  setTimeout(function () {
+    console.log(i);
+  }, 100);
+}
+```
+
+`setTimeout` delays the function call by 100 milliseconds, so all three delayed functions run only after the loop has already finished and `i` has climbed to 3. All three backpacks reference the exact same variable, and the console prints 3 three times.
+
+Swapping `var` for `let` fixes the program: it prints 0, 1, 2. With `let`, every iteration of the loop gets its own fresh `i`, and each delayed function carries off its own copy in its backpack. This trap became one of the main reasons modern JavaScript barely uses `var` anymore.
+
+</Detail>
+
+## Common mistakes
+
+Three situations where newcomers stumble over scope most often.
+
+**Reading a block's variable from outside it.** You declared `let result` inside an `if` and use it afterward, and the program crashes with `ReferenceError`. That happens because the block ended and took the variable with it. The fix: declare the variable before the block, and only assign to it inside.
+
+**Expecting a closure to have taken a snapshot.** You change a variable after declaring a function and are surprised the function sees the new value. A closure holds a live reference, it never takes snapshots. If you genuinely need a snapshot, pass the value as a factory parameter, like `factor` in `makeMultiplier`: a parameter is born fresh on every call, so each created function gets its own variable.
+
+**An accidental global variable.** Assigning to a name that was never declared, like `total = 100` without `let` or `const`, doesn't throw an error in non-strict mode, it silently creates a global variable. From there, two distant pieces of code start quietly overwriting each other, and you're back to the chaos from the chapter's first paragraph. Simple habit: every variable is born with the word `let` or `const`, and a `'use strict'` line at the top of the file turns a slip like this into an honest error.
+
+Closures have a reputation as the scariest topic in basic JavaScript, but the whole mechanism boils down to this chapter's two rules. A variable lives in its box, and a function is permanently tied to the place where it was born. Everything else, from factories to private state, is just something you now know how to work out for yourself.
+
+<KeyTakeaways
+  items={[
+    'let and const variables live inside the nearest curly-brace block; outside it, they do not exist.',
+    'A nested function sees the variables of its enclosing functions, and that set is decided by where it was declared, not where it was called.',
+    'A closure means a function carries off the environment it was born in, like a backpack of variables.',
+    "The backpack holds a live reference to a variable, not a copy of its value at declaration time.",
+    'Every call to a factory creates an independent environment, so two counters from the same factory never interfere with each other.',
+    "A closure's variable cannot be reached from outside, so factories give you private state without classes.",
+  ]}
+/>
+
+## References
+
+- [MDN: Closures](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Closures)
+- [MDN: let](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/let)
+- [MDN: Scope](https://developer.mozilla.org/en-US/docs/Glossary/Scope)
