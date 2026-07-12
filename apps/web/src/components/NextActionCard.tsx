@@ -59,8 +59,9 @@ const useNextActionFromData = (
         topics,
         recallByTopic,
         lastPlace: place ? { topicSlug: place.topicSlug, conceptId: place.conceptId } : undefined,
+        language,
       }),
-    [topics, recallByTopic, place],
+    [topics, recallByTopic, place, language],
   );
 };
 

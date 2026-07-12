@@ -39,6 +39,8 @@ import {
   type SearchEntry,
 } from '@/lib/content-search';
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
+import { getCurrentLanguage } from '@/lib/i18n';
+import { conceptTitle, topicTitle } from '@/lib/topics';
 import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { router } from '@/router';
@@ -92,6 +94,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const notedKeys = useAllNotedKeys();
 
   const searchLanguage = searchLanguageOf(i18n.resolvedLanguage);
+  const language = getCurrentLanguage();
 
   useEffect(() => {
     if (!open) return;
@@ -113,13 +116,13 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
       manifests.flatMap((manifest) =>
         manifest.concepts.map((concept, index) => ({
           slug: manifest.slug,
-          topicTitle: manifest.title,
+          topicTitle: topicTitle(manifest, language),
           conceptId: concept.id,
-          conceptTitle: concept.title,
+          conceptTitle: conceptTitle(concept, language),
           index,
         })),
       ),
-    [manifests],
+    [manifests, language],
   );
 
   const deckTopics = useMemo(() => {
@@ -241,10 +244,10 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                     {manifests.map((manifest) => (
                       <PaletteItem
                         key={`topic-${manifest.slug}`}
-                        value={`topic ${manifest.title} ${manifest.tags.join(' ')} ${manifest.slug}`}
+                        value={`topic ${manifest.title} ${manifest.titleEn ?? ''} ${manifest.tags.join(' ')} ${manifest.slug}`}
                         onSelect={() => goTopic(manifest.slug)}
                         icon={runtimeIcon(manifest.runtime)}
-                        title={manifest.title}
+                        title={topicTitle(manifest, language)}
                         meta={`${manifest.concepts.length} · ${manifest.difficulty}`}
                       />
                     ))}
@@ -304,10 +307,10 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                     {deckTopics.map((manifest) => (
                       <PaletteItem
                         key={`deck-${manifest.slug}`}
-                        value={`flashcards cards ${manifest.title} ${manifest.slug}`}
+                        value={`flashcards cards ${manifest.title} ${manifest.titleEn ?? ''} ${manifest.slug}`}
                         onSelect={() => goFlashcards(manifest.slug)}
                         icon={<Layers size={14} />}
-                        title={manifest.title}
+                        title={topicTitle(manifest, language)}
                         meta={tCommon('languageLabel')}
                       />
                     ))}

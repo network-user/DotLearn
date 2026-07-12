@@ -8,7 +8,7 @@ import {
   type ComponentType,
 } from 'react';
 
-import type { Exercise, TopicSourceRef } from '@dotlearn/contracts';
+import type { Exercise, TopicLanguage, TopicSourceRef } from '@dotlearn/contracts';
 import type { TopicBundle } from '@dotlearn/lesson-engine';
 import { TopicNotFoundError } from '@dotlearn/lesson-engine';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
@@ -68,10 +68,12 @@ import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 import { sanitizeHref } from '@/lib/safe-url';
 import { Seo } from '@/lib/seo';
 import {
+  conceptTitle,
   effectiveLanguage,
   getAllManifests,
   loadTopic,
   topicHasEn,
+  topicTitle,
   useContentLanguage,
 } from '@/lib/topics';
 import type { TopicSearch } from '@/router';
@@ -532,6 +534,8 @@ export const TopicPage = () => {
   const activeManifestConcept =
     manifest.concepts.find((concept) => concept.id === activeConcept?.conceptId) ??
     manifest.concepts[0];
+  const prevManifestConcept = bundle.manifest.concepts[activeIndex - 1];
+  const nextManifestConcept = bundle.manifest.concepts[activeIndex + 1];
 
   const totalExercises = bundle.concepts.reduce(
     (sum, concept) => sum + concept.exercises.reduce((s, file) => s + file.exercises.length, 0),
@@ -593,6 +597,7 @@ export const TopicPage = () => {
         totalExercises={totalExercises}
         streak={streak}
         readCount={readConceptIds.size}
+        language={usedLang}
       />
       <PrerequisitesBanner prerequisites={manifest.prerequisites} />
       {showFallbackBanner && (
@@ -621,6 +626,7 @@ export const TopicPage = () => {
           activeConceptId={activeConcept?.conceptId}
           onSelect={selectConcept}
           progress={progress.byExercise}
+          language={usedLang}
         />
       )}
       <div
@@ -639,6 +645,7 @@ export const TopicPage = () => {
                 activeConceptId={activeConcept?.conceptId}
                 onSelect={selectConcept}
                 progress={progress.byExercise}
+                language={usedLang}
               />
             </div>
             <ResizeHandle
@@ -670,14 +677,15 @@ export const TopicPage = () => {
                 ratio={conceptRatio}
                 focusMode={focusMode}
                 onToggleFocus={() => setFocusMode((value) => !value)}
+                language={usedLang}
               />
             </ConceptTransition>
           ) : (
             <p className="text-fg-subtle">{t('noConcepts')}</p>
           )}
           <ConceptNav
-            prevTitle={bundle.manifest.concepts[activeIndex - 1]?.title}
-            nextTitle={bundle.manifest.concepts[activeIndex + 1]?.title}
+            prevTitle={prevManifestConcept && conceptTitle(prevManifestConcept, usedLang)}
+            nextTitle={nextManifestConcept && conceptTitle(nextManifestConcept, usedLang)}
             onPrev={() => handleNav(-1)}
             onNext={() => handleNav(1)}
           />
@@ -749,7 +757,11 @@ const PrerequisitesBanner = ({ prerequisites }: { prerequisites: string[] }) => 
           passedByTopic.get(slug) ?? 0,
           totalExercises,
         );
-        return { slug, title: manifest.title, mastered: m.mastery >= PREREQ_MASTERY_THRESHOLD };
+        return {
+          slug,
+          title: topicTitle(manifest, language),
+          mastered: m.mastery >= PREREQ_MASTERY_THRESHOLD,
+        };
       })
       .filter((entry): entry is PrerequisiteState => entry !== undefined);
   }, [prerequisites, progressRecords, readByTopic, language]);
@@ -901,9 +913,17 @@ interface TopicHeaderProps {
   totalExercises: number;
   streak: number;
   readCount: number;
+  language: TopicLanguage;
 }
 
-const TopicHeader = ({ manifest, passed, totalExercises, streak, readCount }: TopicHeaderProps) => {
+const TopicHeader = ({
+  manifest,
+  passed,
+  totalExercises,
+  streak,
+  readCount,
+  language,
+}: TopicHeaderProps) => {
   const { t } = useTranslation('topic');
   const totalConcepts = manifest.concepts.length;
   const m = computeMastery(readCount, totalConcepts, passed, totalExercises);
@@ -929,7 +949,7 @@ const TopicHeader = ({ manifest, passed, totalExercises, streak, readCount }: To
             )}
           </div>
           <h1 className="font-display font-medium text-[clamp(32px,5vw,52px)] leading-[1.08] tracking-tightish text-balance">
-            {manifest.title}
+            {topicTitle(manifest, language)}
           </h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 eyebrow text-fg-subtle">
             {manifest.tags.map((tag) => (
@@ -971,6 +991,7 @@ interface ConceptRailProps {
   activeConceptId: string | undefined;
   onSelect: (conceptId: string) => void;
   progress: Map<string, ProgressRecord>;
+  language: TopicLanguage;
 }
 
 interface ConceptStat {
@@ -999,7 +1020,13 @@ const conceptStatOf = (
   };
 };
 
-const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => (
+const ConceptList = ({
+  bundle,
+  activeConceptId,
+  onSelect,
+  progress,
+  language,
+}: ConceptRailProps) => (
   <ol>
     {bundle.manifest.concepts.map((concept, index) => {
       const active = concept.id === activeConceptId;
@@ -1032,7 +1059,9 @@ const ConceptList = ({ bundle, activeConceptId, onSelect, progress }: ConceptRai
                     String(index + 1).padStart(2, '0')
                   )}
                 </span>
-                <span className="text-[13.5px] font-medium truncate">{concept.title}</span>
+                <span className="text-[13.5px] font-medium truncate">
+                  {conceptTitle(concept, language)}
+                </span>
               </div>
               <span className="text-[10px] text-fg-subtle tabular-nums shrink-0">
                 {concept.estimatedMinutes}m
@@ -1071,7 +1100,13 @@ const ConceptRail = (props: ConceptRailProps) => {
   );
 };
 
-const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRailProps) => {
+const ConceptStrip = ({
+  bundle,
+  activeConceptId,
+  onSelect,
+  progress,
+  language,
+}: ConceptRailProps) => {
   const { t } = useTranslation('topic');
   const reduceMotion = useReducedMotion() ?? false;
   const [listOpen, setListOpen] = useState(false);
@@ -1128,7 +1163,7 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
                       )}
                     </span>
                     <span className="text-[13px] font-medium truncate max-w-[40vw]">
-                      {concept.title}
+                      {conceptTitle(concept, language)}
                     </span>
                     <span
                       aria-hidden
@@ -1156,6 +1191,7 @@ const ConceptStrip = ({ bundle, activeConceptId, onSelect, progress }: ConceptRa
               setListOpen(false);
             }}
             progress={progress}
+            language={language}
           />
         </div>
       </Dialog>
@@ -1198,6 +1234,7 @@ interface ConceptPanelProps {
   ratio: number;
   focusMode: boolean;
   onToggleFocus: () => void;
+  language: TopicLanguage;
 }
 
 const recentResultsForExercises = (
@@ -1238,6 +1275,7 @@ const ConceptPanel = ({
   ratio,
   focusMode,
   onToggleFocus,
+  language,
 }: ConceptPanelProps) => {
   const { t } = useTranslation('topic');
   const [notesOpen, setNotesOpen] = useState(false);
@@ -1311,7 +1349,7 @@ const ConceptPanel = ({
           />
         </div>
         <h2 className="mt-3 font-display font-medium text-[clamp(26px,3.5vw,34px)] leading-[1.15] tracking-tightish text-fg text-balance">
-          {concept.title}
+          {conceptTitle(concept, language)}
         </h2>
         <span aria-hidden className="mt-4 block h-0.5 w-14 bg-accent" />
       </header>
@@ -1327,7 +1365,7 @@ const ConceptPanel = ({
                   Component={resolved.Component}
                   topicSlug={slug}
                   conceptId={concept.id}
-                  conceptTitle={concept.title}
+                  conceptTitle={conceptTitle(concept, language)}
                 />
               </Suspense>
             ) : (
@@ -1339,7 +1377,11 @@ const ConceptPanel = ({
 
       {THEORY_HIGHLIGHTS_ENABLED ? <TheoryHighlighter slug={slug} conceptId={concept.id} /> : null}
 
-      <FreeRecall slug={slug} conceptId={concept.id} conceptTitle={concept.title} />
+      <FreeRecall
+        slug={slug}
+        conceptId={concept.id}
+        conceptTitle={conceptTitle(concept, language)}
+      />
 
       <section
         id="concept-exercises"

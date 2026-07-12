@@ -10,7 +10,7 @@ import { useForcedContentLanguage } from '@/lib/forced-language';
 import { GLOSSARY, type GlossaryEntry } from '@/lib/glossary';
 import { getCurrentLanguage } from '@/lib/i18n';
 import { Seo } from '@/lib/seo';
-import { topicHasEn } from '@/lib/topics';
+import { topicHasEn, topicTitle } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 
 interface GlossaryGroup {
@@ -35,9 +35,11 @@ export const GlossaryPage = () => {
   const [query, setQuery] = useState('');
 
   const titleOf = useMemo(() => {
-    const map = new Map(manifests.map((manifest) => [manifest.slug, manifest.title]));
+    const map = new Map(
+      manifests.map((manifest) => [manifest.slug, topicTitle(manifest, language)]),
+    );
     return (slug: string): string => map.get(slug) ?? slug;
-  }, [manifests]);
+  }, [manifests, language]);
 
   const trimmed = query.trim();
 

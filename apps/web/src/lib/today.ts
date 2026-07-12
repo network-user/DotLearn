@@ -10,7 +10,7 @@ import type { SupportedLanguage } from './i18n';
 import { flashcardTopicSlugs, loadTopicCards, type DeckCard } from './flashcard-decks';
 import { interviewFlashcardSlug, loadInterviewCards } from './interview-flashcards';
 import { db, type AttemptEventRecord } from './progress-db';
-import { loadTopic, topicTitleOf } from './topics';
+import { conceptTitle as resolveConceptTitle, loadTopic, topicTitleOf } from './topics';
 
 export interface DueCard {
   deckSlug: string;
@@ -174,7 +174,10 @@ export const loadDueReExams = async (language: SupportedLanguage): Promise<DueRe
     for (const entry of bundles) {
       if (!entry.bundle) continue;
       for (const concept of entry.bundle.manifest.concepts) {
-        conceptTitleIndex.set(`${entry.slug}:${concept.id}`, concept.title);
+        conceptTitleIndex.set(
+          `${entry.slug}:${concept.id}`,
+          resolveConceptTitle(concept, language),
+        );
       }
     }
 

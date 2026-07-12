@@ -17,7 +17,7 @@ import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db } from '@/lib/progress-db';
 import { Seo } from '@/lib/seo';
-import { effectiveLanguage, prefetchTopic } from '@/lib/topics';
+import { effectiveLanguage, prefetchTopic, topicTitle } from '@/lib/topics';
 import { getTrack, trackMemberSlugs } from '@/lib/tracks';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import topicStats from 'virtual:topic-stats';
@@ -182,7 +182,7 @@ export const TrackPage = () => {
               leadingIcon={<Sparkles size={15} />}
               trailingIcon={<ArrowRight size={15} />}
             >
-              {t('nextTopic', { title: nextStep.manifest.title })}
+              {t('nextTopic', { title: topicTitle(nextStep.manifest, language) })}
             </Button>
           </Link>
         )}
@@ -228,7 +228,9 @@ export const TrackPage = () => {
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <h3 className="truncate font-medium text-fg">{step.manifest.title}</h3>
+                          <h3 className="truncate font-medium text-fg">
+                            {topicTitle(step.manifest, language)}
+                          </h3>
                           {locked && (
                             <Lock
                               size={13}

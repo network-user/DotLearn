@@ -45,10 +45,17 @@ import {
 import { MIN_SEARCH_QUERY_LENGTH, loadSearchEntries, type SearchEntry } from '@/lib/content-search';
 import { useForcedContentLanguage } from '@/lib/forced-language';
 import { fuzzyScore } from '@/lib/fuzzy';
+import { getCurrentLanguage } from '@/lib/i18n';
 import { computeMastery, countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { db, type ProgressRecord } from '@/lib/progress-db';
 import { Seo } from '@/lib/seo';
-import { effectiveLanguage, prefetchTopic, useContentLanguage } from '@/lib/topics';
+import {
+  conceptTitle,
+  effectiveLanguage,
+  prefetchTopic,
+  topicTitle,
+  useContentLanguage,
+} from '@/lib/topics';
 import { tracks } from '@/lib/tracks';
 import { useConceptBookmarked, useConceptNote, useLastPlace } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
@@ -329,6 +336,7 @@ export const HomePage = () => {
         const metaScore = hasQuery
           ? fuzzyScore(trimmedQuery, [
               { text: row.manifest.title, weight: 6 },
+              { text: row.manifest.titleEn ?? '', weight: 6 },
               { text: row.manifest.tags.join(' '), weight: 3 },
             ])
           : 0;
@@ -380,9 +388,9 @@ export const HomePage = () => {
 
   const topicTitleBySlug = useMemo(() => {
     const map = new Map<string, string>();
-    for (const row of rows) map.set(row.manifest.slug, row.manifest.title);
+    for (const row of rows) map.set(row.manifest.slug, topicTitle(row.manifest, language));
     return map;
-  }, [rows]);
+  }, [rows, language]);
 
   const conceptMatchesByRow = useMemo(() => {
     const map = new Map<string, ContentHit[]>();
@@ -607,6 +615,7 @@ interface HomeSearchPatch {
 
 const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
   const { t } = useTranslation('home');
+  const language = getCurrentLanguage();
   const place = useLastPlace();
   const bookmarked = useConceptBookmarked(place?.topicSlug ?? '', place?.conceptId);
   const note = useConceptNote(place?.topicSlug ?? '', place?.conceptId);
@@ -648,12 +657,15 @@ const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {
               {t('continue.eyebrow')}
             </div>
             <h3 className="mt-1 font-display text-xl leading-tight tracking-tightish text-fg truncate">
-              {row.manifest.title}
+              {topicTitle(row.manifest, language)}
             </h3>
             <div className="mt-0.5 flex items-center gap-2.5 min-w-0">
               {concept && (
                 <p className="text-[13px] text-fg-muted truncate">
-                  {t('continue.concept', { n: conceptIndex + 1, title: concept.title })}
+                  {t('continue.concept', {
+                    n: conceptIndex + 1,
+                    title: conceptTitle(concept, language),
+                  })}
                 </p>
               )}
               {(bookmarked || hasNote) && (
@@ -1234,6 +1246,7 @@ const TopicCard = memo(function TopicCard({
 }: TopicCardProps) {
   const { t } = useTranslation('home');
   const forcedLanguage = useForcedContentLanguage();
+  const language = getCurrentLanguage();
   const { manifest, total, passed, readConcepts } = row;
   const totalConcepts = manifest.concepts.length;
   const m = computeMastery(readConcepts, totalConcepts, passed, total);
@@ -1266,10 +1279,10 @@ const TopicCard = memo(function TopicCard({
                 <span>{t(taglineKey)}</span>
               </div>
               <h3
-                title={manifest.title}
+                title={topicTitle(manifest, language)}
                 className="mt-2 line-clamp-1 max-h-[1.875rem] overflow-hidden font-display text-2xl leading-tight tracking-tightish text-fg transition-[max-height] duration-[var(--dur-med)] ease-standard group-hover:line-clamp-4 group-hover:max-h-[7.5rem] group-focus-visible:line-clamp-4 group-focus-visible:max-h-[7.5rem]"
               >
-                {manifest.title}
+                {topicTitle(manifest, language)}
               </h3>
             </div>
             <DualProgressRing

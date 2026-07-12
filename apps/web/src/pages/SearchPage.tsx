@@ -17,7 +17,9 @@ import {
   type SearchEntry,
   type SearchSnippet,
 } from '@/lib/content-search';
+import { getCurrentLanguage } from '@/lib/i18n';
 import { Seo } from '@/lib/seo';
+import { conceptTitle, topicTitle } from '@/lib/topics';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useVisibleManifests } from '@/lib/use-manifests';
 
@@ -80,6 +82,7 @@ export const SearchPage = () => {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const language = searchLanguageOf(i18n.resolvedLanguage);
+  const uiLanguage = getCurrentLanguage();
   const debouncedInput = useDebouncedValue(input, 250);
 
   useEffect(() => {
@@ -127,12 +130,12 @@ export const SearchPage = () => {
     const topics: SearchResult[] = [];
     for (const manifest of manifests) {
       const haystack =
-        `${manifest.title} ${manifest.tags.join(' ')} ${manifest.slug}`.toLowerCase();
+        `${manifest.title} ${manifest.titleEn ?? ''} ${manifest.tags.join(' ')} ${manifest.slug}`.toLowerCase();
       if (!haystack.includes(q)) continue;
       topics.push({
         kind: 'topic',
         key: `topic-${manifest.slug}`,
-        title: manifest.title,
+        title: topicTitle(manifest, uiLanguage),
         meta: `${manifest.concepts.length} · ${manifest.difficulty}`,
         slug: manifest.slug,
       });
@@ -145,12 +148,16 @@ export const SearchPage = () => {
     const concepts: SearchResult[] = [];
     for (const manifest of manifests) {
       for (const concept of manifest.concepts) {
-        if (!concept.title.toLowerCase().includes(q)) continue;
+        if (
+          !concept.title.toLowerCase().includes(q) &&
+          !(concept.titleEn?.toLowerCase().includes(q) ?? false)
+        )
+          continue;
         concepts.push({
           kind: 'concept',
           key: `concept-${manifest.slug}-${concept.id}`,
-          title: concept.title,
-          meta: manifest.title,
+          title: conceptTitle(concept, uiLanguage),
+          meta: topicTitle(manifest, uiLanguage),
           slug: manifest.slug,
           conceptId: concept.id,
         });
@@ -195,7 +202,7 @@ export const SearchPage = () => {
     }
 
     return list;
-  }, [queryReady, manifests, entries, interview, q, query, tNav]);
+  }, [queryReady, manifests, entries, interview, q, query, tNav, uiLanguage]);
 
   const flatResults = useMemo(() => groups.flatMap((group) => group.results), [groups]);
 

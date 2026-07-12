@@ -30,6 +30,7 @@ import { THEORY_HIGHLIGHTS_ENABLED } from '@/lib/feature-flags';
 import { HIGHLIGHT_COLORS, highlightColorOf } from '@/lib/highlight-colors';
 import { loadUserCardSessionCards, type SessionCard } from '@/lib/flashcard-sources';
 import { initFlashcardReview } from '@/lib/flashcards';
+import { getCurrentLanguage } from '@/lib/i18n';
 import {
   buildNotesMarkdown,
   downloadMarkdown,
@@ -52,6 +53,7 @@ import {
   type HighlightRecord,
   type UserCardRecord,
 } from '@/lib/progress-db';
+import { conceptTitle, topicTitle } from '@/lib/topics';
 import {
   useAllHighlights,
   useAllNotes,
@@ -124,21 +126,22 @@ export const LibraryPage = () => {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [draft, setDraft] = useState<FlashcardDraft | null>(null);
+  const language = getCurrentLanguage();
 
   const resolveTitles = useMemo(() => {
     const topicTitleBySlug = new Map<string, string>();
     const conceptTitleByKey = new Map<string, string>();
     for (const manifest of manifests) {
-      topicTitleBySlug.set(manifest.slug, manifest.title);
+      topicTitleBySlug.set(manifest.slug, topicTitle(manifest, language));
       for (const concept of manifest.concepts) {
-        conceptTitleByKey.set(`${manifest.slug}:${concept.id}`, concept.title);
+        conceptTitleByKey.set(`${manifest.slug}:${concept.id}`, conceptTitle(concept, language));
       }
     }
     return (topicSlug: string, conceptId: string): ResolvedTitles => ({
       topicTitle: topicTitleBySlug.get(topicSlug) ?? topicSlug,
       conceptTitle: conceptTitleByKey.get(`${topicSlug}:${conceptId}`) ?? conceptId,
     });
-  }, [manifests]);
+  }, [manifests, language]);
 
   const trimmedQuery = query.trim();
 

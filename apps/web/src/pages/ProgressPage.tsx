@@ -50,7 +50,7 @@ import {
 import { compareWeeks, type WeeklyComparison } from '@/lib/recap';
 import { Seo } from '@/lib/seo';
 import { useSync } from '@/lib/sync/engine';
-import { effectiveLanguage, useContentLanguage } from '@/lib/topics';
+import { conceptTitle, effectiveLanguage, topicTitle, useContentLanguage } from '@/lib/topics';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useBookmarks } from '@/lib/use-learning';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
@@ -184,12 +184,12 @@ export const ProgressPage = () => {
           id: bookmark.id,
           slug: bookmark.topicSlug,
           conceptId: bookmark.conceptId,
-          topicTitle: manifest.title,
-          conceptTitle: concept.title,
+          topicTitle: topicTitle(manifest, language),
+          conceptTitle: conceptTitle(concept, language),
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
-  }, [bookmarks, manifests]);
+  }, [bookmarks, manifests, language]);
 
   const weakConcepts = useMemo(() => {
     const byTopic = new Map<string, ExerciseAttemptInput[]>();
@@ -221,13 +221,13 @@ export const ProgressPage = () => {
         return {
           topicSlug: weak.topicSlug,
           conceptId: weak.conceptId,
-          topicTitle: manifest.title,
-          conceptTitle: concept.title,
+          topicTitle: topicTitle(manifest, language),
+          conceptTitle: conceptTitle(concept, language),
           strengthPercent: Math.round(weak.strength * 100),
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
-  }, [attemptEvents, manifests]);
+  }, [attemptEvents, manifests, language]);
 
   const calibrationSamples = useMemo<CalibrationSample[]>(() => {
     const samples: CalibrationSample[] = [];
@@ -682,7 +682,9 @@ export const ProgressPage = () => {
                     className="block rounded-lg border border-border-base bg-surface hover:border-border-strong hover:bg-surface-2/50 transition p-5"
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <h3 className="font-semibold text-fg truncate">{row.manifest.title}</h3>
+                      <h3 className="font-semibold text-fg truncate">
+                        {topicTitle(row.manifest, language)}
+                      </h3>
                       <span className="text-xs font-medium text-fg tabular-nums shrink-0">
                         {masteryPercent}%
                       </span>

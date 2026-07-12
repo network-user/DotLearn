@@ -1,7 +1,8 @@
-import type { TopicManifest } from '@dotlearn/contracts';
+import type { TopicLanguage, TopicManifest } from '@dotlearn/contracts';
 
 import { blendRecallIntoMastery, computeMastery, RECALL_REVIEW_THRESHOLD } from './mastery';
 import type { TopicRecall } from './retention';
+import { conceptTitle as resolveConceptTitle, topicTitle as resolveTopicTitle } from './topics';
 
 export type NextActionKind = 'resume' | 'review-topic' | 'due-deck' | 'unlocked';
 
@@ -28,6 +29,7 @@ export interface NextActionInput {
   recallByTopic: Map<string, TopicRecall>;
   lastPlace?: { topicSlug: string; conceptId: string } | undefined;
   reviewThreshold?: number;
+  language: TopicLanguage;
 }
 
 const PRIORITY: Record<NextActionKind, number> = {
@@ -54,12 +56,13 @@ const masteredSlugsOf = (topics: readonly NextActionTopicInput[]): Set<string> =
 const conceptLocator = (
   manifest: TopicManifest,
   conceptId: string,
+  language: TopicLanguage,
 ): { conceptId: string; conceptIndex: number; conceptTitle: string } | undefined => {
   const index = manifest.concepts.findIndex((concept) => concept.id === conceptId);
   if (index < 0) return undefined;
   const concept = manifest.concepts[index];
   if (!concept) return undefined;
-  return { conceptId, conceptIndex: index, conceptTitle: concept.title };
+  return { conceptId, conceptIndex: index, conceptTitle: resolveConceptTitle(concept, language) };
 };
 
 const reviewTopicCandidate = (
@@ -84,7 +87,7 @@ const reviewTopicCandidate = (
         action: {
           kind: 'review-topic',
           topicSlug: topic.manifest.slug,
-          topicTitle: topic.manifest.title,
+          topicTitle: resolveTopicTitle(topic.manifest, input.language),
           recallPercent: Math.round(recall.recall * 100),
           dueCount: recall.dueCards,
         },
@@ -106,11 +109,11 @@ const resumeCandidate = (input: NextActionInput): NextAction | undefined => {
     topic.total,
   );
   if (base.mastery >= 0.999) return undefined;
-  const locator = conceptLocator(topic.manifest, place.conceptId);
+  const locator = conceptLocator(topic.manifest, place.conceptId, input.language);
   return {
     kind: 'resume',
     topicSlug: topic.manifest.slug,
-    topicTitle: topic.manifest.title,
+    topicTitle: resolveTopicTitle(topic.manifest, input.language),
     ...(locator ?? {}),
   };
 };
@@ -128,7 +131,7 @@ const dueDeckCandidate = (input: NextActionInput): NextAction | undefined => {
   return {
     kind: 'due-deck',
     topicSlug: best.topic.manifest.slug,
-    topicTitle: best.topic.manifest.title,
+    topicTitle: resolveTopicTitle(best.topic.manifest, input.language),
     dueCount: best.dueCards,
   };
 };
@@ -150,13 +153,17 @@ const unlockedCandidate = (input: NextActionInput): NextAction | undefined => {
       const prereqs = topic.manifest.prerequisites.filter((slug) => existingSlugs.has(slug));
       return prereqs.length > 0 && prereqs.every((slug) => mastered.has(slug));
     })
-    .sort((a, b) => a.manifest.title.localeCompare(b.manifest.title));
+    .sort((a, b) =>
+      resolveTopicTitle(a.manifest, input.language).localeCompare(
+        resolveTopicTitle(b.manifest, input.language),
+      ),
+    );
   const first = untouched[0];
   if (!first) return undefined;
   return {
     kind: 'unlocked',
     topicSlug: first.manifest.slug,
-    topicTitle: first.manifest.title,
+    topicTitle: resolveTopicTitle(first.manifest, input.language),
   };
 };
 

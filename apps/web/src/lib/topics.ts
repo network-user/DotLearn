@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import {
   languageOfTopicFile,
   TopicManifestObject,
+  type TopicConcept,
   type TopicLanguage,
   type TopicManifest,
 } from '@dotlearn/contracts';
@@ -110,6 +111,16 @@ export const effectiveLanguage = (
   requested: TopicLanguage = resolveContentLanguage(),
 ): TopicLanguage =>
   manifest.availableLanguages.includes(requested) ? requested : manifest.primaryLanguage;
+
+export const conceptTitle = (
+  concept: Pick<TopicConcept, 'title' | 'titleEn'>,
+  language: TopicLanguage,
+): string => (language === 'en' && concept.titleEn ? concept.titleEn : concept.title);
+
+export const topicTitle = (
+  manifest: Pick<TopicManifest, 'title' | 'titleEn'>,
+  language: TopicLanguage,
+): string => (language === 'en' && manifest.titleEn ? manifest.titleEn : manifest.title);
 
 const filterConceptByLanguage = (
   concept: ConceptBundle,

@@ -34,6 +34,7 @@ export type TopicAuthor = z.infer<typeof TopicAuthor>;
 export const TopicConcept = z.object({
   id: z.string().regex(SLUG_PATTERN),
   title: z.string().min(3),
+  titleEn: z.string().min(3).max(100).optional(),
   estimatedMinutes: z.number().int().min(5).max(240),
   theoryFiles: z.array(z.string().regex(THEORY_FILE_PATTERN)).min(1),
   exerciseFiles: z.array(z.string().regex(EXERCISE_FILE_PATTERN)).min(1),
@@ -186,6 +187,21 @@ export const TopicManifest = TopicManifestObject.superRefine((manifest, ctx) => 
       });
     }
     conceptIds.add(concept.id);
+    if (uniqueAvailable.has('en')) {
+      if (!concept.titleEn) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['concepts', index, 'titleEn'],
+          message: `Concept "${concept.id}" is missing titleEn (required when "en" is in availableLanguages)`,
+        });
+      }
+    } else if (concept.titleEn) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['concepts', index, 'titleEn'],
+        message: `Concept "${concept.id}" has titleEn but "en" is not in availableLanguages`,
+      });
+    }
     for (const lang of manifest.availableLanguages) {
       const hasTheory = concept.theoryFiles.some((file) => fileLanguage(file) === lang);
       const hasExercise = concept.exerciseFiles.some((file) => fileLanguage(file) === lang);

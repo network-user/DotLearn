@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import type { TopicManifest } from '@dotlearn/contracts';
+import type { TopicLanguage, TopicManifest } from '@dotlearn/contracts';
 import { Link } from '@tanstack/react-router';
 import { Code2, Database, FileText, FlaskConical, GitBranch, Lock, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -8,9 +8,10 @@ import { useTranslation } from 'react-i18next';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
 import { DualProgressRing } from '@/components/ui/DualProgressRing';
+import { getCurrentLanguage } from '@/lib/i18n';
 import { blendRecallIntoMastery, computeMastery, type BlendedMastery } from '@/lib/mastery';
 import type { TopicRecall } from '@/lib/retention';
-import { prefetchTopic } from '@/lib/topics';
+import { prefetchTopic, topicTitle } from '@/lib/topics';
 
 export interface MapNode {
   manifest: TopicManifest;
@@ -90,7 +91,10 @@ const DIFFICULTY_RANK: Record<string, number> = {
   advanced: 2,
 };
 
-export const computeRecommendedNext = (nodes: MapNode[]): string | undefined => {
+export const computeRecommendedNext = (
+  nodes: MapNode[],
+  language: TopicLanguage,
+): string | undefined => {
   if (nodes.length === 0) return undefined;
   const existingSlugs = new Set(nodes.map((node) => node.manifest.slug));
   const masteredSlugs = new Set<string>();
@@ -113,7 +117,7 @@ export const computeRecommendedNext = (nodes: MapNode[]): string | undefined => 
       const diffA = DIFFICULTY_RANK[a.manifest.difficulty] ?? 1;
       const diffB = DIFFICULTY_RANK[b.manifest.difficulty] ?? 1;
       if (diffA !== diffB) return diffA - diffB;
-      return a.manifest.title.localeCompare(b.manifest.title);
+      return topicTitle(a.manifest, language).localeCompare(topicTitle(b.manifest, language));
     })[0];
 
   const inProgress = unlocked.filter((node) => statusOf(masteryOf(node)) === 'in-progress');
@@ -154,6 +158,7 @@ interface NodeCardProps {
   dimmed: boolean;
   recommended?: boolean;
   onHover: (slug: string | null) => void;
+  language: TopicLanguage;
 }
 
 const NodeCard = ({
@@ -163,6 +168,7 @@ const NodeCard = ({
   dimmed,
   recommended = false,
   onHover,
+  language,
 }: NodeCardProps) => {
   const { t } = useTranslation('map');
   const { manifest } = node;
@@ -227,10 +233,10 @@ const NodeCard = ({
             )}
           </div>
           <h3
-            title={manifest.title}
+            title={topicTitle(manifest, language)}
             className="mt-0.5 line-clamp-1 max-h-[1.1875rem] overflow-hidden font-display text-[15px] leading-tight tracking-tightish text-fg transition-[max-height] duration-[var(--dur-med)] ease-standard group-hover:line-clamp-3 group-hover:max-h-[3.5625rem] group-focus-visible:line-clamp-3 group-focus-visible:max-h-[3.5625rem]"
           >
-            {manifest.title}
+            {topicTitle(manifest, language)}
           </h3>
         </div>
       </div>
@@ -271,9 +277,11 @@ interface EdgeGeometry {
 const GraphView = ({
   nodes,
   recommendedSlug,
+  language,
 }: {
   nodes: MapNode[];
   recommendedSlug: string | undefined;
+  language: TopicLanguage;
 }) => {
   const levels = useMemo(() => computeLevels(nodes), [nodes]);
   const existingSlugs = useMemo(() => new Set(nodes.map((node) => node.manifest.slug)), [nodes]);
@@ -298,9 +306,11 @@ const GraphView = ({
       .sort((a, b) => a[0] - b[0])
       .map(([level, items]) => ({
         level,
-        items: items.sort((a, b) => a.manifest.title.localeCompare(b.manifest.title)),
+        items: items.sort((a, b) =>
+          topicTitle(a.manifest, language).localeCompare(topicTitle(b.manifest, language)),
+        ),
       }));
-  }, [nodes, levels]);
+  }, [nodes, levels, language]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
@@ -420,6 +430,7 @@ const GraphView = ({
                     dimmed={dimmed}
                     recommended={node.manifest.slug === recommendedSlug}
                     onHover={setActiveSlug}
+                    language={language}
                   />
                 </div>
               );
@@ -434,18 +445,20 @@ const GraphView = ({
 const ListView = ({
   nodes,
   recommendedSlug,
+  language,
 }: {
   nodes: MapNode[];
   recommendedSlug: string | undefined;
+  language: TopicLanguage;
 }) => {
   const { t } = useTranslation('map');
   const levels = useMemo(() => computeLevels(nodes), [nodes]);
   const existingSlugs = useMemo(() => new Set(nodes.map((node) => node.manifest.slug)), [nodes]);
   const titleOf = useMemo(() => {
     const map = new Map<string, string>();
-    for (const node of nodes) map.set(node.manifest.slug, node.manifest.title);
+    for (const node of nodes) map.set(node.manifest.slug, topicTitle(node.manifest, language));
     return map;
-  }, [nodes]);
+  }, [nodes, language]);
   const masteredSlugs = useMemo(() => {
     const set = new Set<string>();
     for (const node of nodes) {
@@ -467,9 +480,11 @@ const ListView = ({
       .sort((a, b) => a[0] - b[0])
       .map(([level, items]) => ({
         level,
-        items: items.sort((a, b) => a.manifest.title.localeCompare(b.manifest.title)),
+        items: items.sort((a, b) =>
+          topicTitle(a.manifest, language).localeCompare(topicTitle(b.manifest, language)),
+        ),
       }));
-  }, [nodes, levels]);
+  }, [nodes, levels, language]);
 
   return (
     <div className="space-y-8">
@@ -491,6 +506,7 @@ const ListView = ({
                     dimmed={false}
                     recommended={node.manifest.slug === recommendedSlug}
                     onHover={() => undefined}
+                    language={language}
                   />
                   {presentPrereqs.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1.5 pl-1">
@@ -521,14 +537,15 @@ const ListView = ({
 };
 
 export const LearningMap = ({ nodes }: { nodes: MapNode[] }) => {
-  const recommendedSlug = useMemo(() => computeRecommendedNext(nodes), [nodes]);
+  const language = getCurrentLanguage();
+  const recommendedSlug = useMemo(() => computeRecommendedNext(nodes, language), [nodes, language]);
   return (
     <>
       <div className="hidden md:block">
-        <GraphView nodes={nodes} recommendedSlug={recommendedSlug} />
+        <GraphView nodes={nodes} recommendedSlug={recommendedSlug} language={language} />
       </div>
       <div className="md:hidden">
-        <ListView nodes={nodes} recommendedSlug={recommendedSlug} />
+        <ListView nodes={nodes} recommendedSlug={recommendedSlug} language={language} />
       </div>
     </>
   );
