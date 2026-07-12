@@ -110,6 +110,45 @@ export const TopicManifest = TopicManifestObject.superRefine((manifest, ctx) => 
       message: 'primaryLanguage must be listed in availableLanguages',
     });
   }
+  const descriptions = manifest.descriptions ?? {};
+  for (const lang of Object.keys(descriptions) as TopicLanguage[]) {
+    if (!uniqueAvailable.has(lang)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['descriptions', lang],
+        message: `descriptions has key "${lang}" that is not listed in availableLanguages`,
+      });
+    }
+  }
+  if (!descriptions[manifest.primaryLanguage]) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['descriptions'],
+      message: `descriptions.${manifest.primaryLanguage} is required (primaryLanguage)`,
+    });
+  }
+  if (uniqueAvailable.has('en')) {
+    if (!descriptions.en) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['descriptions', 'en'],
+        message: 'descriptions.en is required when "en" is in availableLanguages',
+      });
+    }
+    if (!manifest.titleEn) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['titleEn'],
+        message: 'titleEn is required when "en" is in availableLanguages',
+      });
+    }
+  } else if (manifest.titleEn) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['titleEn'],
+      message: 'titleEn is only allowed when "en" is in availableLanguages',
+    });
+  }
   if (manifest.relatedTopics) {
     const uniqueRelated = new Set(manifest.relatedTopics);
     if (uniqueRelated.size !== manifest.relatedTopics.length) {

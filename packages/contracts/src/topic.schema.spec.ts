@@ -11,6 +11,11 @@ import {
 const valid = () => ({
   slug: 'demo',
   title: 'Demo Topic',
+  titleEn: 'Demo Topic',
+  descriptions: {
+    ru: 'Учебная тема для тестов схемы манифеста: поля, языковые правила и структура концептов.',
+    en: 'A demo topic used by the manifest schema tests: field shapes, language rules and concept structure.',
+  },
   version: '1.0.0',
   availableLanguages: ['ru', 'en'],
   primaryLanguage: 'ru',
@@ -176,6 +181,50 @@ describe('TopicManifest', () => {
   it('rejects a relatedTopics entry with an invalid slug', () => {
     const result = TopicManifest.safeParse({ ...valid(), relatedTopics: ['Bad_Slug'] });
     expect(result.success).toBe(false);
+  });
+
+  it('rejects a manifest without a primary-language description', () => {
+    const m: Record<string, unknown> = { ...valid() };
+    delete m.descriptions;
+    expect(TopicManifest.safeParse(m).success).toBe(false);
+  });
+
+  it('rejects an en-available manifest without descriptions.en', () => {
+    const m = valid();
+    expect(TopicManifest.safeParse({ ...m, descriptions: { ru: m.descriptions.ru } }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects an en-available manifest without titleEn', () => {
+    const m: Record<string, unknown> = { ...valid() };
+    delete m.titleEn;
+    expect(TopicManifest.safeParse(m).success).toBe(false);
+  });
+
+  it('applies the ru-only rules for titleEn and descriptions keys', () => {
+    const m = valid();
+    const ruOnly: Record<string, unknown> = {
+      ...m,
+      availableLanguages: ['ru'],
+      descriptions: { ru: m.descriptions.ru },
+      concepts: [
+        {
+          ...m.concepts[0],
+          theoryFiles: ['theory/01-intro.ru.mdx'],
+          exerciseFiles: ['exercises/01-intro.ru.yaml'],
+        },
+      ],
+    };
+    delete ruOnly.titleEn;
+    expect(TopicManifest.safeParse(ruOnly).success).toBe(true);
+    expect(TopicManifest.safeParse({ ...ruOnly, titleEn: 'Not allowed' }).success).toBe(false);
+    expect(
+      TopicManifest.safeParse({
+        ...ruOnly,
+        descriptions: { ru: m.descriptions.ru, en: m.descriptions.en },
+      }).success,
+    ).toBe(false);
   });
 });
 

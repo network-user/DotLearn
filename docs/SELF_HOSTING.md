@@ -131,9 +131,25 @@ codes on stderr (shown once).
 | `ADMIN_JWT_SECRET` / `ADMIN_REFRESH_SECRET`                 | Signing keys for access and refresh JWTs (must differ).                                                      |
 | `ES_ENABLED`                                                | `false` → in-memory search (default). `true` → Elasticsearch at `ES_NODE`.                                   |
 | `PRESENCE_TTL_MS` / `PRESENCE_MAX_TRACKED`                  | Optional online-counter tuning: liveness window (default `90000` ms) and in-memory id cap (default `50000`). |
+| `VITE_SITE_URL`                                             | Optional canonical origin for SEO artifacts (sitemap, canonical, OG). Defaults to `VITE_API_BASE`.           |
 
 Other auth timings (`ADMIN_ACCESS_TTL`, `ADMIN_LOCKOUT_TTL`, …) are optional;
 sensible defaults live in `apps/api/src/modules/auth/auth.config.ts`.
+
+---
+
+## SEO & webmaster tools
+
+The web build prerenders every topic page (ru + en) and emits `sitemap.xml`,
+`robots.txt`, `llms.txt`, markdown mirrors (`/topics/<slug>.md`) and OG images
+into `dist/`. Absolute URLs come from `VITE_SITE_URL` (falls back to
+`VITE_API_BASE`), so a bare-metal deploy needs no extra configuration.
+
+When you decide to register the site with search engines: add the verification
+meta tag (or DNS TXT record) from Google Search Console / Yandex.Webmaster,
+submit `https://$DOMAIN/sitemap.xml`, and optionally drop an IndexNow key file
+into `apps/web/public/` with a ping on deploy for instant reindexing. None of
+this is preconfigured, by design.
 
 ---
 
