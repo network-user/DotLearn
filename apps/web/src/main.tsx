@@ -1,4 +1,12 @@
-import { lazy, StrictMode, Suspense, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import {
+  lazy,
+  StrictMode,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { registerSW } from 'virtual:pwa-register';
 
