@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
@@ -34,6 +36,17 @@ export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps)
       : undefined;
 
   const disabledLang: Lang | undefined = topicSlug && !topicHasEn(topicSlug) ? 'en' : undefined;
+
+  // /topics and /en routes carry their own language in the URL and never call
+  // setLanguage() when navigated to directly (a link, back/forward, the switcher
+  // below). Without this, the global UI language can stay "stuck" on whatever it
+  // was last explicitly set to (e.g. via the command palette), so chrome outside
+  // the route (nav, presence indicator) stops matching the page you're on.
+  useEffect(() => {
+    if (routeLanguage && routeLanguage !== current) {
+      void setLanguage(routeLanguage);
+    }
+  }, [routeLanguage, current]);
 
   const handleChange = (lang: Lang): void => {
     if (lang === disabledLang || lang === routeLanguage) return;
