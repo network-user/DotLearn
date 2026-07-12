@@ -18,6 +18,7 @@ import { remarkConceptLinks } from '../remark-concept-links.mjs';
 import {
   WEB_ROOT,
   DIST_ROOT,
+  REPO_ROOT,
   loadTopics,
   resolveSiteUrl,
   alternatesFor,
@@ -30,6 +31,7 @@ import {
   conceptTitleFor,
   topicHasEn,
   loadLocale,
+  parseTheoryFrontmatter,
 } from './seo-lib.mjs';
 import { emitSeoArtifacts } from './seo-artifacts.mjs';
 
@@ -42,6 +44,26 @@ const catalogData = JSON.parse(
 const glossary = JSON.parse(
   readFileSync(join(WEB_ROOT, 'src', 'lib', 'glossary.data.json'), 'utf8'),
 );
+
+const INTERVIEW_DIR = join(REPO_ROOT, 'interview');
+const interviewIndex = JSON.parse(readFileSync(join(INTERVIEW_DIR, 'index.json'), 'utf8'));
+const interviewCategories = JSON.parse(
+  readFileSync(join(WEB_ROOT, 'src', 'lib', 'interview-categories.data.json'), 'utf8'),
+).categoryTopicSlugs;
+const topicBySlugForInterview = new Map(topics.map((t) => [t.slug, t]));
+
+const INTERVIEW_HUB = {
+  ru: {
+    title: 'Вопросы для собеседований',
+    description: 'Вопросы для подготовки к техническому собеседованию по темам курса.',
+    study: 'Изучить тему',
+  },
+  en: {
+    title: 'Interview questions',
+    description: 'Interview questions covering the course topics, for technical-interview prep.',
+    study: 'Study the topic',
+  },
+};
 
 const LABELS = {
   ru: {
@@ -74,10 +96,6 @@ const fallbackHomeDescription = (lang, count) =>
 
 const HUBS = {
   flashcards: { title: 'Карточки', description: 'Интервальное повторение по всем темам .learn.' },
-  interview: {
-    title: 'Подготовка к собеседованию',
-    description: 'Вопросы для технических интервью по Python, SQL и вебу.',
-  },
   tracks: {
     title: 'Треки обучения',
     description: 'Программы из нескольких тем .learn, собранные по порядку.',
@@ -294,6 +312,11 @@ const compileOptions = {
   ],
 };
 
+const interviewCompileOptions = {
+  ...compileOptions,
+  remarkPlugins: [remarkFrontmatter, remarkGfm, remarkMdxFrontmatter, remarkConceptLinks],
+};
+
 let healedComponents = 0;
 let healedGlobals = 0;
 
@@ -312,8 +335,8 @@ const defineMissingGlobal = (identifier) => {
   }
 };
 
-const renderTheoryBody = async (absPath, body) => {
-  const compiled = await compile({ path: absPath, value: body }, compileOptions);
+const renderTheoryBody = async (absPath, body, options = compileOptions) => {
+  const compiled = await compile({ path: absPath, value: body }, options);
   const mod = await run(compiled, { ...jsxRuntime, baseUrl: import.meta.url });
   const components = { ...baseComponents };
   for (const match of body.matchAll(/<([A-Z][A-Za-z0-9]*)/g)) {
@@ -339,6 +362,71 @@ const renderTheoryBody = async (absPath, body) => {
     }
   }
   throw new Error(`prerender: unresolved references in ${absPath}`);
+};
+
+const stripLeadingH1 = (html) => html.replace(/^\s*<h1\b[^>]*>[\s\S]*?<\/h1>/i, '');
+
+const htmlToText = (html) =>
+  html
+    .replace(/<\/(p|div|section|li|h[1-6]|pre|tr|blockquote|figcaption)>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+
+const firstProseBlock = (body) => {
+  for (const raw of body.split(/\r?\n\r?\n+/)) {
+    const b = raw.trim();
+    if (!b || b.startsWith('#') || b.startsWith('```') || b.startsWith('<')) continue;
+    if (b.startsWith('-') || b.startsWith('*') || /^\d+\./.test(b)) continue;
+    return b;
+  }
+  return '';
+};
+
+const plainInline = (s) =>
+  s
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const truncate = (s, n = 160) =>
+  s.length <= n ? s : `${s.slice(0, n - 1).replace(/\s+\S*$/, '')}…`;
+
+const interviewDescription = (body) => truncate(plainInline(firstProseBlock(body)));
+
+const loadInterviewBody = (relPath) => {
+  const abs = join(INTERVIEW_DIR, relPath);
+  const { body } = parseTheoryFrontmatter(readFileSync(abs, 'utf8'));
+  return { abs, body };
+};
+
+const renderStudyLinks = (lang, slugs) => {
+  const items = slugs
+    .map((slug) => {
+      const topic = topicBySlugForInterview.get(slug);
+      if (!topic) return '';
+      const t =
+        lang === 'en' ? topic.manifest.titleEn || topic.manifest.title : topic.manifest.title;
+      const href = lang === 'en' && topicHasEn(topic) ? `/en/topics/${slug}` : `/topics/${slug}`;
+      return `<li><a href="${escapeAttr(href)}">${escapeHtml(t)}</a></li>`;
+    })
+    .filter(Boolean)
+    .join('');
+  if (!items) return '';
+  const label = INTERVIEW_HUB[lang].study;
+  return `\n<nav aria-label="${escapeAttr(label)}"><h2>${escapeHtml(label)}</h2><ul>${items}</ul></nav>`;
 };
 
 const renderConceptSection = async (topic, concept, lang) => {
@@ -468,6 +556,38 @@ const breadcrumbJsonLd = (lang, homeUrl, pageUrl, title) => ({
     { '@type': 'ListItem', position: 2, name: title, item: pageUrl },
   ],
 });
+
+const qaPageJsonLd = (lang, pageUrl, questionName, answerText) => ({
+  '@context': 'https://schema.org',
+  '@type': 'QAPage',
+  inLanguage: lang,
+  mainEntity: {
+    '@type': 'Question',
+    name: questionName,
+    text: questionName,
+    answerCount: 1,
+    acceptedAnswer: {
+      '@type': 'Answer',
+      text: answerText || questionName,
+      url: pageUrl,
+      upvoteCount: 0,
+    },
+  },
+});
+
+const interviewBreadcrumbJsonLd = (lang, pageUrl, questionName) => {
+  const homeUrl = lang === 'en' ? `${SITE}/en` : `${SITE}/`;
+  const hubUrl = lang === 'en' ? `${SITE}/en/interview` : `${SITE}/interview`;
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: LABELS[lang].home, item: homeUrl },
+      { '@type': 'ListItem', position: 2, name: INTERVIEW_HUB[lang].title, item: hubUrl },
+      { '@type': 'ListItem', position: 3, name: questionName, item: pageUrl },
+    ],
+  };
+};
 
 const websiteJsonLd = () => ({
   '@context': 'https://schema.org',
@@ -804,6 +924,137 @@ for (const topic of topics) {
           jsonLd: [glossaryJsonLd(lang, canonical, page.title)],
         }),
         body: page.html,
+      }),
+    );
+  }
+}
+
+// Interview: per-question pages (ru + en) + contentful hub.
+{
+  const byCategory = new Map();
+  for (const q of interviewIndex) {
+    if (!byCategory.has(q.category))
+      byCategory.set(q.category, { label: q.categoryLabel, items: [] });
+    byCategory.get(q.category).items.push(q);
+  }
+  const categoryOrder = [...byCategory.keys()].sort((a, b) =>
+    byCategory.get(a).label.localeCompare(byCategory.get(b).label, 'ru'),
+  );
+  for (const cat of categoryOrder) byCategory.get(cat).items.sort((a, b) => a.id - b.id);
+
+  const renderOne = async (q, lang) => {
+    const ruPath = `/interview/${q.id}`;
+    const enPath = `/en/interview/${q.id}`;
+    const path = lang === 'en' ? enPath : ruPath;
+    const pageUrl = SITE + path;
+    const rel = lang === 'en' ? q.path.replace(/\.ru\.mdx$/, '.en.mdx') : q.path;
+    const { abs, body } = loadInterviewBody(rel);
+    const html = await renderTheoryBody(abs, body, interviewCompileOptions);
+    const answerText = htmlToText(stripLeadingH1(html)).slice(0, 5000);
+    const title = lang === 'en' ? q.titleEn || q.title : q.title;
+    const description = interviewDescription(body);
+    const studyHtml = renderStudyLinks(lang, interviewCategories[q.category] ?? []);
+    const alternates = alternatesFor(SITE, { ru: ruPath, en: enPath });
+
+    writePage(
+      lang === 'en' ? `en/interview/${q.id}/index.html` : `interview/${q.id}/index.html`,
+      applyShell({
+        lang,
+        title: `${title} · .learn`,
+        head: buildHead({
+          lang,
+          canonical: pageUrl,
+          alternates,
+          description,
+          ogType: 'article',
+          ogTitle: title,
+          ogImage: `${SITE}/og/default.png`,
+          jsonLd: [
+            qaPageJsonLd(lang, pageUrl, title, answerText),
+            interviewBreadcrumbJsonLd(lang, pageUrl, title),
+          ],
+        }),
+        body: html + studyHtml,
+      }),
+    );
+  };
+
+  for (const q of interviewIndex) {
+    await renderOne(q, 'ru');
+    await renderOne(q, 'en');
+  }
+
+  const hubAlternates = alternatesFor(SITE, { ru: '/interview', en: '/en/interview' });
+  const buildHubBody = (lang) => {
+    const base = lang === 'en' ? '/en/interview' : '/interview';
+    const L = INTERVIEW_HUB[lang];
+    const parts = [`<h1>${escapeHtml(L.title)}</h1>`, `<p>${escapeHtml(L.description)}</p>`];
+    for (const cat of categoryOrder) {
+      const { label, items } = byCategory.get(cat);
+      const lis = items
+        .map((q) => {
+          const t = lang === 'en' ? q.titleEn || q.title : q.title;
+          return `<li><a href="${escapeAttr(`${base}/${q.id}`)}">${escapeHtml(t)}</a></li>`;
+        })
+        .join('');
+      parts.push(`<section><h2>${escapeHtml(label)}</h2><ul>${lis}</ul></section>`);
+    }
+    return parts.join('\n');
+  };
+  const buildHubJsonLd = (lang) => {
+    const base = lang === 'en' ? `${SITE}/en/interview` : `${SITE}/interview`;
+    const collection = {
+      '@context': 'https://schema.org',
+      '@type': 'CollectionPage',
+      '@id': base,
+      url: base,
+      name: INTERVIEW_HUB[lang].title,
+      description: INTERVIEW_HUB[lang].description,
+      inLanguage: lang,
+      isPartOf: { '@type': 'WebSite', name: '.learn', url: SITE },
+    };
+    const itemListElement = [];
+    let pos = 0;
+    for (const cat of categoryOrder) {
+      for (const q of byCategory.get(cat).items) {
+        pos += 1;
+        const t = lang === 'en' ? q.titleEn || q.title : q.title;
+        itemListElement.push({
+          '@type': 'ListItem',
+          position: pos,
+          name: t,
+          url: `${base}/${q.id}`,
+        });
+      }
+    }
+    const itemList = {
+      '@context': 'https://schema.org',
+      '@type': 'ItemList',
+      itemListOrder: 'https://schema.org/ItemListOrderAscending',
+      numberOfItems: interviewIndex.length,
+      itemListElement,
+    };
+    return [collection, itemList];
+  };
+
+  for (const lang of ['ru', 'en']) {
+    const canonical = lang === 'en' ? `${SITE}/en/interview` : `${SITE}/interview`;
+    writePage(
+      lang === 'en' ? 'en/interview/index.html' : 'interview/index.html',
+      applyShell({
+        lang,
+        title: `${INTERVIEW_HUB[lang].title} · .learn`,
+        head: buildHead({
+          lang,
+          canonical,
+          alternates: hubAlternates,
+          description: INTERVIEW_HUB[lang].description,
+          ogType: 'website',
+          ogTitle: INTERVIEW_HUB[lang].title,
+          ogImage: `${SITE}/og/default.png`,
+          jsonLd: buildHubJsonLd(lang),
+        }),
+        body: buildHubBody(lang),
       }),
     );
   }
