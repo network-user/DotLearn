@@ -113,7 +113,7 @@ const DURATION_DEFAULT_LABEL: Record<HomeDuration, string> = {
   long: 'Более 90 мин',
 };
 
-const DIFFICULTY_RANK: Record<string, number> = {
+const DIFFICULTY_RANK: Record<TopicManifest['difficulty'], number> = {
   beginner: 0,
   intermediate: 1,
   advanced: 2,
@@ -642,6 +642,7 @@ interface HomeSearchPatch {
   status?: string | undefined;
   sort?: HomeSortKey | undefined;
   duration?: HomeDuration | undefined;
+  forMe?: boolean | undefined;
 }
 
 const ContinueCard = ({ rows }: { rows: TopicRow[] }) => {

@@ -134,7 +134,7 @@ export const PersonalizeWizard = () => {
 
   const finish = (): void => {
     setPersonalization({
-      level: levelDraft,
+      ...(levelDraft !== undefined ? { level: levelDraft } : {}),
       trackIds: trackIdsDraft,
       interests: interestsDraft,
       configuredAt: new Date().toISOString(),
@@ -240,9 +240,9 @@ export const PersonalizeWizard = () => {
                   key={track.id}
                   active={trackIdsDraft.includes(track.id)}
                   title={track.title}
-                  eyebrow={track.targetRole}
                   hint={track.description}
                   onClick={() => toggleTrack(track.id)}
+                  {...(track.targetRole ? { eyebrow: track.targetRole } : {})}
                 />
               ))}
             </div>
