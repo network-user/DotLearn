@@ -2,7 +2,6 @@ import i18n from 'i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 import { initReactI18next } from 'react-i18next';
 
-import en from '../locales/en.json';
 import ru from '../locales/ru.json';
 
 export const SUPPORTED_LANGUAGES = ['ru', 'en'] as const;
@@ -21,7 +20,6 @@ void i18n
   .init({
     resources: {
       ru: ru as Record<string, Record<string, unknown>>,
-      en: en as Record<string, Record<string, unknown>>,
     },
     fallbackLng: DEFAULT_LANGUAGE,
     supportedLngs: SUPPORTED_LANGUAGES as unknown as string[],
@@ -35,6 +33,23 @@ void i18n
       caches: ['localStorage'],
     },
   });
+
+let englishResources: Promise<void> | null = null;
+
+const loadEnglish = (): Promise<void> => {
+  if (!englishResources) {
+    englishResources = import('../locales/en.json').then((module) => {
+      const bundles = module.default as Record<string, Record<string, unknown>>;
+      for (const [namespace, resources] of Object.entries(bundles)) {
+        i18n.addResourceBundle('en', namespace, resources, true, true);
+      }
+    });
+  }
+  return englishResources;
+};
+
+export const ensureLanguageResources = (lang: SupportedLanguage): Promise<void> =>
+  lang === 'en' ? loadEnglish() : Promise.resolve();
 
 const syncHtmlLang = (lang: string): void => {
   const normalized = isSupported(lang) ? lang : DEFAULT_LANGUAGE;
@@ -50,7 +65,15 @@ export const getCurrentLanguage = (): SupportedLanguage =>
   isSupported(i18n.language) ? i18n.language : DEFAULT_LANGUAGE;
 
 export const setLanguage = async (lang: SupportedLanguage): Promise<void> => {
+  await ensureLanguageResources(lang);
   await i18n.changeLanguage(lang);
 };
+
+const isForcedEnglishRoute = (): boolean =>
+  typeof window !== 'undefined' && /^\/en(?:\/|$)/.test(window.location.pathname);
+
+if (getCurrentLanguage() === 'en' || isForcedEnglishRoute()) {
+  await ensureLanguageResources('en');
+}
 
 export default i18n;
