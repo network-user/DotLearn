@@ -198,6 +198,7 @@ export interface HomeSearch {
   status?: string | undefined;
   sort?: HomeSortKey | undefined;
   duration?: HomeDuration | undefined;
+  forMe?: boolean | undefined;
 }
 
 const homeRoute = new Route({
@@ -225,6 +226,10 @@ const homeRoute = new Route({
       search.duration === 'short' || search.duration === 'medium' || search.duration === 'long'
         ? search.duration
         : undefined;
+    const forMe =
+      search.forMe === '1' || search.forMe === 1 || search.forMe === true || search.forMe === 'true'
+        ? true
+        : undefined;
     return {
       q: str(search.q),
       difficulty: str(search.difficulty),
@@ -233,6 +238,7 @@ const homeRoute = new Route({
       status: str(search.status),
       sort,
       duration,
+      forMe,
     };
   },
 });
@@ -316,6 +322,7 @@ export interface InterviewSearch {
   stage?: string | undefined;
   status?: 'studied' | 'not-studied' | undefined;
   sort?: 'title' | 'topic' | 'stage' | undefined;
+  forMe?: boolean | undefined;
 }
 
 const interviewRoute = new Route({
@@ -331,12 +338,17 @@ const interviewRoute = new Route({
       search.sort === 'title' || search.sort === 'topic' || search.sort === 'stage'
         ? search.sort
         : undefined;
+    const forMe =
+      search.forMe === '1' || search.forMe === 1 || search.forMe === true || search.forMe === 'true'
+        ? true
+        : undefined;
     return {
       q: str(search.q),
       topic: str(search.topic),
       stage: str(search.stage),
       status,
       sort,
+      forMe,
     };
   },
 });
