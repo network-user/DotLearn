@@ -12,6 +12,8 @@ import {
   type InterviewStage,
 } from '@dotlearn/contracts';
 
+import categoryData from './interview-categories.data.json';
+
 const indexModules = import.meta.glob<{ default: unknown }>('../../../../interview/index.json', {
   eager: true,
 });
@@ -161,25 +163,7 @@ export const relatedInterviewQuestions = (
   return scored.slice(0, limit).map((entry) => entry.other);
 };
 
-const categoryTopicSlugs: Record<string, string[]> = {
-  'data-storage': ['sql-fundamentals', 'database-types', 'python-orm', 'django-query-profiling'],
-  concurrency: ['python-storage-internals', 'celery', 'message-brokers'],
-  'web-networking': ['cors', 'websockets-realtime', 'fastapi', 'keycloak'],
-  'oop-patterns': ['python-oop', 'clean-architecture', 'dependency-injection'],
-  'python-core': [
-    'python-decorators',
-    'python-mro',
-    'python-context-managers',
-    'python-typevar',
-    'python-walrus',
-    'python-main-guard',
-  ],
-  'data-structures': ['python-algorithms', 'computational-complexity'],
-  infrastructure: ['git', 'celery', 'message-brokers'],
-  frameworks: ['fastapi', 'python-orm', 'django-query-profiling'],
-  'quality-process': ['clean-architecture', 'python-logging', 'computational-complexity'],
-  'system-design': ['clean-architecture', 'message-brokers', 'database-types'],
-};
+const categoryTopicSlugs: Record<string, string[]> = categoryData.categoryTopicSlugs;
 
 export const relatedTopicsForQuestion = (
   question: InterviewQuestionMeta,
