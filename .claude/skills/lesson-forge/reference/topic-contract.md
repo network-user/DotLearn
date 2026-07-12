@@ -29,6 +29,11 @@ topics/<slug>/
 {
   "slug": "sql-fundamentals",
   "title": "SQL Fundamentals",
+  "titleEn": "SQL Fundamentals",
+  "descriptions": {
+    "ru": "Изучите основы SQL: запросы SELECT, фильтрация, соединения таблиц и агрегация прямо в браузере.",
+    "en": "Learn SQL fundamentals: SELECT queries, filtering, joins, and aggregation with hands-on browser exercises."
+  },
   "version": "1.0.0",
   "availableLanguages": ["en", "ru"],
   "primaryLanguage": "en",
@@ -51,7 +56,7 @@ topics/<slug>/
       "exerciseFiles": ["exercises/01-select.en.yaml", "exercises/01-select.ru.yaml"]
     }
   ],
-  "license": "MIT"
+  "license": "CC-BY-NC-4.0"
 }
 ```
 
@@ -59,6 +64,8 @@ topics/<slug>/
 
 - **slug** — globally unique. Lowercase, ASCII, hyphenated, must match the folder name. No leading numbers.
 - **title** — human-readable; appears in catalog and topic page header.
+- **titleEn** sets the English title of the topic, used on `/en/*` pages. Required when `en` is listed in `availableLanguages`, regardless of which language is `primaryLanguage`. Must be omitted when `en` is not in `availableLanguages`.
+- **descriptions** holds SEO descriptions of the topic per language: keys `ru` and/or `en`, restricted to `availableLanguages`, each 50 to 200 characters. `descriptions.<primaryLanguage>` is always required. `descriptions.en` is required when `en` is listed in `availableLanguages` (which also requires `titleEn`). Rendered as the meta description on the topic page and in the catalog card.
 - **version** — semver. Bumped on any change to topic structure or exercise IDs.
 - **availableLanguages** — non-empty, deduplicated array of languages this topic ships with. Supported values: `en`, `ru`. Every language listed here must have matching `.<lang>.mdx` and `.<lang>.yaml` files in every concept.
 - **primaryLanguage** — the original language of the content. Used as fallback when the learner's UI language isn't in `availableLanguages`. Must appear in `availableLanguages`.
@@ -69,7 +76,13 @@ topics/<slug>/
 - **tags** — short, lowercase, used for catalog filtering. Reuse existing tags when possible.
 - **author** — `{ kind: "agent" | "human", name: string, model?: string }`. Required for traceability.
 - **concepts** — ordered. Each concept binds a set of theory files to a set of exercise files. The `id` is referenced from exercise YAMLs via `concept` field. For every language in `availableLanguages` there must be at least one matching theory file and at least one matching exercise file inside each concept.
-- **license** — must be MIT or compatible OSS license. No proprietary content.
+- **license** sets the content license: `MIT`, `Apache-2.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, or `CC-BY-NC-4.0`. New topics default to `CC-BY-NC-4.0`. Proprietary content is not allowed.
+
+### titleEn and descriptions requirements
+
+- Russian-only topic (`availableLanguages: ["ru"]`): only `descriptions.ru` is needed (50-200 characters). `titleEn` and `descriptions.en` must be omitted.
+- Russian + English topic (`availableLanguages: ["ru", "en"]`): `titleEn`, `descriptions.ru`, and `descriptions.en` are all needed.
+- `descriptions.<primaryLanguage>` is required for every topic.
 
 ## Theory files
 
