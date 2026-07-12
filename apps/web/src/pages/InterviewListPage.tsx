@@ -1,9 +1,9 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import type { InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
+import type { InterviewCategory, InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
-import { CheckCircle2, GraduationCap, Search, Shuffle } from 'lucide-react';
+import { CheckCircle2, GraduationCap, Search, Shuffle, Wand2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import type { InterviewSearch } from '@/router';
@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/components/ui/cx';
 import { Surface } from '@/components/ui/Surface';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { categoryOfSlug } from '@/lib/catalog-categories';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
   getInterviewCategories,
@@ -20,9 +21,17 @@ import {
   topicSlugsForCategory,
 } from '@/lib/interview';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
+import { isPersonalized, usePersonalization } from '@/lib/personalization';
+import { openPersonalizeWizard } from '@/lib/personalize-wizard';
 import { Seo } from '@/lib/seo';
 import { useVisibleManifests } from '@/lib/use-manifests';
 import { useInterviewStudiedIds } from '@/lib/use-interview';
+
+const interviewCategoryMatchesInterests = (
+  category: InterviewCategory,
+  interests: readonly string[],
+): boolean =>
+  topicSlugsForCategory(category).some((slug) => interests.includes(categoryOfSlug(slug)));
 
 type SortKey = 'default' | 'title' | 'topic' | 'stage';
 type StatusFilter = 'all' | 'studied' | 'not-studied';
@@ -107,6 +116,9 @@ export const InterviewListPage = () => {
   const stage = search.stage ?? 'all';
   const status: StatusFilter = search.status ?? 'all';
   const sort: SortKey = search.sort ?? 'default';
+  const forMe = search.forMe === true;
+  const profile = usePersonalization();
+  const profileReady = isPersonalized(profile);
 
   // Keep the search box responsive locally and only push the debounced value to the URL,
   // so a keystroke no longer drives a router navigation + re-filter of every question.
@@ -139,6 +151,13 @@ export const InterviewListPage = () => {
     patch({ status: value === 'all' ? undefined : value });
   const setSort = (value: SortKey): void =>
     patch({ sort: value === 'default' ? undefined : value });
+  const toggleForMe = (): void => {
+    if (!profileReady) {
+      openPersonalizeWizard();
+      return;
+    }
+    patch({ forMe: forMe ? undefined : true });
+  };
 
   const locale = getCurrentLanguage();
   const titleOf = (question: InterviewQuestionMeta): string =>
@@ -154,6 +173,12 @@ export const InterviewListPage = () => {
       if (status === 'studied' && !studiedIds.has(question.id)) return false;
       if (status === 'not-studied' && studiedIds.has(question.id)) return false;
       if (needle && !normalize(title(question)).includes(needle)) return false;
+      if (
+        forMe &&
+        profile.interests.length > 0 &&
+        !interviewCategoryMatchesInterests(question.category, profile.interests)
+      )
+        return false;
       return true;
     });
 
@@ -173,7 +198,7 @@ export const InterviewListPage = () => {
       sorted.sort((a, b) => a.id - b.id);
     }
     return sorted;
-  }, [query, category, stage, status, sort, studiedIds, locale]);
+  }, [query, category, stage, status, sort, studiedIds, locale, forMe, profile]);
 
   const studiedCount = studiedIds.size;
 
@@ -271,6 +296,22 @@ export const InterviewListPage = () => {
               className="form-input pl-10"
             />
           </label>
+          <button
+            type="button"
+            onClick={toggleForMe}
+            aria-pressed={forMe}
+            title={profileReady ? undefined : t('forMe.needsSetup')}
+            aria-label={profileReady ? t('forMe.aria') : t('forMe.needsSetup')}
+            className={cx(
+              'inline-flex items-center justify-center gap-1.5 rounded-full border px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55 w-full sm:w-auto',
+              forMe
+                ? 'border-accent/70 bg-accent/[0.16] text-accent'
+                : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+            )}
+          >
+            <Wand2 size={14} />
+            {t('forMe.toggle')}
+          </button>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
             <Field label={t('filterTopic')}>
               <select
