@@ -33,7 +33,7 @@ const stepIcons: ReactNode[] = [
   <Command key="command" size={26} className="text-accent" />,
 ];
 
-export const Onboarding = () => {
+export const Onboarding = ({ onDismiss }: { onDismiss?: () => void } = {}) => {
   const { t } = useTranslation('help');
   const [open, setOpen] = useState(() => !readSeen());
   const [step, setStep] = useState(0);
@@ -43,6 +43,7 @@ export const Onboarding = () => {
   const close = () => {
     writeSeen();
     setOpen(false);
+    onDismiss?.();
   };
 
   const handleOpenChange = (next: boolean) => {

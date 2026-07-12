@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth/AuthContext';
 import { openCommandPalette } from '@/lib/command-palette';
 import { isNavPathActive } from '@/lib/navigation';
 import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
+import { openPersonalizeWizard } from '@/lib/personalize-wizard';
 import { adminPath } from '@/router';
 
 import { AddTopicButton } from './AddTopicButton';
@@ -18,6 +19,7 @@ import { InstallPrompt } from './InstallPrompt';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { Onboarding } from './Onboarding';
 import { OnlineIndicator } from './OnlineIndicator';
+import { PersonalizeWizard } from './PersonalizeWizard';
 import { ShortcutsHost, openShortcuts } from './ShortcutsDialog';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -226,7 +228,8 @@ export const Layout = ({ children }: LayoutProps) => {
       <BottomTabBar />
       <ShortcutsHost />
       <InstallPrompt />
-      <Onboarding />
+      <Onboarding onDismiss={openPersonalizeWizard} />
+      <PersonalizeWizard />
     </div>
   );
 };
