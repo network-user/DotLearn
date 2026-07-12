@@ -267,6 +267,38 @@ const topicRoute = new Route({
   validateSearch: validateTopicSearch,
 });
 
+export interface InterviewSearch {
+  q?: string | undefined;
+  topic?: string | undefined;
+  stage?: string | undefined;
+  status?: 'studied' | 'not-studied' | undefined;
+  sort?: 'title' | 'topic' | 'stage' | undefined;
+  forMe?: boolean | undefined;
+}
+
+const validateInterviewSearch = (search: Record<string, unknown>): InterviewSearch => {
+  const str = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.length > 0 ? value : undefined;
+  const status =
+    search.status === 'studied' || search.status === 'not-studied' ? search.status : undefined;
+  const sort =
+    search.sort === 'title' || search.sort === 'topic' || search.sort === 'stage'
+      ? search.sort
+      : undefined;
+  const forMe =
+    search.forMe === '1' || search.forMe === 1 || search.forMe === true || search.forMe === 'true'
+      ? true
+      : undefined;
+  return {
+    q: str(search.q),
+    topic: str(search.topic),
+    stage: str(search.stage),
+    status,
+    sort,
+    forMe,
+  };
+};
+
 const enLayoutRoute = new Route({
   getParentRoute: () => rootRoute,
   id: 'en-layout',
@@ -303,11 +335,26 @@ const enAnalyticsRoute = new Route({
   component: AnalyticsPage,
 });
 
+const enInterviewRoute = new Route({
+  getParentRoute: () => enLayoutRoute,
+  path: '/en/interview',
+  component: InterviewListPage,
+  validateSearch: validateInterviewSearch,
+});
+
+const enInterviewQuestionRoute = new Route({
+  getParentRoute: () => enLayoutRoute,
+  path: '/en/interview/$id',
+  component: InterviewQuestionPage,
+});
+
 const enRouteTree = enLayoutRoute.addChildren([
   enHomeRoute,
   enTopicRoute,
   enGlossaryRoute,
   enAnalyticsRoute,
+  enInterviewRoute,
+  enInterviewQuestionRoute,
 ]);
 
 const submitRoute = new Route({
@@ -316,41 +363,11 @@ const submitRoute = new Route({
   component: SubmitTopicPage,
 });
 
-export interface InterviewSearch {
-  q?: string | undefined;
-  topic?: string | undefined;
-  stage?: string | undefined;
-  status?: 'studied' | 'not-studied' | undefined;
-  sort?: 'title' | 'topic' | 'stage' | undefined;
-  forMe?: boolean | undefined;
-}
-
 const interviewRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/interview',
   component: InterviewListPage,
-  validateSearch: (search: Record<string, unknown>): InterviewSearch => {
-    const str = (value: unknown): string | undefined =>
-      typeof value === 'string' && value.length > 0 ? value : undefined;
-    const status =
-      search.status === 'studied' || search.status === 'not-studied' ? search.status : undefined;
-    const sort =
-      search.sort === 'title' || search.sort === 'topic' || search.sort === 'stage'
-        ? search.sort
-        : undefined;
-    const forMe =
-      search.forMe === '1' || search.forMe === 1 || search.forMe === true || search.forMe === 'true'
-        ? true
-        : undefined;
-    return {
-      q: str(search.q),
-      topic: str(search.topic),
-      stage: str(search.stage),
-      status,
-      sort,
-      forMe,
-    };
-  },
+  validateSearch: validateInterviewSearch,
 });
 
 const interviewExamRoute = new Route({

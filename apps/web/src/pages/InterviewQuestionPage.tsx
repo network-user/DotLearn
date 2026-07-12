@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/Button';
 import { cx } from '@/components/ui/cx';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
+import { useForcedContentLanguage } from '@/lib/forced-language';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
   getInterviewComponentForLocale,
@@ -35,8 +36,11 @@ const stageTone: Record<InterviewStage, 'accent' | 'info' | 'success'> = {
 };
 
 export const InterviewQuestionPage = () => {
-  const { id } = useParams({ from: '/interview/$id' });
+  const { id } = useParams({ strict: false }) as { id: string };
   const { t } = useTranslation('interview');
+  const forcedLanguage = useForcedContentLanguage();
+  const listTo = forcedLanguage === 'en' ? '/en/interview' : '/interview';
+  const questionTo = forcedLanguage === 'en' ? '/en/interview/$id' : '/interview/$id';
   const numericId = Number(id);
   const question = Number.isFinite(numericId) ? getInterviewQuestion(numericId) : undefined;
   const studied = useInterviewStudied(question?.id ?? -1);
@@ -81,7 +85,7 @@ export const InterviewQuestionPage = () => {
         <div className="p-6">
           <h1 className="font-display text-2xl text-err">{t('notFoundTitle')}</h1>
           <p className="mt-2 text-sm text-fg-muted">{t('notFoundBody')}</p>
-          <Link to="/interview">
+          <Link to={listTo}>
             <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />} className="mt-4">
               {t('backToList')}
             </Button>
@@ -91,7 +95,7 @@ export const InterviewQuestionPage = () => {
     );
   }
 
-  const locale = getCurrentLanguage();
+  const locale = forcedLanguage ?? getCurrentLanguage();
   const Component = getInterviewComponentForLocale(question, locale);
   const related = relatedInterviewQuestions(question);
   const studyLinks = relatedTopicsForQuestion(question)
@@ -114,7 +118,15 @@ export const InterviewQuestionPage = () => {
 
   return (
     <div className="space-y-8">
-      <Seo robots="noindex,nofollow" title={t('title')} />
+      <Seo
+        lang={forcedLanguage ?? 'ru'}
+        title={localizedInterviewTitle(question, locale)}
+        canonicalPath={
+          forcedLanguage === 'en' ? `/en/interview/${question.id}` : `/interview/${question.id}`
+        }
+        alternates={{ ru: `/interview/${question.id}`, en: `/en/interview/${question.id}` }}
+        ogType="article"
+      />
       <div className="flex items-center justify-between gap-3">
         <Link to="/interview">
           <Button variant="ghost" leadingIcon={<ArrowLeft size={14} />}>
@@ -214,7 +226,7 @@ export const InterviewQuestionPage = () => {
             {related.map((item) => (
               <li key={item.id}>
                 <Link
-                  to="/interview/$id"
+                  to={questionTo}
                   params={{ id: String(item.id) }}
                   className="group flex items-center justify-between gap-3 rounded-xl border border-border-base px-4 py-3 transition-colors hover:border-border-strong hover:bg-fg/[0.03]"
                 >
@@ -236,7 +248,7 @@ export const InterviewQuestionPage = () => {
         <nav className="flex items-stretch justify-between gap-3 pt-6 border-t border-border-base">
           {previous ? (
             <Link
-              to="/interview/$id"
+              to={questionTo}
               params={{ id: String(previous.id) }}
               className="group flex flex-1 max-w-none sm:max-w-[280px] items-center gap-3 min-h-[var(--tap-comfort)] px-2 py-2 text-left"
             >
@@ -256,7 +268,7 @@ export const InterviewQuestionPage = () => {
           )}
           {next ? (
             <Link
-              to="/interview/$id"
+              to={questionTo}
               params={{ id: String(next.id) }}
               className="group flex flex-1 max-w-none sm:max-w-[280px] items-center justify-end gap-3 min-h-[var(--tap-comfort)] px-2 py-2 text-right"
             >

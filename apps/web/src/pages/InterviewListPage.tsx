@@ -12,6 +12,7 @@ import { cx } from '@/components/ui/cx';
 import { Surface } from '@/components/ui/Surface';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { categoryOfSlug } from '@/lib/catalog-categories';
+import { useForcedContentLanguage } from '@/lib/forced-language';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
   getInterviewCategories,
@@ -108,8 +109,11 @@ export const InterviewListPage = () => {
   const { t } = useTranslation('interview');
   const { t: tSeo } = useTranslation('seo');
   const studiedIds = useInterviewStudiedIds();
-  const search = useSearch({ from: '/interview' });
+  const search = useSearch({ strict: false }) as InterviewSearch;
   const navigate = useNavigate();
+  const forcedLanguage = useForcedContentLanguage();
+  const basePath = forcedLanguage === 'en' ? '/en/interview' : '/interview';
+  const questionBase = forcedLanguage === 'en' ? '/en/interview/$id' : '/interview/$id';
 
   const query = search.q ?? '';
   const category = search.topic ?? 'all';
@@ -127,7 +131,7 @@ export const InterviewListPage = () => {
 
   const patch = (next: Partial<InterviewSearch>, options?: { replace?: boolean }): void => {
     void navigate({
-      to: '/interview',
+      to: basePath,
       search: (prev): InterviewSearch => ({ ...(prev as InterviewSearch), ...next }),
       ...(options?.replace ? { replace: true } : {}),
     });
@@ -227,16 +231,18 @@ export const InterviewListPage = () => {
     const pool = visible.length > 0 ? visible : getInterviewIndex();
     const pick = pool[Math.floor(Math.random() * pool.length)];
     if (pick) {
-      void navigate({ to: '/interview/$id', params: { id: String(pick.id) } });
+      void navigate({ to: questionBase, params: { id: String(pick.id) } });
     }
   };
 
   return (
     <div className="space-y-6">
       <Seo
+        lang={forcedLanguage ?? 'ru'}
         title={t('title')}
         description={tSeo('interviewDescription')}
-        canonicalPath="/interview"
+        canonicalPath={basePath}
+        alternates={{ ru: '/interview', en: '/en/interview' }}
       />
       <header className="border-y border-border-base py-6 sm:py-8">
         <div className="eyebrow eyebrow-accent mb-3">{t('eyebrow')}</div>
@@ -377,7 +383,12 @@ export const InterviewListPage = () => {
           <p className="px-4 py-10 text-center text-sm text-fg-subtle italic">{t('empty')}</p>
         </Surface>
       ) : (
-        <VirtualQuestionList questions={visible} studiedIds={studiedIds} titleOf={titleOf} />
+        <VirtualQuestionList
+          questions={visible}
+          studiedIds={studiedIds}
+          titleOf={titleOf}
+          questionTo={questionBase}
+        />
       )}
     </div>
   );
@@ -387,10 +398,12 @@ const VirtualQuestionList = ({
   questions,
   studiedIds,
   titleOf,
+  questionTo,
 }: {
   questions: InterviewQuestionMeta[];
   studiedIds: Set<number>;
   titleOf: (question: InterviewQuestionMeta) => string;
+  questionTo: '/interview/$id' | '/en/interview/$id';
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef(0);
@@ -429,6 +442,7 @@ const VirtualQuestionList = ({
               question={question}
               title={titleOf(question)}
               studied={studiedIds.has(question.id)}
+              questionTo={questionTo}
             />
           </div>
         );
@@ -448,13 +462,15 @@ const QuestionCard = memo(function QuestionCard({
   question,
   title,
   studied,
+  questionTo,
 }: {
   question: InterviewQuestionMeta;
   title: string;
   studied: boolean;
+  questionTo: '/interview/$id' | '/en/interview/$id';
 }) {
   return (
-    <Link to="/interview/$id" params={{ id: String(question.id) }} className="block">
+    <Link to={questionTo} params={{ id: String(question.id) }} className="block">
       <Surface interactive className={cx('p-4 sm:p-5', studied && 'border-l-2 border-l-ok')}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 space-y-2.5">
