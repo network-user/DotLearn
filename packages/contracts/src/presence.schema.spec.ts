@@ -1,12 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { PresenceBeatInput, PresenceStats } from './presence.schema';
+import { PresenceAnalytics, PresenceBeatInput, PresenceStats } from './presence.schema';
 
 const VALID_ID = '11111111-1111-4111-8111-111111111111';
+const VALID_VISITOR = '22222222-2222-4222-8222-222222222222';
 
 describe('PresenceBeatInput', () => {
   it('accepts a valid UUID v4', () => {
     expect(PresenceBeatInput.parse({ id: VALID_ID })).toEqual({ id: VALID_ID });
+  });
+
+  it('accepts an optional visitorId and topic slug', () => {
+    const payload = { id: VALID_ID, visitorId: VALID_VISITOR, topic: 'db-indexes' };
+    expect(PresenceBeatInput.parse(payload)).toEqual(payload);
+  });
+
+  it('rejects a non-slug topic', () => {
+    expect(PresenceBeatInput.safeParse({ id: VALID_ID, topic: 'Git Basics' }).success).toBe(false);
+  });
+
+  it('rejects a visitorId that is not a UUID v4', () => {
+    expect(PresenceBeatInput.safeParse({ id: VALID_ID, visitorId: 'nope' }).success).toBe(false);
   });
 
   it('rejects a non-UUID string', () => {
@@ -55,5 +69,54 @@ describe('PresenceStats', () => {
       daily: [{ day: '01/01/2026', uniques: 0, peak: 0 }],
     };
     expect(PresenceStats.safeParse(payload).success).toBe(false);
+  });
+
+  it('accepts the optional extended analytics fields', () => {
+    const payload = {
+      online: 3,
+      uniquesToday: 10,
+      peakToday: 5,
+      series: [],
+      daily: [],
+      uniquesAllTime: 1234,
+      uniques7d: 300,
+      uniques30d: 900,
+      peakAllTime: 42,
+      totalVisitorDays: 5000,
+      reading: [{ topic: 'git', count: 2 }],
+    };
+    expect(PresenceStats.parse(payload)).toEqual(payload);
+  });
+});
+
+describe('PresenceAnalytics', () => {
+  it('accepts a full analytics payload with per-topic stats', () => {
+    const payload = {
+      online: 1,
+      uniquesToday: 1,
+      peakToday: 1,
+      series: [],
+      daily: [],
+      uniquesAllTime: 100,
+      uniques7d: 30,
+      uniques30d: 90,
+      peakAllTime: 9,
+      totalVisitorDays: 400,
+      reading: [{ topic: 'python', count: 1 }],
+      topics: [
+        {
+          topic: 'python',
+          readingNow: 1,
+          uniquesAllTime: 50,
+          daily: [{ day: '2026-01-01', uniques: 5 }],
+        },
+      ],
+    };
+    expect(PresenceAnalytics.parse(payload)).toEqual(payload);
+  });
+
+  it('requires the extended fields (unlike PresenceStats)', () => {
+    const payload = { online: 1, uniquesToday: 1, peakToday: 1, series: [], daily: [], topics: [] };
+    expect(PresenceAnalytics.safeParse(payload).success).toBe(false);
   });
 });

@@ -63,6 +63,7 @@ import { getTheory, prefetchTheory } from '@/lib/theory';
 import { isConstrainedConnection } from '@/lib/connection';
 import { programmaticScrollTo } from '@/lib/reading-position';
 import { recordRecentVisit } from '@/lib/recent-visits';
+import { setPresenceTopic } from '@/lib/presence';
 import { prewarmPythonRuntime } from '@/lib/python-runtime';
 import { prewarmSqlRuntime } from '@/lib/sql-runtime';
 import { sanitizeHref } from '@/lib/safe-url';
@@ -244,6 +245,12 @@ export const TopicPage = () => {
       delete document.documentElement.dataset.focus;
     };
   }, [focusMode]);
+
+  // Report the current topic for the anonymous aggregate "reading now" breakdown.
+  useEffect(() => {
+    setPresenceTopic(slug);
+    return () => setPresenceTopic(null);
+  }, [slug]);
 
   const selectConcept = useCallback(
     (conceptId: string): void => {

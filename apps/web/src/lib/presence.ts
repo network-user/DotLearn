@@ -20,8 +20,15 @@ import { sendPresenceBeat, type PresenceBeatResult } from './api-client';
 export type PresenceState = { online: number; uniquesToday: number } | null;
 
 const ID_KEY = 'dotlearn:presence-id';
+// Stable (non-rotating) anonymous device id, distinct from the daily id above.
+// Feeds the server's all-time unique estimator; never leaves localStorage as
+// anything but an opaque UUID. No IP, no fingerprint.
+const VISITOR_ID_KEY = 'dotlearn:visitor-id';
 const LOCK_NAME = 'dotlearn-presence-leader';
 const CHANNEL_NAME = 'dotlearn-presence';
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TOPIC_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 const BEAT_INTERVAL_MS = 30_000;
 const BACKOFF_MIN_MS = 60_000;
@@ -58,6 +65,41 @@ const getDailyId = (): string => {
     }
   }
   return id;
+};
+
+/**
+ * Read (or mint) the stable anonymous visitor id. Returns undefined when a valid
+ * v4 UUID can't be produced (e.g. no crypto in an insecure context), in which
+ * case the beat simply omits it — the counter still works, all-time just skips
+ * that device.
+ */
+const getVisitorId = (): string | undefined => {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(VISITOR_ID_KEY);
+      if (raw && UUID_V4.test(raw)) return raw;
+    } catch {
+      // fall through to mint
+    }
+  }
+  if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') return undefined;
+  const id = crypto.randomUUID();
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(VISITOR_ID_KEY, id);
+    } catch {
+      // storage unavailable; skip all-time attribution for this device
+    }
+  }
+  return id;
+};
+
+// The topic the user is currently reading, reported in the beat for the
+// aggregate "reading now" breakdown. Set by TopicPage; cleared when leaving.
+let currentTopic: string | null = null;
+
+export const setPresenceTopic = (topic: string | null): void => {
+  currentTopic = topic && TOPIC_SLUG.test(topic) ? topic : null;
 };
 
 // --- Shared state store (useSyncExternalStore) ---
@@ -141,7 +183,11 @@ const beatOnce = async (): Promise<void> => {
     return;
   }
   try {
-    const result: PresenceBeatResult = await sendPresenceBeat(getDailyId());
+    const result: PresenceBeatResult = await sendPresenceBeat(
+      getDailyId(),
+      getVisitorId(),
+      currentTopic ?? undefined,
+    );
     consecutiveFailures = 0;
     loggedFailure = false;
     publish({ online: result.online, uniquesToday: result.uniquesToday });

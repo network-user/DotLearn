@@ -265,23 +265,63 @@ export interface PresenceDailyPoint {
   peak: number;
 }
 
+export interface PresenceReadingPoint {
+  topic: string;
+  count: number;
+}
+
 export interface PresenceStats {
   online: number;
   uniquesToday: number;
   peakToday: number;
   series: PresenceSeriesPoint[];
   daily: PresenceDailyPoint[];
+  // Extended metrics: present only when the server has analytics enabled.
+  uniquesAllTime?: number;
+  uniques7d?: number;
+  uniques30d?: number;
+  peakAllTime?: number;
+  totalVisitorDays?: number;
+  reading?: PresenceReadingPoint[];
 }
 
-export const sendPresenceBeat = (id: string): Promise<PresenceBeatResult> =>
+export interface PresenceTopicDailyPoint {
+  day: string;
+  uniques: number;
+}
+
+export interface PresenceTopicStat {
+  topic: string;
+  readingNow: number;
+  uniquesAllTime: number;
+  daily: PresenceTopicDailyPoint[];
+}
+
+export interface PresenceAnalytics extends Required<Omit<PresenceStats, 'reading'>> {
+  reading: PresenceReadingPoint[];
+  topics: PresenceTopicStat[];
+}
+
+export const sendPresenceBeat = (
+  id: string,
+  visitorId?: string,
+  topic?: string,
+): Promise<PresenceBeatResult> =>
   request<PresenceBeatResult>('/api/presence/beat', {
     method: 'POST',
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({
+      id,
+      ...(visitorId ? { visitorId } : {}),
+      ...(topic ? { topic } : {}),
+    }),
     auth: false,
   });
 
 export const fetchPresenceStats = (): Promise<PresenceStats> =>
   request<PresenceStats>('/api/presence/stats', { auth: false });
+
+export const fetchPresenceAnalytics = (): Promise<PresenceAnalytics> =>
+  request<PresenceAnalytics>('/api/presence/analytics', { auth: false });
 
 // --- Cross-device sync (anonymous code, public endpoints) ---
 //

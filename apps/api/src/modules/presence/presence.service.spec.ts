@@ -49,6 +49,18 @@ describe('PresenceService', () => {
     expect(service.getStats().online).toBe(1);
   });
 
+  it('exposes no extended analytics when PRESENCE_ANALYTICS is off', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+
+    service.beat('a', '22222222-2222-4222-8222-222222222222', 'git');
+    const stats = service.getStats();
+
+    expect(stats.uniquesAllTime).toBeUndefined();
+    expect(stats.reading).toBeUndefined();
+    expect(service.getAnalytics()).toBeNull();
+  });
+
   it('drops a device from online once its TTL elapses', () => {
     const service = new PresenceService();
     stubDisk(service);
@@ -89,7 +101,8 @@ describe('PresenceService', () => {
     vi.setSystemTime(new Date('2026-01-01T23:59:00.000Z'));
     service.beat('a');
     service.beat('b'); // peak of 2 concurrent online
-    expect(service.getStats().daily).toHaveLength(0);
+    // No completed day yet, but `daily` always carries today's in-progress rollup.
+    expect(service.getStats().daily).toEqual([{ day: '2026-01-01', uniques: 2, peak: 2 }]);
     expect(service.getStats().uniquesToday).toBe(2);
     expect(service.getStats().peakToday).toBe(2);
 
@@ -97,7 +110,11 @@ describe('PresenceService', () => {
     const counters = service.beat('c');
 
     const stats = service.getStats();
-    expect(stats.daily).toEqual([{ day: '2026-01-01', uniques: 2, peak: 2 }]);
+    // Yesterday is now a completed row; today ('c' only) is the trailing point.
+    expect(stats.daily).toEqual([
+      { day: '2026-01-01', uniques: 2, peak: 2 },
+      { day: '2026-01-02', uniques: 1, peak: 1 },
+    ]);
     expect(counters.uniquesToday).toBe(1);
     expect(stats.uniquesToday).toBe(1);
     // Peak resets with the new day: only 'c' has been online so far.
@@ -116,7 +133,10 @@ describe('PresenceService', () => {
     vi.setSystemTime(new Date('2026-01-02T00:05:00.000Z'));
     const stats = service.getStats();
 
-    expect(stats.daily).toEqual([{ day: '2026-01-01', uniques: 1, peak: 1 }]);
+    expect(stats.daily).toEqual([
+      { day: '2026-01-01', uniques: 1, peak: 1 },
+      { day: '2026-01-02', uniques: 0, peak: 0 },
+    ]);
     expect(stats.uniquesToday).toBe(0);
   });
 
@@ -238,5 +258,95 @@ describe('PresenceService', () => {
     expect(internal.lastSeen.has('stale')).toBe(true);
     // ...but the reported count comes from countOnline's freshness filter, not map size.
     expect(counters.online).toBe(1);
+  });
+});
+
+describe('PresenceService analytics (enabled)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    vi.stubEnv('PRESENCE_ANALYTICS', '1');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it('estimates all-time unique visitors from stable ids, ignoring repeats', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+
+    for (let i = 0; i < 400; i += 1) service.beat(uuid(i), `visitor-${i}`, 'git');
+    // A second full pass of the very same visitors must not inflate the estimate.
+    for (let i = 0; i < 400; i += 1) service.beat(uuid(i), `visitor-${i}`, 'git');
+
+    const stats = service.getStats();
+    expect(stats.uniquesToday).toBe(400);
+    expect(stats.uniquesAllTime).toBeGreaterThan(376); // within ~6% of 400
+    expect(stats.uniquesAllTime).toBeLessThan(424);
+  });
+
+  it('breaks down reading-now by topic over online devices', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+
+    service.beat(uuid(1), 'v-1', 'git');
+    service.beat(uuid(2), 'v-2', 'git');
+    service.beat(uuid(3), 'v-3', 'python');
+
+    expect(service.getStats().reading).toEqual([
+      { topic: 'git', count: 2 },
+      { topic: 'python', count: 1 },
+    ]);
+  });
+
+  it('builds per-topic analytics with reading-now and all-time uniques', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+
+    for (let i = 0; i < 300; i += 1) service.beat(uuid(i), `v-${i}`, 'git');
+
+    const analytics = service.getAnalytics();
+    expect(analytics).not.toBeNull();
+    const git = analytics?.topics.find((topic) => topic.topic === 'git');
+    expect(git?.readingNow).toBe(300);
+    expect(git?.uniquesAllTime).toBeGreaterThan(282); // within ~6% of 300
+    expect(git?.uniquesAllTime).toBeLessThan(318);
+  });
+
+  it('keeps peakAllTime and banks totalVisitorDays across a day rollover', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+
+    vi.setSystemTime(new Date('2026-01-01T23:59:00.000Z'));
+    service.beat(uuid(1), 'v-1', 'git');
+    service.beat(uuid(2), 'v-2', 'git'); // peak of 2 today
+    expect(service.getStats().peakAllTime).toBe(2);
+
+    vi.setSystemTime(new Date('2026-01-02T00:01:00.000Z'));
+    service.beat(uuid(3), 'v-3', 'python'); // new day; yesterday's two devices are stale
+
+    const stats = service.getStats();
+    expect(stats.peakToday).toBe(1); // resets with the new day
+    expect(stats.peakAllTime).toBe(2); // all-time peak survives
+    expect(stats.totalVisitorDays).toBe(2); // yesterday's uniques banked
+  });
+
+  it('dedups unique visitors across days for the rolling windows', () => {
+    const service = new PresenceService();
+    stubDisk(service);
+
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    for (let i = 0; i < 200; i += 1) service.beat(uuid(i), `d1-${i}`, 'git');
+
+    vi.setSystemTime(new Date('2026-01-02T12:00:00.000Z'));
+    for (let i = 0; i < 200; i += 1) service.beat(uuid(500 + i), `d2-${i}`, 'git');
+
+    const stats = service.getStats();
+    // 200 distinct visitors on each of two days = ~400 unique over the window.
+    expect(stats.uniques7d).toBeGreaterThan(372);
+    expect(stats.uniques7d).toBeLessThan(428);
+    expect(stats.uniques30d).toBe(stats.uniques7d);
   });
 });
