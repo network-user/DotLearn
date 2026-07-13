@@ -1,7 +1,7 @@
 # .learn
 
 <p>
-  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat" alt="Node.js" />
+  <img src="https://img.shields.io/badge/Node.js-22%2B-339933?style=flat" alt="Node.js" />
   <img src="https://img.shields.io/badge/Platform-Web%20%7C%20Docker-555?style=flat" alt="Platform" />
   <img src="https://img.shields.io/badge/Category-Learning-orange?style=flat" alt="Category" />
   <!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-283627-lightgrey?style=flat" alt="283627 lines of code" /><!-- loc:end -->
@@ -11,8 +11,8 @@
 
 <!-- audit:start -->
 <p>
-  <a href="docs/audit/latest.md"><img src="https://img.shields.io/badge/security_audit-passed-3fb950?style=flat" alt="security audit passed - full, leaks + code" /></a>
-  <a href="docs/audit/2026-07-08-amber-sentinel.md"><img src="https://img.shields.io/badge/date-2026--07--08-555?style=flat" alt="audit date" /></a>
+  <a href="docs/audit/latest.md"><img src="https://img.shields.io/badge/security_audit-passed-3fb950?style=flat" alt="security audit passed · full, leaks + code" /></a>
+  <a href="docs/audit/2026-07-13-cobalt-lattice.md"><img src="https://img.shields.io/badge/date-2026--07--13-555?style=flat" alt="audit date" /></a>
 </p>
 <!-- audit:end -->
 
