@@ -37,6 +37,11 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @dotlearn/contracts build
 RUN pnpm --filter @dotlearn/sandbox build
 RUN pnpm --filter @dotlearn/lesson-engine build
+
+# Растущий interview-контент (тысячи MDX) раздувает vite build за дефолтный ~4GB
+# heap Node - сборка падала с OOM (FATAL: heap limit, exit 134). Поднимаем лимит;
+# на GitHub-раннере памяти хватает (>=7GB), 6GB heap помещается.
+ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN pnpm --filter @dotlearn/web build
 
 # Unprivileged nginx: runs as the non-root `nginx` user and listens on 8080.
