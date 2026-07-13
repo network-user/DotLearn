@@ -1,7 +1,8 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
-import { SUPPORTED_LANGUAGES, getCurrentLanguage, setLanguage } from '@/lib/i18n';
+import { SUPPORTED_LANGUAGES, getCurrentLanguage } from '@/lib/i18n';
+import { applyLanguageSelection, routeLanguageFromPathname } from '@/lib/localized-routes';
 import { topicHasEn } from '@/lib/topics';
 
 interface LanguageSwitcherProps {
@@ -10,7 +11,7 @@ interface LanguageSwitcherProps {
 
 type Lang = (typeof SUPPORTED_LANGUAGES)[number];
 
-const TOPIC_PATH_PATTERN = /^\/(en\/)?topics\/([^/]+)$/;
+const TOPIC_PATH_PATTERN = /^\/(?:en\/)?topics\/([^/]+)$/;
 
 export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps) => {
   const { t, i18n } = useTranslation('common');
@@ -20,42 +21,14 @@ export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps)
   const search = useRouterState({ select: (state) => state.location.search });
 
   const topicMatch = TOPIC_PATH_PATTERN.exec(pathname);
-  const topicSlug = topicMatch?.[2];
-  const isHomeRoute = pathname === '/' || pathname === '/en';
-
-  const routeLanguage: Lang | undefined = topicMatch
-    ? topicMatch[1]
-      ? 'en'
-      : 'ru'
-    : isHomeRoute
-      ? pathname === '/en'
-        ? 'en'
-        : 'ru'
-      : undefined;
+  const topicSlug = topicMatch?.[1];
+  const routeLanguage = routeLanguageFromPathname(pathname);
 
   const disabledLang: Lang | undefined = topicSlug && !topicHasEn(topicSlug) ? 'en' : undefined;
 
   const handleChange = (lang: Lang): void => {
     if (lang === disabledLang) return;
-    // /topics and /en routes carry their own language in the URL, so a click here can
-    // look like a no-op when the URL already matches (routeLanguage === lang) — but the
-    // global UI language (nav chrome, presence indicator, "follow-ui" content elsewhere)
-    // can still be on the other language if it was changed independently (command palette,
-    // settings). Always resync it on click, even when there's nothing to navigate.
-    if (lang !== current) void setLanguage(lang);
-    if (lang === routeLanguage) return;
-    if (topicSlug) {
-      void navigate({
-        to: lang === 'en' ? '/en/topics/$slug' : '/topics/$slug',
-        params: { slug: topicSlug },
-        search,
-        replace: true,
-      });
-      return;
-    }
-    if (isHomeRoute) {
-      void navigate({ to: lang === 'en' ? '/en' : '/' });
-    }
+    void applyLanguageSelection(lang, { pathname, search, navigate });
   };
 
   const isActive = (lang: Lang): boolean =>

@@ -1,0 +1,72 @@
+---
+id: 1641
+title: "Что такое shadowing, почему оно опасно и как Go это регулирует"
+category: go-go-yazyk-obschee
+categoryLabel: "Go: язык (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое shadowing, почему оно опасно и как Go это регулирует
+
+## Суть
+
+Shadowing — когда внутренний блок объявляет идентификатор с тем же именем, что во внешнем scope, и «затеняет» внешний. В Go это легально в новых блоках (`if`, `for`, вложенные функции). Опасно: путаем какую переменную меняем, особенно `err` в `if err := ...`.
+
+## Что ответить на собесе
+
+- Shadowing ≠ reassignment: `:=` в inner block создаёт новую переменную.
+- Классический баг: `err` shadow в `if`, снаружи остаётся старый nil/err.
+- `go vet` с `-shadow` / staticcheck ловит часть случаев.
+- В цикле `for _, item := range` — `item` переиспользуется, closure ловит последнее значение без `item := item`.
+- Честно: shadowing иногда намеренный (короткий scope), но `err` лучше не затенять.
+
+## Как это работает
+
+```go
+var x = 10
+
+func main() {
+	x := 20
+	fmt.Println(x)
+
+	if x := 5; x > 0 {
+		fmt.Println(x)
+	}
+	fmt.Println(x)
+}
+```
+
+Внутри `if` — своя `x`. После блока снова `20`.
+
+```go
+func process() error {
+	var err error
+	if data, err := load(); err != nil {
+		return err
+	}
+	return err
+}
+```
+
+Внутренний `err` затеняет внешний — `return err` снаружи может вернуть nil, хотя load упал. Правильно: отдельные имена или `data, loadErr := load()`.
+
+```go
+for _, v := range items {
+	v := v
+	go func() { use(v) }()
+}
+```
+
+## Подводные камни
+
+**Shadow err в каждом if.** Тихие логические баги в error handling.
+
+**Затенение import или package name.** Редко, но ломает читаемость.
+
+**switch с short variable declaration.** Новый scope на каждый case в Go 1.22+ иначе — знать версию.
+
+**Линтер выключен в CI.** Shadowing уходит в prod.
+
+**Думать, что `:=` всегда создаёт новую переменную.** Если хотя бы одно имя новое — остальные могут быть reuse.

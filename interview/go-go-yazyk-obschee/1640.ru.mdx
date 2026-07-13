@@ -1,0 +1,72 @@
+---
+id: 1640
+title: "Какой порядок вызовов отложенных функций в Go"
+category: go-go-yazyk-obschee
+categoryLabel: "Go: язык (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой порядок вызовов отложенных функций в Go
+
+## Суть
+
+`defer` откладывает вызов до выхода из текущей функции. Порядок выполнения — LIFO: последний `defer` выполняется первым. Аргументы defer-вызова вычисляются в момент регистрации, не в момент выполнения.
+
+## Что ответить на собесе
+
+- Стек defer: Last In, First Out.
+- Типичный паттерн: `defer f.Close()` сразу после успешного open.
+- Defer срабатывает при return, panic и нормальном выходе.
+- Замыкание в defer видит финальные значения переменных, если передать указатель или вызвать анонимную func.
+- Честно: defer имеет небольшой runtime cost — не в tight hot loop.
+
+## Как это работает
+
+```go
+func main() {
+	fmt.Println("start")
+	defer fmt.Println("first")
+	defer fmt.Println("second")
+	defer fmt.Println("third")
+	fmt.Println("end")
+}
+```
+
+Вывод: start, end, third, second, first.
+
+```go
+func writeReport(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString("ok")
+	return err
+}
+```
+
+`Close` гарантирован даже при early return. Для изменяемого результата:
+
+```go
+defer func() {
+	if err != nil {
+		_ = os.Remove(tmpPath)
+	}
+}()
+```
+
+## Подводные камни
+
+**defer fmt.Println(i) в цикле.** Печатает финальное `i`, не текущее — нужна IIFE с аргументом.
+
+**Много defer в глубоком стеке.** Накладные расходы и неочевидный порядок cleanup.
+
+**defer Close() после ошибки Create.** Nil pointer panic — defer только после успешного acquire.
+
+**Забыть, что return value вычисляется до defer.** Named return + defer может менять итог.
+
+**defer lock.Unlock() без defer в ветке с panic до lock.** Deadlock при панике между lock и defer.

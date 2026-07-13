@@ -1,0 +1,145 @@
+---
+id: 3693
+title: "Как использовать Testcontainers для Kafka/RabbitMQ в автотестах и что валидировать?"
+rawCategory: ocheredi-i-brokery-soobscheniy
+rawCategoryLabel: "Очереди и брокеры сообщений"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+sourceUrl: "https://speedrunit.ru/question/3693/"
+---
+
+# Как использовать Testcontainers для Kafka/RabbitMQ в автотестах и что валидировать?
+
+## 1️⃣ Как кратко ответить
+
+Testcontainers позволяет запускать изолированные контейнеры с Kafka или RabbitMQ для интеграционного тестирования. В автотестах с Kafka/RabbitMQ валидируют корректность отправки и получения сообщений, обработку ошибок и соответствие сообщений ожидаемым форматам.
+
+## 2️⃣ Подробное объяснение темы
+
+Testcontainers — это библиотека для Java, которая позволяет запускать Docker-контейнеры непосредственно из тестов. Это особенно полезно для интеграционного тестирования, где требуется взаимодействие с внешними системами, такими как Kafka или RabbitMQ. Использование Testcontainers позволяет избежать зависимости от внешних сервисов, обеспечивая изолированное и предсказуемое тестовое окружение.
+
+### Зачем это нужно
+
+При разработке систем, использующих брокеры сообщений, такие как Kafka или RabbitMQ, важно убедиться, что ваша система правильно взаимодействует с этими брокерами. Это включает в себя проверку отправки и получения сообщений, обработку ошибок и соответствие сообщений ожидаемым форматам. Testcontainers позволяет автоматизировать эти проверки, создавая временные экземпляры брокеров сообщений для каждого теста.
+
+### Как это работает
+
+### Пример использования Testcontainers с Kafka
+
+```java
+import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.KafkaContainer;
+import org.testcontainers.utility.DockerImageName;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import java.util.Properties;
+import java.util.Collections;
+
+public class KafkaTest {
+
+    @Test
+    public void testKafkaMessaging() {
+        // Создаем контейнер с Kafka
+        KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:latest"));
+        kafka.start();
+
+        // Настраиваем Kafka Producer
+        Properties producerProps = new Properties();
+        producerProps.put("bootstrap.servers", kafka.getBootstrapServers());
+        producerProps.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        producerProps.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+        KafkaProducer<String, String> producer = new KafkaProducer<>(producerProps);
+
+        // Отправляем сообщение в Kafka
+        producer.send(new ProducerRecord<>("test-topic", "key", "value"));
+        producer.close();
+
+        // Настраиваем Kafka Consumer
+        Properties consumerProps = new Properties();
+        consumerProps.put("bootstrap.servers", kafka.getBootstrapServers());
+        consumerProps.put("group.id", "test-group");
+        consumerProps.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        consumerProps.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+        consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        KafkaConsumer<String, String> consumer = new KafkaConsumer<>(consumerProps);
+        consumer.subscribe(Collections.singletonList("test-topic"));
+
+        // Проверяем получение сообщения
+        ConsumerRecords<String, String> records = consumer.poll(10000);
+        assert records.count() == 1;
+        assert records.iterator().next().value().equals("value");
+
+        consumer.close();
+        kafka.stop();
+    }
+}
+```
+
+- **Создание контейнера с Kafka**: `KafkaContainer kafka = new KafkaContainer(...)` — создается и запускается контейнер с Kafka.
+- **Настройка и использование Kafka Producer**: Отправка сообщения в Kafka.
+- **Настройка и использование Kafka Consumer**: Подписка на топик и проверка получения сообщения.
+- **Валидация**: Проверка, что сообщение было получено и его содержимое соответствует ожидаемому.
+
+### Пример использования Testcontainers с RabbitMQ
+
+```java
+import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.RabbitMQContainer;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.DeliverCallback;
+
+public class RabbitMQTest {
+
+    @Test
+    public void testRabbitMQMessaging() throws Exception {
+        // Создаем контейнер с RabbitMQ
+        RabbitMQContainer rabbitMQ = new RabbitMQContainer("rabbitmq:3-management");
+        rabbitMQ.start();
+
+        // Настраиваем соединение с RabbitMQ
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setHost(rabbitMQ.getHost());
+        factory.setPort(rabbitMQ.getAmqpPort());
+        Connection connection = factory.newConnection();
+        Channel channel = connection.createChannel();
+
+        // Объявляем очередь и отправляем сообщение
+        String queueName = "test-queue";
+        channel.queueDeclare(queueName, false, false, false, null);
+        String message = "Hello, RabbitMQ!";
+        channel.basicPublish("", queueName, null, message.getBytes());
+
+        // Настраиваем получение сообщения
+        DeliverCallback deliverCallback = (consumerTag, delivery) -> {
+            String receivedMessage = new String(delivery.getBody(), "UTF-8");
+            assert receivedMessage.equals(message);
+        };
+        channel.basicConsume(queueName, true, deliverCallback, consumerTag -> { });
+
+        // Закрываем соединение
+        channel.close();
+        connection.close();
+        rabbitMQ.stop();
+    }
+}
+```
+
+- **Создание контейнера с RabbitMQ**: `RabbitMQContainer rabbitMQ = new RabbitMQContainer(...)` — создается и запускается контейнер с RabbitMQ.
+- **Настройка соединения и канала**: Устанавливается соединение с RabbitMQ и создается канал для взаимодействия.
+- **Объявление очереди и отправка сообщения**: Создается очередь и отправляется сообщение.
+- **Получение и валидация сообщения**: Настраивается получение сообщения и проверяется его содержимое.
+
+### Что валидировать
+
+1. **Корректность отправки и получения сообщений**: Убедитесь, что сообщения отправляются и получаются корректно.
+2. **Обработка ошибок**: Проверьте, как система реагирует на ошибки, такие как недоступность брокера.
+3. **Соответствие форматов сообщений**: Убедитесь, что формат сообщений соответствует ожидаемому.
+4. **Производительность**: Оцените, как система справляется с нагрузкой при большом количестве сообщений.
+
+Использование Testcontainers для Kafka и RabbitMQ позволяет автоматизировать и упростить процесс интеграционного тестирования, обеспечивая надежность и предсказуемость тестов.

@@ -1,0 +1,115 @@
+---
+id: 1563
+title: "Как использовать контекст, если в одном методе используется несколько транзакций"
+rawCategory: konkurentnost
+rawCategoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+sourceUrl: "https://speedrunit.ru/question/1563/"
+---
+
+# Как использовать контекст, если в одном методе используется несколько транзакций
+
+## 1️⃣ Как кратко ответить
+
+Для использования контекста в методе с несколькими транзакциями, передавайте `context.Context` в каждую транзакцию и используйте его для управления жизненным циклом транзакций и обработки отмены или тайм-аутов. Это позволяет централизованно управлять временем выполнения и отменой всех транзакций в методе.
+
+## 2️⃣ Подробное объяснение темы
+
+Контекст в Go (`context.Context`) — это механизм, который позволяет управлять временем выполнения, отменой и передачей метаданных между различными частями программы. Он особенно полезен в сетевых приложениях и при работе с базами данных, где операции могут быть длительными и требуют возможности отмены или ограничения по времени.
+
+Когда в одном методе используется несколько транзакций, важно, чтобы все они были согласованы и управлялись централизованно. Это достигается с помощью контекста, который передается в каждую транзакцию. Контекст позволяет:
+
+- Отменить все транзакции, если одна из них завершилась с ошибкой.
+- Установить общий тайм-аут для всех транзакций.
+- Передавать метаданные, которые могут быть полезны в каждой транзакции.
+
+Рассмотрим пример использования контекста с несколькими транзакциями:
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "log"
+    "time"
+    _ "github.com/lib/pq"
+)
+
+func performTransactions(ctx context.Context, db *sql.DB) error {
+    // Устанавливаем тайм-аут для всего метода
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+
+    // Начинаем первую транзакцию
+    tx1, err := db.BeginTx(ctx, nil)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction 1: %w", err)
+    }
+
+    // Выполняем операцию в первой транзакции
+    _, err = tx1.ExecContext(ctx, "INSERT INTO table1 (column) VALUES ($1)", "value1")
+    if err != nil {
+        tx1.Rollback()
+        return fmt.Errorf("failed to execute transaction 1: %w", err)
+    }
+
+    // Фиксируем первую транзакцию
+    if err := tx1.Commit(); err != nil {
+        return fmt.Errorf("failed to commit transaction 1: %w", err)
+    }
+
+    // Начинаем вторую транзакцию
+    tx2, err := db.BeginTx(ctx, nil)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction 2: %w", err)
+    }
+
+    // Выполняем операцию во второй транзакции
+    _, err = tx2.ExecContext(ctx, "INSERT INTO table2 (column) VALUES ($1)", "value2")
+    if err != nil {
+        tx2.Rollback()
+        return fmt.Errorf("failed to execute transaction 2: %w", err)
+    }
+
+    // Фиксируем вторую транзакцию
+    if err := tx2.Commit(); err != nil {
+        return fmt.Errorf("failed to commit transaction 2: %w", err)
+    }
+
+    return nil
+}
+
+func main() {
+    // Подключение к базе данных
+    connStr := "user=username dbname=mydb sslmode=disable"
+    db, err := sql.Open("postgres", connStr)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+
+    // Создаем базовый контекст
+    ctx := context.Background()
+
+    // Выполняем метод с несколькими транзакциями
+    if err := performTransactions(ctx, db); err != nil {
+        log.Fatalf("failed to perform transactions: %v", err)
+    }
+
+    log.Println("Transactions completed successfully")
+}
+```
+
+В этом примере:
+
+- Мы создаем контекст с тайм-аутом в 5 секунд, который будет действовать на все транзакции в методе `performTransactions`.
+- Для каждой транзакции (`tx1` и `tx2`) мы используем метод `BeginTx`, передавая контекст `ctx`. Это позволяет транзакциям быть отмененными, если контекст завершится.
+- Метод `ExecContext` используется для выполнения SQL-запросов в контексте транзакции, что позволяет учитывать тайм-ауты и отмену.
+- Если какая-либо транзакция завершается с ошибкой, мы вызываем `Rollback`, чтобы отменить изменения.
+- Если транзакция успешна, мы вызываем `Commit`, чтобы зафиксировать изменения.
+
+Использование контекста в методе с несколькими транзакциями позволяет централизованно управлять их выполнением, обеспечивая согласованность и возможность отмены в случае ошибок или превышения времени выполнения.

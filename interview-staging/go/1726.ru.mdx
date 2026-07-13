@@ -1,0 +1,141 @@
+---
+id: 1726
+title: "В чем разница между Consumer и Consumer Group"
+rawCategory: kafka-i-brokery
+rawCategoryLabel: "Kafka и брокеры"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+sourceUrl: "https://speedrunit.ru/question/1726/"
+---
+
+# В чем разница между Consumer и Consumer Group
+
+## 1️⃣ Как кратко ответить
+
+Consumer — это отдельный процесс или приложение, которое читает данные из одного или нескольких разделов (partitions) топика в Kafka. Consumer Group — это группа потребителей, которые совместно читают данные из топика, распределяя между собой разделы, чтобы обеспечить параллельную обработку и балансировку нагрузки.
+
+## 2️⃣ Подробное объяснение темы
+
+В Apache Kafka, популярной платформе для потоковой передачи данных, концепции Consumer и Consumer Group играют ключевую роль в организации и управлении процессом чтения данных из топиков.
+
+**Consumer:**
+
+Consumer — это отдельный процесс или приложение, которое подписывается на один или несколько топиков в Kafka и читает данные из них. Каждый Consumer может быть настроен для чтения данных из одного или нескольких разделов (partitions) топика. Однако, если один Consumer читает из нескольких разделов, он обрабатывает их последовательно, что может ограничивать производительность.
+
+Пример кода для создания Consumer:
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "github.com/Shopify/sarama"
+)
+
+func main() {
+    // Конфигурация для Consumer
+    config := sarama.NewConfig()
+    config.Consumer.Return.Errors = true
+
+    // Создание нового Consumer
+    consumer, err := sarama.NewConsumer([]string{"localhost:9092"}, config)
+    if err != nil {
+        log.Fatalln("Failed to start consumer:", err)
+    }
+    defer consumer.Close()
+
+    // Подписка на раздел топика
+    partitionConsumer, err := consumer.ConsumePartition("example_topic", 0, sarama.OffsetNewest)
+    if err != nil {
+        log.Fatalln("Failed to start partition consumer:", err)
+    }
+    defer partitionConsumer.Close()
+
+    // Чтение сообщений
+    for message := range partitionConsumer.Messages() {
+        fmt.Printf("Message: %s\n", string(message.Value))
+    }
+}
+```
+
+- `sarama.NewConfig()`: Создает новую конфигурацию для Consumer.
+- `sarama.NewConsumer`: Создает новый Consumer, подключающийся к Kafka-брокеру.
+- `consumer.ConsumePartition`: Подписывается на конкретный раздел топика.
+- `partitionConsumer.Messages()`: Читает сообщения из раздела.
+
+**Consumer Group:**
+
+Consumer Group — это группа потребителей, которые совместно читают данные из топика. Каждый Consumer в группе отвечает за чтение данных из одного или нескольких разделов, но каждый раздел может быть назначен только одному Consumer в группе. Это позволяет распределять нагрузку и обрабатывать данные параллельно, что значительно увеличивает производительность и устойчивость системы.
+
+Когда Consumer Group подписывается на топик, Kafka автоматически распределяет разделы между потребителями в группе. Если один из потребителей выходит из строя, Kafka перераспределяет разделы между оставшимися потребителями, обеспечивая непрерывность обработки.
+
+Пример кода для создания Consumer Group:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "github.com/Shopify/sarama"
+    "github.com/Shopify/sarama/mocks"
+)
+
+func main() {
+    // Конфигурация для Consumer Group
+    config := sarama.NewConfig()
+    config.Version = sarama.V2_1_0_0
+    config.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
+
+    // Создание нового Consumer Group
+    group, err := sarama.NewConsumerGroup([]string{"localhost:9092"}, "example_group", config)
+    if err != nil {
+        log.Fatalln("Failed to start consumer group:", err)
+    }
+    defer group.Close()
+
+    // Обработчик сообщений
+    handler := &ConsumerGroupHandler{}
+
+    // Чтение сообщений в контексте
+    ctx := context.Background()
+    for {
+        if err := group.Consume(ctx, []string{"example_topic"}, handler); err != nil {
+            log.Fatalln("Error from consumer:", err)
+        }
+    }
+}
+
+// ConsumerGroupHandler реализует интерфейс sarama.ConsumerGroupHandler
+type ConsumerGroupHandler struct{}
+
+// Setup выполняется перед началом потребления
+func (h *ConsumerGroupHandler) Setup(sarama.ConsumerGroupSession) error {
+    return nil
+}
+
+// Cleanup выполняется после завершения потребления
+func (h *ConsumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
+    return nil
+}
+
+// ConsumeClaim обрабатывает сообщения из раздела
+func (h *ConsumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+    for message := range claim.Messages() {
+        fmt.Printf("Message: %s\n", string(message.Value))
+        session.MarkMessage(message, "")
+    }
+    return nil
+}
+```
+
+- `sarama.NewConsumerGroup`: Создает новый Consumer Group, подключающийся к Kafka-брокеру.
+- `group.Consume`: Начинает процесс потребления сообщений из топика.
+- `ConsumerGroupHandler`: Реализует интерфейс для обработки сообщений в группе.
+
+**Зачем это нужно:**
+
+Использование Consumer Group позволяет масштабировать обработку данных, распределяя нагрузку между несколькими потребителями. Это особенно важно для систем, где требуется высокая производительность и надежность. Consumer Group обеспечивает автоматическое восстановление и перераспределение разделов в случае отказа одного из потребителей, что делает систему более устойчивой к сбоям.

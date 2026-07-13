@@ -1,0 +1,102 @@
+---
+id: 3696
+title: "Что такое outbox pattern и зачем он нужен при публикации событий из БД?"
+rawCategory: ocheredi-i-brokery-soobscheniy
+rawCategoryLabel: "Очереди и брокеры сообщений"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+sourceUrl: "https://speedrunit.ru/question/3696/"
+---
+
+# Что такое outbox pattern и зачем он нужен при публикации событий из БД?
+
+## 1️⃣ Как кратко ответить
+
+Outbox pattern — это архитектурный шаблон, который используется для обеспечения надежной публикации событий из базы данных в системы обмена сообщениями. Он решает проблему атомарности транзакций между базой данных и брокером сообщений, гарантируя, что события не будут потеряны или дублированы. Это достигается путем записи событий в специальную таблицу "outbox" в рамках транзакции с основными данными, а затем асинхронной публикацией этих событий в брокер сообщений.
+
+## 2️⃣ Подробное объяснение темы
+
+Outbox pattern — это архитектурный шаблон, который помогает решить проблему согласованности данных между базой данных и системой обмена сообщениями. В распределенных системах часто возникает необходимость в том, чтобы изменения в базе данных сопровождались публикацией соответствующих событий в брокер сообщений, таких как Kafka, RabbitMQ и другие. Однако, выполнение этих операций в разных системах может привести к проблемам с атомарностью: изменения могут быть зафиксированы в базе данных, но не отправлены в брокер сообщений, или наоборот.
+
+Outbox pattern решает эту проблему следующим образом:
+
+1. **Запись в таблицу Outbox**: Вместо того чтобы сразу отправлять событие в брокер сообщений, оно сначала записывается в специальную таблицу "outbox" в той же базе данных, где происходят изменения. Эта операция выполняется в рамках той же транзакции, что и изменения в основных данных. Таким образом, если транзакция успешно завершается, то и изменения, и запись события в outbox гарантированно происходят.
+2. **Асинхронная публикация**: Отдельный процесс или сервис периодически читает события из таблицы outbox и публикует их в брокер сообщений. После успешной публикации событие удаляется из таблицы outbox. Это может быть реализовано с помощью фонового задания или отдельного микросервиса.
+3. **Гарантия доставки**: Поскольку запись в outbox и изменения в данных происходят в одной транзакции, мы гарантируем, что событие не будет потеряно. Даже если публикация в брокер сообщений временно недоступна, событие останется в таблице outbox и будет опубликовано позже.
+
+Пример реализации на Java с использованием Spring и JPA:
+
+```java
+@Entity
+public class Order {
+    @Id
+    private Long id;
+    private String status;
+    // другие поля и методы
+}
+
+@Entity
+public class OutboxEvent {
+    @Id
+    private Long id;
+    private String eventType;
+    private String payload;
+    private LocalDateTime createdAt;
+    // другие поля и методы
+}
+
+@Service
+public class OrderService {
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Transactional
+    public void createOrder(Order order) {
+        // Сохраняем заказ
+        orderRepository.save(order);
+
+        // Создаем событие и сохраняем его в таблицу outbox
+        OutboxEvent event = new OutboxEvent();
+        event.setEventType("OrderCreated");
+        event.setPayload(convertOrderToJson(order));
+        event.setCreatedAt(LocalDateTime.now());
+        outboxEventRepository.save(event);
+    }
+
+    private String convertOrderToJson(Order order) {
+        // Конвертация объекта заказа в JSON
+        return new ObjectMapper().writeValueAsString(order);
+    }
+}
+
+@Component
+public class OutboxEventPublisher {
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private MessageBrokerClient messageBrokerClient;
+
+    @Scheduled(fixedRate = 5000)
+    public void publishEvents() {
+        List<OutboxEvent> events = outboxEventRepository.findAll();
+        for (OutboxEvent event : events) {
+            // Публикуем событие в брокер сообщений
+            messageBrokerClient.publish(event.getEventType(), event.getPayload());
+            // Удаляем событие из таблицы outbox после успешной публикации
+            outboxEventRepository.delete(event);
+        }
+    }
+}
+```
+
+- **Order**: сущность, представляющая заказ.
+- **OutboxEvent**: сущность, представляющая событие, которое нужно опубликовать.
+- **OrderService**: сервис, который создает заказ и записывает событие в таблицу outbox в рамках одной транзакции.
+- **OutboxEventPublisher**: компонент, который периодически читает события из таблицы outbox и публикует их в брокер сообщений.
+
+Outbox pattern обеспечивает надежную и согласованную публикацию событий, что особенно важно в системах с высокой нагрузкой и требованием к надежности данных.
