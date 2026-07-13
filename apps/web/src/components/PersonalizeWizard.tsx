@@ -237,7 +237,7 @@ export const PersonalizeWizard = () => {
               {step === 0 && (
                 <div className="space-y-3">
                   <p className="text-sm text-fg-muted">{t('personalize:level.body')}</p>
-                  <div className="grid gap-2">
+                  <div className="grid gap-2 max-h-[min(55vh,20rem)] overflow-y-auto overscroll-contain pr-1">
                     {EXPERIENCE_LEVELS.map((level) => (
                       <OptionCard
                         key={level}
@@ -254,7 +254,7 @@ export const PersonalizeWizard = () => {
               {step === 1 && (
                 <div className="space-y-3">
                   <p className="text-sm text-fg-muted">{t('personalize:track.body')}</p>
-                  <div className="grid gap-2">
+                  <div className="grid gap-2 max-h-[min(55vh,20rem)] overflow-y-auto overscroll-contain pr-1">
                     {tracks.map((track) => (
                       <OptionCard
                         key={track.id}
@@ -272,7 +272,7 @@ export const PersonalizeWizard = () => {
               {step === 2 && (
                 <div className="space-y-3">
                   <p className="text-sm text-fg-muted">{t('personalize:categories.body')}</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5 max-h-[min(55vh,20rem)] overflow-y-auto overscroll-contain pr-1">
                     {CATALOG_CATEGORY_ORDER.filter((id) => id !== 'other').map((id) => {
                       const active = interestsDraft.includes(id);
                       return (

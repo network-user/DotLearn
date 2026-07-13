@@ -55,14 +55,17 @@ export const Dialog = ({
           'data-[state=open]:animate-rise',
           placement === 'center'
             ? cx(
-                'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] rounded-xl shadow-float',
+                // Центрируем через CSS-свойство translate, а не transform: keyframe
+                // rise анимирует transform (translateY), и при transform-центрировании
+                // он затирал -50%,-50% - окно прыгало из угла в центр при появлении.
+                'left-1/2 top-1/2 [translate:-50%_-50%] w-[92vw] max-h-[88vh] overflow-y-auto rounded-xl shadow-float',
                 sizes[size],
               )
             : cx(
-                'inset-x-0 bottom-0 w-full max-h-[85dvh] overflow-y-auto',
+                'inset-x-0 bottom-0 w-full max-h-[85dvh] overflow-y-auto overscroll-contain',
                 'rounded-t-xl rounded-b-none shadow-sheet pb-[calc(24px+var(--safe-bottom))]',
-                'md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
-                'md:w-[92vw] md:max-h-none md:overflow-y-visible md:rounded-xl md:shadow-float md:pb-6',
+                'md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:[translate:-50%_-50%]',
+                'md:w-[92vw] md:max-h-[88vh] md:overflow-y-auto md:rounded-xl md:shadow-float md:pb-6',
                 sheetSizes[size],
               ),
           className,
