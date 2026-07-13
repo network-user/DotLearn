@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /workspace
 
@@ -22,7 +22,7 @@ RUN pnpm --filter @dotlearn/api build
 # @dotlearn/contracts как реальные файлы.
 RUN pnpm --filter=@dotlearn/api deploy --prod /output
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
