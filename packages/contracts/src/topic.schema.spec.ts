@@ -205,15 +205,17 @@ describe('TopicManifest', () => {
 
   it('applies the ru-only rules for titleEn and descriptions keys', () => {
     const m = valid();
+    const firstConcept = m.concepts[0];
+    if (!firstConcept) throw new Error('valid() must provide at least one concept');
     const ruOnly: Record<string, unknown> = {
       ...m,
       availableLanguages: ['ru'],
       descriptions: { ru: m.descriptions.ru },
       concepts: [
         {
-          id: m.concepts[0].id,
-          title: m.concepts[0].title,
-          estimatedMinutes: m.concepts[0].estimatedMinutes,
+          id: firstConcept.id,
+          title: firstConcept.title,
+          estimatedMinutes: firstConcept.estimatedMinutes,
           theoryFiles: ['theory/01-intro.ru.mdx'],
           exerciseFiles: ['exercises/01-intro.ru.yaml'],
         },
