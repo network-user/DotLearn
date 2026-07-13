@@ -143,12 +143,27 @@ const MAX_TEXT_FIELD_LENGTH = 20_000;
 const isBoundedString = (value: unknown, max = MAX_TEXT_FIELD_LENGTH): value is string =>
   typeof value === 'string' && value.length <= max;
 
+const pick = <T, K extends keyof T>(entry: T, keys: readonly K[]): Pick<T, K> | null => {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = entry[key];
+    if (value === undefined) continue;
+    if (typeof value === 'string' && value.length > MAX_TEXT_FIELD_LENGTH) return null;
+    out[key as string] = value;
+  }
+  return out as Pick<T, K>;
+};
+
 interface CollectResult<T> {
   valid: T[];
   skipped: number;
 }
 
-const collect = <T>(value: unknown, guard: (entry: unknown) => entry is T): CollectResult<T> => {
+const collect = <T>(
+  value: unknown,
+  guard: (entry: unknown) => entry is T,
+  project: (entry: T) => T | null,
+): CollectResult<T> => {
   if (!Array.isArray(value)) {
     return { valid: [], skipped: 0 };
   }
@@ -160,7 +175,12 @@ const collect = <T>(value: unknown, guard: (entry: unknown) => entry is T): Coll
       continue;
     }
     if (guard(entry)) {
-      valid.push(entry);
+      const clean = project(entry);
+      if (clean !== null) {
+        valid.push(clean);
+      } else {
+        skipped += 1;
+      }
     } else {
       skipped += 1;
     }
@@ -358,6 +378,34 @@ const isExamResultRecord = (value: unknown): value is ExamResultRecord =>
   isString(value.startedAt) &&
   isString(value.finishedAt);
 
+const rebuildScoreBuckets = (
+  buckets: Record<string, ExamScoreBucket>,
+): Record<string, ExamScoreBucket> => {
+  const out: Record<string, ExamScoreBucket> = {};
+  for (const [key, bucket] of Object.entries(buckets)) {
+    out[key] = { total: bucket.total, correct: bucket.correct };
+  }
+  return out;
+};
+
+const projectExamResult = (entry: ExamResultRecord): ExamResultRecord | null => {
+  for (const field of [entry.id, entry.scope, entry.startedAt, entry.finishedAt]) {
+    if (field.length > MAX_TEXT_FIELD_LENGTH) return null;
+  }
+  return {
+    id: entry.id,
+    scope: entry.scope,
+    filters: entry.filters,
+    total: entry.total,
+    correct: entry.correct,
+    byType: rebuildScoreBuckets(entry.byType),
+    byDifficulty: rebuildScoreBuckets(entry.byDifficulty),
+    durationMs: entry.durationMs,
+    startedAt: entry.startedAt,
+    finishedAt: entry.finishedAt,
+  };
+};
+
 const isUserCardRecord = (value: unknown): value is UserCardRecord =>
   isRecord(value) &&
   isString(value.id) &&
@@ -393,35 +441,157 @@ export const importProgress = async (raw: unknown): Promise<ImportSummary> => {
     importSettings(payload.settings);
   }
 
-  const progress = collect(data.progress, isProgressRecord);
-  const activity = collect(data.activity, isActivityRecord);
-  const flashcardReviews = collect(data.flashcardReviews, isFlashcardReviewRecord);
-  const interviewStudied = collect(data.interviewStudied, isInterviewStudiedRecord);
-  const topicPlace = collect(data.topicPlace, isTopicPlaceRecord);
-  const conceptNotes = collect(data.conceptNotes, isConceptNoteRecord);
-  const bookmarks = collect(data.bookmarks, isBookmarkRecord);
-  const conceptRead = collect(data.conceptRead, isConceptReadRecord);
-  const conceptScroll = collect(data.conceptScroll, isConceptScrollRecord);
-  const highlights = collect(data.highlights, isHighlightRecord);
+  const progress = collect(data.progress, isProgressRecord, (entry) =>
+    pick(entry, ['id', 'topicSlug', 'exerciseId', 'status', 'attempts', 'lastAttemptAt'] as const),
+  );
+  const activity = collect(data.activity, isActivityRecord, (entry) =>
+    pick(entry, [
+      'day',
+      'exercisesAttempted',
+      'exercisesPassed',
+      'interviewStudied',
+      'cardsReviewed',
+      'conceptsRead',
+      'focusBlocks',
+    ] as const),
+  );
+  const flashcardReviews = collect(data.flashcardReviews, isFlashcardReviewRecord, (entry) =>
+    pick(entry, [
+      'id',
+      'topicSlug',
+      'cardId',
+      'due',
+      'stability',
+      'difficulty',
+      'elapsedDays',
+      'scheduledDays',
+      'reps',
+      'lapses',
+      'state',
+      'lastReviewAt',
+    ] as const),
+  );
+  const interviewStudied = collect(data.interviewStudied, isInterviewStudiedRecord, (entry) =>
+    pick(entry, ['id', 'studiedAt'] as const),
+  );
+  const topicPlace = collect(data.topicPlace, isTopicPlaceRecord, (entry) =>
+    pick(entry, ['topicSlug', 'conceptId', 'updatedAt'] as const),
+  );
+  const conceptNotes = collect(data.conceptNotes, isConceptNoteRecord, (entry) =>
+    pick(entry, ['id', 'topicSlug', 'conceptId', 'text', 'updatedAt', 'tags'] as const),
+  );
+  const bookmarks = collect(data.bookmarks, isBookmarkRecord, (entry) =>
+    pick(entry, ['id', 'topicSlug', 'conceptId', 'createdAt', 'tags'] as const),
+  );
+  const conceptRead = collect(data.conceptRead, isConceptReadRecord, (entry) =>
+    pick(entry, ['id', 'topicSlug', 'conceptId', 'readAt'] as const),
+  );
+  const conceptScroll = collect(data.conceptScroll, isConceptScrollRecord, (entry) =>
+    pick(entry, [
+      'id',
+      'topicSlug',
+      'conceptId',
+      'anchorId',
+      'anchorOffset',
+      'ratio',
+      'updatedAt',
+    ] as const),
+  );
+  const highlights = collect(data.highlights, isHighlightRecord, (entry) =>
+    pick(entry, [
+      'id',
+      'topicSlug',
+      'conceptId',
+      'text',
+      'color',
+      'note',
+      'prefix',
+      'suffix',
+      'createdAt',
+    ] as const),
+  );
   const attemptEvents =
     version >= 2
-      ? collect(normalizeEntries(data.attemptEvents, stripInvalidConfidence), isAttemptEventRecord)
+      ? collect(
+          normalizeEntries(data.attemptEvents, stripInvalidConfidence),
+          isAttemptEventRecord,
+          (entry) =>
+            pick(entry, [
+              'id',
+              'topicSlug',
+              'exerciseId',
+              'concept',
+              'difficulty',
+              'status',
+              'hintsRevealed',
+              'durationMs',
+              'mode',
+              'confidence',
+              'at',
+            ] as const),
+        )
       : { valid: [], skipped: 0 };
   const achievements =
-    version >= 2 ? collect(data.achievements, isAchievementRecord) : { valid: [], skipped: 0 };
+    version >= 2
+      ? collect(data.achievements, isAchievementRecord, (entry) =>
+          pick(entry, ['id', 'unlockedAt'] as const),
+        )
+      : { valid: [], skipped: 0 };
   const checkpointResults =
     version >= 2
       ? collect(
           normalizeEntries(data.checkpointResults, stripInvalidCheckpointFields),
           isCheckpointResultRecord,
+          (entry) =>
+            pick(entry, [
+              'id',
+              'topicSlug',
+              'conceptId',
+              'status',
+              'confidence',
+              'conceptTitle',
+              'source',
+              'recalled',
+              'total',
+              'at',
+            ] as const),
         )
       : { valid: [], skipped: 0 };
   const examResults =
-    version >= 3 ? collect(data.examResults, isExamResultRecord) : { valid: [], skipped: 0 };
+    version >= 3
+      ? collect(data.examResults, isExamResultRecord, projectExamResult)
+      : { valid: [], skipped: 0 };
   const userCards =
-    version >= 4 ? collect(data.userCards, isUserCardRecord) : { valid: [], skipped: 0 };
+    version >= 4
+      ? collect(data.userCards, isUserCardRecord, (entry) =>
+          pick(entry, [
+            'id',
+            'front',
+            'back',
+            'topicSlug',
+            'conceptId',
+            'sourceNoteId',
+            'sourceHighlightId',
+            'createdAt',
+          ] as const),
+        )
+      : { valid: [], skipped: 0 };
   const reExamSchedule =
-    version >= 5 ? collect(data.reExamSchedule, isReExamScheduleRecord) : { valid: [], skipped: 0 };
+    version >= 5
+      ? collect(data.reExamSchedule, isReExamScheduleRecord, (entry) =>
+          pick(entry, [
+            'id',
+            'topicSlug',
+            'conceptId',
+            'due',
+            'stepIndex',
+            'streak',
+            'lastStatus',
+            'graduated',
+            'updatedAt',
+          ] as const),
+        )
+      : { valid: [], skipped: 0 };
 
   await db.transaction(
     'rw',

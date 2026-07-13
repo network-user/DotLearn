@@ -669,7 +669,7 @@ const DeepLinkDialog = ({ state, currentCode, onOpenChange, onLinked }: DeepLink
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('sync.deepLink.confirmTitle', { code: maskCode(formatSyncCode(code)) })}
+      title={t('sync.deepLink.confirmTitle', { code: formatSyncCode(code) })}
       placement="center"
       size="sm"
       footer={
@@ -689,6 +689,7 @@ const DeepLinkDialog = ({ state, currentCode, onOpenChange, onLinked }: DeepLink
       }
     >
       <div className="space-y-2">
+        <p className="text-[13px] text-fg-subtle">{t('sync.deepLink.linkWarning')}</p>
         {replacesExisting && (
           <p className="text-sm text-warn">{t('sync.deepLink.replaceWarning')}</p>
         )}

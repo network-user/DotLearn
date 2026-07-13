@@ -1,6 +1,7 @@
 import type {
   CreateSubmissionInput,
   HiddenTopic,
+  HiddenTopicPublic,
   HideTopicInput,
   MarkMaterializedInput,
   ReviewSubmissionInput,
@@ -233,8 +234,8 @@ export const markSubmissionMaterialized = (
     body: JSON.stringify(input),
   });
 
-export const listHiddenTopics = (): Promise<HiddenTopic[]> =>
-  request<HiddenTopic[]>('/api/topics/hidden', { auth: false });
+export const listHiddenTopics = (): Promise<HiddenTopicPublic[]> =>
+  request<HiddenTopicPublic[]>('/api/topics/hidden', { auth: false });
 
 export const hideTopic = (slug: string, input: HideTopicInput): Promise<HiddenTopic> =>
   request<HiddenTopic>(`/api/admin/topics/${slug}/hide`, {

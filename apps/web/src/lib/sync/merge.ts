@@ -131,6 +131,14 @@ export const snapshotHash = (snapshot: SyncSnapshot): string => {
 
 // --- shared helpers for the merge specs -------------------------------------------------------
 
+const projectKeys = (rec: Rec, keys: readonly string[]): Rec => {
+  const out: Rec = {};
+  for (const key of keys) {
+    if (rec[key] !== undefined) out[key] = rec[key];
+  }
+  return out;
+};
+
 // Picks whichever record's projection over `fields` sorts first canonically. Used to choose the
 // "identity" columns (topicSlug/exerciseId/conceptId) of a synthesized record deterministically.
 // These columns are derived from the key and equal in practice; the pick only matters if a
@@ -264,7 +272,23 @@ const activitySpec: KeyedSpec = {
 };
 
 const flashcardSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id)
+      ? projectKeys(raw, [
+          'id',
+          'topicSlug',
+          'cardId',
+          'due',
+          'stability',
+          'difficulty',
+          'elapsedDays',
+          'scheduledDays',
+          'reps',
+          'lapses',
+          'state',
+          'lastReviewAt',
+        ])
+      : null,
   key: (rec) => rec.id as string,
   combine: (x, y) => {
     const tx = parseTime(x.lastReviewAt, 0);
@@ -296,7 +320,7 @@ const topicPlaceSpec: KeyedSpec = {
     if (!isObject(raw)) return null;
     if (!isString(raw.topicSlug) || !isString(raw.conceptId) || !isString(raw.updatedAt))
       return null;
-    return raw;
+    return projectKeys(raw, ['topicSlug', 'conceptId', 'updatedAt']);
   },
   key: (rec) => rec.topicSlug as string,
   combine: lwwByField('updatedAt'),
@@ -304,7 +328,10 @@ const topicPlaceSpec: KeyedSpec = {
 };
 
 const conceptNotesSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) && isString(raw.updatedAt) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id) && isString(raw.updatedAt)
+      ? projectKeys(raw, ['id', 'topicSlug', 'conceptId', 'text', 'updatedAt', 'tags'])
+      : null,
   key: (rec) => rec.id as string,
   combine: lwwByField('updatedAt'),
   sortTime: (rec) => parseTime(rec.updatedAt, 0),
@@ -362,14 +389,38 @@ const conceptReadSpec: KeyedSpec = {
 };
 
 const conceptScrollSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) && isString(raw.updatedAt) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id) && isString(raw.updatedAt)
+      ? projectKeys(raw, [
+          'id',
+          'topicSlug',
+          'conceptId',
+          'anchorId',
+          'anchorOffset',
+          'ratio',
+          'updatedAt',
+        ])
+      : null,
   key: (rec) => rec.id as string,
   combine: lwwByField('updatedAt'),
   sortTime: (rec) => parseTime(rec.updatedAt, 0),
 };
 
 const highlightsSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id)
+      ? projectKeys(raw, [
+          'id',
+          'topicSlug',
+          'conceptId',
+          'text',
+          'color',
+          'note',
+          'prefix',
+          'suffix',
+          'createdAt',
+        ])
+      : null,
   key: (rec) => rec.id as string,
   combine: (x, y) => {
     const nx = hasNonEmptyNote(x);
@@ -396,21 +447,60 @@ const immutableUnionCombine = (x: Rec, y: Rec): Rec =>
   stableStringify(x) <= stableStringify(y) ? x : y;
 
 const examResultsSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id)
+      ? projectKeys(raw, [
+          'id',
+          'scope',
+          'filters',
+          'total',
+          'correct',
+          'byType',
+          'byDifficulty',
+          'durationMs',
+          'startedAt',
+          'finishedAt',
+        ])
+      : null,
   key: (rec) => rec.id as string,
   combine: immutableUnionCombine,
   sortTime: (rec) => parseTime(rec.finishedAt, 0),
 };
 
 const userCardsSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id)
+      ? projectKeys(raw, [
+          'id',
+          'front',
+          'back',
+          'topicSlug',
+          'conceptId',
+          'sourceNoteId',
+          'sourceHighlightId',
+          'createdAt',
+        ])
+      : null,
   key: (rec) => rec.id as string,
   combine: immutableUnionCombine,
   sortTime: (rec) => parseTime(rec.createdAt, 0),
 };
 
 const reExamSpec: KeyedSpec = {
-  parse: (raw) => (isObject(raw) && isString(raw.id) && isString(raw.updatedAt) ? raw : null),
+  parse: (raw) =>
+    isObject(raw) && isString(raw.id) && isString(raw.updatedAt)
+      ? projectKeys(raw, [
+          'id',
+          'topicSlug',
+          'conceptId',
+          'due',
+          'stepIndex',
+          'streak',
+          'lastStatus',
+          'graduated',
+          'updatedAt',
+        ])
+      : null,
   key: (rec) => rec.id as string,
   combine: lwwByField('updatedAt'),
   sortTime: (rec) => parseTime(rec.updatedAt, 0),
@@ -468,7 +558,18 @@ const attemptEventSpec: ContentSpec = {
     if (!isString(raw.concept) || !isString(raw.difficulty)) return null;
     if (raw.status !== 'pass' && raw.status !== 'fail') return null;
     if (!isString(raw.at)) return null;
-    return raw;
+    return projectKeys(raw, [
+      'topicSlug',
+      'exerciseId',
+      'concept',
+      'difficulty',
+      'status',
+      'hintsRevealed',
+      'durationMs',
+      'mode',
+      'confidence',
+      'at',
+    ]);
   },
   contentKey: (rec) =>
     [
@@ -494,7 +595,17 @@ const checkpointSpec: ContentSpec = {
     if (!isString(raw.topicSlug) || !isString(raw.conceptId)) return null;
     if (raw.status !== 'pass' && raw.status !== 'fail') return null;
     if (!isString(raw.at)) return null;
-    return raw;
+    return projectKeys(raw, [
+      'topicSlug',
+      'conceptId',
+      'status',
+      'confidence',
+      'conceptTitle',
+      'source',
+      'recalled',
+      'total',
+      'at',
+    ]);
   },
   // Covers every value-bearing column of CheckpointResultRecord (absent `source` defaults to
   // 'checkpoint' per the interface). conceptTitle is placed last - the only free-text field -
