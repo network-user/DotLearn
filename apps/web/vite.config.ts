@@ -328,6 +328,10 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 900,
+    // Пик памяти сборки был на "computing gzip size" (гзип всех чанков ради
+    // отчёта). На большом бандле (~9000 модулей из interview-MDX) это роняло
+    // build в OOM. Отчёт косметический - отключаем, экономим память и время.
+    reportCompressedSize: false,
     modulePreload: {
       resolveDependencies: (_filename, deps) =>
         deps.filter((dep) => !/interview-(data|flashcards)/.test(dep)),
