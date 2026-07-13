@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { AnimatePresence, m as motion, useReducedMotion } from 'framer-motion';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -53,10 +54,12 @@ const readOnboardingSeen = (): boolean => {
 };
 
 const STEP_TITLE_KEY = [
-  'personalize.level.title',
-  'personalize.track.title',
-  'personalize.categories.title',
+  'personalize:level.title',
+  'personalize:track.title',
+  'personalize:categories.title',
 ];
+
+const STEP_TRANSITION = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
 
 const OptionCard = ({
   active,
@@ -95,11 +98,18 @@ const OptionCard = ({
 
 export const PersonalizeWizard = () => {
   const { t } = useTranslation(['personalize', 'home']);
+  const reduceMotion = useReducedMotion() ?? false;
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
+  const [direction, setDirection] = useState(1);
   const [levelDraft, setLevelDraft] = useState<ExperienceLevel | undefined>(undefined);
   const [trackIdsDraft, setTrackIdsDraft] = useState<string[]>([]);
   const [interestsDraft, setInterestsDraft] = useState<CatalogCategoryId[]>([]);
+
+  const goToStep = (next: number): void => {
+    setDirection(next > step ? 1 : -1);
+    setStep(Math.min(STEP_COUNT - 1, Math.max(0, next)));
+  };
 
   const openWizard = useCallback((): void => {
     const profile = getPersonalization();
@@ -107,6 +117,7 @@ export const PersonalizeWizard = () => {
     setTrackIdsDraft(profile.trackIds);
     setInterestsDraft(profile.interests);
     setStep(0);
+    setDirection(1);
     setOpen(true);
   }, []);
 
@@ -188,7 +199,7 @@ export const PersonalizeWizard = () => {
               <Button
                 variant="outline"
                 size="md"
-                onClick={() => setStep((value) => Math.max(0, value - 1))}
+                onClick={() => goToStep(step - 1)}
                 className="min-h-[var(--tap)] sm:min-h-0"
               >
                 {t('personalize:back')}
@@ -202,7 +213,7 @@ export const PersonalizeWizard = () => {
                 if (isLast) {
                   finish();
                 } else {
-                  setStep((value) => Math.min(STEP_COUNT - 1, value + 1));
+                  goToStep(step + 1);
                 }
               }}
               className="min-h-[var(--tap)] sm:min-h-0"
@@ -214,67 +225,79 @@ export const PersonalizeWizard = () => {
       }
     >
       <div className="space-y-5">
-        {step === 0 && (
-          <div className="space-y-3">
-            <p className="text-sm text-fg-muted">{t('personalize:level.body')}</p>
-            <div className="grid gap-2">
-              {EXPERIENCE_LEVELS.map((level) => (
-                <OptionCard
-                  key={level}
-                  active={levelDraft === level}
-                  title={t(`personalize:level.options.${level}.title`)}
-                  hint={t(`personalize:level.options.${level}.hint`)}
-                  onClick={() => setLevelDraft(level)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+        <motion.div layout={!reduceMotion} className="overflow-hidden">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={step}
+              initial={reduceMotion ? false : { opacity: 0, x: direction * 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={STEP_TRANSITION}
+              {...(reduceMotion ? {} : { exit: { opacity: 0, x: direction * -20 } })}
+            >
+              {step === 0 && (
+                <div className="space-y-3">
+                  <p className="text-sm text-fg-muted">{t('personalize:level.body')}</p>
+                  <div className="grid gap-2">
+                    {EXPERIENCE_LEVELS.map((level) => (
+                      <OptionCard
+                        key={level}
+                        active={levelDraft === level}
+                        title={t(`personalize:level.options.${level}.title`)}
+                        hint={t(`personalize:level.options.${level}.hint`)}
+                        onClick={() => setLevelDraft(level)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-        {step === 1 && (
-          <div className="space-y-3">
-            <p className="text-sm text-fg-muted">{t('personalize:track.body')}</p>
-            <div className="grid gap-2">
-              {tracks.map((track) => (
-                <OptionCard
-                  key={track.id}
-                  active={trackIdsDraft.includes(track.id)}
-                  title={track.title}
-                  hint={track.description}
-                  onClick={() => toggleTrack(track.id)}
-                  {...(track.targetRole ? { eyebrow: track.targetRole } : {})}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+              {step === 1 && (
+                <div className="space-y-3">
+                  <p className="text-sm text-fg-muted">{t('personalize:track.body')}</p>
+                  <div className="grid gap-2">
+                    {tracks.map((track) => (
+                      <OptionCard
+                        key={track.id}
+                        active={trackIdsDraft.includes(track.id)}
+                        title={track.title}
+                        hint={track.description}
+                        onClick={() => toggleTrack(track.id)}
+                        {...(track.targetRole ? { eyebrow: track.targetRole } : {})}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
 
-        {step === 2 && (
-          <div className="space-y-3">
-            <p className="text-sm text-fg-muted">{t('personalize:categories.body')}</p>
-            <div className="flex flex-wrap gap-1.5">
-              {CATALOG_CATEGORY_ORDER.filter((id) => id !== 'other').map((id) => {
-                const active = interestsDraft.includes(id);
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => toggleCategory(id)}
-                    aria-pressed={active}
-                    className={cx(
-                      'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] tracking-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55',
-                      active
-                        ? 'border-accent/70 bg-accent/[0.16] text-accent font-medium'
-                        : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
-                    )}
-                  >
-                    {t(`home:${categoryLabelKey(id)}`)}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+              {step === 2 && (
+                <div className="space-y-3">
+                  <p className="text-sm text-fg-muted">{t('personalize:categories.body')}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CATALOG_CATEGORY_ORDER.filter((id) => id !== 'other').map((id) => {
+                      const active = interestsDraft.includes(id);
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => toggleCategory(id)}
+                          aria-pressed={active}
+                          className={cx(
+                            'inline-flex items-center gap-1.5 rounded-full border px-3 min-h-[var(--tap)] sm:min-h-0 sm:py-1.5 text-[12px] tracking-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/55',
+                            active
+                              ? 'border-accent/70 bg-accent/[0.16] text-accent font-medium'
+                              : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+                          )}
+                        >
+                          {t(`home:${categoryLabelKey(id)}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </motion.div>
 
         <div className="flex items-center gap-1.5" aria-hidden>
           {Array.from({ length: STEP_COUNT }, (_, index) => (
