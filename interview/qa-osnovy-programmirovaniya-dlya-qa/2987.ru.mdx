@@ -1,0 +1,56 @@
+---
+id: 2987
+title: "Error vs Exception: что QA видит в логах и ответах API?"
+category: qa-osnovy-programmirovaniya-dlya-qa
+categoryLabel: "Основы программирования для QA"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Error vs Exception: что QA видит в логах и ответах API?
+
+## Суть
+
+Error обычно означает фатальную проблему среды (OutOfMemory, StackOverflow), которую приложение не должно «лечить» catch-блоком. Exception это штатное событие бизнес/логики, которое код перехватывает и превращает в понятный ответ. QA различает их по recoverability и по тому, что уходит клиенту.
+
+## Что ответить на собесе
+
+- Exception: invalid input, not found, conflict; ожидаю 4xx и structured body.
+- Error: JVM OOM, segfault; процесс падает, k8s restart, alert on-call.
+- В Java Throwable hierarchy: Exception checked/unchecked vs Error subclass.
+- Тестирую exception paths; error paths через chaos/limit tests на staging.
+- Честно: разработчики называют всё «error» в JSON `{ error: "..." }`; смотрю HTTP status и logs.
+
+## Как это работает
+
+```gherkin
+Feature: Error vs Exception в API
+
+  Scenario: Exception превращается в 404
+    When GET /api/users/nonexistent-id
+    Then статус 404
+    And body содержит code USER_NOT_FOUND
+    And процесс остаётся healthy
+
+  Scenario: Uncaught exception не отдаёт stack клиенту
+    When POST /api/orders с broken payload по контракту
+    Then статус 400 или 422
+    And body без java.lang trace
+
+  Scenario: Fatal Error перезапускает pod
+    Given memory limit 256Mi на staging
+    When нагрузочный сценарий вызывает OOM
+    Then pod restart count увеличивается
+    And health check временно failing
+```
+
+Exception handler middleware ловит `NotFoundException`, маппит в JSON. Error уровня JVM обходит application catch; orchestrator видит exit code != 0.
+
+## Подводные камни
+
+- **Ловят Throwable и глотают OOM.** Система в zombie state.
+- **500 на business exception.** Клиент ретраит неидемпотентный POST.
+- **Error message в UI.** «NullPointerException at line 42» для пользователя.
+- **Same word in i18n.** RU «ошибка» смешивает оба типа для PM.
+- **No correlation id на exception.** Нельзя связать UI toast с log line.

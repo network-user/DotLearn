@@ -1,0 +1,58 @@
+---
+id: 1725
+title: "What delivery guarantees does Kafka offer?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What delivery guarantees does Kafka offer?
+
+## In short
+
+Kafka does not ship a single "magic" guarantee: delivery semantics come from producer settings, broker replication, and when the consumer commits offsets. In practice you choose among at-most-once, at-least-once, and exactly-once, trading loss, duplicates, and transaction cost.
+
+## How to answer in an interview
+
+- I name three semantics: at-most-once (may lose, no duplicates), at-least-once (no loss, repeats possible), exactly-once (once end-to-end, heavier and not always worth it).
+- I explain that the producer sets `acks` and idempotence, while the consumer decides whether to commit offsets before or after processing.
+- For financial flows I usually pick at-least-once plus an idempotent consumer or key-based dedup rather than blindly enabling EOS.
+- I add honestly: Kafka exactly-once works with producer transactions plus read-process-write in one transaction; for simple fire-and-forget logging, at-most-once is enough.
+
+## How it works
+
+**At-most-once.** The producer sends without waiting for acknowledgment (`acks=0`); the consumer commits the offset before processing. A message can vanish on failure, but there are no replays and latency stays low. Good for metrics and telemetry where missing a point is acceptable.
+
+**At-least-once.** The producer waits for ack from the leader or all ISR (`acks=1` / `all`); the consumer commits after successful handling. If it crashes between processing and commit, the message arrives again. Duplicates are handled with idempotent handlers or dedup keys in storage.
+
+**Exactly-once.** Enable an idempotent producer (`enable.idempotence=true`), transactions (`transactional.id`), and a consumer with `isolation.level=read_committed`. The broker and transaction coordinator make writes and offset commits atomic inside the transaction.
+
+Minimal setup via environment variables before starting the client:
+
+```bash
+export KAFKA_BOOTSTRAP="kafka-1:9092,kafka-2:9092"
+
+# at-most-once
+export KAFKA_ACKS=0
+export KAFKA_ENABLE_IDEMPOTENCE=false
+
+# at-least-once (typical prod)
+export KAFKA_ACKS=all
+export KAFKA_ENABLE_IDEMPOTENCE=true
+
+# exactly-once (unique transactional.id per instance)
+export KAFKA_TRANSACTIONAL_ID="billing-writer-$(hostname)-001"
+export KAFKA_ISOLATION_LEVEL=read_committed
+```
+
+On the consumer side, committing offsets after business logic turns "at least once" into a controlled model: repeats are possible, loss with `acks=all` is unlikely.
+
+## Pitfalls
+
+- **Commit before process.** Accidental at-most-once: offset marked read while the handler crashed.
+- **Duplicates without a plan.** At-least-once without idempotency keys leads to double charges and duplicate orders.
+- **EOS and external side effects.** A Kafka transaction does not roll back HTTP calls or S3 writes; use outbox or saga patterns.
+- **acks=1 vs min.insync.replicas.** Ack from the leader without ISR can lose data on failover before replication.
+- **Stale transactional.id.** Unreleased ids block fencing; deployments need a unique suffix per pod.

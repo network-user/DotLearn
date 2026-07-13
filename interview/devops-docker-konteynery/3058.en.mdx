@@ -1,0 +1,61 @@
+---
+id: 3058
+title: "What is a Dockerfile and what goes in it?"
+category: devops-docker-konteynery
+categoryLabel: "Docker / Контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is a Dockerfile and what goes in it?
+
+## In short
+
+A Dockerfile describes step-by-step image build: base layer, dependency install, artifact copy, and start command. It is a declarative recipe that `docker build` turns into an immutable image for the same run locally, in CI, and in production.
+
+## How to answer in an interview
+
+- I describe a Dockerfile as version-controlled container build instructions, not a hand-built golden server.
+- I list key directives: `FROM`, `WORKDIR`, `COPY`, `RUN`, `EXPOSE`, `CMD`/`ENTRYPOINT`, `USER`.
+- I stress layer cache: dependency manifests first, then source, to speed up CI.
+- I add honestly: a sloppy Dockerfile bloats the image and runs as root; production almost always uses multi-stage builds and a non-root user.
+
+## How it works
+
+Each Dockerfile line creates an image layer. BuildKit caches a layer until inputs or the command change. Typical flow: pick a minimal base, set workdir, install deps in its own `RUN`, copy code, declare port and PID 1 process.
+
+Example two-stage Node service build:
+
+```bash
+cat > Dockerfile <<'EOF'
+FROM node:20-alpine AS deps
+WORKDIR /srv/app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+FROM node:20-alpine AS runtime
+WORKDIR /srv/app
+ENV NODE_ENV=production
+COPY --from=deps /srv/app/node_modules ./node_modules
+COPY src ./src
+USER node
+EXPOSE 8080
+CMD ["node", "src/server.js"]
+EOF
+
+docker build -t api-service:1.4.2 .
+docker run --rm -p 8080:8080 api-service:1.4.2
+```
+
+`FROM` sets the parent layer; `COPY` moves files from the build context; `RUN` executes commands and freezes the result in a new layer. `CMD` defines the default container process, overridable via `docker run` args. `EXPOSE` documents a port but does not publish it without `-p`.
+
+Multi-stage drops the toolchain from the final image: runtime keeps only runtime deps and app code/binary.
+
+## Pitfalls
+
+- **COPY . . before install.** Any code change invalidates the dependency install cache.
+- **Default root.** PID 1 as uid 0 widens blast radius on container escape.
+- **ADD instead of COPY.** `ADD` handles archives and remote URLs; for project files I prefer `COPY`.
+- **Single RUN apt without cleanup.** Deleted packages still live in the layer; I chain install and `rm -rf /var/lib/apt/lists/*`.
+- **Floating base tag.** `FROM node:latest` breaks reproducibility; I pin digest or a minor tag.

@@ -1,0 +1,87 @@
+---
+id: 3453
+title: "Прототипное наследование в JavaScript для AQA"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Прототипное наследование в JavaScript для AQA
+
+## Суть
+
+Объекты JS делегируют поиск свойств цепочке прототипов `[[Prototype]]`. Функция-конструктор задаёт shared методы через `Constructor.prototype`. Наследование строят `Object.create` или `class extends`, но под капотом те же ссылки. В тестах это влияет на monkey patch и spy на prototype method.
+
+## Что ответить на собесе
+
+- Поиск: own property, затем prototype, до `null`.
+- `Dog.prototype = Object.create(Animal.prototype)` связывает цепочку без вызова конструктора Animal.
+- `class UiPage extends BasePage` синтаксический сахар над prototype linkage.
+- Spy на `BasePage.prototype.click` перехватывает все экземпляры, не один объект.
+- Честно: правка `Array.prototype` в helper утекает во все тесты процесса.
+
+## Как это работает
+
+Конструкторы и цепочка:
+
+```
+function Animal(name) {
+    this.name = name;
+}
+Animal.prototype.describe = function () {
+    return this.name;
+};
+
+function Runner(name, pace) {
+    Animal.call(this, name);
+    this.pace = pace;
+}
+Runner.prototype = Object.create(Animal.prototype);
+Runner.prototype.constructor = Runner;
+Runner.prototype.describe = function () {
+    return `${this.name}@${this.pace}`;
+};
+```
+
+ES class эквивалент для page object слоя:
+
+```
+class BasePage {
+    constructor(root) { this.root = root; }
+    title() { return this.root.locator("h1"); }
+}
+class LoginPage extends BasePage {
+    submit() { return this.root.getByRole("button", { name: "Sign in" }); }
+}
+```
+
+В pytest проверяю, что subclass расширяет, не затирая базу:
+
+```python
+class BasePage:
+    def actions(self):
+        return ["open"]
+
+
+class LoginPage(BasePage):
+    def actions(self):
+        return super().actions() + ["submit"]
+
+
+def test_inheritance_extends_base_actions():
+    assert LoginPage().actions() == ["open", "submit"]
+```
+
+## Подводные камни
+
+**Прямое присвоение prototype.** `Runner.prototype = {}` рвёт цепочку к Animal.
+
+**Метод на instance vs prototype.** Spy вешают не туда, patch не срабатывает.
+
+**hasOwnProperty в assert.** Унаследованное поле не own, тест путает источник.
+
+**Object.create(null).** Объект без Object.prototype, ломает generic serializer.
+
+**Mixin Object.assign на prototype.** Коллизии имён методов между миксинами.

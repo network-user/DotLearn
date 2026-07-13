@@ -1,0 +1,82 @@
+---
+id: 1550
+title: "Как поймать data race в Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как поймать data race в Go?
+
+## Суть
+
+Race detector включается флагом `-race` при build/test/run; он инструментирует memory access и репортит параллельный unsynchronized read/write. Держу `-race` в CI на unit/integration tests; в prod binary обычно без race из-за overhead 5-10×.
+
+## Что ответить на собесе
+
+- `go test -race ./...` основной workflow; `go run -race` для repro main.
+- Report показывает две stacks конфликтующих access.
+- Fix: mutex, atomic, channel, или eliminate sharing.
+- Честно: detector не видит races через external systems (DB, files) и logical races без concurrent unsynchronized access.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func buggy() int {
+	var total int
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			total++
+		}()
+	}
+	wg.Wait()
+	return total
+}
+
+func fixed() int {
+	var total int
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			total++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return total
+}
+
+func main() {
+	fmt.Println(buggy(), fixed())
+}
+```
+
+`go test -race` на пакете с `buggy` печатает WARNING DATA RACE с адресом `total`. После mutex fix прогон чистый.
+
+## Подводные камни
+
+**Race только под нагрузкой.** Мало итераций может не триггерить; stress test помогает.
+
+**False negatives в prod.** Без `-race` binary гонка остаётся.
+
+**Performance CI skip.** Команда отключает race tests «для скорости» и ловит баги в prod.
+
+**Cgo races.** Detector coverage ограничен за пределами Go memory.
+
+**Happens-before через chan.** Race между send и receive без sync может быть ok если chan establishes ordering; без chan нужен mutex.

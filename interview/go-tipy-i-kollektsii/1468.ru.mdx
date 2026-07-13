@@ -1,0 +1,72 @@
+---
+id: 1468
+title: "Зачем в Go появились дженерики?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в Go появились дженерики?
+
+## Суть
+
+Дженерики (с Go 1.18) позволяют параметризовать типы и функции: один алгоритм компилируется для разных конкретных типов без копипасты и без потери проверки типов на этапе компиляции.
+
+## Что ответить на собесе
+
+- Называю типичные кейсы: `slices.Contains`, `maps.Keys`, свои контейнеры и алгоритмы без `interface{}` и reflection.
+- Объясняю constraints: union `~int | ~int64` или `cmp.Ordered`, `constraints.Ordered` в older code.
+- Контрастирую с доразгенериковым Go: дублирование `MaxInt`, `MaxFloat` или runtime type switch.
+- Честно добавляю: дженерики не заменяют интерфейсы там, где нужна runtime-полиморфия; перегиб с `<T any>` везде ухудшает читаемость.
+
+## Как это работает
+
+Параметр типа `T` подставляется при инстанцировании. Компилятор мономорфизирует код: для `[]int` и `[]string` получаются отдельные специализации. Ограничение (constraint) описывает, какие операции допустимы над `T`.
+
+```go
+package main
+
+import (
+	"cmp"
+	"fmt"
+)
+
+func Min[T cmp.Ordered](items []T) T {
+	if len(items) == 0 {
+		panic("empty slice")
+	}
+	best := items[0]
+	for _, v := range items[1:] {
+		if v < best {
+			best = v
+		}
+	}
+	return best
+}
+
+type Pair[A, B any] struct {
+	First  A
+	Second B
+}
+
+func main() {
+	fmt.Println(Min([]int{4, 1, 9}))
+	fmt.Println(Min([]string{"pear", "apple", "kiwi"}))
+	p := Pair[string, int]{First: "qty", Second: 42}
+	fmt.Println(p)
+}
+```
+
+`cmp.Ordered` из stdlib заменяет самодельные union-типы для сравнимых значений. `Pair` показывает несколько параметров типа в одной struct.
+
+Дженерики снижают boilerplate в утилитах (`slices`, `maps` пакеты построены на них). Для DI и моков по-прежнему удобны интерфейсы.
+
+## Подводные камни
+
+- **Слишком широкий `any`.** Теряется смысл generics; остаётся reflection внутри.
+- **Constraint explosion.** Десять union-веток в одном constraint трудно сопровождать.
+- **Неэкспортируемые методы в constraint.** Тип из другого пакета не удовлетворит constraint с unexported method.
+- **Binary size.** Мономорфизация раздувает бинарник при множестве instantiations.
+- **Путаница с interface constraint.** `interface{ ~[]E; Len() int }` для custom slice-like типов требует аккуратного дизайна API.

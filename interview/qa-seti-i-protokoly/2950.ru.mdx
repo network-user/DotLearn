@@ -1,0 +1,61 @@
+---
+id: 2950
+title: "Порт и сокет: как QA проверяет, что сервис слушает нужную точку?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Порт и сокет: как QA проверяет, что сервис слушает нужную точку?
+
+## Суть
+
+IP адрес идентифицирует хост в сети; порт (0..65535) отделяет процессы на этом хосте. Сокет это пара (IP, port, protocol): конечная точка TCP или UDP соединения. Для тестирования важно знать well-known порты (80, 443, 5432), что один порт нельзя занять двумя процессами одновременно на одном интерфейсе, и как воспроизвести «connection refused» vs «timeout».
+
+## Что ответить на собесе
+
+- Well-known 0..1023 (HTTP 80, HTTPS 443); registered до 49151; ephemeral 49152+ для исходящих клиентских соединений.
+- TCP сокет: connect установит сессию, гарантия доставки; UDP: datagram без connect, быстрее, но без гарантий.
+- Проверяю доступность `host:port` через nc/telnet/curl до UI тестов, чтобы отделить «сервис не поднят» от «баг в форме».
+- Честно: в Docker/K8s внутренний порт контейнера может отличаться от published port; в багрепорте указываю оба.
+
+## Как это работает
+
+Пример: API слушает `0.0.0.0:8080`, снаружи ingress на 443.
+
+```
+Client socket: 203.0.113.10:52144  ->  Server socket: 198.51.100.5:443
+NAT/Ingress maps to pod 10.0.1.7:8080
+```
+
+Gherkin для smoke инфраструктуры:
+
+```gherkin
+Feature: Порт и доступность сервиса
+
+  Scenario: HTTPS endpoint принимает соединения
+    When QA открывает TCP к "shop.example.com:443"
+    Then handshake TLS завершается успешно
+
+  Scenario: Закрытый порт возвращает refused, а не вечный timeout
+    When QA подключается к "shop.example.com:9999"
+    Then соединение отклонено сразу с connection refused
+    And UI не показывает generic "network error" без деталей в логах
+
+  Scenario: Неверный host header на правильном IP
+    Given IP балансировщика 198.51.100.5
+    When QA шлёт GET / с Host "unknown.internal"
+    Then ответ 404 или 421, а не контент production vhost
+```
+
+Диапазоны портов в чек-листе регресса staging: postgres 5432, redis 6379, kafka 9092, только из VPN security group.
+
+## Подводные камни
+
+- **Путаница порта и URL path.** `/8080` в path не равен порту 8080.
+- **LISTEN на localhost only.** Снаружи timeout, внутри pod curl OK; ложный «сервис жив».
+- **TIME_WAIT и исчерпание ephemeral портов.** Нагрузочный тест с одного агента падает странно.
+- **UDP «молчит» при блокировке firewall.** Нет refused, только timeout; другой triage чем TCP.
+- **IPv6 vs IPv4.** Сервис слушает только v6, QA проверяет v4 A record.

@@ -1,0 +1,87 @@
+---
+id: 1535
+title: "When does the scheduler switch goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When does the scheduler switch goroutines?
+
+## In short
+
+Switching is cooperative: a goroutine yields the CPU when it blocks (channel, mutex, sleep, syscalls, netpoll) or when the runtime injects preemption at a safepoint or via signal. A pure CPU-bound loop with no blocking may hold a thread for a long time until async preemption fires (Go 1.14+).
+
+## How to answer in an interview
+
+- Typical yield points: channel send/recv, Lock, time.Sleep, syscall, select.
+- Go does not time-slice like OS threads on every instruction; you need blocking or preemption.
+- `runtime.Gosched()` explicitly asks to yield on the current P.
+- Honestly: preemption heuristics changed across releases; blocking operations remain reliable switch points.
+
+## How it works
+
+The M:P:G scheduler binds goroutine G to OS thread M through logical processor P. When G blocks, M can run another G from the same P's run queue or steal work from a neighbor.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func emitDigits(done <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for d := 1; d <= 5; d++ {
+		select {
+		case <-done:
+			return
+		default:
+			fmt.Println("digit:", d)
+			time.Sleep(80 * time.Millisecond)
+		}
+	}
+}
+
+func emitRunes(done <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for r := 'a'; r <= 'e'; r++ {
+		select {
+		case <-done:
+			return
+		default:
+			fmt.Printf("rune: %c\n", r)
+			time.Sleep(120 * time.Millisecond)
+		}
+	}
+}
+
+func main() {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go emitDigits(done, &wg)
+	go emitRunes(done, &wg)
+	time.Sleep(700 * time.Millisecond)
+	close(done)
+	wg.Wait()
+}
+```
+
+Each `Sleep` puts G into waiting; M picks another ready G. Without such points two CPU-bound goroutines on one P alternate only after preemption or with GOMAXPROCS>1.
+
+## Pitfalls
+
+**Busy loop without blocking.** A tight loop can monopolize a P and starve neighbors; add Gosched, chunking, or a capped worker pool.
+
+**Syscall and threads.** A long blocking syscall may detach M from P; the runtime spins up another M so P does not sit idle.
+
+**Scheduler queue pressure.** Mass spawn without backpressure fills run queues; latency grows from queueing, not a "slow switch".
+
+**Sleep in main for sync.** In production use WaitGroup, errgroup, or context instead of sleeping in main.
+
+**Fairness assumption.** Wake order is not guaranteed FIFO; use explicit primitives (semaphore, rate limiter) when you need fairness.

@@ -1,0 +1,79 @@
+---
+id: 3455
+title: "Мок HTTP в JS-тестах: nock и MSW"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Мок HTTP в JS-тестах: nock и MSW
+
+## Суть
+
+Мок HTTP подменяет сетевой ответ фикстурой, изолируя тест от реального API. Nock перехватывает запросы на уровне Node http/https. MSW использует Service Worker в браузере и request interceptor в Node, один набор handlers для UI и API suite. Цель: скорость, детерминизм, сценарии 4xx/5xx.
+
+## Что ответить на собесе
+
+- Nock хорош в Jest/Vitest node environment для axios/fetch polyfill.
+- MSW даёт единые handlers для Playwright component test и backend contract test.
+- После каждого теста `nock.cleanAll()` или `server.resetHandlers()`.
+- Проверяю, что не осталось pending mock (`nock.isDone()`).
+- Честно: MSW не перехватывает нативный fetch в старом Jest без node polyfill, нужна явная настройка.
+
+## Как это работает
+
+Nock сценарий:
+
+```
+const nock = require("nock");
+
+nock("https://billing.test")
+    .get("/invoices/9")
+    .reply(200, { id: 9, total: 120 });
+```
+
+MSW handler:
+
+```
+import { http, HttpResponse } from "msw";
+
+export const handlers = [
+    http.get("https://billing.test/invoices/9", () =>
+        HttpResponse.json({ id: 9, total: 120 })
+    ),
+];
+```
+
+В pytest orchestration проверяю матрицу статусов:
+
+```python
+import pytest
+
+CASES = [
+    (200, {"id": 9, "total": 120}),
+    (404, {"error": "not_found"}),
+    (500, {"error": "upstream"}),
+]
+
+
+@pytest.mark.parametrize("status, body", CASES)
+def test_contract_matrix(status, body):
+    assert status in {200, 404, 500}
+    assert "error" in body or "id" in body
+```
+
+Для UI теста MSW стартует до `page.goto`, иначе первый fetch уходит в сеть.
+
+## Подводные камни
+
+**Забытый cleanAll.** Следующий тест получает чужой stub.
+
+**Неверный host alias.** `localhost` vs `127.0.0.1` не матчится nock.
+
+**Порядок handlers MSW.** Более общий pattern перекрывает специфичный.
+
+**Recording HAR и mock одновременно.** Дублирование ответов, flaky pass.
+
+**TLS/agent reuse.** Keep-alive соединение обходит nock без `disableNetConnect`.

@@ -1,0 +1,49 @@
+---
+id: 4187
+title: "Зачем в Kafka нужны partitions?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в Kafka нужны partitions?
+
+## Суть
+
+Partition это упорядочный append-only log внутри topic. Они дают parallelism (несколько consumers), spread по brokers и retention независимо per shard. Message key определяет partition (`hash(key) % N`) для locality ordering по entity.
+
+## Что ответить на собесе
+
+- Ordering гарантирован только внутри одной partition.
+- Consumer group: max parallel consumers ≈ partition count для topic.
+- Leader/follower replication per partition; ISR определяет commit safety.
+- Честно добавляю: увеличить partitions later возможно, но меняется key routing; планирую count upfront или использую sticky rebalancing осознанно.
+
+## Как это работает
+
+```bash
+kafka-topics.sh --bootstrap-server kafka.internal:9092 \
+  --describe --topic payments
+
+kafka-run-class.sh kafka.tools.GetOffsetShell \
+  --broker-list kafka.internal:9092 --topic payments --time -1
+```
+
+Producer с key:
+
+```bash
+kafka-console-producer.sh --bootstrap-server kafka.internal:9092 --topic payments \
+  --property parse.key=true --property key.separator=: <<<'user-42:{"amount":1200}'
+```
+
+Один key всегда в одну partition сохраняет порядок событий пользователя. Без key round-robin балансирует, но теряет per-entity order. `GetOffsetShell` показывает high watermark per partition для capacity planning.
+
+## Подводные камни
+
+- **Increase partitions breaks key order history.** Новый hash slot для старых key только для new messages.
+- **One partition topic.** Single consumer throughput ceiling.
+- **Under-replicated partition.** Leader без ISR ack рискует потерей при crash.
+- **Compacted topic wrong keys.** Tombstone compaction требует key на каждом message.
+- **Consumer faster than producer imbalanced.** Monitor per-partition lag, not only total.

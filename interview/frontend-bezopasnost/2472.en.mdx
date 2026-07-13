@@ -1,0 +1,58 @@
+---
+id: 2472
+title: "JWT authorization: basic SPA flow"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JWT authorization: basic SPA flow
+
+## In short
+
+A JSON Web Token is compact signed JSON with claims. After login the server issues a JWT; the client sends it as Bearer. The server statelessly verifies signature and `exp`, but logout/revoke needs TTL or a server blocklist.
+
+## How to answer in an interview
+
+- I separate authentication (login) from authorization (scopes/roles in token or introspection).
+- JWTs are not encrypted by default: base64 payload is visible; no secrets inside.
+- I prefer asymmetric signing (RS256) with multiple resource servers.
+- Honestly: «JWT session» in localStorage trades UX for XSS risk; mitigated with httpOnly refresh.
+- Backend validates `aud`, `iss`, `exp`; frontend decodes for display only.
+
+## How it works
+
+```ts
+const token =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0In0.signature';
+
+function decodePayload(jwt: string) {
+  const payload = jwt.split('.')[1];
+  const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+  return JSON.parse(json) as { sub: string; exp?: number; role?: string };
+}
+
+async function createSession(credentials: { email: string; password: string }) {
+  const res = await fetch('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credentials),
+  });
+  const { accessToken } = (await res.json()) as { accessToken: string };
+  return accessToken;
+}
+```
+
+Three segments: header (alg), payload (claims), signature. Signing uses HMAC(secret) or RSA/ECDSA private key. Verification on API gateway with pub key or shared secret.
+
+Refresh flow separates long-lived credential from access JWT. Rotation plus reuse detection protects stolen refresh tokens.
+
+## Pitfalls
+
+- **None algorithm attack.** Server must whitelist algs.
+- **Key in frontend.** HS256 verification secret must never ship to SPA.
+- **Stale roles.** JWT roles live until exp; demoted admin is not instant without short TTL.
+- **Storage choice.** Memory clears on tab close; localStorage survives XSS.
+- **Size limits.** Huge custom claims break headers and caching.

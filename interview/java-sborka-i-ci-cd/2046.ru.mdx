@@ -1,0 +1,85 @@
+---
+id: 2046
+title: "Плюсы и минусы Maven в Java-разработке"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Плюсы и минусы Maven в Java-разработке
+
+## Суть
+
+Maven даёт предсказуемую структуру проекта, централизованное управление зависимостями, богатую экосистему плагинов и нативную интеграцию с CI. Минусы: многословный XML, меньше гибкости чем Gradle, полные пересборки без incremental tricks, зависимость от remote repository (решается Nexus mirror). Для корпоративных Java monorepo Maven всё ещё доминирует.
+
+## Что ответить на собесе
+
+- Плюсы: convention over configuration, reactor multi-module, BOM/`dependencyManagement`, зрелые плагины (Surefire, Failsafe, Enforcer).
+- Минусы: кастомные workflow сложнее чем в Gradle DSL, медленнее на huge repo без cache.
+- Parent POM + CI cache `.m2` закрывают большую часть боли.
+- `mvnw` wrapper фиксирует версию Maven для всех разработчиков.
+- Честно: Maven XML copy-paste без BOM приводит к version hell.
+
+## Как это работает
+
+Стандартный layout:
+
+```
+src/main/java
+src/test/java
+pom.xml
+```
+
+Добавление зависимости:
+
+```xml
+<dependency>
+  <groupId>org.apache.commons</groupId>
+  <artifactId>commons-collections4</artifactId>
+  <version>4.4</version>
+</dependency>
+```
+
+Maven скачает из Central (или corporate mirror) в `~/.m2/repository`.
+
+CI-friendly wrapper:
+
+```bash
+./mvnw -B verify -DskipITs
+```
+
+Enforcer в parent POM:
+
+```xml
+<plugin>
+  <artifactId>maven-enforcer-plugin</artifactId>
+  <executions>
+    <execution>
+      <goals><goal>enforce</goal></goals>
+      <configuration>
+        <rules>
+          <dependencyConvergence/>
+          <requireJavaVersion><version>[21,)</version></requireJavaVersion>
+        </rules>
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
+```
+
+| Плюс | Минус |
+|------|-------|
+| Одинаковая структура всех проектов | XML boilerplate |
+| Отличная документация плагинов | Сложные кастомные pipeline |
+| Offline после первого resolve | Первый resolve требует сеть |
+| Jenkins/GitLab templates | Медленнее Gradle на incremental |
+
+## Подводные камни
+
+- **SNAPSHOT в production.** Невоспроизводимые сборки без locked versions.
+- **Parent POM недоступен.** CI без VPN к internal Nexus падает на inherit.
+- **Плагин без version.** Super-POM default может не поддерживать JDK 21.
+- **Локальный `settings.xml` с mirror.** У dev работает, у CI другой mirror: разные артефакты.
+- **multi-module без `-am`.** Собрали child без зависимых модулей: compile error в runtime.

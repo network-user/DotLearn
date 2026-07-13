@@ -1,0 +1,55 @@
+---
+id: 1783
+title: "What locks occur when posting a document"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What locks occur when posting a document
+
+## In short
+
+On posting the platform opens a transaction, locks the recorder document, movements of related registers, and affected totals. The developer may add managed locks in the posting module to protect balances before writing movements.
+
+## How to answer in an interview
+
+- I separate platform automatic locks from explicit `БлокировкаДанных` in code.
+- In an interview I list objects: document table, `_AccumReg*`, totals, sometimes number sequences.
+- I stress that unposting removes movements in the same transactional model.
+- I honestly say extra registers in movements multiply locks without benefit.
+- I check `ОбработкаПроведения` and the list of `Движения.*.Записывать = Истина`.
+
+## How it works
+
+On `Записать(Проведение)` the platform runs posting handlers, builds movements, and writes them atomically.
+
+```bsl
+Процедура ОбработкаПроведения(Отказ, Режим)
+    Блокировка = Новый БлокировкаДанных;
+    Элемент = Блокировка.Добавить("РегистрНакопления.ТоварыНаСкладах");
+    Элемент.Режим = РежимБлокировкиДанных.Исключительный;
+    Элемент.УстановитьЗначение("Склад", Склад);
+    Блокировка.Заблокировать();
+    Движения.ТоварыНаСкладах.Записывать = Истина;
+    Движение = Движения.ТоварыНаСкладах.Добавить();
+    Движение.ВидДвижения = ВидДвиженияНакопления.Расход;
+    Движение.Количество = КоличествоОтгрузки;
+КонецПроцедуры
+```
+
+Register rows are locked automatically by dimension keys and recorder. On reposting old movements are deleted then new ones written; locks are held for the whole transaction.
+
+Accumulation totals on backdated movement lock a range of aggregate periods. Periodic information registers lock period + dimensions slice.
+
+If `Отказ = Истина`, the transaction rolls back and locks are released. On success commit frees resources on the DBMS side.
+
+## Pitfalls
+
+- **Lock after writing movements.** A parallel session may already change the balance.
+- **Auto-registration of all document registers.** Extra tables in the lock graph.
+- **Posting without managed lock on a hot register.** Races on write-off.
+- **Reposting at peak load.** Double lock volume on the same keys.
+- **Manual movements outside standard posting.** Locks do not match platform expectations.

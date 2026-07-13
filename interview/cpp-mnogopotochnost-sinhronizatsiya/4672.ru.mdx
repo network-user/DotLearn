@@ -1,0 +1,70 @@
+---
+id: 4672
+title: "Зачем в C++ нужен mutex?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в C++ нужен mutex?
+
+## Суть
+
+Mutex (mutual exclusion) сериализует доступ к shared state: в каждый момент критическую секцию выполняет один поток. Это убирает data race на неатомарных операциях вроде read-modify-write.
+
+## Что ответить на собесе
+
+- Mutex это user-space примитив с возможным fallback в kernel при contention.
+- В STL: `std::mutex`, обёртки `lock_guard`, `unique_lock`, `scoped_lock`.
+- Защищаю инварианты структур данных, не «весь объект» без нужды.
+- Альтернатива для простых счётчиков: `std::atomic`.
+- Честно: mutex не делает код быстрее; он делает его корректным ценой latency и риска deadlock.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex tally_gate;
+int tally = 0;
+
+void bump_many(int steps) {
+    for (int i = 0; i < steps; ++i) {
+        std::lock_guard<std::mutex> hold(tally_gate);
+        ++tally;
+    }
+}
+
+int main() {
+    std::thread a(bump_many, 1000);
+    std::thread b(bump_many, 1000);
+    a.join();
+    b.join();
+    std::cout << "tally=" << tally << '\n';
+}
+```
+
+Поток вызывает `lock()`: если mutex свободен, владелец один; иначе блокировка до `unlock()`. `lock_guard` гарантирует unlock при выходе из scope, в том числе через exception.
+
+Типы mutex в STL:
+
+```cpp
+std::mutex plain;
+std::recursive_mutex reentrant;
+std::shared_mutex rw; // shared_lock для readers
+std::timed_mutex with_timeout;
+```
+
+Выбор зависит от паттерна доступа: write-heavy critical section vs read-mostly config.
+
+## Подводные камни
+
+- **Coarse lock.** Один mutex на весь service убивает parallelism.
+- **Lock order.** Несколько mutex без policy ведут к deadlock.
+- **Hold during I/O.** Блокировка на network/disk раздувает critical section.
+- **Priority inversion.** Низкоприоритетный holder блокирует high-priority waiter.
+- **Forgotten unlock.** Raw `lock()` без RAII опасен при early return.

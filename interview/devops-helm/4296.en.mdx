@@ -1,0 +1,57 @@
+---
+id: 4296
+title: "How do you roll back a Helm release?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you roll back a Helm release?
+
+## In short
+
+Each `helm upgrade` creates a revision in release history (stored in a cluster Secret). `helm rollback <release> <revision>` restores that revision's manifests and values. It is a fast revert for bad deploys but does not undo external DB migrations already applied by hooks.
+
+## How to answer in an interview
+
+- `helm history <release> -n <ns>` shows REVISION, STATUS, CHART.
+- `helm rollback <release> <rev>` returns to a known good state.
+- Without a revision number, rollback goes to the previous one (N-1).
+- After rollback I check `helm status` and `kubectl rollout status`.
+- Honestly: rollback does not undo schema migrations; you need a forward fix or DB snapshot restore.
+
+## How it works
+
+Inspect history and roll back:
+
+```bash
+helm history payments -n prod
+
+helm rollback payments 14 -n prod --wait --timeout 8m
+
+helm status payments -n prod
+kubectl get pods -n prod -l app.kubernetes.io/instance=payments
+```
+
+Compare manifests between revisions (Helm 3):
+
+```bash
+helm get manifest payments -n prod --revision 14 | sha256sum
+helm get manifest payments -n prod --revision 15 | sha256sum
+```
+
+Rollback with debug on failure:
+
+```bash
+helm rollback payments 14 -n prod --debug 2>&1 | tee /tmp/rollback.log
+```
+
+## Pitfalls
+
+- **Failed revision.** Rolling back to a `failed` revision may repeat the same error; pick the last `deployed` revision.
+- **PVC data mismatch.** A new version migrated data format; rolling back the image without DB compatibility causes crash loops.
+- **CRDs are forward only.** Chart rollback does not remove new CRD fields; stale schema remains in the API.
+- **Hooks re-run.** Rollback may trigger pre/post hooks again with DB side effects.
+- **Max history limit.** Old revisions get pruned; archive critical manifests in git before upgrading.

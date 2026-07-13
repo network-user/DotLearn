@@ -1,0 +1,59 @@
+---
+id: 1771
+title: "Manual transactions with НачатьТранзакцию and ЗафиксироватьТранзакцию"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Manual transactions with НачатьТранзакцию and ЗафиксироватьТранзакцию
+
+## In short
+
+Explicit `НачатьТранзакцию`, `ЗафиксироватьТранзакцию`, and `ОтменитьТранзакцию` are needed when several writes and registers must save atomically outside standard posting. This is the direct DBMS transaction interface in a 1C session.
+
+## How to answer in an interview
+
+- I use manual transactions in import processing, batch balance transfers, and non-standard integrations.
+- In an interview I stress pairing with `Попытка`/`Исключение`: commit only on success, rollback on any error.
+- I clarify that legacy names `ТранзакцияНачать()` were replaced by `НачатьТранзакцию()` in current syntax.
+- I am honest that an extra transaction inside an already posting document is usually a design smell.
+- I do not commit in a shared library if the caller opened the transaction.
+
+## How it works
+
+A manual block template:
+
+```bsl
+Процедура ЗагрузитьПакетНоменклатуры(ТаблицаДанных) Экспорт
+    НачатьТранзакцию();
+    Попытка
+        Для Каждого Строка Из ТаблицаДанных Цикл
+            Элемент = Справочники.Номенклатура.СоздатьЭлемент();
+            Элемент.Наименование = Строка.Наименование;
+            Элемент.Артикул = Строка.Артикул;
+            Элемент.Записать();
+        КонецЦикла;
+        ЗафиксироватьТранзакцию();
+    Исключение
+        ОтменитьТранзакцию();
+        ЗаписьЖурналаРегистрации("ЗагрузкаНоменклатуры", УровеньЖурналаРегистрации.Ошибка, , ,
+            ПодробноеПредставлениеОшибки(ИнформацияОбОшибке()));
+        ВызватьИсключение;
+    КонецПопытки;
+КонецПроцедуры
+```
+
+`НачатьТранзакцию()` opens a boundary on the DBMS connection. All subsequent `Записать()` calls until commit or rollback are visible only to the current session. `ЗафиксироватьТранзакцию()` makes changes permanent; `ОтменитьТранзакцию()` returns the database to the state at block start.
+
+For long batches I split into chunks with separate transactions every N rows to avoid bloating the SQL log and holding locks for minutes. Whole-file atomicity is then relaxed but system availability is higher.
+
+## Pitfalls
+
+- **Commit inside the loop.** Partial load when an error hits mid-file.
+- **Forgotten НачатьТранзакцию.** Rollback in Исключение without an open block errors or behaves unexpectedly.
+- **Nested commit.** Breaks outer operation atomicity.
+- **Transaction with an HTTP call inside.** The network waits while locks are held.
+- **Confusing with data locks.** `Заблокировать()` and SQL transactions solve different problems.

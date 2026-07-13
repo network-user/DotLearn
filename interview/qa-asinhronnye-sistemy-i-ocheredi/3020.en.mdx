@@ -1,0 +1,56 @@
+---
+id: 3020
+title: "What is async microservice interaction from a QA perspective?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is async microservice interaction from a QA perspective?
+
+## In short
+
+A service publishes an event to a broker and does not wait for an immediate reply from the receiver. Consistency arrives later through consumers and saga/compensation. For QA this means validating the service chain, queue lag, final state, and behavior when a middle step fails.
+
+## How to answer in an interview
+
+- Producer is fire-and-forget: HTTP 202 or publish to Kafka/RabbitMQ.
+- Consumers run independently; one failure does not block the UI instantly.
+- I test end-to-end: order created, payment, notification, stock within minutes.
+- I monitor dead letter and retry policy per service.
+- Honestly: without contract tests on event schema the chain breaks silently.
+
+## How it works
+
+```gherkin
+Feature: Async microservice interaction
+
+  Scenario: Order placed event flow
+    Given OrderService publishes OrderPlaced to topic sales.orders
+    When PaymentService and NotificationService consume
+    Then user receives email within SLA 2 minutes
+    And payment status COMPLETED in billing DB
+
+  Scenario: Downstream temporarily unavailable
+    Given NotificationService consumer stopped
+    When order event published
+    Then message accumulates in queue no user email yet
+    And after consumer start backlog drains without duplicate emails
+
+  Scenario: Contract on event schema
+    Given payload field totalAmount type decimal
+    When producer sends string amount
+    Then consumer rejects to DLQ and alert fires
+```
+
+Flow: Order API → broker → Payment worker → broker → Email worker. QA checkpoints: publish ack, consumer log, final read models.
+
+## Pitfalls
+
+- **Sync mindset.** Expect instant email after click.
+- **Single service test only.** Integration gap stays hidden.
+- **No event versioning.** Breaking JSON change kills consumers.
+- **Poison message ignored.** One bad record blocks the queue.
+- **Different staging SLA.** Timeouts unlike prod cause false fails.

@@ -1,0 +1,61 @@
+---
+id: 4583
+title: "How does std::unordered_map resolve collisions?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does std::unordered_map resolve collisions?
+
+## In short
+
+`std::unordered_map` is a hash table with buckets. A key is hashed and mapped to a bucket index. On collision, different keys share one bucket; libstdc++/libc++ keep them in a chain inside the bucket and compare keys on lookup.
+
+## How to answer in an interview
+
+- I describe the flow: hash → bucket index → chain of key/value nodes.
+- I clarify that key equality is checked after bucket match because hashes are not unique.
+- I state amortized O(1) at low load and degradation when chains grow long.
+- I mention rehash when `load_factor` rises and the role of `max_load_factor()`.
+- I add honestly: exact node layout is implementation-defined; interviews care about chaining, not GCC vs MSVC internals.
+
+## How it works
+
+On `emplace` or `operator[]`, the container computes `std::hash<Key>{}(k)` and maps it into `[0, bucket_count)`. If the bucket already holds entries (including different keys that share the hash bucket), the new node joins the chain. `find` hashes again, enters the bucket, and scans with `key_equal`.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <unordered_map>
+
+int main() {
+    std::unordered_map<std::string, int> prices;
+    prices.reserve(16);
+
+    prices.emplace("apple", 120);
+    prices["banana"] = 95;
+    prices.insert({"orange", 110});
+
+    const std::string query = "banana";
+    auto it = prices.find(query);
+    if (it != prices.end()) {
+        std::cout << query << " -> " << it->second << '\n';
+    }
+
+    std::cout << "buckets: " << prices.bucket_count()
+              << ", load: " << prices.load_factor() << '\n';
+}
+```
+
+When load exceeds the threshold (often near 1.0, configurable), the table grows bucket count and redistributes entries (rehash) to keep chains short. Call `reserve(n)` up front to cut rehashes during bulk insert.
+
+## Pitfalls
+
+- **Weak hash function.** A poor `std::hash` for custom types yields long chains even with a large `bucket_count`.
+- **Custom hash without equals.** `Hash` and `KeyEqual` must stay consistent or you get false misses or duplicates.
+- **Iterators on rehash.** Rehash invalidates iterators; references to elements usually stay valid in C++11+ for `unordered_map`.
+- **Pointers as keys.** You hash addresses, not pointee data; collisions are rare but equality semantics surprise people.
+- **Hash flooding.** In networked settings teams use hardened hashes or seeded maps; crafted keys can enable HashDoS.

@@ -1,0 +1,60 @@
+---
+id: 1582
+title: "Создаётся ли struct G на каждый go"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Создаётся ли struct G на каждый go
+
+## Суть
+
+Runtime аллоцирует G (descriptor + stack) только когда `go` реально выполняется. Dead code path с `go` не создаёт G. После exit G возвращается в pool и может переиспользоваться для следующего `go`.
+
+## Что ответить на собесе
+
+- `go fn()` на unreachable branch: zero G.
+- Каждый успешный spawn: новая или recycled G из freelist.
+- Stack отделён от OS thread stack.
+- Честно: «структура» это runtime internal G, не user struct.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	if false {
+		go fmt.Println("never")
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fmt.Println("runs")
+	}()
+	wg.Wait()
+}
+```
+
+Второй `go` создаёт G и scheduler entry. Первый не достигается компилятором/ runtime. После Wait G recycled.
+
+## Подводные камни
+
+**Spawn in loop without exit.** G count растёт до millions.
+
+**Assumption 1 G = 1 MB.** Stack starts small.
+
+**Cgo thread not G struct.** Different accounting.
+
+**Race detector overhead.** Inflates G metadata in tests.
+
+**go on nil func value.** Panic at spawn, G may partially allocate.

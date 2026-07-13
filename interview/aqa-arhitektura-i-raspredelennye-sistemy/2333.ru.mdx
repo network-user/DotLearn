@@ -1,0 +1,64 @@
+---
+id: 2333
+title: "Монолит или микросервисы: что меняется в стратегии автотестов"
+category: aqa-arhitektura-i-raspredelennye-sistemy
+categoryLabel: "Архитектура и распределённые системы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Монолит или микросервисы: что меняется в стратегии автотестов
+
+## Суть
+
+Монолит разворачивается и тестируется как единое приложение с общей БД и процессом. Микросервисы делят домен на независимые сервисы с сетевым взаимодействием. Для AQA это сдвиг пирамиды: больше контрактных и интegration-тестов, observability и управление тестовыми данными между сервисами.
+
+## Что ответить на собесе
+
+- Описываю монолит: один deployable unit, in-process вызовы, проще end-to-end и транзакции, сложнее масштабировать отдельные модули.
+- Описываю микросервисы: независимый deploy, изоляция сбоев, но сетевые задержки, распределённые транзакции и сквозная трассировка.
+- Объясняю impact на тесты: в монолите упор на модульные + один e2e; в микросервисах consumer-driven contracts (Pact), component tests per service, ограниченный e2e smoke.
+- Упоминаю инфраструктуру: service mesh, API gateway, message broker, testcontainers для каждой зависимости.
+- Честно добавляю: микросервисы не «лечат» плохое покрытие; без зрелого CI/CD и мониторинга cost of testing растёт быстрее, чем benefit.
+
+## Как это работает
+
+В монолите pytest может поднять приложение через TestClient (FastAPI/Flask) и проверить бизнес-сценарий за один прогон: HTTP → доменный слой → БД в одной транзакции. Flaky чаще от данных и порядка тестов, реже от сети.
+
+В микросервисной схеме каждый сервис имеет свой репозиторий и pipeline. Автотест сервиса A мокает B через wiremock или контракт Pact; e2e проходит через gateway и проверяет только критические user journey. Регрессия интеграции ловится contract tests на каждом PR, а не полным e2e на 20 сервисов.
+
+```python
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+catalog_app = FastAPI()
+
+
+@catalog_app.get("/api/v1/items/{item_id}")
+def fetch_item(item_id: int):
+    return {"id": item_id, "title": "demo-widget", "stock": 3}
+
+
+def test_catalog_contract():
+    client = TestClient(catalog_app)
+    response = client.get("/api/v1/items/42")
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"id", "title", "stock"}
+    assert body["id"] == 42
+```
+
+Для распределённого сценария добавляю correlation-id в заголовок, собираю логи/traces в Allure attachment и проверяю saga/compensation при падении downstream.
+
+## Подводные камни
+
+**E2E на всю mesh.** Прогон 40 минут, нестабилен; один упавший сервис блокирует все команды.
+
+**Shared test database.** Микросервисы с одной БД теряют главный плюс изоляции; тесты конфликтуют.
+
+**Contract drift.** Producer меняет JSON без версии; consumer tests green на mock, red в staging.
+
+**Test data fan-out.** Seed в одном сервисе не виден другому; нужны orchestrated fixtures или synthetic events.
+
+**Ложная уверенность монолита.** Быстрый e2e маскирует отсутствие unit-тестов на сложную доменную логику.

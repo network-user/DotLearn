@@ -1,0 +1,79 @@
+---
+id: 4661
+title: "Можно ли «убить» std::thread из родительского потока?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Можно ли «убить» std::thread из родительского потока?
+
+## Суть
+
+Стандарт C++ не даёт безопасно принудительно завершить чужой `std::thread`. Рабочий поток должен сам выйти по cooperative сигналу, либо процесс завершается целиком через `std::terminate` при уничтожении joinable thread.
+
+## Что ответить на собесе
+
+- Нет API вроде `thread.kill()` в стандартной библиотеке.
+- Корректные пути: `join()` после завершения, `detach()` если lifetime не важен, или флаг/`std::stop_token` для мягкой остановки.
+- `std::jthread` (C++20) принимает stop token и auto-join в деструкторе.
+- Платформенный `pthread_cancel`/`TerminateThread` в portable C++ не использую на production коде.
+- Честно: принудительное убийство ломает инварианты RAII и может оставить mutex locked; cooperative shutdown почти всегда правильнее.
+
+## Как это работает
+
+Поток стартует с callable и крутится, пока функция не вернётся. Родитель управляет только lifetime handle через `join`/`detach`.
+
+```cpp
+#include <atomic>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+std::atomic<bool> shutdown{false};
+
+void pump() {
+    while (!shutdown.load(std::memory_order_relaxed)) {
+        std::cout << "working...\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+    std::cout << "worker exits cleanly\n";
+}
+
+int main() {
+    std::thread worker(pump);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    shutdown.store(true, std::memory_order_relaxed);
+    worker.join();
+}
+```
+
+C++20 вариант с `std::jthread`:
+
+```cpp
+#include <stop_token>
+#include <thread>
+
+void pump_stoppable(std::stop_token token) {
+    while (!token.stop_requested()) {
+        // work unit
+    }
+}
+
+void demo() {
+    std::jthread worker(pump_stoppable);
+    worker.request_stop();
+}
+```
+
+Если уничтожить joinable `std::thread` без `join`/`detach`, вызывается `std::terminate()`. Это не «убийство» worker, а аварийное завершение всего процесса.
+
+## Подводные камни
+
+- **terminate on destructor.** Забытый join в scope exit убивает программу.
+- **Detach orphan.** `detach()` без контроля lifetime даёт use-after-free, если worker трогает уничтоженные объекты.
+- **Blocking join.** Worker, зависший в syscall, не проверит atomic flag; нужен interruptible I/O или timeout policy на уровне архитектуры.
+- **Locked mutex.** Принудительный kill (если бы был) оставил бы mutex в locked state и deadlock остальных потоков.
+- **Cancellation points.** Даже POSIX cancel безопасен только в documented cancellation points; в C++ это не part of the standard model.

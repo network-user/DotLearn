@@ -1,0 +1,53 @@
+---
+id: 4179
+title: "What steps make up a TLS handshake?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What steps make up a TLS handshake?
+
+## In short
+
+The handshake negotiates protocol version and cipher suite, validates the server certificate (and client cert with mTLS), derives shared keys, and switches the channel to encrypted records. TLS 1.3 uses fewer round trips and drops legacy cipher negotiation.
+
+## How to answer in an interview
+
+- ClientHello: versions, ciphers, SNI, ALPN (http/1.1 vs h2).
+- ServerHello + cert chain + (EC)DHE key share → shared secret.
+- Finished messages prove a MITM did not swap parameters.
+- mTLS adds CertificateRequest and client cert verify.
+- I add honestly: in practice I use `openssl s_client` and ingress logs, not memorizing every TLS 1.2 message name.
+
+## How it works
+
+Simplified TLS 1.3 flow (1-RTT):
+
+```bash
+openssl s_client -connect api.example.com:443 -servername api.example.com -tls1_3 </dev/null \
+  2>/dev/null | grep -E 'Protocol|Cipher|Verify return code|ALPN'
+
+# handshake trace (if ssldump installed)
+# ssldump -i eth0 port 443
+```
+
+The client sends supported groups (X25519, P-256). The server picks an SNI-matching cert and KeyShare. Both sides derive traffic keys and send encrypted Finished.
+
+Latency debug:
+
+```bash
+curl -w 'connect:%{time_connect} tls:%{time_appconnect}\n' -o /dev/null -s https://api.example.com/
+```
+
+`time_appconnect` includes full handshake; session tickets/resumption cut it on repeats.
+
+## Pitfalls
+
+- **Missing SNI in legacy clients.** Wrong cert on shared IP.
+- **ALPN mismatch.** HTTP/2 client to HTTP/1.1-only backend via misconfigured proxy.
+- **Incomplete intermediate on server.** Handshake ok in Chrome, fails in curl/Java.
+- **TLS inspection appliances.** Corporate proxies break cert pinning in mobile apps.
+- **0-RTT replay (TLS 1.3).** Early data is not idempotent; disable on mutating APIs.

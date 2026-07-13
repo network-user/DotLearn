@@ -1,0 +1,71 @@
+---
+id: 4674
+title: "Why mark a base class destructor virtual?"
+category: cpp-klassy-oop-polimorfizm
+categoryLabel: "Классы / ООП / Полиморфизм"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why mark a base class destructor virtual?
+
+## In short
+
+`virtual ~Base()` ensures `delete base_ptr` runs destructors from the dynamic type down to the base. Without virtual, only the base subobject is destroyed and derived resources leak.
+
+## How to answer in an interview
+
+- Rule: if the class has any virtual function or is deleted through `Base*`, make the base destructor virtual.
+- Order: ~Derived, then ~Base.
+- Works via the vtable pointer in the object.
+- Same rule with smart pointers (`unique_ptr<Base>`).
+- Honestly: if the hierarchy is not polymorphic and you delete only by concrete type, virtual is optional; for interface bases it is almost always required.
+
+## How it works
+
+Without virtual:
+
+```cpp
+struct Host {
+    ~Host() { /* base cleanup */ }
+};
+
+struct Worker : Host {
+    ~Worker() { /* never runs on base delete */ }
+};
+
+void leak() {
+    Host* slot = new Worker();
+    delete slot;
+}
+```
+
+With virtual:
+
+```cpp
+struct Host {
+    virtual ~Host() = default;
+};
+
+struct Worker : Host {
+    ~Worker() override { /* derived cleanup */ }
+};
+
+void ok() {
+    Host* slot = new Worker();
+    delete slot;
+}
+```
+
+Output order: `Worker` first, then `Host`. RAII members in derived are destroyed in ~Worker before the base subobject.
+
+A `= default` virtual destructor on an interface is enough when derived manages its own resources.
+
+## Pitfalls
+
+- **Partial destroy.** Non-virtual delete skips derived-only resources through a base pointer.
+- **Exceptions in destructors.** Destructors must not throw; a virtual chain complicates debugging.
+- **Pure virtual base.** Abstract bases still need a virtual ~ (can be defaulted).
+- **delete this antipattern.** Even riskier without virtual hierarchy discipline.
+- **Object slicing.** Virtual dtor does not fix slicing on copy by value.

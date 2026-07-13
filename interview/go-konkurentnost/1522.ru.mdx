@@ -1,0 +1,58 @@
+---
+id: 1522
+title: "Что такое goroutine в Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое goroutine в Go?
+
+## Суть
+
+Goroutine это легковесная единица выполнения, запускаемая ключевым словом `go`. Планировщик Go мультиплексирует тысячи goroutine на потоки ОС (M:N), переключая их на блокировках I/O и syscall.
+
+## Что ответить на собесе
+
+- Старт: `go worker()`; стек начинается маленьким и растёт по необходимости.
+- Main goroutine завершает процесс, не дожидаясь фоновых, если нет sync (WaitGroup, channel, context).
+- Goroutine дешевле OS thread; типичный сервис держит пулы worker goroutine, не thread per request.
+- Честно добавляю: утечка goroutine (вечный блок на channel) так же опасна, как thread leak.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func worker(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("start", id)
+}
+
+func main() {
+	var wg sync.WaitGroup
+	for i := 1; i <= 3; i++ {
+		wg.Add(1)
+		go worker(i, &wg)
+	}
+	wg.Wait()
+	fmt.Println("done")
+}
+```
+
+Runtime GMP модель: G (goroutine) выполняется на M (OS thread) с очередями P (processor). При блокировке на channel или network syscall G отдаёт M, другая G продолжает работу.
+
+## Подводные камни
+
+- **Завершение main.** `go` без ожидания обрывается при exit main.
+- **Closure capture loop var.** До Go 1.22 классический баг; сейчас всё ещё осторожен с замыканиями.
+- **GOMAXPROCS.** Влияет на параллелизм CPU-bound, не на количество goroutine.
+- **Panic в goroutine.** Роняет только эту G, если нет recover; не всегда валит процесс.
+- **Слишком много G.** Миллионы goroutine возможны, но scheduler и память стеков всё равно имеют предел.

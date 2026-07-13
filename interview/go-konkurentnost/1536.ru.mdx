@@ -1,0 +1,80 @@
+---
+id: 1536
+title: "Какие состояния бывают у канала?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие состояния бывают у канала?
+
+## Суть
+
+Канал может быть nil (нулевое значение типа), открытым (создан через make) или закрытым (вызван close). Открытый канал синхронизирует send/recv; закрытый запрещает send и отдаёт остаток буфера плюс zero value с ok=false; операции на nil блокируют навсегда.
+
+## Что ответить на собесе
+
+- nil канал в select игнорируется, в одиночной операции блокирует навсегда.
+- Закрытие делает только отправитель; повторный close panic.
+- Чтение из закрытого unbuffered сразу даёт zero value, ok=false.
+- Честно: «три состояния» это модель для собеса; runtime хранит больше деталей (буфер, waiters).
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func demoOpen() {
+	queue := make(chan int, 2)
+	queue <- 10
+	queue <- 20
+	fmt.Println(<-queue, <-queue)
+}
+
+func demoClosed() {
+	events := make(chan string, 1)
+	events <- "ready"
+	close(events)
+	for msg := range events {
+		fmt.Println("event:", msg)
+	}
+	val, ok := <-events
+	fmt.Println("drained:", val, ok)
+}
+
+func demoNilSelect(in <-chan int) {
+	var sink chan int
+	select {
+	case v := <-in:
+		fmt.Println("in:", v)
+	case sink <- 1:
+		fmt.Println("never")
+	default:
+		fmt.Println("nil branch skipped in select")
+	}
+}
+
+func main() {
+	demoOpen()
+	demoClosed()
+	demoNilSelect(nil)
+}
+```
+
+Открытый buffered канал не блокирует send, пока len < cap. После close send panic; range читает до опустошения и завершается.
+
+## Подводные камни
+
+**Send в закрытый канал.** Всегда panic; закрывай только когда receivers знают, что данных больше не будет.
+
+**Close со стороны reader.** Гонка: writer может ещё слать; договорённость «кто закрывает» обязательна.
+
+**nil в assignment.** `var ch chan T` и забытый make приводят к silent deadlock в проде.
+
+**range без close.** Если sender не закроет и не завершится, range блокирует навсегда.
+
+**Буфер и «закрыт но полон».** Закрытый канал с буфером всё ещё отдаёт накопленные значения; zero value после drain не значит «ошибка данных».

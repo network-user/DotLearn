@@ -1,0 +1,66 @@
+---
+id: 2962
+title: "IPv4: why should QA understand a 32-bit address?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# IPv4: why should QA understand a 32-bit address?
+
+## In short
+
+IPv4 assigns a 32-bit node address on the network (four octets in dotted decimal). Routers read the destination IP in the packet header and pick the next hop. For testers, private ranges (10/8, 172.16/12, 192.168/16), loopback, and the difference between "ping works" and "the right port is open" matter.
+
+## How to answer in an interview
+
+- The address splits into network and host via a mask; ACLs and security groups cut traffic by subnet.
+- NAT hides internal addresses: app logs show 10.x, nginx access.log shows the client's public IP.
+- Public IPv4 exhaustion is handled with CGNAT and a move to v6; staging often sits in RFC1918.
+- Honestly: ping succeeds but HTTPS is blocked by firewall; I check the specific port with curl, not only ICMP.
+
+## How it works
+
+Breakdown of `203.0.113.42/24`:
+
+| Part | Value | Role |
+|------|-------|------|
+| Network | 203.0.113.0 | route to internet |
+| Host | .42 | specific VM |
+| Broadcast | .255 | rare in cloud |
+
+Gherkin connectivity checklist:
+
+```gherkin
+Feature: IPv4 service reachability
+
+  Scenario: API responds on public IPv4
+    Given the service listens on 203.0.113.42:443
+    When QA runs curl https://203.0.113.42/health
+    Then HTTP status is 200
+    And the TLS certificate is valid for CN/SAN
+
+  Scenario: Private IP unreachable from the internet
+    Given backend only on 10.20.30.40:8080
+    When QA curls from an external machine without VPN
+    Then the connection times out or is connection refused
+    And the bug report notes expected ACL deny
+
+  Scenario: Office subnet whitelist
+    Given ACL allows 198.51.100.0/24
+    And the QA machine is 198.51.100.15
+    When GET /admin
+    Then status is not 403
+```
+
+Wireshark filter `ip.addr == 203.0.113.42` helps separate "packet never arrived" from "arrived, RST from the app".
+
+## Pitfalls
+
+- **Confusing L3 and L7.** IP reachable, certificate on another hostname.
+- **Docker bridge 172.17.0.0/16.** Works locally, different network in CI.
+- **Multiple NICs.** Reply leaves via the "wrong" source IP, asymmetric routing.
+- **0.0.0.0 bind vs connect.** Service listens on all interfaces, firewall blocks one.
+- **Literals in config.** Staging IP hardcoded, DNS already changed.

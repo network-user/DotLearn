@@ -1,0 +1,63 @@
+---
+id: 4223
+title: "What goes into a Route 53 A record?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What goes into a Route 53 A record?
+
+## In short
+
+An A (Address) record maps a hostname to IPv4. In Route 53 the value is one or more IPs, an alias to an AWS resource (ALB, CloudFront, API Gateway), or a routing policy (weighted, latency, failover). Use AAAA for IPv6. The A record is the first hook from your domain to AWS infrastructure.
+
+## How to answer in an interview
+
+- Plain A: `app.example.com` → `203.0.113.10` (public EC2 or Elastic IP).
+- Alias A to ALB/CloudFront without extra DNS query charges to the AWS target.
+- I set TTL by scenario: short for fast failover, long for static assets behind a CDN.
+- Health checks plus failover routing for active/passive pairs.
+- Honestly: a direct A to an instance IP breaks on replacement; I prefer an alias to a load balancer.
+
+## How it works
+
+The client resolver queries Route 53 authoritative NS, receives the A record, and opens TCP to the IP.
+
+CLI for a simple record:
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id Z1234567890ABC \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "api.example.com",
+        "Type": "A",
+        "TTL": 60,
+        "ResourceRecords": [{"Value": "203.0.113.10"}]
+      }
+    }]
+  }'
+```
+
+Alias to ALB (no TTL):
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id Z1234567890ABC \
+  --change-batch file://alias-alb.json
+```
+
+Where `alias-alb.json` holds `AliasTarget` with the balancer DNS name and hosted zone ID.
+
+## Pitfalls
+
+- **Public vs private zone.** Private hosted zones resolve only inside linked VPCs; watch split-horizon DNS confusion.
+- **CNAME at apex.** Root domains cannot be CNAME; use alias A or registrar ANAME.
+- **Stale TTL.** Long TTL during migration keeps clients on old IPs; lower TTL ahead of time.
+- **Multiple A without policy.** Client round-robin is not guaranteed; use a load balancer or weighted routing.
+- **Elastic IP vs ephemeral.** An A to an ephemeral public IP changes after stop/start; pin an EIP or alias.

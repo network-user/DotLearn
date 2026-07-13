@@ -1,0 +1,70 @@
+---
+id: 1780
+title: "What to do when posting fails due to deadlock"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What to do when posting fails due to deadlock
+
+## In short
+
+Deadlock happens when two sessions lock resources in different order. The DBMS rolls back one transaction; the user sees a posting error. The developer's job is to capture the session pair, align lock order, and shorten transaction time.
+
+## How to answer in an interview
+
+- I start with the lock monitor and event log at error time.
+- In an interview I name typical measures: consistent register lock order, short transactions, retry with backoff.
+- I stress `Блокировка.Заблокировать()` with a meaningful filter instead of locking "the whole register".
+- I honestly say reposting after deadlock often succeeds but without an algorithm fix it returns.
+- I separate SQL deadlock from 1C managed lock conflicts.
+
+## How it works
+
+Session A locks the goods register then settlements. Session B does the reverse. Both wait; the DBMS picks a victim and rolls back its transaction.
+
+```bsl
+Процедура ПровестиСБлокировками(ДокументОбъект) Экспорт
+    Блокировка = Новый БлокировкаДанных;
+    ЭлементТовары = Блокировка.Добавить("РегистрНакопления.ТоварыНаСкладах");
+    ЭлементТовары.Режим = РежимБлокировкиДанных.Исключительный;
+    ЭлементТовары.УстановитьЗначение("Склад", ДокументОбъект.Склад);
+    ЭлементРасчеты = Блокировка.Добавить("РегистрНакопления.Взаиморасчеты");
+    ЭлементРасчеты.Режим = РежимБлокировкиДанных.Исключительный;
+    ЭлементРасчеты.УстановитьЗначение("Контрагент", ДокументОбъект.Контрагент);
+    Блокировка.Заблокировать();
+    ДокументОбъект.Движения.Записать();
+КонецПроцедуры
+```
+
+The order of elements in `БлокировкаДанных` must match across all posting procedures. Bulk jobs sort documents by lock keys.
+
+On deadlock the client can retry with a pause:
+
+```bsl
+МаксПопыток = 3;
+Для НомерПопытки = 1 По МаксПопыток Цикл
+    Попытка
+        ДокументОбъект.Записать(РежимЗаписиДокумента.Проведение);
+        Прервать;
+    Исключение
+        Если Не ЭтоDeadlock(ИнформацияОбОшибке()) Или НомерПопытки = МаксПопыток Тогда
+            ВызватьИсключение;
+        КонецЕсли;
+        Пауза(НомерПопытки * 200);
+    КонецПопытки;
+КонецЦикла;
+```
+
+Long term: move bulk posting to background, drop unnecessary registers from movements, check parallel scheduled jobs on the same tables.
+
+## Pitfalls
+
+- **Retry without changing lock order.** Deadlock reproduces reliably under load.
+- **Widening filters "just in case".** Broad locks increase overlap.
+- **Two scheduled jobs on the same registers.** Contention invisible to interactive users.
+- **Fixing only by increasing timeout.** The system hangs longer before rollback.
+- **Confusing with insufficient balance.** That is a business error, not deadlock.

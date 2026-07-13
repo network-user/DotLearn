@@ -1,0 +1,64 @@
+---
+id: 1603
+title: "What does eventual consistency mean in microservices?"
+category: java-mikroservisy
+categoryLabel: "Микросервисы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does eventual consistency mean in microservices?
+
+## In short
+
+Eventual consistency allows temporary divergence between replicas or services but promises that, once writes stop, every copy converges to the same state. It is a common CAP trade-off: higher availability and tolerance to network faults, lower instant consistency.
+
+## How to answer in an interview
+
+- Frame it as a consistency model for distributed stores, not a "weak form of ACID."
+- Contrast with strong consistency: a reader may see an old version until replication catches up with the leader.
+- Give a practical example: a profile update lands on one node while a second DC still serves the previous name for a few seconds.
+- Name systems where this is normal: Cassandra, DynamoDB, async replication between services via Kafka or outbox.
+- Be honest: without explicit business logic (version, TTL, conflict resolution), eventual consistency becomes "data sometimes never matches" for the user.
+
+## How it works
+
+Imagine a profile service with three replicas. A client writes to node A; the write is acknowledged locally while an event travels to B and C asynchronously. Until the message arrives, a read from B may return the old email.
+
+```java
+public record ProfilePatch(String userId, String displayName, long version) {}
+
+public interface ProfileStore {
+    void applyOnLeader(ProfilePatch patch);
+    Optional<String> readFromReplica(String userId);
+}
+
+public final class EventualProfileService {
+    private final ProfileStore store;
+
+    public EventualProfileService(ProfileStore store) {
+        this.store = store;
+    }
+
+    public void renameUser(ProfilePatch patch) {
+        store.applyOnLeader(patch);
+    }
+
+    public String readDisplayName(String userId) {
+        return store.readFromReplica(userId).orElse("unknown");
+    }
+}
+```
+
+When new writes stop, replication and anti-entropy protocols bring lagging nodes up to date. In Java microservices this often shows up as eventual read models: a command writes to OLTP, and a projection in the read DB updates through a delayed consumer.
+
+The model fits the domain: a post like can be eventual, while an account balance or inventory hold often needs linearizable writes or a transactional outbox with idempotency.
+
+## Pitfalls
+
+- **Stale read without UX hint.** The user sees "saved" while another screen still shows the old value.
+- **Concurrent write conflicts.** Last-write-wins drops updates; you need vector clocks or merge strategies.
+- **No lag monitoring.** A replica falls hours behind with no alert until an incident.
+- **Mixed consistency levels.** Strong consistency in one service does not help if a neighboring read model is eventual.
+- **Happy-path tests only.** Everything is synchronous locally; production networking opens inconsistency windows unit tests never hit.

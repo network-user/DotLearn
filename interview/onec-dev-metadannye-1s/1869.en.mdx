@@ -1,0 +1,48 @@
+---
+id: 1869
+title: "How the platform reads and caches constants"
+category: onec-dev-metadannye-1s
+categoryLabel: "Метаданные 1С"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How the platform reads and caches constants
+
+## In short
+
+Constant values sit in one DBMS table; on access the platform loads them into the session cache. The API `Константы.<Имя>.Получить()` reads from cache; `Установить()` writes to the database and refreshes the current session cache.
+
+## How to answer in an interview
+
+- I explain: one physical table, many logical constants from metadata.
+- After `Установить()` other sessions see the new value on the next `Получить()`.
+- For bulk settings reads I avoid dozens of `Получить()` calls in a loop without need.
+- I split: a constant for a global flag, a register for time-bound parameters.
+- I am honest: a constant is not transactionally versioned; you cannot recover change history that way.
+
+## How it works
+
+Typical pattern in a common module:
+
+```bsl
+Функция ИспользуетсяУчетПоСериям() Экспорт
+    Возврат Константы.УчетПоСериям.Получить();
+КонецФункции
+
+Процедура ВключитьУчетПоСериям() Экспорт
+    УстановитьПривилегированныйРежим(Истина);
+    Константы.УчетПоСериям.Установить(Истина);
+КонецПроцедуры
+```
+
+On background job start the cache is empty; the first `Получить()` hits the DBMS. In an interactive session repeat calls are cheaper. Changing a constant via the Constants form or in code immediately affects new calculations in the same session.
+
+## Pitfalls
+
+**Stale cache in a long session.** A scheduled job does not see a rate change without a fresh read.
+**Constant as a log.** No "who and when changed" slice without separate audit.
+**Frequent writes.** `Установить()` in a loop loads the DBMS and locks.
+**Type mismatch.** After a metadata type change the old value may not read.
+**Direct SQL.** Bypassing the platform breaks cache and portability across DBMS engines.

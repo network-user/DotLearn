@@ -1,0 +1,62 @@
+---
+id: 2955
+title: "IP addresses: how does QA use IPv4, IPv6, and routing in bugs?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# IP addresses: how does QA use IPv4, IPv6, and routing in bugs?
+
+## In short
+
+Internet Protocol provides addressing and packet delivery without ordering guarantees (TCP adds that). IPv4 (32-bit, ~4B addresses) and IPv6 (128-bit) identify a network interface. QA hits IP with ACL whitelists, geo by IP, dual-stack DNS, NAT, and "works by IP, fails by hostname".
+
+## How to answer in an interview
+
+- IPv4 dotted decimal (192.0.2.10); private ranges 10/8, 172.16/12, 192.168/16 are not routed on the public internet.
+- IPv6 compressed notation, often dual-stack: A and AAAA records; browsers may prefer v6.
+- Routers forward by longest prefix match; MTU fragmentation can break large UDP packets.
+- Honestly: "ping the IP" does not replace SNI/TLS checks by hostname; certs bind to names, not IPs.
+
+## How it works
+
+Packet path:
+
+```
+Client 203.0.113.5 -> Router -> ISP -> Target 198.51.100.20:443
+```
+
+Dual-stack and ACL Gherkin:
+
+```gherkin
+Feature: IP addressing and access
+
+  Scenario: Host resolves to A and AAAA
+    When QA digs A and AAAA for "app.example.com"
+    Then both records exist on the dual-stack stand
+    And curl to https://app.example.com succeeds on both families
+
+  Scenario: Whitelist blocks disallowed IP
+    Given API allows only subnet 198.51.100.0/24
+    When a request comes from IP 203.0.113.99
+    Then API returns 403
+    And logs record denied client IP
+
+  Scenario: Direct HTTPS by IP without SNI is rejected
+    When the client opens "https://198.51.100.20/" with IP as Host
+    Then TLS handshake fails or default vhost 404 is returned
+    And expected behavior is documented
+```
+
+Private IP in Docker/k8s (10.x) explains why a service is unreachable from a laptop without port-forward.
+
+## Pitfalls
+
+- **Hardcoded IPv4 in client config.** Breaks when CDN anycast changes.
+- **AAAA published, broken v6 route.** Timeout for a subset of users only.
+- **NAT hairpin.** Inside LAN the domain does not resolve to public IP.
+- **GeoIP on stale DB.** VPN exit in an "unexpected" country, false fraud block.
+- **Confusing MAC and IP.** L2 vs L3; ARP issues are not fixed by changing DNS.

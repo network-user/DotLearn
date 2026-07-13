@@ -1,0 +1,51 @@
+---
+id: 1527
+title: "Where does a goroutine store local data?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where does a goroutine store local data?
+
+## In short
+
+Each goroutine has its own stack, starting small (on the order of kilobytes) and growing on demand. Locals and call frames live on the stack; when the compiler cannot prove a bounded lifetime, values escape to the heap through the allocator.
+
+## How to answer in an interview
+
+- Stack growth copies into a larger segment; runtime fixes up pointers into the heap.
+- Large objects and closures that outlive the function allocate on the heap, not on the goroutine stack.
+- `new` and `&T{}` literals do not automatically mean heap; escape analysis decides.
+- I honestly caveat: infinite recursion or huge frames still hit process memory limits.
+
+## How it works
+
+```go
+package main
+
+import "fmt"
+
+func leaf(n int) int {
+	buf := [4]int{n, n + 1, n + 2, n + 3}
+	return buf[0] + buf[3]
+}
+
+func main() {
+	go func() {
+		fmt.Println(leaf(10))
+	}()
+}
+```
+
+Array `buf` likely stays on `leaf`'s stack until it escapes. Returning a pointer into `buf` moves allocation to the heap.
+
+## Pitfalls
+
+- **Escape through interface.** Assigning a local to `any` often forces heap.
+- **Closure on loop variable.** A pointer to the changing loop var escapes and races.
+- **Stack shrink.** Stacks can shrink; do not rely on raw stack pointers outside Go rules.
+- **Cgo stack.** Separate limits; crossing the boundary is costly.
+- **Profiling.** `go build -gcflags=-m` shows escapes; guessing heap behavior without it is unreliable.

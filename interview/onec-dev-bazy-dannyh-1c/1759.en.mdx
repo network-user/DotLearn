@@ -1,0 +1,67 @@
+---
+id: 1759
+title: "How 1C metadata maps to DBMS tables"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How 1C metadata maps to DBMS tables
+
+## In short
+
+Every configuration object in 1C gets physical tables in a relational DBMS on deploy: a catalog is usually one table, a document with tabular sections several, registers separate movement and total tables. Attributes become columns and references are stored as platform binary identifiers.
+
+## How to answer in an interview
+
+- I explain that developers work with metadata while the platform translates it into an SQL schema on database update.
+- In an interview I name mappings: `Справочник.Контрагенты` → `_Reference<N>`, tabular section → `_Document<N>_VT<K>`, accumulation register → `_AccumReg<N>`.
+- I stress that table names are internal and depend on metadata IDs, so raw SQL without platform knowledge is fragile.
+- I am honest that foreign keys in the classic SQL sense are not always declared explicitly; integrity is enforced by 1C.
+- For debugging I use 1C queries and the technological log, not manual table edits in SSMS unless absolutely necessary.
+
+## How it works
+
+A catalog stores `_IDRRef`, data version, deletion mark, and attributes as typed columns. Hierarchy is expressed with parent and level fields, not nested tables.
+
+A document splits into at least two areas: header in `_Document*` and tabular rows in `_Document*_VT*`. A posted document also leaves rows in register tables with the recorder field filled.
+
+An accumulation register writes each movement as its own row with period, movement type, dimensions, and resources. Totals may live in aggregates or be computed through query virtual tables.
+
+A simplified link diagram:
+
+```
+Справочник.Номенклатура  -->  _Reference42 (item header)
+Документ.Реализация      -->  _Document17 (header)
+                         -->  _Document17_VT1 (item lines)
+Регистр.ТоварыНаСкладах  -->  _AccumReg5 (movements)
+```
+
+A 1C query compiles to SQL with JOIN on `_IDRRef` and service fields:
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Реализация.Ссылка,
+|    Реализация.Дата,
+|    Контрагенты.Наименование
+|ИЗ
+|    Документ.РеализацияТоваров КАК Реализация
+|        ЛЕВОЕ СОЕДИНЕНИЕ Справочник.Контрагенты КАК Контрагенты
+|        ПО Реализация.Контрагент = Контрагенты.Ссылка
+|ГДЕ
+|    Реализация.Дата >= &НачалоПериода";
+```
+
+Understanding the mapping helps explain why a report reads three large tables instead of one document and where posting locks appear.
+
+## Pitfalls
+
+- **Direct UPDATE in the DBMS.** Bypassing the platform breaks reference integrity and session caches.
+- **Expecting FK like plain SQL.** Reference links are controlled by 1C, not declared FOREIGN KEY constraints.
+- **Same names across configurations.** Internal table numbers differ between databases of the same typical configuration with different customization history.
+- **Tabular sections without indexes.** Finding rows by document header without an index on the header reference degrades at scale.
+- **Confusing information and accumulation registers.** They have different physical total models; moving a query between them is non-trivial.

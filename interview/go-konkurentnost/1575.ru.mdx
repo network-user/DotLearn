@@ -1,0 +1,64 @@
+---
+id: 1575
+title: "Send в переполненный буфер канала"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Send в переполненный буфер канала
+
+## Суть
+
+Send в заполненный buffered channel блокирует горутину до recv или освобождения слота. Runtime не теряет значение: goroutine park, пока consumer не прочитает. Это backpressure без busy-wait.
+
+## Что ответить на собесе
+
+- Блокировка на send, не panic и не drop.
+- Размер буфера задаётся при `make(chan T, n)`.
+- Unbuffered (cap 0) блокирует сразу без receiver.
+- Честно: без consumer send может висеть бесконечно, это не deadlock runtime, а логическая.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	queue := make(chan int, 2)
+	queue <- 10
+	queue <- 20
+
+	go func() {
+		fmt.Println("writer blocked")
+		queue <- 30
+		fmt.Println("writer done")
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	fmt.Println(<-queue)
+	fmt.Println(<-queue)
+	fmt.Println(<-queue)
+}
+```
+
+Первые два send заполняют cap=2. Третий в goroutine park до `<-queue`. После drain writer разблокируется. Планировщик переключает CPU на другие goroutines.
+
+## Подводные камни
+
+**Нулевой consumer.** Writer навсегда в wait queue.
+
+**Слишком большой buffer.** Скрывает медленного reader, копит latency.
+
+**Select default на send.** Не блокирует, если buffer full, иначе как обычный send.
+
+**Close при blocked senders.** Нужна дисциплина shutdown.
+
+**Замер «зависания».** Блокировка нормальна; проблема в отсутствии recv path.

@@ -1,0 +1,70 @@
+---
+id: 4227
+title: "What is Nginx and where is it used?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is Nginx and where is it used?
+
+## In short
+
+Nginx is an event-driven web server and reverse proxy with low per-connection memory use. It handles static content, TLS termination, load balancing, rate limiting, and upstream caching. It commonly sits in front of app servers (Node, PHP-FPM, uWSGI) as an edge tier in Kubernetes Ingress and CDN origins.
+
+## How to answer in an interview
+
+- Master plus worker processes, async I/O; handles many keep-alive connections without thread-per-connection.
+- Reverse proxy with `proxy_pass`, health-aware upstreams, passing `X-Forwarded-*` headers.
+- L7 balancing: round-robin, least_conn, hash, sticky cookies.
+- Static offload via `root`/`try_files` removes load from the application tier.
+- Honestly: uncached dynamic traffic still hits the backend; nginx does not replace app scaling.
+
+## How it works
+
+Typical edge server block:
+
+```nginx
+upstream api_backends {
+    least_conn;
+    server 10.0.1.11:8080 max_fails=2 fail_timeout=10s;
+    server 10.0.1.12:8080 max_fails=2 fail_timeout=10s;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/ssl/certs/api.pem;
+    ssl_certificate_key /etc/ssl/private/api.key;
+
+    location / {
+        proxy_pass http://api_backends;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /assets/ {
+        root /var/www/static;
+        expires 7d;
+    }
+}
+```
+
+Reload without dropping connections when upgrade is configured:
+
+```bash
+sudo nginx -t && sudo nginx -s reload
+```
+
+## Pitfalls
+
+- **Worker connections limit.** Default 512 under heavy traffic yields 502; raise `worker_connections` and `somaxconn`.
+- **Proxy buffer defaults.** Large JSON responses stall on `proxy_buffers`; tune for API payloads.
+- **Include order.** Alphabetical server includes change implicit default; set explicit `default_server`.
+- **HTTP/2 push deprecated.** Do not enable push without metrics; it often hurts cache hit ratio.
+- **Stream module is separate.** TCP proxy lives in `stream {}`, not `http {}`; different context and metrics.

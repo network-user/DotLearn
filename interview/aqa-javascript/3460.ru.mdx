@@ -1,0 +1,76 @@
+---
+id: 3460
+title: "Promise.all и Promise.any в параллельных API-тестах"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Promise.all и Promise.any в параллельных API-тестах
+
+## Суть
+
+`Promise.all` ждёт все промисы: успех даёт массив результатов в исходном порядке, первый reject валит весь aggregate. `Promise.any` резолвится на первом fulfilled, игнорируя reject до тех пор, пока не упадут все (тогда `AggregateError`). Выбор зависит от того, нужны ли все ответы или достаточно первого зеркала.
+
+## Что ответить на собесе
+
+- `all` для setup шага: пользователь + корзина + токен перед UI сценарием.
+- `any` для fallback CDN/health endpoint, когда один регион недоступен.
+- Non-promise элементы в массиве `all` оборачиваются в `resolve` автоматически.
+- При `all` логирую индекс упавшего промиса для диагностики.
+- Честно: `any` скрывает деградацию второго и третьего upstream, если первый success.
+
+## Как это работает
+
+Все должны пройти:
+
+```
+const rows = await Promise.all([
+    client.get("/users/1"),
+    client.get("/users/2"),
+]);
+```
+
+Первый успех:
+
+```
+const fastest = await Promise.any([
+    client.get("https://edge-a.test/ping"),
+    client.get("https://edge-b.test/ping"),
+]);
+```
+
+В pytest таблица стратегий:
+
+```python
+def combine_all(results: list[int]) -> int:
+    if any(r < 0 for r in results):
+        raise RuntimeError("one failed")
+    return sum(results)
+
+
+def pick_any(results: list[int | None]) -> int:
+    for value in results:
+        if value is not None and value >= 0:
+            return value
+    raise RuntimeError("all failed")
+
+
+def test_all_vs_any_policy():
+    assert combine_all([1, 2, 3]) == 6
+    assert pick_any([None, 5, 1]) == 5
+```
+
+## Подводные камни
+
+**Promise.all без return в map.** `items.map(async () => ...)` создаёт массив промисов, забытый await.
+
+**any на зависимых шагах.** Второй запрос требует id из первого, any не подходит.
+
+**Пустой массив any.** Сразу AggregateError, ловлю в setup guard.
+
+**allSettled путают с all.** Нужен полный отчёт, не fail-fast.
+
+**Таймаут одного leg.** all отменяет ожидание только логически, fetch может висеть без AbortSignal.

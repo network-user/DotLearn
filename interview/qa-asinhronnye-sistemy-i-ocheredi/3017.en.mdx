@@ -1,0 +1,55 @@
+---
+id: 3017
+title: "How does QA verify duplicate messages in a queue?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does QA verify duplicate messages in a queue?
+
+## In short
+
+A duplicate is redelivery of the same business event with the same or equivalent payload. Verification relies on a unique message id, idempotency key, and side effects: double order, two SMS messages, double charge. QA compares broker counters, consumer logs, and final DB state.
+
+## How to answer in an interview
+
+- I send one event twice with the same `messageId` and count handler executions.
+- I check offset/partition in Kafka UI or RabbitMQ Management UI.
+- I compare body hash and business key: duplicate content without a new id is still a risk.
+- After a forced retry (network drop, consumer restart) I count rows in the target table.
+- Honestly: at-least-once delivery is normal; the bug is a non-idempotent consumer, not retry itself.
+
+## How it works
+
+```gherkin
+Feature: Duplicate message detection
+
+  Scenario: Same messageId redelivered
+    Given producer publishes event id evt-550 body order 9001
+    When broker redelivers evt-550 after consumer crash
+    And consumer dedup store contains evt-550
+    Then order 9001 exists exactly once in database
+
+  Scenario: Duplicate without idempotency key
+    Given two messages different ids same payload order 9001
+    When both consumed
+    Then QA expects either one order or documented duplicate policy
+
+  Scenario: Monitor queue metrics
+    Given publish rate 100 msg per sec
+    When consumer lag stable but DB insert rate 200 per sec
+    Then investigate duplicate processing
+```
+
+Checklist: `processed_events` table, Redis SET, or unique index on `external_id`. Consumer logs with `skipped duplicate` confirm protection.
+
+## Pitfalls
+
+- **Headers only.** Body changed; duplicate missed.
+- **Dedup window too short.** Retry after an hour passes through.
+- **Different consumer groups.** Each group processes again; not a delivery bug.
+- **Test on empty DB.** Unique index effect is invisible.
+- **Outbox ignored.** Duplicate visible only downstream, not in the queue.

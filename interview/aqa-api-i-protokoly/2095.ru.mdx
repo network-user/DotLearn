@@ -1,0 +1,73 @@
+---
+id: 2095
+title: "HTTP и HTTPS: что проверять в автотестах API"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HTTP и HTTPS: что проверять в автотестах API
+
+## Суть
+
+HTTP передаёт запросы и ответы в открытом виде по модели «клиент → сервер → клиент». HTTPS добавляет TLS: шифрование, проверку целостности и аутентификацию сервера сертификатом. Для AQA разница проявляется в безопасности канала, конфигурации клиента и наборе негативных сценариев.
+
+## Что ответить на собесе
+
+- Формулирую HTTP как прикладной протокол поверх TCP: метод, URL, заголовки, тело; stateless по умолчанию, состояние через cookies/tokens.
+- Объясняю HTTPS: тот же HTTP после TLS-handshake; данные на проводе зашифрованы, сервер предъявляет сертификат.
+- Перечисляю три свойства TLS: конфиденциальность, целостность, аутентификация peer (при корректной проверке цепочки).
+- Рассказываю, как тестирую: `requests`/`httpx` с verify=True, негативы на expired/self-signed cert, редирект http→https, HSTS.
+- Честно добавляю: HTTPS не защищает от XSS/CSRF на уровне приложения; шифрование канала не заменяет авторизацию и валидацию входных данных.
+
+## Как это работает
+
+Браузер или HTTP-клиент открывает TCP-соединение. Для `http://` сразу отправляется запрос в plaintext. Для `https://` сначала ClientHello/ServerHello, обмен сертификатами, согласование cipher suite, затем зашифрованный HTTP. Статус-код, заголовки и body после расшифровки выглядят так же, как в HTTP.
+
+В pytest часто проверяю оба endpoint'а staging: plain HTTP должен редиректить или отклоняться, HTTPS возвращает 200 и корректный cert chain. Для локальных mock-сервисов временно отключаю verify, но в pipeline prod-like окружения verify обязателен.
+
+```python
+import httpx
+import pytest
+
+
+@pytest.mark.parametrize(
+    "url, verify",
+    [
+        ("https://api.example.com/v1/ping", True),
+    ],
+)
+def test_https_ping(url: str, verify: bool):
+    with httpx.Client(verify=verify, timeout=5.0) as client:
+        response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("application/json")
+
+
+def test_http_redirects_to_https():
+    with httpx.Client(follow_redirects=False, timeout=5.0) as client:
+        response = client.get("http://api.example.com/v1/ping")
+    assert response.status_code in (301, 302, 308)
+    assert response.headers["location"].startswith("https://")
+
+
+def test_rejects_invalid_certificate():
+    with pytest.raises(httpx.ConnectError):
+        httpx.get("https://self-signed.bad.test/health", verify=True, timeout=3.0)
+```
+
+Дополнительно смотрю security-заголовки (`Strict-Transport-Security`, `Content-Security-Policy`) там, где это в scope API-gateway или BFF.
+
+## Подводные камни
+
+**verify=False в CI «навсегда».** Тесты проходят, prod падает на MITM или просроченном cert.
+
+**Mixed content.** UI на HTTPS дергает HTTP API; браузер блокирует, а headless API-тест этого не ловит без e2e.
+
+**TLS termination на балансировщике.** Внутренний hop может быть HTTP; healthcheck и trace должны учитывать реальный edge.
+
+**SNI и виртуальные хосты.** Запрос по IP без Host/SNI даёт другой cert, чем по домену.
+
+**Performance-тесты.** Handshake и session reuse сильно влияют на latency; сравнивать HTTP и HTTPS «в лоб» некорректно без warmup.

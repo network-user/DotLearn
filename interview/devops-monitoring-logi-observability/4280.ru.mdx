@@ -1,0 +1,71 @@
+---
+id: 4280
+title: "Как сделать Prometheus отказоустойчивым?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как сделать Prometheus отказоустойчивым?
+
+## Суть
+
+Один инстанс Prometheus не кластеризуется из коробки: локальный TSDB привязан к pod. HA строят дублированным scrape (два Prometheus с одинаковыми targets), federation или слоем Thanos/Mimir/Cortex для долгого хранения и dedup. Alertmanager, напротив, умеет gossip-кластер для дедупликации алертов.
+
+## Что ответить на собесе
+
+- Запускаю два независимых Prometheus с идентичным `scrape_configs`; Grafana читает оба или Thanos Query объединяет.
+- Для long-term storage подключаю Thanos sidecar + object storage (S3/MinIO).
+- Alertmanager в кластере из 3 nodes с `--cluster.peer`.
+- Бэкаплю TSDB volume snapshot'ами или `promtool tsdb create-blocks-from openmetrics`.
+- Честно: dual scrape удваивает нагрузку на exporters; на тысячах targets считаю remote write в Mimir/VictoriaMetrics.
+
+## Как это работает
+
+Кластер Alertmanager (3 peers):
+
+```bash
+docker run -d --name am-1 --network monitoring \
+  -p 9093:9093 \
+  prom/alertmanager:v0.27.0 \
+  --config.file=/etc/alertmanager/alertmanager.yml \
+  --cluster.listen-address=0.0.0.0:9094 \
+  --cluster.peer=am-2:9094 \
+  --cluster.peer=am-3:9094
+```
+
+Скрипт snapshot TSDB перед апгрейдом:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+DATA_DIR="/var/lib/prometheus"
+BACKUP_ROOT="/backup/prometheus"
+STAMP=$(date +%Y%m%d-%H%M%S)
+DEST="${BACKUP_ROOT}/${STAMP}"
+
+mkdir -p "$DEST"
+curl -s -X POST http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot
+SNAP=$(ls -td "${DATA_DIR}/snapshots/"* | head -1)
+tar -C "$(dirname "$SNAP")" -czf "${DEST}/tsdb.tar.gz" "$(basename "$SNAP")"
+echo "saved ${DEST}/tsdb.tar.gz"
+```
+
+Thanos sidecar рядом с Prometheus отдаёт блоки в S3:
+
+```bash
+thanos sidecar \
+  --prometheus.url=http://127.0.0.1:9090 \
+  --tsdb.path=/var/lib/prometheus \
+  --objstore.config-file=/etc/thanos/bucket.yml
+```
+
+## Подводные камни
+
+- **Ложное чувство HA.** Два Prometheus без Thanos дают расхождение series при missed scrape; алерты могут флапать.
+- **WAL corruption.** Жёсткое kill pod без graceful shutdown повреждает WAL; ставлю `preStop` hook с quit endpoint.
+- **Alertmanager split.** Чётное число peers без proper timeout даёт split notifications; держу нечётный кластер.
+- **Cardinality blast.** HA не спасает от OOM при bad metric labels; лимитирую relabel и drop rules.
+- **Backup размер.** Полный tar TSDB на больших retention занимает часы; предпочитаю object storage replication.

@@ -1,0 +1,70 @@
+---
+id: 4678
+title: "Why doesn't virtual dispatch from a destructor call the override?"
+category: cpp-klassy-oop-polimorfizm
+categoryLabel: "Классы / ООП / Полиморфизм"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why doesn't virtual dispatch from a destructor call the override?
+
+## In short
+
+During ~Base the object is already sliced to Base: the derived subobject is gone. Dynamic dispatch from a base destructor calls Base::virtual, not Derived::virtual.
+
+## How to answer in an interview
+
+- Destruction order: ~Derived, then ~Base.
+- Inside ~Base the object's vtable type is Base.
+- Calling virtual from ~Base skips derived cleanup; it is an antipattern.
+- Put derived cleanup in ~Derived, not via a virtual hook from ~Base.
+- Honestly: same in constructors: virtual from a ctor uses the current class static type too.
+
+## How it works
+
+```cpp
+#include <iostream>
+
+struct Node {
+    virtual ~Node() {
+        tidy(); // always Node::tidy
+    }
+    virtual void tidy() const {
+        std::cout << "Node::tidy\n";
+    }
+};
+
+struct Leaf : Node {
+    ~Leaf() override { std::cout << "~Leaf\n"; }
+    void tidy() const override {
+        std::cout << "Leaf::tidy\n";
+    }
+};
+
+int main() {
+    delete new Leaf{};
+}
+```
+
+Output: `~Leaf`, then `Node::tidy`, then ~Node. `Leaf::tidy` never runs.
+
+Safer pattern:
+
+```cpp
+struct LeafSafe : Node {
+    ~LeafSafe() override {
+        leaf_cleanup(); // concrete call
+    }
+    void leaf_cleanup() { /* derived resources */ }
+};
+```
+
+## Pitfalls
+
+- **Pure virtual in ctor/dtor.** Can terminate or was UB pre-C++11; still avoid.
+- **Virtual logging hook in ~Base.** Silently drops derived details.
+- **Two-phase shutdown.** A public close() before delete beats virtual in dtor.
+- **Exceptions during virtual in dtor.** Worsens the terminate path.
+- **Ctor/dtor symmetry.** Both periods are non-polymorphic for the current class level.

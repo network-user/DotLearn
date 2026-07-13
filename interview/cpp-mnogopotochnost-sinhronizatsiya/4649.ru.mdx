@@ -1,0 +1,59 @@
+---
+id: 4649
+title: "Какие типы mutex вы знаете?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие типы mutex вы знаете?
+
+## Суть
+
+В C++ стандартная библиотека предлагает линейку mutex под разные сценарии: обычный, рекурсивный, с таймаутом, shared для read/write и их timed-варианты. Выбор зависит от того, нужен ли exclusive доступ, параллельное чтение или повторный захват тем же потоком.
+
+## Что ответить на собесе
+
+- `std::mutex` для типичной критической секции.
+- `std::timed_mutex` когда нужен `try_lock_for` вместо вечного блокирования.
+- `std::recursive_mutex` для реентерабельного кода (лучше рефакторить, чем злоупотреблять).
+- `std::shared_mutex` + `shared_lock`/`unique_lock` для read-mostly данных.
+- Честно: также знаю OS mutex (pthread, CRITICAL_SECTION), но в modern C++ начинаю со STL.
+
+## Как это работает
+
+```cpp
+#include <chrono>
+#include <mutex>
+#include <shared_mutex>
+
+int cacheValue = 0;
+std::shared_mutex cacheGuard;
+std::timed_mutex retryGate;
+
+int readCache() {
+    std::shared_lock lock(cacheGuard);
+    return cacheValue;
+}
+
+void writeCache(int v) {
+    std::unique_lock lock(cacheGuard);
+    cacheValue = v;
+}
+
+bool tryWork() {
+    return retryGate.try_lock_for(std::chrono::milliseconds(5));
+}
+```
+
+`readCache` берёт `shared_lock` для параллельных читателей. `writeCache` эксклюзивен через `unique_lock`. `retryGate` позволяет отказаться, если lock занят дольше 5 ms, и выполнить fallback вместо deadlock.
+
+## Подводные камни
+
+- **Дублирование с 4646.** На собесе кратко перечисляю и сразу даю сценарий выбора.
+- **shared_timed редок.** Поддержка и поведение отличаются между libc++; проверяю платформу.
+- **Неправильный wrapper.** `shared_lock` на обычном `mutex` не компилируется.
+- **Priority inversion.** На Linux обычный mutex не решает PI; нужны pthread attr или futex policy.
+- **Размер критической секции.** Тип mutex не спасает, если под lock тяжёлая работа.

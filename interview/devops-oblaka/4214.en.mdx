@@ -1,0 +1,61 @@
+---
+id: 4214
+title: "What load balancers does AWS offer?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What load balancers does AWS offer?
+
+## In short
+
+AWS has three ELB families: ALB (L7, HTTP/HTTPS), NLB (L4, TCP/UDP, low latency), and GWLB (L3, inline network virtual appliances). All are managed, use target groups, health checks, and multi-AZ. Pick based on protocol and whether you need content-based routing.
+
+## How to answer in an interview
+
+- I use ALB for web and APIs: path/host/header routing, TLS termination, WAF integration.
+- NLB for high-throughput TCP/UDP: static IPs, source IP preservation, gaming and streaming.
+- GWLB for inline traffic inspection through partner NGFW/IDS without redesigning the app tier.
+- I tune target group health checks and cross-zone balancing to match service SLAs.
+- Honestly: ALB does not replace NLB for raw TCP at millions of connections; I mix types in one design.
+
+## How it works
+
+ALB accepts HTTP(S), matches listener rules to target groups (EC2, IP, Lambda, containers). NLB terminates TCP/UDP at connection level and can expose fixed Elastic IPs. GWLB steers flows to a fleet of virtual appliances via an endpoint service.
+
+Minimal ALB via CLI:
+
+```bash
+aws elbv2 create-target-group \
+  --name web-backends \
+  --protocol HTTP \
+  --port 8080 \
+  --vpc-id vpc-0a1b2c3d \
+  --health-check-path /healthz
+
+aws elbv2 create-load-balancer \
+  --name public-alb \
+  --type application \
+  --subnets subnet-aaa111 subnet-bbb222 \
+  --security-groups sg-frontend
+
+aws elbv2 create-listener \
+  --load-balancer-arn "$ALB_ARN" \
+  --protocol HTTPS \
+  --port 443 \
+  --certificates CertificateArn="$ACM_ARN" \
+  --default-actions Type=forward,TargetGroupArn="$TG_ARN"
+```
+
+The target group defines where traffic is forwarded; the listener binds a balancer port to an action. Health checks drop unhealthy targets from rotation.
+
+## Pitfalls
+
+- **ALB idle timeout.** Long WebSocket/SSE sessions may drop at the default 60s; raise timeout or use NLB.
+- **Cross-zone charges.** Inter-AZ traffic is billed; for NLB I sometimes disable cross-zone when targets are local.
+- **TLS on NLB.** NLB TLS termination is limited; complex L7 logic stays on ALB.
+- **GWLB asymmetry.** Wrong return paths break stateful inspection; verify route tables and endpoint subnets.
+- **Sticky sessions.** Cookie affinity hurts even scale-out; enable only when the app requires it.

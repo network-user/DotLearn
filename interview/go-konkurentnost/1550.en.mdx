@@ -1,0 +1,82 @@
+---
+id: 1550
+title: "How do you detect a data race in Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you detect a data race in Go?
+
+## In short
+
+Enable the race detector with `-race` on build/test/run; it instruments memory accesses and reports unsynchronized concurrent read/write. I keep `-race` in CI on unit/integration tests; production binaries usually ship without it due to 5-10× overhead.
+
+## How to answer in an interview
+
+- `go test -race ./...` is the main workflow; `go run -race` to repro main.
+- Reports show stacks for both conflicting accesses.
+- Fix with mutex, atomic, channel, or eliminate sharing.
+- Honestly: the detector misses races through external systems (DB, files) and logical races without concurrent unsynchronized access.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func buggy() int {
+	var total int
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			total++
+		}()
+	}
+	wg.Wait()
+	return total
+}
+
+func fixed() int {
+	var total int
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			total++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return total
+}
+
+func main() {
+	fmt.Println(buggy(), fixed())
+}
+```
+
+`go test -race` on a package calling `buggy` prints WARNING DATA RACE on `total`. After the mutex fix the run is clean.
+
+## Pitfalls
+
+**Race only under load.** Few iterations may not trigger; stress tests help.
+
+**False negatives in prod.** Without `-race` the race remains.
+
+**CI skips race for speed.** Teams disable race tests and ship bugs.
+
+**Cgo races.** Detector coverage is limited outside Go memory.
+
+**Happens-before via channel.** A race between send and receive may be fine when the channel orders events; without a channel you need a mutex.

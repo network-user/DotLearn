@@ -1,0 +1,51 @@
+---
+id: 2087
+title: "Shenandoah GC: concurrent low-pause collector"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Shenandoah GC: concurrent low-pause collector
+
+## In short
+
+Shenandoah is a regional concurrent GC for OpenJDK optimized for short STW pauses regardless of heap size. Most mark, evacuate, and compact work runs concurrently with the mutator via Brooks pointers (forwarding). It fits latency-sensitive Java services on large heaps where Parallel/G1 pauses are too long.
+
+## How to answer in an interview
+
+- Enable: `-XX:+UseShenandoahGC` (Red Hat builds, upstream OpenJDK 12+).
+- Concurrent phases + short init mark/evac STW pauses.
+- Competes with ZGC in the low-latency niche; different barrier implementation.
+- Trade-off: extra CPU overhead vs pause reduction.
+- Honestly: not default; verify distro (Amazon Corretto, Temurin) bundles support.
+
+## How it works
+
+```bash
+java -XX:+UseShenandoahGC \
+  -Xms8g -Xmx8g \
+  -XX:ShenandoahGCHeuristics=adaptive \
+  -jar matching-engine.jar
+```
+
+Cycle (simplified):
+
+1. **Concurrent mark.** Traverse object graph while app runs; snapshot-at-beginning style coordination.
+2. **Concurrent evacuation.** Copy live objects to new regions; forwarding pointer in object header.
+3. **Brief STW.** Finalize roots update, finish evacuation wave.
+4. **Concurrent update refs.** Mutator barriers follow forwarded objects.
+
+Load barriers on read may add overhead vs G1, but P99 pause is often <10ms even on large heaps.
+
+Compare ZGC: both target sub-ms/sub-10ms; Shenandoah available earlier on some enterprise distros; tuning heuristics differ.
+
+## Pitfalls
+
+- **Missing on some JDK builds.** Unrecognized flag → startup fail.
+- **CPU saturation.** Concurrent GC threads compete with app under load.
+- **Assuming zero pause.** STW phases still exist, just short.
+- **Small heap workloads.** Barrier cost may dominate.
+- **No magic for allocation storm.** Allocation rate still drives GC frequency.

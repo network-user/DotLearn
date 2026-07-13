@@ -1,0 +1,57 @@
+---
+id: 1778
+title: "Which objects most often lock during posting"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which objects most often lock during posting
+
+## In short
+
+On posting the platform locks accumulation and information register movements, totals tables, sometimes catalogs and recorder documents. Main contention is for balance slices by warehouse, item, and period, not the form object itself.
+
+## How to answer in an interview
+
+- I name accumulation registers with balances as the first queue source on posting.
+- In an interview I mention periodic information registers and those subordinate to a recorder.
+- I stress register totals: recalculation locks a wide period range.
+- I honestly say two documents for the same warehouse and item almost always serialize on movements.
+- For analysis I check which registers are wired in that document's posting module.
+
+## How it works
+
+Posting a sales document creates movements for goods, settlements, cost. Each movement set locks dimension keys in `_AccumReg*`.
+
+```bsl
+Процедура ОбработкаПроведения(Отказ, РежимПроведения)
+    Движения.ТоварыНаСкладах.Записывать = Истина;
+    Движение = Движения.ТоварыНаСкладах.Добавить();
+    Движение.ВидДвижения = ВидДвиженияНакопления.Расход;
+    Движение.Период = Дата;
+    Движение.Склад = Склад;
+    Движение.Номенклатура = СтрокаТовара.Номенклатура;
+    Движение.Количество = СтрокаТовара.Количество;
+    Движения.Взаиморасчеты.Записывать = Истина;
+    ЗаписьВзаиморасчетов = Движения.Взаиморасчеты.Добавить();
+    ЗаписьВзаиморасчетов.Контрагент = Контрагент;
+    ЗаписьВзаиморасчетов.Сумма = СуммаДокумента;
+КонецПроцедуры
+```
+
+An information register with second-level periodicity locks a row by period + dimensions. Document number sequences lock `_Document*` on write.
+
+Accumulation totals on backdated posting grab aggregates by period. Parallel posting on one register without ordered warehouses increases deadlocks.
+
+Typical hot spots: `ТоварыНаСкладах`, `ВзаиморасчетыСКонтрагентами`, cost registers, exchange rates, order statuses.
+
+## Pitfalls
+
+- **Focus only on the document.** The lock is on the register, not the document form.
+- **Several registers in one posting.** Deadlock from different lock order.
+- **Reposting old documents.** Pulls totals recalculation wider than expected.
+- **Auto-registration of extra registers.** Extra movements and extra locks.
+- **Overnight job vs daytime documents.** Contention on the same `_AccumReg*` tables.

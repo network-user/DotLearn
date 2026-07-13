@@ -1,0 +1,66 @@
+---
+id: 2024
+title: "Что такое negative testing?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое negative testing?
+
+## Суть
+
+Negative testing проверяет поведение системы на невалидном вводе, ошибках зависимостей и forbidden actions. Цель: предсказуемая ошибка (4xx/exception), без partial side effects и data corruption.
+
+## Что ответить на собесе
+
+- Пары к happy path: null, empty, too long, wrong charset, unauthorized role.
+- `assertThrows` / `MockMvc` expect status 400/403/409.
+- Проверяю, что DB не изменилась после rejected command.
+- Security negative: SQLi strings, CSRF missing token, expired JWT.
+- Честно: не всё invalid input должно быть 400; иногда 422 с field errors UX лучше.
+
+## Как это работает
+
+Domain validation:
+
+```java
+@Test
+void rejectsBlankEmail() {
+    RegistrationForm form = new RegistrationForm("", "Secret1!");
+    assertThrows(InvalidEmailException.class, () -> registrar.register(form));
+}
+
+@Test
+void divideByZeroThrows() {
+    MathOps ops = new MathOps();
+    ArithmeticException ex = assertThrows(ArithmeticException.class, () -> ops.ratio(10, 0));
+    assertTrue(ex.getMessage().contains("zero"));
+}
+```
+
+API layer with MockMvc:
+
+```java
+@Test
+void createOrderWithoutAuthReturns401() throws Exception {
+    mockMvc.perform(post("/api/orders")
+            .contentType(APPLICATION_JSON)
+            .content("""
+                {"sku":"ABC","qty":1}
+                """))
+        .andExpect(status().isUnauthorized());
+}
+```
+
+После negative case проверяю `orderRepository.count()` unchanged. Fuzz/property tests (jqwik) генерируют random invalid payloads для parser boundaries.
+
+## Подводные камни
+
+- **Only happy path in CI.** Prod первым видит malformed webhook.
+- **assertThrows без message/type specificity.** Ловит wrong exception.
+- **500 вместо 4xx на validation.** Клиент retry storm на user error.
+- **Leak stack trace in error body.** Information disclosure.
+- **Negative test mutates shared fixture.** Next test inherits dirty state.

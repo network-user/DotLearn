@@ -1,0 +1,69 @@
+---
+id: 2020
+title: "Когда уместно применять mocks?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда уместно применять mocks?
+
+## Суть
+
+Mocks нужны, когда unit-тест должен изолировать класс от медленных или недетерминированных зависимостей (БД, HTTP, message broker) и при этом проверить, что collaboration корректна. Не заменяют integration tests: mock соседа + real wiring ловит другой класс багов.
+
+## Что ответить на собесе
+
+- Mock внешний порт: repository, payment gateway, clock.
+- Stub happy path + verify side effect (email sent, metric incremented).
+- Не mock то, что тестируешь; не mock trivial getters.
+- Для Spring `@MockBean` в slice test, `@Mock` + `@InjectMocks` в pure unit.
+- Честно: если контракт соседа меняется часто, contract test лучше, чем хрупкий verify.
+
+## Как это работает
+
+```java
+class BillingServiceTest {
+    @Mock PaymentGateway gateway;
+    @InjectMocks BillingService billing;
+
+    @BeforeEach
+    void setup() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void chargesCustomerOnRenewal() {
+        Subscription sub = Subscription.active("cust-9", Money.of("9.99", "USD"));
+        when(gateway.charge(eq("cust-9"), any())).thenReturn(ChargeResult.ok("ch_1"));
+
+        billing.renew(sub);
+
+        assertEquals(RenewalStatus.PAID, sub.status());
+        verify(gateway).charge("cust-9", sub.price());
+        verifyNoMoreInteractions(gateway);
+    }
+
+    @Test
+    void marksPastDueWhenGatewayFails() {
+        when(gateway.charge(any(), any())).thenReturn(ChargeResult.declined());
+        Subscription sub = Subscription.active("cust-9", Money.of("9.99", "USD"));
+
+        billing.renew(sub);
+
+        assertEquals(RenewalStatus.PAST_DUE, sub.status());
+    }
+}
+```
+
+`when` задаёт поведение gateway без реального Stripe. `verify` подтверждает, что сервис не забыл вызвать charge. Для clock dependency inject `Clock.fixed(...)` вместо mock, если нужен только контроль времени.
+
+## Подводные камни
+
+- **Mock entire Spring context.** Тест не ловит wiring ошибки `@Autowired`.
+- **verify без need.** Implementation detail tests ломаются при rename private helper.
+- **lenient stubs скрывают unused setup.** Dead `when()` маскирует неверный сценарий.
+- **Mock static everywhere.** Mockito 3+ static mock усложняет parallel Surefire.
+- **Integration scenario через mocks.** 5 mocks = модель реальности, не система.

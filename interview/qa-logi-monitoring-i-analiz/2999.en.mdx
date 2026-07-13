@@ -1,0 +1,61 @@
+---
+id: 2999
+title: "Correlation ID: how does QA link a UI bug to microservice logs?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Correlation ID: how does QA link a UI bug to microservice logs?
+
+## In short
+
+A correlation ID (request id, trace id) is a unique request marker the gateway forwards to all downstream services and writes to logs. QA copies the id from a response header or error screen and searches the full chain in Kibana/Grafana/Loki.
+
+## How to answer in an interview
+
+- Generate or accept `X-Request-Id` / `traceparent` at the edge.
+- Same id in nginx access log, api, worker, DB audit.
+- Bug report: steps + timestamp + correlation id are mandatory.
+- Distributed tracing (Jaeger) visualizes spans with the same trace id.
+- Honestly: if id is not returned to client, QA is blind on prod without admin log access.
+
+## How it works
+
+```http
+GET /api/checkout HTTP/1.1
+X-Request-Id: 7f3a9c2e-4b1d-4e8a-9c0f-2d8e1a4b6c7d
+```
+
+Gherkin:
+
+```gherkin
+Feature: Correlation id across services
+
+  Scenario: Response header contains request id
+    When POST /api/payment fails
+    Then header X-Request-Id is present
+    And QA records value in bug ticket
+
+  Scenario: Search in centralized logs
+    Given request id 7f3a9c2e
+    When query in Kibana correlation_id:7f3a9c2e
+    Then entries from gateway payment inventory visible
+    And timestamps ascending
+
+  Scenario: Id propagated to async worker
+    Given checkout enqueues job
+    Then job log contains same correlation id as HTTP response
+```
+
+UUID v4 or snowflake; W3C Trace Context `traceparent` aligns with OpenTelemetry.
+
+## Pitfalls
+
+- **New id per internal hop.** Chain breaks, cannot correlate.
+- **Id only in DEBUG logs.** Prod level INFO without id.
+- **PII in log line with id.** GDPR leak in ticket paste.
+- **Clock skew between services.** Wrong order in timeline.
+- **Client-generated id not trusted.** Spoof floods logs.

@@ -1,0 +1,60 @@
+---
+id: 2507
+title: "Vite: dev server и prod build"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Vite: dev server и prod build
+
+## Суть
+
+Vite в dev отдаёт исходники как native ESM через esbuild pre-bundle deps (единый graph для `node_modules`). Запрос файла трансформируется on-demand (TS, Vue SFC). Prod build идёт через Rollup: tree shaking, code split, asset pipeline. HMR обновляет только затронутый модуль без full reload.
+
+## Что ответить на собесе
+
+- `pnpm dev` стартует мгновенно: нет upfront bundle всего app graph.
+- `@vitejs/plugin-react` / `plugin-vue` подключают framework SFC transforms.
+- `import.meta.env`, `import.meta.glob` compile-time features Vite.
+- Честно: очень кастомный Webpack config с legacy loaders иногда мигрирует болезненно; greenfield берёт Vite.
+- Preview: `vite preview` сервит уже собранный `dist` для smoke перед deploy.
+
+## Как это работает
+
+`vite.config.ts`:
+
+```ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: { port: 5173 },
+  build: {
+    target: 'es2020',
+    sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+        },
+      },
+    },
+  },
+});
+```
+
+Dev flow: browser `import App from '/src/App.tsx'` → Vite transpile TSX → ESM ответ. Dependency `react` pre-bundled в `.vite/deps`. HMR websocket шлёт accept для изменённого модуля.
+
+Prod: Rollup entry `index.html` → chunked JS/CSS в `dist/`. Static assets hashed filenames для cache bust.
+
+## Подводные камни
+
+- **CJS deps.** Legacy package без ESM может ломать dev pre-bundle; fix через `optimizeDeps.include`.
+- **Env exposure.** Только `VITE_` vars; забытый secret prefix утекает.
+- **SSR frameworks.** Nuxt/SvelteKit добавляют свой слой поверх Vite; не путать с vanilla SPA setup.
+- **Rollup plugin compat.** Dev-only plugin может не работать в prod build без dual config.
+- **Base path.** Deploy под subpath требует `base: '/app/'` иначе assets 404.

@@ -1,0 +1,60 @@
+---
+id: 2084
+title: "Two classes with the same FQN in one JVM"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Two classes with the same FQN in one JVM
+
+## In short
+
+Class identity in the JVM is the pair (fully qualified name, defining ClassLoader). Two `.class` files with the same `com.acme.Plugin` loaded by different loaders are different runtime types. Assignment and `instanceof` across them are illegal. This is the basis for isolation in app servers, OSGi, and plugin frameworks.
+
+## How to answer in an interview
+
+- Bootstrap loads `java.*`; app classes via ApplicationClassLoader.
+- Custom loader `defineClass` creates a new klass object even for identical bytecode.
+- Parent delegation: loader asks parent first, but sibling loaders are isolated.
+- `Class.forName(name, init, loader)` explicitly picks loader.
+- Honestly: duplicate class = ClassCastException hell; prefer a single classpath version.
+
+## How it works
+
+```java
+public final class LoaderIsolationDemo {
+
+    public static void main(String[] args) throws Exception {
+        var jarA = Paths.get("plugins/v1/plugin.jar");
+        var jarB = Paths.get("plugins/v2/plugin.jar");
+
+        var loaderA = new JarClassLoader(jarA);
+        var loaderB = new JarClassLoader(jarB);
+
+        Class<?> handlerA = loaderA.loadClass("com.acme.Handler");
+        Class<?> handlerB = loaderB.loadClass("com.acme.Handler");
+
+        System.out.println(handlerA == handlerB);
+        System.out.println(handlerA.getClassLoader());
+        System.out.println(handlerB.getClassLoader());
+
+        Object instanceA = handlerA.getDeclaredConstructor().newInstance();
+        // handlerB.cast(instanceA); // ClassCastException
+    }
+}
+```
+
+`handlerA == handlerB` → `false`. Same name, different klass metadata in metaspace (possibly twice if not unloaded).
+
+Tomcat: each webapp WAR → WebappClassLoader → two apps ship different Guava versions without JVM-wide conflict (within limits).
+
+## Pitfalls
+
+- **SPI with wrong TCCL.** ServiceLoader picks app loader vs plugin loader mismatch.
+- **Serialization across loaders.** Deserialized object class not assignable to caller type.
+- **Parent-last inversion.** Shading libs duplicate classes silently until runtime CCE.
+- **Metaspace leak.** Reload plugin without dropping loader retains all klasses.
+- **Assuming name uniqueness global.** Only per loader namespace guaranteed.

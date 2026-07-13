@@ -1,0 +1,64 @@
+---
+id: 2333
+title: "Monolith vs microservices: what changes in test strategy"
+category: aqa-arhitektura-i-raspredelennye-sistemy
+categoryLabel: "Архитектура и распределённые системы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Monolith vs microservices: what changes in test strategy
+
+## In short
+
+A monolith is deployed and tested as one application with a shared DB and process. Microservices split the domain into independent services that talk over the network. For AQA that shifts the pyramid: more contract and integration tests, observability, and test data management across services.
+
+## How to answer in an interview
+
+- I describe the monolith: one deployable unit, in-process calls, simpler end-to-end and transactions, harder to scale individual modules.
+- I describe microservices: independent deploy, failure isolation, but network latency, distributed transactions, and end-to-end tracing.
+- I explain test impact: in a monolith focus on unit + one e2e; in microservices use consumer-driven contracts (Pact), component tests per service, limited e2e smoke.
+- I mention infrastructure: service mesh, API gateway, message broker, testcontainers for each dependency.
+- I add honestly: microservices do not fix poor coverage; without mature CI/CD and monitoring the cost of testing grows faster than the benefit.
+
+## How it works
+
+In a monolith pytest can start the app via TestClient (FastAPI/Flask) and verify a business scenario in one run: HTTP → domain layer → DB in one transaction. Flakiness usually comes from data and test order, less often from the network.
+
+In a microservice setup each service has its own repo and pipeline. Service A tests mock B via wiremock or a Pact contract; e2e goes through the gateway and covers only critical user journeys. Integration regression is caught by contract tests on every PR, not a full e2e across 20 services.
+
+```python
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+catalog_app = FastAPI()
+
+
+@catalog_app.get("/api/v1/items/{item_id}")
+def fetch_item(item_id: int):
+    return {"id": item_id, "title": "demo-widget", "stock": 3}
+
+
+def test_catalog_contract():
+    client = TestClient(catalog_app)
+    response = client.get("/api/v1/items/42")
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"id", "title", "stock"}
+    assert body["id"] == 42
+```
+
+For a distributed scenario I add a correlation-id header, attach logs/traces to Allure, and verify saga/compensation when a downstream fails.
+
+## Pitfalls
+
+**E2E over the whole mesh.** A 40-minute run that is unstable; one failed service blocks every team.
+
+**Shared test database.** Microservices on one DB lose the main isolation benefit; tests collide.
+
+**Contract drift.** Producer changes JSON without versioning; consumer tests pass on mocks, fail in staging.
+
+**Test data fan-out.** Seed in one service is invisible to another; you need orchestrated fixtures or synthetic events.
+
+**False confidence in a monolith.** Fast e2e hides missing unit tests on complex domain logic.

@@ -1,0 +1,58 @@
+---
+id: 3328
+title: "Как WebSocket даёт двусторонний канал поверх HTTP?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как WebSocket даёт двусторонний канал поверх HTTP?
+
+## Суть
+
+WebSocket начинается как обычный HTTP/1.1 запрос с заголовками `Upgrade: websocket` и `Connection: Upgrade`. После успешного handshake TCP-сессия остаётся открытой, протокол переключается на бинарные/текстовые фреймы, и обе стороны могут слать данные без нового request/response на каждое сообщение.
+
+## Что ответить на собесе
+
+- Конtrast с polling/long-polling: один persistent socket вместо частых HTTP round-trip.
+- Описываю handshake: 101 Switching Protocols, ключ `Sec-WebSocket-Key`, ответ `Sec-WebSocket-Accept`.
+- Называю типичные кейсы: чат, live-дашборды, collaborative editing, игровые лobbies.
+- Честно добавляю: за балансировщиком нужны sticky sessions или L7-aware proxy; health check HTTP не проверяет ws-канал автоматически.
+
+## Как это работает
+
+Клиент открывает TCP к origin, шлёт GET с upgrade-заголовками. Сервер (nginx, ingress или app) валидирует версию протокола и возвращает 101. Дальше трафик идёт фреймами с opcode (text/binary/ping/pong/close). Heartbeat через ping/pong держит NAT и idle timeout прокси.
+
+Проверка handshake с curl (ожидаем 101 или 400 без полного клиента):
+
+```bash
+KEY=$(openssl rand -base64 16)
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: ${KEY}" \
+  "https://chat.example.com/ws"
+```
+
+В проде reverse proxy пробрасывает upgrade:
+
+```bash
+grep -A6 'location /ws' /etc/nginx/snippets/websocket.conf
+# proxy_http_version 1.1;
+# proxy_set_header Upgrade $http_upgrade;
+# proxy_set_header Connection "upgrade";
+# proxy_read_timeout 3600s;
+```
+
+Без `Upgrade`/`Connection` nginx останется на HTTP и оборвёт long-lived сессию. Таймауты `proxy_read_timeout` увеличивают для silent каналов.
+
+## Подводные камни
+
+- **TLS termination и wss.** Клиент использует `wss://`, прокси должен сохранять hop-by-hop заголовки upgrade end-to-end.
+- **Отсутствие backpressure.** Быстрый producer может забить буфер; нужны queue limits на app side.
+- **Reconnect без state.** После обрыва клиент теряет подписки; нужен resume token или replay из брокера.
+- **Mixed content.** Страница на HTTPS не откроет `ws://` без mixed-content block в браузере.
+- **DDoS на handshake.** Дешёвый upgrade-шторм бьёт по CPU; rate limit на `/ws` обязателен.

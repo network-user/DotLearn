@@ -1,0 +1,67 @@
+---
+id: 3042
+title: "Видит ли Charles Proxy трафик WebSocket?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Видит ли Charles Proxy трафик WebSocket?
+
+## Суть
+
+Да: Charles перехватывает WebSocket поверх HTTP Upgrade и показывает кадры в отдельной сессии. Для `wss://` нужен SSL Proxying с установленным корневым сертификатом Charles на клиенте. Сообщения отображаются по направлению (client→server / server→client) с текстом или hex payload.
+
+## Что ответить на собесе
+
+- Настраиваю системный/браузерный proxy на Charles, включаю SSL Proxying для нужного host:port.
+- В Structure ищу запись с типом WebSocket после GET ... Upgrade: websocket.
+- Вкладка WebSocket показывает каждый frame; фильтрую ping/pong, если шумят heartbeat.
+- Для мобилки ставлю Charles cert на устройство и прописываю Wi‑Fi proxy.
+- Честно: certificate pinning в native app блокирует расшифровку; нужен debug build или Frida, не «просто Charles».
+
+## Как это работает
+
+```gherkin
+Feature: Charles WebSocket inspection
+
+  Scenario: Chat message captured on wss
+    Given Charles SSL Proxy enabled for chat.stage.example:443
+    And browser trusts Charles root certificate
+    When user opens wss://chat.stage.example/ws
+    Then Charles lists session with WebSocket tab
+    And frame client sends {"type":"message","text":"ping QA"}
+    And frame server responds {"type":"ack","id":"m-8821"}
+
+  Scenario: Missing frames due to wrong proxy
+    Given mobile app ignores system proxy
+    When tester expects Charles to show socket traffic
+    Then no Upgrade request appears until app configured for manual proxy
+    And QA documents limitation for release build with pinning
+```
+
+Упрощённый клиентский код (переименованный endpoint):
+
+```javascript
+const chatSocket = new WebSocket("wss://chat.stage.example/ws/v2");
+
+chatSocket.addEventListener("open", () => {
+  chatSocket.send(JSON.stringify({ type: "subscribe", room: "orders" }));
+});
+
+chatSocket.addEventListener("message", (evt) => {
+  console.debug("frame", evt.data);
+});
+```
+
+В Charles последовательность такая: HTTP handshake с заголовками `Connection: Upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Key`; после 101 Switching Protocols трафик идёт бинарными/text frames. Binary frames Charles показывает hex; для protobuf нужен внешний decoder по schema.
+
+## Подводные камни
+
+- **Забытый SSL Proxy host.** Виден только CONNECT tunnel без payload.
+- **HTTP/2-only gateway.** Некоторые балансировщики терминируют WS иначе; проверь path через curl -v.
+- **Огромный поток tickers.** UI тормозит; включай focus host и export только нужный интервал.
+- **Pinning в prod build.** Charles покажет tunnel, но не расшифрует body.
+- **Смешение ws и wss.** На http странице mixed content блокирует socket до исправления CSP.

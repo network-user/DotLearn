@@ -1,0 +1,64 @@
+---
+id: 4644
+title: "How do you prevent deadlock?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you prevent deadlock?
+
+## In short
+
+Strategies break one of Coffman's four conditions: a single lock order, atomic multi-mutex acquisition (`std::lock` / `scoped_lock`), timeouts with rollback, fewer simultaneously held resources, and a lock hierarchy.
+
+## How to answer in an interview
+
+- I always take mutexes in ascending address order or a predefined rank.
+- For pairs I use `std::scoped_lock(m1, m2)` or `std::lock` plus `adopt_lock`.
+- `try_lock_for` / `try_lock` with backoff instead of waiting forever.
+- Design with fewer nested locks: one mutex per subsystem, lock-free queue between stages.
+- Honestly: timeouts treat symptoms; without rollback and retry logic you can break invariants.
+
+## How it works
+
+```cpp
+#include <mutex>
+#include <thread>
+
+std::mutex alpha;
+std::mutex beta;
+
+void safeWork() {
+    std::scoped_lock guard(alpha, beta);
+}
+
+int main() {
+    std::thread t1(safeWork);
+    std::thread t2(safeWork);
+    t1.join();
+    t2.join();
+}
+```
+
+`scoped_lock` acquires both mutexes without a user-defined order: the implementation picks an order that avoids cycling with another `scoped_lock` in a peer thread. Rank-based alternative:
+
+```cpp
+void ranked() {
+    std::lock(alpha, beta);
+    std::lock_guard a(alpha, std::adopt_lock);
+    std::lock_guard b(beta, std::adopt_lock);
+}
+```
+
+Both threads always take `alpha` before `beta`.
+
+## Pitfalls
+
+- **Three or more mutexes.** Rank must be global; `scoped_lock` scales better than ad-hoc ordering.
+- **False success on try_lock.** Rollback must release locks already taken or hold-and-wait remains.
+- **Database and external APIs.** Internal order does not help if a library locks differently.
+- **Readers and writers.** `shared_mutex` can deadlock on bad shared → unique upgrade.
+- **Avoiding locks.** Lock-free code is harder; memory-order bugs cost more than mutex deadlock.

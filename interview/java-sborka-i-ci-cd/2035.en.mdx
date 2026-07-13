@@ -1,0 +1,63 @@
+---
+id: 2035
+title: "Maven default lifecycle phases in order"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Maven default lifecycle phases in order
+
+## In short
+
+The Maven default lifecycle follows a fixed chain: `validate`, `compile`, `test`, `package`, `verify`, `install`, `deploy`. Each phase aggregates plugin goals. Naming one phase runs it and every earlier phase. `compile` builds main sources; `test` runs unit tests before packaging.
+
+## How to answer in an interview
+
+- I list phases and what actually happens: validate checks the POM, compile → `target/classes`, test → Surefire, package → jar/war.
+- `verify` adds integration/quality gates (Failsafe, SpotBugs) when configured.
+- `install` puts the artifact in `~/.m2`; `deploy` pushes to remote Nexus/Artifactory.
+- In pipelines I usually stop at `verify` and move deploy to a separate job with credentials.
+- Honestly: `mvn compile` does not guarantee green tests, which is a common code review trap.
+
+## How it works
+
+The `validate` phase catches a broken POM before compilation. `compile` invokes `maven-compiler-plugin`; without explicit config, Java version comes from the toolchain or parent POM:
+
+```xml
+<plugin>
+  <artifactId>maven-compiler-plugin</artifactId>
+  <configuration>
+    <release>21</release>
+  </configuration>
+</plugin>
+```
+
+At `test`, Surefire finds `*Test.java` / `@Test` methods. I keep test dependencies in `scope=test`:
+
+```xml
+<dependency>
+  <groupId>org.junit.jupiter</groupId>
+  <artifactId>junit-jupiter</artifactId>
+  <version>5.10.2</version>
+  <scope>test</scope>
+</dependency>
+```
+
+`package` builds the artifact per `<packaging>`. `verify` does not change the jar but may run Failsafe against a Testcontainers Postgres instance. `install` publishes to the local repository, handy in a multi-module reactor:
+
+```bash
+mvn -pl payments-api -am install
+```
+
+`deploy` needs a server id in `settings.xml` matching `distributionManagement`.
+
+## Pitfalls
+
+- **test-compile vs test.** Test source errors surface at `test-compile`, not `test`.
+- **package without tests.** `-DskipTests` skips Surefire, but the `test` phase is still "passed" empty.
+- **verify ≠ security scan.** Without plugins the phase does almost nothing.
+- **install clutters the local repo.** Snapshots with the same timestamp overwrite in non-obvious ways.
+- **deploy from a laptop.** Accidental `mvn deploy` with dev credentials can publish a SNAPSHOT to shared Nexus.

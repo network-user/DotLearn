@@ -1,0 +1,73 @@
+---
+id: 4285
+title: "What metric types does Prometheus support?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What metric types does Prometheus support?
+
+## In short
+
+The Prometheus exposition format defines four types: Counter (monotonic count), Gauge (up/down value), Histogram (distribution with buckets plus `_sum`/`_count`), and Summary (client-side quantiles). Type drives correct PromQL: `rate()` for counters, `histogram_quantile()` for histogram buckets.
+
+## How to answer in an interview
+
+- Counter: `http_requests_total`, always increases; I use `rate()` or `increase()`.
+- Gauge: `memory_used_bytes`, `queue_depth`; `avg_over_time` works without rate.
+- Histogram: latency buckets `http_request_duration_seconds_bucket`; p95 via `histogram_quantile`.
+- Summary: precomputed quantile series, but cross-replica aggregation is limited; I usually prefer Histogram.
+- Honestly: wrong type (Gauge for total requests) breaks SLO dashboards.
+
+## How it works
+
+Sample exposition with different types (as `/metrics` returns):
+
+```bash
+cat <<'EOF'
+# HELP checkout_orders_total Completed orders
+# TYPE checkout_orders_total counter
+checkout_orders_total{status="ok"} 1542
+
+# HELP checkout_queue_depth Pending jobs
+# TYPE checkout_queue_depth gauge
+checkout_queue_depth 17
+
+# HELP checkout_latency_seconds Request latency
+# TYPE checkout_latency_seconds histogram
+checkout_latency_seconds_bucket{le="0.05"} 900
+checkout_latency_seconds_bucket{le="0.1"} 1200
+checkout_latency_seconds_bucket{le="+Inf"} 1300
+checkout_latency_seconds_sum 85.3
+checkout_latency_seconds_count 1300
+EOF
+```
+
+PromQL for error rate and p95:
+
+```bash
+# error rate (counter)
+curl -G 'http://prometheus:9090/api/v1/query' \
+  --data-urlencode 'query=rate(http_requests_total{status=~"5.."}[5m])'
+
+# p95 latency (histogram)
+curl -G 'http://prometheus:9090/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.95, sum(rate(checkout_latency_seconds_bucket[5m])) by (le))'
+```
+
+Inspect TYPE on a scrape target:
+
+```bash
+curl -s http://app:8080/metrics | grep -E '^# TYPE'
+```
+
+## Pitfalls
+
+- **rate on Gauge.** Produces meaningless spikes on restart or manual dec; use rate only on Counter/Histogram count.
+- **Too many buckets.** Dozens of latency buckets at high cardinality multiply series count.
+- **Summary aggregation.** Summary quantiles cannot be merged across pods; prefer Histogram plus recording rules.
+- **Counter reset.** Pod restart drops the counter; `rate()` handles resets, raw `increase` without a range can lie.
+- **`_total` without counter type.** Hand-rolled metrics missing `# TYPE counter` break detection in some exporters.

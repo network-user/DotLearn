@@ -1,0 +1,64 @@
+---
+id: 2975
+title: "JWT in APIs: why should QA understand token structure?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JWT in APIs: why should QA understand token structure?
+
+## In short
+
+A JWT is signed JSON in three segments (header.payload.signature), usually sent as `Authorization: Bearer`. The server verifies signature and claims (`exp`, `aud`, `sub`) without server-side session. QA uses structure knowledge for negatives: tamper payload, wrong alg, expired `exp`, missing `aud`.
+
+## How to answer in an interview
+
+- Payload decodes in base64url without a secret; I do not put passwords or PII in claims.
+- Header algorithm must be allowlisted (RS256/ES256); I test `alg:none` attack in the security suite.
+- Short TTL access JWT; long session via refresh, not a one-year JWT.
+- Honestly: signature tamper without private key must return 401; if it passes, that is a blocker.
+
+## How it works
+
+Segments:
+
+```
+eyJhbGciOiJIUzI1NiJ9 . eyJzdWIiOiIxMjMifQ . SflKxwRJ...
+     header               payload           signature
+```
+
+Gherkin negatives:
+
+```gherkin
+Feature: JWT validation on API
+
+  Scenario: Valid token passes
+    Given JWT signed HS256 with exp in the future
+    When GET /api/v1/account with Bearer
+    Then status is 200
+
+  Scenario: Tampered payload rejected
+    Given valid JWT
+    When QA changes claim role to admin in payload without resigning
+    And GET /api/v1/admin/users
+    Then status is 401 invalid_signature
+
+  Scenario: Expired exp
+    Given JWT exp in the past
+    When GET /api/v1/account
+    Then status is 401 token_expired
+    And body does not expose internal stack trace
+```
+
+For debugging I use jwt.io only on fixtures; production tokens do not go into tickets.
+
+## Pitfalls
+
+- **Confusing JWT and opaque token.** Payload is not readable for opaque.
+- **Clock skew on exp.** ±60s boundary causes flaky tests.
+- **JWT in query string.** Leak via logs and Referer.
+- **Huge claims.** Header overflow 431/413 on gateway.
+- **JWK rotation without kid.** All requests 401 after key rotation.

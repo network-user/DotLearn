@@ -1,0 +1,58 @@
+---
+id: 1525
+title: "How does the Go scheduler work?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does the Go scheduler work?
+
+## In short
+
+The Go scheduler is M:N: many goroutines (G) run on fewer OS threads (M) bound to logical processors (P). Each P keeps a local run queue; when idle it steals work from other Ps or the global queue.
+
+## How to answer in an interview
+
+- `GOMAXPROCS` sets P count (defaults to CPU count).
+- A blocked G on channel/net/syscall frees M for another G.
+- Work stealing balances load across Ps.
+- I honestly caveat: scheduling is cooperative; a tight CPU loop without preemption (before async preemption) could starve other Gs.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	fmt.Println("gomaxprocs", runtime.GOMAXPROCS(0))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			fmt.Println("task", n)
+		}(i)
+	}
+	wg.Wait()
+}
+```
+
+On `go f()` the G enqueues on a P. M picks a G and runs until block or preemption. Sysmon watches long-running Gs and can force a switch.
+
+## Pitfalls
+
+- **CPU-bound without yield.** Long pure CPU loops monopolize a P; sometimes `runtime.Gosched` or chunking helps.
+- **OS thread blocking.** Cgo or some syscalls pin M; the runtime spawns more Ms.
+- **Local queues and cache.** Gs may move between Ps; do not assume CPU affinity.
+- **GOMAXPROCS=1.** Parallelism is only cooperative; fine for debugging, not prod CPU load.
+- **NumCPU vs containers.** In Kubernetes GOMAXPROCS must respect cgroup quota or you oversubscribe.

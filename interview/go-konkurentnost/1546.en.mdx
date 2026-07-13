@@ -1,0 +1,63 @@
+---
+id: 1546
+title: "How do you launch 100 thousand goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you launch 100 thousand goroutines?
+
+## In short
+
+A loop with `go fn()` and `sync.WaitGroup` (or errgroup) creates 100k G; each must call Done. Fine for I/O-bound work; for CPU-bound use a worker pool or semaphore or the scheduler and memory suffer.
+
+## How to answer in an interview
+
+- Capture the loop variable: `go func(i int){ ... }(i)`.
+- Call wg.Add before spawn or once Add(N) before the loop.
+- Avoid fmt.Println in all 100k (I/O bottleneck).
+- Honestly: 100k idle goroutines are ok; 100k tight CPU loops are not without throttling.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+func main() {
+	const total = 100_000
+	var wg sync.WaitGroup
+	var done atomic.Uint64
+	wg.Add(total)
+	for i := 0; i < total; i++ {
+		go func(id int) {
+			defer wg.Done()
+			done.Add(1)
+		}(i)
+	}
+	wg.Wait()
+	fmt.Println("spawned:", done.Load())
+}
+```
+
+WaitGroup waits for every Done. In production, goroutine-per-request scales to hundreds of thousands when blocked on network; I cap compute with a sem chan struct{}.
+
+## Pitfalls
+
+**OOM from stack × N.** 100k × few KB plus heap captures can kill the process.
+
+**Scheduler thrash.** All runnable at once increases tail latency.
+
+**Forgot Done on panic.** Use defer wg.Done() inside the goroutine.
+
+**Loop variable capture.** Without passing i every goroutine sees the last i.
+
+**Unbounded spawn under load.** Rate limit or a worker queue instead of raw 100k/sec spawn.

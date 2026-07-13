@@ -1,0 +1,71 @@
+---
+id: 1775
+title: "Row, table, and record-set locks in 1C"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Row, table, and record-set locks in 1C
+
+## In short
+
+The platform and DBMS can lock a single row, an entire table, or a set of rows selected by a query. Granularity affects concurrency: a narrow lock reduces queues, a wide one protects a bulk operation but stops concurrent writes.
+
+## How to answer in an interview
+
+- I explain three levels: one reference, the whole metadata table, a query result with a filter.
+- In an interview I show `БлокировкаДанных.УстановитьЗначение()` for a slice and `Запрос.УстановитьБлокировку()` for a set.
+- I stress that a set lock is not "the whole table", only rows that match the filter.
+- I honestly say bulk posting sometimes needs a wide lock, otherwise you get partial posting and races.
+- I compare with SQL: `ROWLOCK`, `TABLOCK`, `UPDLOCK` on a WHERE subset.
+
+## How it works
+
+Locking a single document row before reposting:
+
+```bsl
+Блокировка = Новый БлокировкаДанных;
+Элемент = Блокировка.Добавить("Документ.РеализацияТоваров");
+Элемент.Режим = РежимБлокировкиДанных.Исключительный;
+Элемент.УстановитьЗначение("Ссылка", ДокументСсылка);
+Блокировка.Заблокировать();
+```
+
+Locking a set by filter via a query with managed locking:
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Остатки.Склад,
+|    Остатки.Номенклатура
+|ИЗ
+|    РегистрНакопления.Товары.Остатки(, Склад = &Склад) КАК Остатки
+|ГДЕ
+|    Остатки.КоличествоОстаток > 0";
+Запрос.УстановитьПараметр("Склад", СкладСписания);
+Запрос.МенеджерВременныхТаблиц = Новый МенеджерВременныхТаблиц;
+Запрос.Выполнить();
+Блокировка = Новый БлокировкаДанных;
+Элемент = Блокировка.Добавить("РегистрНакопления.Товары");
+Элемент.Режим = РежимБлокировкиДанных.Исключительный;
+Элемент.ИсточникДанных = Запрос.МенеджерВременныхТаблиц;
+Элемент.ИспользоватьИзИсточникаДанных("Склад", "Склад");
+Элемент.ИспользоватьИзИсточникаДанных("Номенклатура", "Номенклатура");
+Блокировка.Заблокировать();
+```
+
+A "whole table" lock appears when the filter is empty or missing: the platform reserves the entire namespace. That is justified for register totals rebuild but risky during daytime work.
+
+SQL translation of a set usually becomes row locks on movement keys. On escalation the DBMS may raise the lock to page or table regardless of developer intent.
+
+## Pitfalls
+
+- **Empty filter in the lock query.** The whole register is effectively locked.
+- **Reference without exclusive mode.** Two sessions edit the same document.
+- **Large set without a temp table.** A second read of the filter diverges from the first.
+- **Escalation on the SQL side.** The plan changes after data growth.
+- **Mixing levels in one transaction.** Narrow then wide lock increases deadlock risk.

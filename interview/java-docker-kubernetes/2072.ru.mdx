@@ -1,0 +1,70 @@
+---
+id: 2072
+title: "Pod в Kubernetes: минимальная единица деплоя"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Pod в Kubernetes: минимальная единица деплоя
+
+## Суть
+
+Pod это обёртка над одним или несколькими контейнерами с общим network namespace и optional shared volumes. Scheduler кладёт Pod на Node; kubelet запускает containers через runtime (containerd/CRI-O). Для Java-сервиса типичный Pod содержит один JVM container плюс optional sidecar.
+
+## Что ответить на собесе
+
+- Pod получает один cluster-routable IP; containers общаются через localhost.
+- Lifecycle: Pending → Running → Succeeded/Failed; restartPolicy задаёт поведение.
+- В prod Pod создают controllers (Deployment), не `kubectl run` напрямую.
+- requests/limits на Pod суммируют все containers; JVM `-Xmx` должен fit в limit.
+- Честно: Pod ephemeral; persistent state только через PVC или external DB.
+
+## Как это работает
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fraud-checker
+  labels:
+    app: fraud-checker
+spec:
+  restartPolicy: Always
+  containers:
+  - name: app
+    image: fraud-checker:1.6.0
+    ports:
+    - containerPort: 8080
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "768Mi"
+        cpu: "500m"
+    livenessProbe:
+      httpGet:
+        path: /actuator/health/liveness
+        port: 8080
+      initialDelaySeconds: 60
+```
+
+Kubelet на Node:
+
+1. Pull image (if not cached).
+2. Create pause container (holds network namespace).
+3. Start app container with cgroup limits.
+4. Report Pod status to API server.
+
+Service selector матчит Pod labels, not Pod name. При delete Pod Deployment создаёт replacement с новым suffix.
+
+## Подводные камни
+
+- **Two containers, one port.** Оба не могут bind один containerPort на shared IP без разных ports.
+- **OOMKilled JVM.** limit 768Mi при `-Xmx1g` → restart loop.
+- **No readiness probe.** Pod Ready до старта Spring → 502 на Ingress.
+- **Completed Job Pod accumulation.** TTL controller нужен для cleanup.
+- **HostPath in prod.** Node-local disk ломает portability и security.

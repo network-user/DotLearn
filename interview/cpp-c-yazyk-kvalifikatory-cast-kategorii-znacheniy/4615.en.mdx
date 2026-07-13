@@ -1,0 +1,60 @@
+---
+id: 4615
+title: "Do smart pointers replace a garbage collector?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Do smart pointers replace a garbage collector?
+
+## In short
+
+Smart pointers automate deletion when scope ends or the last owner resets, but they do not scan the heap globally or break cycles by themselves. That is deterministic RAII, not tracing GC like Java or C#.
+
+## How to answer in an interview
+
+- `unique_ptr`: single owner, move-only, zero overhead in the typical case.
+- `shared_ptr`: shared ownership plus a control block; `shared_ptr` cycles are not freed without `weak_ptr`.
+- `weak_ptr` breaks cycles and observes without extending lifetime.
+- GC hides ownership and introduces pauses; smart pointers need an explicit ownership model.
+- Honestly: graphs with shared ownership still get designed with unique + raw observer or weak, not "like GC."
+
+## How it works
+
+A `unique_ptr` destructor runs the deleter. `shared_ptr` keeps a strong count; at zero it deletes the object and block. `weak_ptr` does not bump the strong count.
+
+```cpp
+#include <memory>
+#include <iostream>
+
+struct Node {
+    std::shared_ptr<Node> next;
+    int id;
+    explicit Node(int v) : id(v) {}
+    ~Node() { std::cout << "drop " << id << '\n'; }
+};
+
+int main() {
+    auto head = std::make_shared<Node>(1);
+    {
+        auto tail = std::make_shared<Node>(2);
+        head->next = tail;
+        tail->next = head;
+    }
+    std::cout << "scope end\n";
+    return 0;
+}
+```
+
+The `head↔tail` cycle keeps both nodes after scope: without `weak_ptr` memory is not freed. GC would trace and collect; `shared_ptr` will not.
+
+## Pitfalls
+
+- **shared_ptr everywhere.** Extra atomic inc/dec and bloated APIs; default is often `unique_ptr`.
+- **this->shared_from_this.** Needs `enable_shared_from_this`; otherwise double control blocks.
+- **Custom deleters and arrays.** `shared_ptr<T[]>` and `unique_ptr<T[]>` have special delete rules.
+- **Not for non-owning.** Raw or observer/reference for borrows; smart pointers do not replace lifetime design.
+- **C interoperability.** `unique_ptr` with custom `free`/`fclose` deleters is mandatory; otherwise allocator mismatch.

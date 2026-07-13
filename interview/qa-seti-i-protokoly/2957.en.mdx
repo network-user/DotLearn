@@ -1,0 +1,66 @@
+---
+id: 2957
+title: "VPN: how does QA reproduce split tunnel and geo blocks?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# VPN: how does QA reproduce split tunnel and geo blocks?
+
+## In short
+
+A VPN builds an encrypted tunnel between the client and VPN gateway: traffic exits the internet with the gateway IP, not the device IP. Corporate VPN is often full tunnel (all traffic) or split tunnel (corp subnets only). QA verifies internal staging access, content geo restrictions, and that the app survives exit IP changes.
+
+## How to answer in an interview
+
+- Encryption protects the channel to the VPN server; beyond that traffic looks like the exit node (compliance matters).
+- Hidden IP changes geo, fraud rules, CDN edge; I test login from an "unexpected" country.
+- Split tunnel: corp API via VPN, YouTube direct; "API timeout only in office" is often routing.
+- Honestly: consumer VPN does not replace corp SSO testing; use the same client as users (AnyConnect, WireGuard profile).
+
+## How it works
+
+Full tunnel sketch:
+
+```
+[Laptop] --encrypted--> [VPN Gateway EU] --plain--> [api.internal.corp]
+         exit IP = gateway, not home ISP
+```
+
+Gherkin scenarios:
+
+```gherkin
+Feature: VPN and stand access
+
+  Scenario: Internal staging reachable only via VPN
+    Given VPN is disconnected
+    When QA opens "https://staging.internal.corp/"
+    Then the connection fails or DNS is NXDOMAIN
+    When QA connects corp VPN
+    Then staging opens with status 200
+
+  Scenario: Geo policy blocks login outside allowed region
+    Given VPN exit IP is in a non-whitelisted country
+    When the user logs in
+    Then API returns 403 with code geo_denied
+    And a clear message is shown without stack trace leak
+
+  Scenario: Split tunnel does not send public SaaS through corp
+    Given split tunnel is enabled
+    When QA opens a public CDN asset
+    Then traffic does not route through corp VPN gateway
+    And latency is not worse than baseline without VPN
+```
+
+I check DNS leak: internal hostnames resolve only with corp DNS suffix while VPN is active.
+
+## Pitfalls
+
+- **Testing without the user VPN profile.** WireGuard for QA, IPSec for client; different routes.
+- **MTU/MSS on VPN.** Large POST works locally, fails in tunnel.
+- **Kill switch off.** IP leak on reconnect; fraud test invalid.
+- **Double VPN + corp.** Unpredictable exit; flaky geo tests.
+- **Treating VPN as full anonymity.** Server-side session and cookies still identify the user.

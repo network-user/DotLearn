@@ -1,0 +1,71 @@
+---
+id: 2202
+title: "Kafka consumer groups: why should QA care about partition assignment?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Kafka consumer groups: why should QA care about partition assignment?
+
+## In short
+
+A consumer group ties several consumer instances that read a topic together: each partition in the group is assigned to only one active consumer at a time, so a message is not processed twice inside the group. When an instance fails the broker redistributes partitions (rebalance). For testing this is where you verify scale, fault tolerance, and duplicate handling.
+
+## How to answer in an interview
+
+- Group id defines the logical subscriber: all instances with the same GROUP_ID split partitions; another group reads the same messages independently (broadcast across groups).
+- Consumer count in the group must not exceed partition count: extras sit idle.
+- During rebalance you can get pauses and rereads; I check handler idempotency and offset commits.
+- Honestly: auto-commit is fine in demos; in production QA expects manual commit after a successful business step, otherwise effects are lost or duplicated.
+
+## How it works
+
+Topic `orders-created` has 4 partitions. Group `fulfillment-svc` runs 2 processes:
+
+| Consumer | Partitions |
+|----------|------------|
+| worker-a | 0, 1 |
+| worker-b | 2, 3 |
+
+If `worker-a` dies, the group coordinator assigns 0 and 1 to `worker-b` until a new instance joins. Offsets are stored per partition per group: progress is not one cursor for the whole topic.
+
+Gherkin for fault-tolerance regression:
+
+```gherkin
+Feature: Consumer group and rebalance
+
+  Scenario: Two consumers split four partitions with no duplicates in the group
+    Given topic "orders-created" with 4 partitions
+    And two consumer instances with GROUP_ID "fulfillment-svc"
+    When the producer publishes 100 messages with unique keys
+    Then each message is processed by exactly one instance in the group
+    And total group lag trends to 0
+
+  Scenario: Instance failure does not stop processing forever
+    Given worker-a handles partitions 0 and 1
+    When worker-a is stopped forcefully
+    Then within N seconds partitions 0 and 1 are assigned to another live consumer
+    And unprocessed messages from 0 and 1 are eventually read
+```
+
+Key settings on a test stand (pseudo config):
+
+```
+bootstrap.servers=broker:9092
+group.id=fulfillment-svc
+enable.auto.commit=false
+auto.offset.reset=earliest
+```
+
+After successful processing the consumer calls commit sync; on failure the message stays for retry or goes to a DLQ per service policy.
+
+## Pitfalls
+
+- **More consumers than partitions.** Some processes idle; load does not grow but the team thinks it scaled.
+- **Rebalance during deploy.** Spike of duplicates or gaps if the handler is not idempotent.
+- **Different group ids on one service.** Two deploys with a typo in GROUP_ID double downstream load.
+- **Sticky assignor vs range.** After rebalance partition ownership shifts; flaky tests on "which pod processed it".
+- **Lag measured only as a sum.** One hot partition stalls a slice of users with the same key; you need lag per partition.

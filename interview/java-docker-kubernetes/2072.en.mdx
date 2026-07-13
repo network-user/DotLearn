@@ -1,0 +1,70 @@
+---
+id: 2072
+title: "Pod in Kubernetes: smallest deploy unit"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Pod in Kubernetes: smallest deploy unit
+
+## In short
+
+A Pod wraps one or more containers with a shared network namespace and optional shared volumes. The scheduler places the Pod on a Node; kubelet starts containers via the runtime (containerd/CRI-O). For a Java service a typical Pod has one JVM container plus an optional sidecar.
+
+## How to answer in an interview
+
+- A Pod gets one cluster-routable IP; containers talk via localhost.
+- Lifecycle: Pending → Running → Succeeded/Failed; restartPolicy defines behavior.
+- In prod Pods are created by controllers (Deployment), not direct `kubectl run`.
+- Pod requests/limits sum all containers; JVM `-Xmx` must fit the limit.
+- Honestly: Pods are ephemeral; persistent state only via PVC or external DB.
+
+## How it works
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fraud-checker
+  labels:
+    app: fraud-checker
+spec:
+  restartPolicy: Always
+  containers:
+  - name: app
+    image: fraud-checker:1.6.0
+    ports:
+    - containerPort: 8080
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "768Mi"
+        cpu: "500m"
+    livenessProbe:
+      httpGet:
+        path: /actuator/health/liveness
+        port: 8080
+      initialDelaySeconds: 60
+```
+
+Kubelet on the Node:
+
+1. Pull image (if not cached).
+2. Create pause container (holds network namespace).
+3. Start app container with cgroup limits.
+4. Report Pod status to API server.
+
+Service selector matches Pod labels, not Pod name. On Pod delete, Deployment creates a replacement with a new suffix.
+
+## Pitfalls
+
+- **Two containers, one port.** Both cannot bind the same containerPort on shared IP without different ports.
+- **OOMKilled JVM.** limit 768Mi with `-Xmx1g` → restart loop.
+- **No readiness probe.** Pod Ready before Spring starts → 502 on Ingress.
+- **Completed Job Pod accumulation.** TTL controller needed for cleanup.
+- **HostPath in prod.** Node-local disk breaks portability and security.

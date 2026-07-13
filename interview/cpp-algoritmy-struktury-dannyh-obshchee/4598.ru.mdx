@@ -1,0 +1,56 @@
+---
+id: 4598
+title: "Что такое фрагментация кучи?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое фрагментация кучи?
+
+## Суть
+
+Фрагментация кучи это разбиение свободной памяти на множество мелких несмежных блоков. Суммарно памяти может хватить для большого запроса, но непрерывного блока нет. Различают внутреннюю (лишний размер выделенного блока) и внешнюю (дыры между занятыми регионами).
+
+## Что ответить на собесе
+
+- Определяю external vs internal fragmentation.
+- Объясняю сценарий: alloc разных размеров, partial free, затем крупный `new` fails или идёт в mmap.
+- Называю mitigations: pool allocator, slab, tcmalloc/jemalloc, compacting GC (редко в C++).
+- Связываю с latency spikes и RSS, который не возвращается ОС.
+- Честно добавляю: современные аллокаторы смягчают проблему; на embedded она острее.
+
+## Как это работает
+
+Аллокатор выдаёт блоки из arena; `delete` возвращает их в free-list. Соседние свободные куски могут coalesce, но чередование размеров оставляет «швейцарский сыр».
+
+```cpp
+#include <vector>
+
+void fragment_demo() {
+    std::vector<int*> chunks;
+    for (int i = 0; i < 8; ++i) {
+        chunks.push_back(new int[16]);
+    }
+    delete[] chunks[2];
+    delete[] chunks[5];
+    chunks[2] = nullptr;
+    chunks[5] = nullptr;
+    // много мелких дыр; крупный запрос может не найти contiguous block
+    int* big = new int[200];  // может уйти в новый arena
+    delete[] big;
+    for (auto* p : chunks) delete[] p;
+}
+```
+
+Pool с фиксированным размером блока убирает внешнюю фрагментацию внутри пула.
+
+## Подводные камни
+
+- **Считать только free bytes.** Недостаточно; важна непрерывность.
+- **long-lived + short-lived mix.** Классический рецепт фрагментации.
+- **Возврат памяти ОС.** glibc часто держит arena; RSS не падает после free.
+- **Alignment overhead.** Внутренняя фрагментация на границах 16/32 байт.
+- **Over-pooling.** Слишком много пулов увеличивает internal waste.

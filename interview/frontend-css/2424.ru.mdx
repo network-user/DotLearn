@@ -1,0 +1,82 @@
+---
+id: 2424
+title: "Оптимизация reflow: layout thrashing и композитные свойства"
+category: frontend-css
+categoryLabel: "CSS"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Оптимизация reflow: layout thrashing и композитные свойства
+
+## Суть
+
+Reflow (layout) пересчитывает геометрию дерева; repaint рисует пиксели. Частые чередования чтения layout (`offsetWidth`, `getBoundingClientRect`) и записи стилей дают layout thrashing. Для анимаций предпочитаю `transform` и `opacity`, которые обычно идут по композитору.
+
+## Что ответить на собесе
+
+- Батчу DOM-изменения: `DocumentFragment`, один append, скрытый offline-контейнер.
+- Не читаю геометрию между записью стилей в цикле; сначала измерения, потом применение.
+- Анимирую `transform`/`opacity`, не `top`/`width`.
+- `content-visibility: auto` и `contain` сокращают область перерасчёта.
+- Честно добавляю: `will-change` держу кратковременно; постоянный will-change съедает память GPU.
+
+## Как это работает
+
+Плохой паттерн (thrashing):
+
+```ts
+for (const row of rows) {
+  const h = row.offsetHeight;
+  row.style.height = `${h + 8}px`;
+}
+```
+
+Каждая итерация: read → forced layout → write.
+
+Лучше:
+
+```ts
+const heights = rows.map((row) => row.offsetHeight);
+rows.forEach((row, i) => {
+  row.style.height = `${heights[i] + 8}px`;
+});
+```
+
+Анимация через rAF:
+
+```ts
+let tick = 0;
+function frame() {
+  tick += 1;
+  panel.style.transform = `translate3d(${tick}px, 0, 0)`;
+  if (tick < 300) requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+```
+
+`translate3d` поднимает слой на GPU; изменение `left` каждый кадр трогало бы layout.
+
+CSS containment:
+
+```css
+.feed-item {
+  contain: layout style paint;
+  content-visibility: auto;
+}
+```
+
+Браузер может пропустить layout невидимых карточек в длинном списке.
+
+## Подводные камни
+
+**getComputedStyle в hot path.** Синхронный полный стиль-рекальк на каждый вызов.
+
+**Таблицы и flex при массовом обновлении.** Ширины колонок пересчитывают полстраницы.
+
+**ResizeObserver callback + запись размеров в DOM.** Петля обратной связи; debounce или rAF batch.
+
+**contain: paint и dropdown.** Выпадашка обрезается родителем.
+
+**Виртуализация без стабильных key.** Полный remount списка вызывает mega-reflow.

@@ -1,0 +1,73 @@
+---
+id: 2496
+title: "watch и watchEffect во Vue 3"
+category: frontend-drugie-frontend-freymvorki
+categoryLabel: "Другие frontend фреймворки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# watch и watchEffect во Vue 3
+
+## Суть
+
+`watch` и `watchEffect` запускают side effects при изменении reactive state. `watch` явно указывает source (ref, getter, reactive field) и даёт `(newVal, oldVal)`. `watchEffect` автоматически собирает deps внутри callback и перезапускается при любом из них. Оба работают в Composition API и дополняют `computed`, который только derive без IO.
+
+## Что ответить на собесе
+
+- `watch(source, cb, { immediate, deep, flush })` для точечного контроля: debounce search, persist form draft.
+- `watchEffect` для sync derived side effects: document.title, localStorage mirror, analytics beacon.
+- `flush: 'post'` ждёт DOM update; полезно читать layout после мутации.
+- Честно: избыточный watch часто заменяется `computed` + template; watch оставляю для async и imperative API.
+- Cleanup: `watchEffect` возвращает stop handle; onInvalidate отменяет in-flight fetch при смене id.
+
+## Как это работает
+
+Explicit `watch`:
+
+```ts
+import { ref, watch } from 'vue';
+
+const query = ref('');
+const results = ref<string[]>([]);
+
+watch(
+  query,
+  async (next, prev) => {
+    if (next.length < 2) {
+      results.value = [];
+      return;
+    }
+    const payload = await fetch(`/api/search?q=${encodeURIComponent(next)}`).then((r) =>
+      r.json()
+    );
+    results.value = payload.items;
+  },
+  { flush: 'post' }
+);
+```
+
+Auto-tracked `watchEffect`:
+
+```ts
+import { ref, watchEffect } from 'vue';
+
+const quantity = ref(1);
+const lineTotal = ref(0);
+
+watchEffect(() => {
+  lineTotal.value = quantity.value * 19.5;
+  console.info('line recalculated', lineTotal.value);
+});
+```
+
+`watch` не запускается до первого изменения, если нет `immediate: true`. `watchEffect` выполняется сразу, затем при deps change. Для нескольких sources удобнее `watch([a, b], ([aN, bN], [aO, bO]) => ...)`. В `<script setup>` auto-import или explicit import из `vue`.
+
+## Подводные камни
+
+- **Deep watch cost.** `{ deep: true }` на большом reactive tree дорог; watch конкретное поле.
+- **Async race.** Без abort/onInvalidate старый fetch перезапишет новый результат.
+- **watchEffect loop.** Запись в тот же ref внутри effect без guard даёт infinite loop.
+- **SSR.** Side effects в watchEffect на сервере дублируются; оборачивай в `onMounted` где нужно.
+- **vs React useEffect.** Нет dependency array руками, но implicit deps сложнее читать в code review.

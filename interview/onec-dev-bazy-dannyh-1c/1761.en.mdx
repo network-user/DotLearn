@@ -1,0 +1,75 @@
+---
+id: 1761
+title: "Temporary tables in 1C queries: purpose and use"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Temporary tables in 1C queries: purpose and use
+
+## In short
+
+A temporary table in the 1C query language holds an intermediate result of a query batch in the DBMS for the duration of execution. It splits a complex selection into stages, cuts repeated scans of large tables, and simplifies query debugging.
+
+## How to answer in an interview
+
+- I explain that `ПОМЕСТИТЬ` creates a table in tempdb (or equivalent) within one query manager batch.
+- In an interview I name scenarios: prefiltering documents for a period, computing metrics in a second pass, joining an aggregate to detail.
+- I stress that a temporary table is not available after `Выполнить()` in another query without recreating it.
+- I am honest that without an index on the join key a large temporary table becomes the bottleneck itself.
+- For very large sets I consider an in-memory value table or scheduled materialization instead of endlessly growing tempdb.
+
+## How it works
+
+The batch starts with a select and the `ПОМЕСТИТЬ ИмяВТ` directive. Later statements in the same text reference `ИмяВТ` like a normal table. When the batch finishes the DBMS frees the space.
+
+A typical sales report pattern:
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.МенеджерВременныхТаблиц = Новый МенеджерВременныхТаблиц;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Продажи.Ссылка,
+|    Продажи.Дата,
+|    Продажи.Контрагент,
+|    Товары.Номенклатура,
+|    Товары.Количество,
+|    Товары.Сумма
+|ПОМЕСТИТЬ ВТПродажи
+|ИЗ
+|    Документ.РеализацияТоваров КАК Продажи
+|        ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.РеализацияТоваров.Товары КАК Товары
+|        ПО Продажи.Ссылка = Товары.Ссылка
+|ГДЕ
+|    Продажи.Дата МЕЖДУ &Начало И &Конец
+|    И Продажи.Проведен;
+|
+|////////////////////////////////////////////////////////////////////////////////
+|ВЫБРАТЬ
+|    ВТПродажи.Номенклатура,
+|    СУММА(ВТПродажи.Количество) КАК Количество,
+|    СУММА(ВТПродажи.Сумма) КАК Выручка
+|ИЗ
+|    ВТПродажи КАК ВТПродажи
+|СГРУППИРОВАТЬ ПО
+|    ВТПродажи.Номенклатура";
+Запрос.УстановитьПараметр("Начало", НачалоМесяца(ТекущаяДатаСеанса()));
+Запрос.УстановитьПараметр("Конец", КонецМесяца(ТекущаяДатаСеанса()));
+Результат = Запрос.Выполнить();
+```
+
+`МенеджерВременныхТаблиц` lets you run several batches in a row and reuse one temp table between them in the same query session. That helps when a second query builds the report and a third details top items.
+
+Indexes on a temp table are set via `ИНДЕКСИРОВАТЬ ПО` right after the field list in `ПОМЕСТИТЬ`. Without them, joining a million-row temp table to a catalog becomes a nested loop with a full scan.
+
+## Pitfalls
+
+- **Temp table without a filter.** Copying an entire register into tempdb fills disk and server memory.
+- **Missing manager.** Without `МенеджерВременныхТаблиц` reusing a temp table between queries does not work.
+- **Huge cardinality.** Unique rows without grouping before the second JOIN give no benefit.
+- **Mixing with a value table.** A value table lives in 1C session memory; a temp table lives in the DBMS; the choice depends on volume and need for SQL operations.
+- **Parallel sessions.** Tempdb is shared; heavy reports with temp tables compete for one cluster resource.

@@ -1,0 +1,86 @@
+---
+id: 1541
+title: "Зачем в RWMutex отдельные lock на чтение и запись?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в RWMutex отдельные lock на чтение и запись?
+
+## Суть
+
+`RLock` допускает параллельных readers, пока нет writer; `Lock` эксклюзивен и блокирует всех. Это снижает contention, когда reads доминируют и данные не меняются во время read critical section.
+
+## Что ответить на собесе
+
+- Read-heavy cache/config/map snapshot: RWMutex vs Mutex часто выигрывает.
+- Writer starvation возможен при непрерывном потоке readers; иногда Mutex проще и быстрее.
+- Нельзя upgrade RLock→Lock в одной goroutine (deadlock risk).
+- Честно: benchmark решает; sync.Map или immutable snapshot иногда лучше RWMutex.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Metrics struct {
+	mu    sync.RWMutex
+	hits  int
+	miss  int
+}
+
+func (m *Metrics) RecordHit() {
+	m.mu.Lock()
+	m.hits++
+	m.mu.Unlock()
+}
+
+func (m *Metrics) Snapshot() (hits, miss int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.hits, m.miss
+}
+
+func main() {
+	var m Metrics
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.RecordHit()
+		}()
+	}
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, _ := m.Snapshot()
+			fmt.Println("hits:", h)
+		}()
+	}
+	wg.Wait()
+}
+```
+
+Много `Snapshot` идут параллельно под RLock; `RecordHit` берёт exclusive Lock на короткое время.
+
+## Подводные камни
+
+**Write-heavy workload.** RWMutex дороже Mutex из-за reader counter и writer waiting.
+
+**RLock while mutate.** Держать RLock и менять данные через pointer race; read section должна быть truly read-only.
+
+**Recursive RLock.** Повторный RLock из той же G deadlock в стандартной реализации.
+
+**Copy after RUnlock.** Возвращай копию struct/slice под lock, не pointer на shared mutable state без защиты.
+
+**Prefer immutability.** Replace-on-write map избавляет от RWMutex в hot path.

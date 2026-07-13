@@ -1,0 +1,52 @@
+---
+id: 1521
+title: "Как Go разрешает коллизии в map?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как Go разрешает коллизии в map?
+
+## Суть
+
+Go map использует bucket с фиксированным числом слотов и overflow bucket цепочки при переполнении. Коллизии по хэшу разрешаются линейным пробингом внутри bucket и переходом на overflow, плюс рост таблицы при высоком load factor.
+
+## Что ответить на собесе
+
+- Не классический linked list на каждую ячейку; bucket массив с 8 key/value слотами (runtime detail).
+- Overflow bucket цепляется к основному при нехватке места в восьми слотах.
+- Incremental evacuation при resize снижает паузы на больших map.
+- Честно уточняю: точная схема внутренностей может меняться между версиями Go; на собесе важнее амортизированный O(1) и hash seeding против flooding.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	ids := make(map[uint64]string, 16)
+
+	for i := uint64(0); i < 20; i++ {
+		ids[i] = fmt.Sprintf("id-%d", i)
+	}
+
+	for k, v := range ids {
+		fmt.Println(k, v)
+	}
+}
+```
+
+Ключи с одинаковым bucket index после маски попадают в один bucket. Поиск сравнивает ключи в слотах bucket, затем проходит overflow chain. При росте map bucket count удваивается, элементы постепенно эвакуируются.
+
+## Подводные камни
+
+- **Упрощение «linked list».** Устаревшее описание; реальность bucket+overflow точнее.
+- **Hash flooding.** Без per-map seed злоумышленник мог бы подобрать коллизии; Go это учитывает.
+- **Pointer keys.** Равенство по адресу, не по содержимому; коллизии редки, но семантика ключей важнее.
+- **Итерация во время grow.** Runtime координирует, но concurrent write без sync всё равно запрещён.
+- **Ожидание сортировки.** Коллизии не влияют на порядок `range`; он всё равно псевдослучайный.

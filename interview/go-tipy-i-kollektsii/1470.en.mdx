@@ -1,0 +1,71 @@
+---
+id: 1470
+title: "How do you reduce the impact of map collisions?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you reduce the impact of map collisions?
+
+## In short
+
+Map collisions are inevitable: the runtime resolves them with bucket chains and table growth. You reduce impact with good keys, `make` with a size hint, and avoiding pathological hashes (shared prefixes, attacker-controlled keys).
+
+## How to answer in an interview
+
+- I say most of the fight is in the runtime; application code does not pick buckets manually.
+- For dense maps I use `make(map[K]V, expectedSize)` to trigger fewer grows and rebalances.
+- I warn about custom key types: stable `==` and sensible hashing via fields matter.
+- I add honestly: if you suspect hash flooding on a public API, do not accept arbitrary strings as keys without length limits.
+
+## How it works
+
+The hash maps a key to a bucket index. Many keys in one bucket lengthen lookup chains. Grow increases bucket count and redistributes entries, shortening average chain length again.
+
+Practices:
+
+```go
+package main
+
+import "fmt"
+
+type UserID struct {
+	id int64
+}
+
+func (u UserID) HashSeed() int {
+	return int(u.id ^ (u.id >> 32))
+}
+
+func buildIndex(ids []int64) map[UserID]string {
+	m := make(map[UserID]string, len(ids))
+	for _, raw := range ids {
+		key := UserID{id: raw}
+		m[key] = fmt.Sprintf("user-%d", raw)
+	}
+	return m
+}
+
+func main() {
+	ids := []int64{10, 20, 30, 40, 50}
+	idx := buildIndex(ids)
+	for k, v := range idx {
+		fmt.Println(k.id, v)
+	}
+}
+```
+
+`make` with `len(ids)` cuts intermediate grows. Key `UserID` compares on `id`; the runtime hashes the whole comparable struct.
+
+When keys come from outside (HTTP query as map key), an attacker can craft collisions; mitigations include canonical key types, length caps, or not using a map as the primary store.
+
+## Pitfalls
+
+- **Treating collisions as a bug.** They are normal for hash tables.
+- **Huge map without a hint.** Frequent grows copy the whole table and temporarily double memory.
+- **Struct key with a mutable slice field.** Does not compile; pointer fields mutated after insert break lookup.
+- **Iteration for ordering.** Order is random; sort keys separately.
+- **sync.Map as anti-collision.** It is for concurrency, not hash quality.

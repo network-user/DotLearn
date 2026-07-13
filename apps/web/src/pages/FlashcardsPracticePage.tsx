@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import type { InterviewDirection } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Dices, GraduationCap, Layers, Shuffle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -24,6 +25,12 @@ import {
   type FlashcardsPracticeSearch,
 } from '@dotlearn/lesson-engine';
 import { getInterviewCategories, getInterviewStages } from '@/lib/interview';
+import {
+  directionLabel,
+  getInterviewDirections,
+  isInterviewDirection,
+  readStoredInterviewDirection,
+} from '@/lib/interview-directions';
 import { Seo } from '@/lib/seo';
 import { topicTitleOf, useContentLanguage } from '@/lib/topics';
 
@@ -42,11 +49,12 @@ const PracticeField = ({ label, children }: { label: string; children: React.Rea
 
 const resolvedSearch = (
   search: FlashcardsPracticeSearch,
-): Required<Pick<FlashcardsPracticeSearch, 'mode' | 'category' | 'stage' | 'due' | 'count'>> &
+): Required<Pick<FlashcardsPracticeSearch, 'mode' | 'category' | 'stage' | 'direction' | 'due' | 'count'>> &
   Pick<FlashcardsPracticeSearch, 'topics' | 'start'> => ({
   mode: search.mode ?? practiceSearchDefaults.mode,
   category: search.category ?? practiceSearchDefaults.category,
   stage: search.stage ?? practiceSearchDefaults.stage,
+  direction: search.direction ?? practiceSearchDefaults.direction,
   due: search.due ?? practiceSearchDefaults.due,
   count: search.count ?? practiceSearchDefaults.count,
   topics: search.topics,
@@ -65,6 +73,24 @@ export const FlashcardsPracticePage = () => {
     () => parseTopicsParam(active.topics, topicSlugs),
     [active.topics, topicSlugs],
   );
+  const activeDirection: InterviewDirection | 'all' = (() => {
+    const rawDirection = active.direction ?? 'all';
+    if (rawDirection === 'all') return 'all';
+    if (isInterviewDirection(rawDirection)) return rawDirection;
+    return readStoredInterviewDirection() ?? 'python';
+  })();
+  const scopedCategories = useMemo(
+    () =>
+      activeDirection === 'all'
+        ? getInterviewCategories()
+        : getInterviewCategories(activeDirection),
+    [activeDirection],
+  );
+  const scopedStages = useMemo(
+    () =>
+      activeDirection === 'all' ? getInterviewStages() : getInterviewStages(activeDirection),
+    [activeDirection],
+  );
 
   const [session, setSession] = useState<Session | undefined>(undefined);
   const [starting, setStarting] = useState(false);
@@ -79,6 +105,7 @@ export const FlashcardsPracticePage = () => {
           mode: next.mode,
           ...(next.category !== 'all' ? { category: next.category } : {}),
           ...(next.stage !== 'all' ? { stage: next.stage } : {}),
+          ...(next.direction !== 'all' ? { direction: next.direction } : {}),
           ...(next.topics ? { topics: next.topics } : {}),
           ...(next.due !== 'due' ? { due: next.due } : {}),
           ...(next.count !== '20' ? { count: next.count } : {}),
@@ -100,12 +127,18 @@ export const FlashcardsPracticePage = () => {
         title = t('practice.topicsTitle');
         subtitle = t('practice.topicsSubtitle', { count: selectedTopics.length });
       } else if (active.mode === 'interview') {
-        const filter: { category?: string; stage?: string } = {};
+        const filter: { category?: string; stage?: string; direction?: string } = {};
+        if (activeDirection !== 'all') filter.direction = activeDirection;
         if (active.category && active.category !== 'all') filter.category = active.category;
         if (active.stage && active.stage !== 'all') filter.stage = active.stage;
         pool = await loadInterviewSessionCards(language, filter);
         title = t('practice.interviewTitle');
-        subtitle = t('practice.interviewSubtitle');
+        subtitle =
+          activeDirection === 'all'
+            ? t('practice.interviewSubtitle')
+            : t('practice.interviewDirectionSubtitle', {
+                direction: directionLabel(activeDirection, language),
+              });
       } else {
         pool = await loadMixedSessionCards(language, topicSlugs);
         title = t('practice.randomTitle');
@@ -124,7 +157,7 @@ export const FlashcardsPracticePage = () => {
     } finally {
       setStarting(false);
     }
-  }, [active, language, selectedTopics, t, topicSlugs]);
+  }, [active, activeDirection, language, selectedTopics, t, topicSlugs]);
 
   useEffect(() => {
     if (!search.start || session || starting || autostartHandled.current) return;
@@ -250,43 +283,66 @@ export const FlashcardsPracticePage = () => {
         )}
 
         {active.mode === 'interview' && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <PracticeField label={t('practice.filterCategory')}>
+          <div className="space-y-4">
+            <PracticeField label={t('practice.filterDirection')}>
               <select
-                value={active.category}
-                onChange={(event) =>
+                value={activeDirection}
+                onChange={(event) => {
+                  const value = event.target.value;
                   patchSearch({
-                    category: event.target.value === 'all' ? undefined : event.target.value,
-                  })
-                }
+                    direction: value === 'all' ? undefined : value,
+                    category: undefined,
+                    stage: undefined,
+                  });
+                }}
                 className="form-input"
               >
-                <option value="all">{t('practice.allCategories')}</option>
-                {getInterviewCategories().map((item) => (
-                  <option key={item.slug} value={item.slug}>
-                    {item.label} ({item.count})
+                <option value="all">{t('practice.allDirections')}</option>
+                {getInterviewDirections().map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {directionLabel(entry.id, language)}
                   </option>
                 ))}
               </select>
             </PracticeField>
-            <PracticeField label={t('practice.filterStage')}>
-              <select
-                value={active.stage}
-                onChange={(event) =>
-                  patchSearch({
-                    stage: event.target.value === 'all' ? undefined : event.target.value,
-                  })
-                }
-                className="form-input"
-              >
-                <option value="all">{t('practice.allStages')}</option>
-                {getInterviewStages().map((item) => (
-                  <option key={item.slug} value={item.slug}>
-                    {item.label} ({item.count})
-                  </option>
-                ))}
-              </select>
-            </PracticeField>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <PracticeField label={t('practice.filterCategory')}>
+                <select
+                  value={active.category}
+                  onChange={(event) =>
+                    patchSearch({
+                      category: event.target.value === 'all' ? undefined : event.target.value,
+                    })
+                  }
+                  className="form-input"
+                >
+                  <option value="all">{t('practice.allCategories')}</option>
+                  {scopedCategories.map((item) => (
+                    <option key={item.slug} value={item.slug}>
+                      {item.label} ({item.count})
+                    </option>
+                  ))}
+                </select>
+              </PracticeField>
+              <PracticeField label={t('practice.filterStage')}>
+                <select
+                  value={active.stage}
+                  onChange={(event) =>
+                    patchSearch({
+                      stage: event.target.value === 'all' ? undefined : event.target.value,
+                    })
+                  }
+                  className="form-input"
+                >
+                  <option value="all">{t('practice.allStages')}</option>
+                  {scopedStages.map((item) => (
+                    <option key={item.slug} value={item.slug}>
+                      {item.label} ({item.count})
+                    </option>
+                  ))}
+                </select>
+              </PracticeField>
+            </div>
           </div>
         )}
 

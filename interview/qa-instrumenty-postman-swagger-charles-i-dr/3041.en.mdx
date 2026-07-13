@@ -1,0 +1,79 @@
+---
+id: 3041
+title: "Postman environments and authorization: how to configure them?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Postman environments and authorization: how to configure them?
+
+## In short
+
+A Postman environment stores key/value pairs (`baseUrl`, `clientId`, `accessToken`) and injects them into URL, headers, and body via `{{name}}`. The Authorization tab adds Bearer, Basic, OAuth2, or API Key at request, folder, or collection level. Switching environments changes all substitutions without editing every request.
+
+## How to answer in an interview
+
+- I create Dev, Staging, Prod environments with different `baseUrl` and credential placeholders.
+- I store the token in `accessToken`; a pre-request script refreshes it after the login request.
+- I inherit auth: collection-level Bearer, per-request Basic only for a legacy endpoint.
+- I mark secrets as secret type/current value and never commit exports with initial values.
+- Honestly: without a dedicated auth refresh request, long CI sessions fail with 401 after an hour.
+
+## How it works
+
+```gherkin
+Feature: Postman environments and auth
+
+  Scenario: Switch staging to prod without editing URLs
+    Given environment Staging with baseUrl https://api-stage.shop.example
+    And environment Production with baseUrl https://api.shop.example
+    When tester selects Production from environment dropdown
+    Then request GET {{baseUrl}}/health hits production host
+    And all collection requests reuse same variable names
+
+  Scenario: OAuth token chain
+    Given folder Auth contains POST /oauth/token
+    And test script saves json.access_token to environment accessToken
+    When subsequent GET /profile uses Authorization Bearer {{accessToken}}
+    Then profile returns 200 without manual paste
+
+  Scenario: Newman run with env file
+    Given exported staging.postman_environment.json in CI vault
+    When newman run orders.json -e staging.postman_environment.json
+    Then pipeline uses injected secrets not stored in collection JSON
+```
+
+Sample pre-request script (renamed fields):
+
+```javascript
+const expires = pm.environment.get("tokenExpiresAt");
+if (!expires || Date.now() > Number(expires)) {
+  pm.sendRequest({
+    url: pm.environment.get("baseUrl") + "/oauth/token",
+    method: "POST",
+    header: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: { mode: "urlencoded", urlencoded: [
+      { key: "grant_type", value: "client_credentials" },
+      { key: "client_id", value: pm.environment.get("clientId") },
+      { key: "client_secret", value: pm.environment.get("clientSecret") }
+    ]}
+  }, (err, res) => {
+    const body = res.json();
+    pm.environment.set("accessToken", body.access_token);
+    pm.environment.set("tokenExpiresAt", Date.now() + body.expires_in * 1000);
+  });
+}
+```
+
+Variable scopes: **environment** (Dev/Prod), **collection**, **global**; on name collision the narrowest scope wins. `{{$randomUUID}}` and dynamic variables generate unique payloads without external scripts.
+
+## Pitfalls
+
+- **Initial value with prod token in git.** Environment export leaks; keep secrets in CI variables.
+- **Forgotten active environment.** Requests hit the wrong host; check the dropdown before customer demos.
+- **Auth tab plus manual Authorization header.** Duplicate headers break some gateways.
+- **OAuth2 without refresh.** Long regression runs get 401 halfway through.
+- **Variable name typo.** `{{baseURL}}` vs `{{baseUrl}}` fails silently; enable console logging in debug.

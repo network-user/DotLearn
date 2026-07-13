@@ -1,0 +1,82 @@
+---
+id: 1545
+title: "How do you write to a map from goroutines without Mutex?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you write to a map from goroutines without Mutex?
+
+## In short
+
+The built-in map is not thread-safe; without Mutex you need a single writer: all mutations in one goroutine, others send updates through a channel. Alternatives: `sync.Map`, sharded maps, or atomic swap of immutable maps.
+
+## How to answer in an interview
+
+- "Without Mutex" in interviews usually means the actor model via channels, not a magic concurrent map.
+- One goroutine owns the map; close the chan after producers finish.
+- For read-heavy loads use `sync.Map` or copy-on-write snapshots.
+- Honestly: a channel serializes writes; it is another form of mutex with messaging overhead.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type patch struct {
+	key string
+	add int
+}
+
+func main() {
+	store := make(map[string]int)
+	updates := make(chan patch, 32)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for p := range updates {
+			store[p.key] += p.add
+		}
+	}()
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			updates <- patch{key: "hits", add: 1}
+		}()
+	}
+	wg.Wait()
+	close(updates)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range updates {
+		}
+	}()
+	wg.Wait()
+	fmt.Println(store["hits"])
+}
+```
+
+The writer goroutine alone touches the map; producers only send patches. After Wait I close the chan and draining finishes the writer.
+
+## Pitfalls
+
+**Concurrent read without sync.** Readers while the writer runs without RWMutex or snapshots trigger fatal concurrent map reads.
+
+**Close before producer Wait.** Panic on send to closed chan.
+
+**Forgot to drain writer.** Map may look fine but the goroutine leaks.
+
+**sync.Map for everything.** Poor for dense writes or typed keys; benchmark first.
+
+**Sharding without balance.** Per-shard mutex or single writer per shard is still required.

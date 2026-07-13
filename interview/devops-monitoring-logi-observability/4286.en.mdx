@@ -1,0 +1,85 @@
+---
+id: 4286
+title: "What stack do you use for monitoring and logging in DevOps?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What stack do you use for monitoring and logging in DevOps?
+
+## In short
+
+The classic pairing: metrics (Prometheus + Alertmanager + Grafana) and logs (ELK or the Loki stack). ELK means Elasticsearch + Logstash/Beats + Kibana for full-text event search; Grafana visualizes time series and can alert on Loki/Tempo. Modern platforms add OpenTelemetry for unified traces/metrics/logs collection.
+
+## How to answer in an interview
+
+- Metrics: Prometheus scrape plus node_exporter and kube-state-metrics; alerts via Alertmanager to Slack/PagerDuty.
+- Logs: Fluent Bit to Loki or Beats to Elasticsearch; correlate `trace_id` across both layers.
+- Dashboards and explore: Grafana with Prometheus, Loki, and Elasticsearch datasources.
+- For audit/compliance I keep ES longer; for k8s-native and cost I often pick Loki.
+- Honestly: "ELK vs Grafana" is a false dichotomy; Grafana is usually the UI while ELK backs logs, they complement each other.
+
+## How it works
+
+Minimal docker-compose snippet linking Prometheus, Grafana, and Loki:
+
+```bash
+cat <<'EOF' > observability.compose.yml
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: changeme
+
+  loki:
+    image: grafana/loki:3.1.0
+    ports: ["3100:3100"]
+
+  promtail:
+    image: grafana/promtail:3.1.0
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail.yml:/etc/promtail/config.yml:ro
+EOF
+```
+
+Logstash to Elasticsearch ingest (ELK path):
+
+```bash
+cat <<'EOF' > logstash.conf
+input { beats { port => 5044 } }
+filter { json { source => "message" } }
+output {
+  elasticsearch {
+    hosts => ["http://es:9200"]
+    index => "app-%{+YYYY.MM.dd}"
+  }
+}
+EOF
+```
+
+Health check for the whole stack:
+
+```bash
+for url in http://localhost:9090/-/healthy http://localhost:3000/api/health http://localhost:3100/ready; do
+  echo -n "$url -> "; curl -sf -o /dev/null -w '%{http_code}\n' "$url"
+done
+```
+
+## Pitfalls
+
+- **Alert fatigue.** Prometheus rules without `for:` and Alertmanager grouping spam on-call.
+- **Index/label cardinality.** ES daily indexes and Loki high-cardinality labels both hit disk differently; set limits.
+- **Single timezone.** Logs in UTC, metrics scrape local; align in Grafana timezone for RCA.
+- **Default security.** Kibana/Grafana admin without SSO and TLS on an internal network leaks after one VPN breach.
+- **No traces.** Metrics plus logs without OpenTelemetry/Jaeger make latency spike root cause harder.

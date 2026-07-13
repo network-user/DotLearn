@@ -1,0 +1,66 @@
+---
+id: 1622
+title: "Standard HTTP status codes"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Standard HTTP status codes
+
+## In short
+
+The three-digit code in a response tells the result class: 1xx informational, 2xx success, 3xx redirect, 4xx client error, 5xx server error. Clients and proxies decide from the code without parsing the body: cache, retry, follow Location.
+
+## How to answer in an interview
+
+- 200 OK, 201 Created, 204 No Content for successful mutations.
+- 301/308 permanent redirect, 302/307 temporary; difference in method rewrite.
+- 400 validation, 401 unauthenticated, 403 forbidden, 404 missing, 409 conflict, 422 semantic error.
+- 500 internal, 502 bad gateway, 503 unavailable, 504 gateway timeout.
+- Honestly: 418 and joke codes in prod APIs only confuse clients.
+
+## How it works
+
+```go
+func itemHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"id":1}`)
+	case http.MethodPost:
+		w.Header().Set("Location", "/items/1")
+		w.WriteHeader(http.StatusCreated)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func main() {
+	http.HandleFunc("/items", itemHandler)
+	http.HandleFunc("/items/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/items/999" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		itemHandler(w, r)
+	})
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+`http.Error` writes body and code in one call. Middleware logs status via a wrapper `ResponseWriter` that intercepts `WriteHeader`. The client uses `resp.StatusCode` to branch retries: 5xx and 429 with backoff, 4xx usually not retried.
+
+## Pitfalls
+
+**Always 200 with error in JSON.** Breaks caches, alerts, and generic HTTP clients.
+
+**302 on POST changes method to GET.** Use 307/308 if the method must be preserved.
+
+**Confuse 401 vs 403.** 401 asks for credentials; 403 means credentials exist but no permission.
+
+**503 without Retry-After.** Clients hammer a down service synchronously.
+
+**Write after WriteHeader.** In Go headers are already sent; status cannot change.

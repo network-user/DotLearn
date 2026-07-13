@@ -1,0 +1,71 @@
+---
+id: 1484
+title: "What are the pros and cons of in-memory maps?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What are the pros and cons of in-memory maps?
+
+## In short
+
+A RAM-backed map gives O(1) lookup and a simple API, but is bounded by process memory and does not survive restarts. Multi-goroutine code needs explicit synchronization.
+
+## How to answer in an interview
+
+- Pros: speed, ergonomic syntax, flexible key/value types.
+- Cons: RAM cap, no durability, growth triggers rehash and GC pressure.
+- For shared state I name `sync.RWMutex` plus map or `sync.Map` for read-heavy patterns.
+- I honestly add that large or durable data belongs in Redis/DB; I keep maps for caches and local indexes.
+
+## How it works
+
+An in-memory map lives on the process heap. Inserts may grow the bucket array. On shutdown data is lost unless persisted separately.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Registry struct {
+	mu    sync.RWMutex
+	users map[string]string
+}
+
+func (r *Registry) Set(id, name string) {
+	r.mu.Lock()
+	r.users[id] = name
+	r.mu.Unlock()
+}
+
+func (r *Registry) Get(id string) (string, bool) {
+	r.mu.RLock()
+	name, ok := r.users[id]
+	r.mu.RUnlock()
+	return name, ok
+}
+
+func main() {
+	reg := &Registry{users: make(map[string]string)}
+	reg.Set("u1", "Mila")
+	if name, ok := reg.Get("u1"); ok {
+		fmt.Println(name)
+	}
+}
+```
+
+The mutex wrapper serializes writers and allows parallel readers with `RLock`.
+
+## Pitfalls
+
+- **Unbounded growth.** A cache without eviction fills RAM; add TTL or LRU on top.
+- **Pointer values.** Storing large structs by value copies data; sometimes `map[K]*V` is better.
+- **Iteration under lock.** A long `range` under a write lock blocks all writers.
+- **sync.Map misuse.** It is not a drop-in replacement; it wins with stable keys and rare writes.
+- **Serialization cost.** Snapshotting a huge map to disk can cost more than a remote KV store.

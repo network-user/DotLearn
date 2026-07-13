@@ -1,0 +1,73 @@
+---
+id: 3480
+title: "Statement vs PreparedStatement в JDBC-тестах"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Statement vs PreparedStatement в JDBC-тестах
+
+## Суть
+
+`Statement` выполняет статический SQL string, каждый раз parse на сервере. `PreparedStatement` биндит параметры через `?`, план кешируется, SQL injection исключён. В data setup integration test DDL иногда через Statement; все DML с user input только PreparedStatement.
+
+## Что ответить на собесе
+
+- Seed fixture: `prepareStatement("INSERT INTO run VALUES (?,?)")`.
+- Dynamic table name нельзя параметризовать, whitelist enum вместо concat.
+- try-with-resources закрывает statement и result set.
+- Batch insert через `addBatch`/`executeBatch` ускоряет thousand rows.
+- Честно: string format id в Statement «для теста» всё равно плохая привычка.
+
+## Как это работает
+
+Statement:
+
+```
+Statement st = conn.createStatement();
+ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM runs");
+```
+
+PreparedStatement:
+
+```
+PreparedStatement ps = conn.prepareStatement(
+    "SELECT status FROM runs WHERE id = ?"
+);
+ps.setLong(1, runId);
+ResultSet rs = ps.executeQuery();
+```
+
+Python DB API analogue:
+
+```python
+def fetch_status(conn, run_id: int) -> str:
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM runs WHERE id = ?", (run_id,))
+    row = cur.fetchone()
+    return row[0]
+
+
+def test_parameterized_query():
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE runs (id INT, status TEXT)")
+    conn.execute("INSERT INTO runs VALUES (1, 'PASS')")
+    assert fetch_status(conn, 1) == "PASS"
+    conn.close()
+```
+
+## Подводные камни
+
+**setString index 0.** JDBC placeholders 1-based.
+
+**Reuse PreparedStatement другой schema.** Stale plan после migration.
+
+**Statement large IN list.** Parse cost, лучше temp table или batch.
+
+**getConnection autocommit.** Forgotten commit в setup, assert на stale data.
+
+**ResultSet TYPE_FORWARD_ONLY.** second pass требует re-query.

@@ -1,0 +1,59 @@
+---
+id: 4300
+title: "Where and how should you store Helm templates?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where and how should you store Helm templates?
+
+## In short
+
+Charts live in Git as the source of truth: mono-repo `charts/<app>/` or one repo per service. CI runs `helm lint`, `helm template`, optional `kubeconform`, and publishes `.tgz` or OCI artifacts. The cluster keeps only release metadata (Secrets), not editable template copies.
+
+## How to answer in an interview
+
+- Git plus PR review for every `templates/` and `values.yaml` change.
+- Semver bump `Chart.yaml` version on each chart release.
+- Commit `Chart.lock` for reproducible subchart versions.
+- Registry: Harbor/ECR OCI for binary chart artifacts; Git for sources.
+- Honestly: storing only `.tgz` without source templates blocks diff and code review.
+
+## How it works
+
+Mono-repo layout:
+
+```bash
+mkdir -p charts/checkout-api/templates
+tree charts/checkout-api -L 2
+```
+
+CI pipeline fragment:
+
+```bash
+helm lint charts/checkout-api
+helm template test charts/checkout-api -f charts/checkout-api/values-ci.yaml \
+  | kubeconform -strict -summary -
+helm package charts/checkout-api -d dist/
+helm push dist/checkout-api-*.tgz oci://registry.internal/platform-charts
+```
+
+Version a release:
+
+```bash
+# bump Chart.yaml version: 2.3.0 -> 2.3.1
+git add charts/checkout-api/Chart.yaml charts/checkout-api/templates/
+git commit -m "chart(checkout): add topologySpreadConstraints"
+git tag chart/checkout-api/2.3.1
+```
+
+## Pitfalls
+
+- **Secrets in Git.** Plaintext `values-prod.yaml` passwords; use SOPS/ExternalSecrets and git-crypt.
+- **Unpinned dependencies.** Vendored `charts/*.tgz` without lock changes CI output daily.
+- **Branch deploy drift.** `helm install` from a local branch without tags is not reproducible; prod uses tagged chart versions only.
+- **Huge binaries in repo.** Packed deps bloat git; prefer `helm dependency build` in CI.
+- **Template fork without upstream.** Bitnami copy-paste without a merge path loses security patches.

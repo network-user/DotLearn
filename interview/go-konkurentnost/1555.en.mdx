@@ -1,0 +1,76 @@
+---
+id: 1555
+title: "Which operations block a goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which operations block a goroutine?
+
+## In short
+
+G blocks on channel send/recv (when the peer or buffer slot is unavailable), mutex Lock, WaitGroup Wait, time.Sleep, select with no ready case, blocking syscalls, and net I/O. Blocking moves G to waiting and frees M for other G.
+
+## How to answer in an interview
+
+- Unbuffered chan: send and recv rendezvous, both sides are sync points.
+- Mutex Lock blocks until another G Unlock.
+- Non-blocking try: select with default, TryLock, select on ctx.
+- Honestly: "blocking" does not always mean "OS thread blocked"; netpoller often avoids extra threads.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func demoChan() {
+	ch := make(chan int)
+	go func() { ch <- 1 }()
+	fmt.Println(<-ch)
+}
+
+func demoWG() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+func demoMutex() {
+	var mu sync.Mutex
+	mu.Lock()
+	mu.Unlock()
+}
+
+func main() {
+	demoChan()
+	demoWG()
+	demoMutex()
+}
+```
+
+Each operation parks G off the run queue until the condition is met. The scheduler uses this for multiplexing.
+
+## Pitfalls
+
+**Busy loop is not blocking.** G stays runnable and starves others without preemption delay.
+
+**Buffered chan full send.** Blocks when len==cap, not only unbuffered.
+
+**Lock ordering deadlock.** Two mutexes block forever.
+
+**Wait without Add.** Permanent block or panic race.
+
+**Blocking while holding lock.** Deadlock if another needs that lock to unblock.

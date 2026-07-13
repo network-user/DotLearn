@@ -1,0 +1,67 @@
+---
+id: 1625
+title: "HTTP server in Go"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTP server in Go
+
+## In short
+
+`net/http` provides `Server`, `ServeMux`, and handler func `func(ResponseWriter, *Request)`. `ListenAndServe` listens on a port, accepts connections, parses HTTP, and dispatches by pattern. For production you usually use an explicit `http.Server` with timeouts and graceful shutdown.
+
+## How to answer in an interview
+
+- The handler writes the response via `ResponseWriter` and reads the request from `*http.Request`.
+- `HandleFunc` registers a route on `DefaultServeMux`; a custom mux isolates middleware.
+- `ListenAndServeTLS` enables HTTP/2 automatically.
+- `http.Server{Addr, Handler, ReadTimeout, WriteTimeout, IdleTimeout}`.
+- Honestly: `DefaultServeMux` is global; in services I prefer my own router (chi, echo, std mux 1.22+).
+
+## How it works
+
+```go
+type app struct {
+	mux *http.ServeMux
+}
+
+func (a *app) routes() {
+	a.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+	a.mux.HandleFunc("POST /api/items", createItem)
+}
+
+func main() {
+	a := &app{mux: http.NewServeMux()}
+	a.routes()
+
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      a.mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
+}
+```
+
+Each incoming TCP connection is handled by a goroutine. `ServeHTTP` on the mux picks the longest prefix match pattern. Middleware wraps `Handler` and calls `next.ServeHTTP(w, r)`.
+
+## Pitfalls
+
+**No timeouts on `ListenAndServe`.** Slowloris and stuck clients hold goroutines.
+
+**Write to `ResponseWriter` before `WriteHeader`.** Default status 200; headers cannot be added later.
+
+**Global `DefaultServeMux` in libraries.** Route conflicts between packages.
+
+**Ignore `r.Context()` cancel.** Client left but handler work continues.
+
+**No graceful shutdown.** Deploy cuts active requests on `SIGTERM`.

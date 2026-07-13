@@ -1,0 +1,93 @@
+---
+id: 2060
+title: "Deployment vs StatefulSet: when to choose which"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Deployment vs StatefulSet: when to choose which
+
+## In short
+
+A Deployment manages interchangeable Pods with no preserved identity: rolling updates, scaling, rollback. A StatefulSet provides stable Pod names, ordered rollout, and persistent volumes per replica. The choice depends on whether the app needs sticky identity and local state.
+
+## How to answer in an interview
+
+- Deployment for stateless HTTP/API services; any Pod is interchangeable.
+- StatefulSet for databases, queues, clusters with leader election and stable network IDs.
+- StatefulSet creates Pods named like `web-0`, `web-1` and a headless Service for DNS.
+- Deployment updates in parallel (RollingUpdate); StatefulSet often one Pod at a time in order.
+- Honestly: a StatefulSet without proper backup/storageClass is harder to run than a managed DB.
+
+## How it works
+
+Stateless API:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: catalog-api
+  template:
+    metadata:
+      labels:
+        app: catalog-api
+    spec:
+      containers:
+      - name: api
+        image: catalog-api:2.1.0
+        ports:
+        - containerPort: 8080
+```
+
+Stateful service:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+spec:
+  serviceName: redis-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.2
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+A Deployment does not guarantee Pod `catalog-api-x` keeps its name or volume after restart. StatefulSet binds PVC `data-redis-cluster-0` to Pod `redis-cluster-0`; DNS `redis-cluster-0.redis-headless` is stable inside the namespace.
+
+## Pitfalls
+
+- **StatefulSet for stateless apps.** Extra PVCs and slow ordered updates with no benefit.
+- **Deployment for databases.** Data loss on reschedule without external storage.
+- **ReadWriteOnce and multi-AZ.** Pod may not start if volume is bound to another zone.
+- **Selector mismatch.** Changing template labels without updating selector breaks rollout.
+- **Parallel policy on StatefulSet.** Without understanding orderedReady, split-brain risk in clusters.

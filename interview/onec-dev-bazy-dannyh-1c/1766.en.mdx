@@ -1,0 +1,60 @@
+---
+id: 1766
+title: "How to verify a 1C query uses an index"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to verify a 1C query uses an index
+
+## In short
+
+Verification has two layers: the 1C query plan in the Designer or console and the actual SQL plan in the DBMS. Only the second shows real index seek or scan at production data volume.
+
+## How to answer in an interview
+
+- I enable Show Query Plan in the query wizard and look for IndexSeek vs TableScan at the platform level.
+- In an interview I add a mandatory step: copy SQL from the technological log and open `SET SHOWPLAN` or Execution Plan in SSMS/pgAdmin.
+- I stress that a plan on a test base with a thousand rows may show an index while production optimizer picks a scan.
+- I am honest that a parameterized 1C query can get different plans for different parameter values.
+- After adding an index in metadata I check the plan only after database configuration update and statistics refresh.
+
+## How it works
+
+In the Designer open the query and run it with the plan flag. The operation tree shows how the platform reads metadata tables: by reference index, full tabular section scan, and so on.
+
+For a client-server base enable technological log event `DBMSSQL` or `DBPOSTGRS` above a duration threshold. The text will contain SQL with parameters substituted.
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Остатки.Номенклатура,
+|    Остатки.КоличествоОстаток
+|ИЗ
+|    РегистрНакопления.ТоварыНаСкладах.Остатки(
+|        &Граница,
+|        Склад = &Склад) КАК Остатки
+|ГДЕ
+|    Остатки.КоличествоОстаток > 0";
+Запрос.УстановитьПараметр("Граница", ТекущаяДатаСеанса());
+Запрос.УстановитьПараметр("Склад", СкладФильтра);
+Результат = Запрос.Выполнить();
+```
+
+Run the copied SQL in SSMS with Include Actual Execution Plan enabled. Look for Index Seek on the expected index name. Index Scan on the same index means low filter selectivity.
+
+In PostgreSQL use `EXPLAIN (ANALYZE, BUFFERS)` on the same text. Bitmap Index Scan on register dimensions confirms use of the platform index.
+
+If the plan shows Table Scan on a movement register, check: is there a period filter, does composite index field order match the condition, is statistics current after a bulk data migration.
+
+## Pitfalls
+
+- **1C plan only without SQL.** The platform plan is abstract and may not match the DBMS decision.
+- **Plan on an empty table.** The optimizer almost always chooses scan on small volumes.
+- **Default parameters.** The first run after session start may differ from the stable plan under production values.
+- **Hints in code.** `OPTION (FORCE ORDER)` hides the problem and breaks when statistics update.
+- **Ignoring Key Lookup.** There is a seek but millions of lookups to the cluster still timeout the report.

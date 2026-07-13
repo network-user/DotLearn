@@ -1,0 +1,58 @@
+---
+id: 1525
+title: "Как устроен Go scheduler?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроен Go scheduler?
+
+## Суть
+
+Планировщик Go реализует M:N: много goroutine (G) выполняются на меньшем числе OS thread (M), привязанных к логическим процессорам (P). P держит локальную run queue; при нехватке работы ворует из других P или global queue.
+
+## Что ответить на собесе
+
+- `GOMAXPROCS` задаёт число P (по умолчанию число CPU).
+- Блокировка G на channel/net/syscall освобождает M для другой G.
+- Work stealing балансирует нагрузку между P.
+- Честно оговариваю: cooperative scheduling; tight CPU loop без preemption (до async preemption в новых версиях) мог голодать другие G.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	fmt.Println("gomaxprocs", runtime.GOMAXPROCS(0))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			fmt.Println("task", n)
+		}(i)
+	}
+	wg.Wait()
+}
+```
+
+При `go f()` G ставится в очередь P. M берёт G, исполняет до блокировки или preemption. Sysmon следит за долгими G и может форсировать переключение.
+
+## Подводные камни
+
+- **CPU-bound без yield.** Долгий чистый CPU цикл монополизирует P; иногда `runtime.Gosched` или разбиение работы.
+- **Блокировка OS thread.** Cgo или некоторые syscall привязывают M; runtime создаёт новые M.
+- **Локальные очереди и cache.** G может переехать между P; не полагаюсь на CPU affinity.
+- **GOMAXPROCS=1.** Весь параллелизм только кооперативный; полезно для отладки, не для prod CPU load.
+- **NumCPU vs containers.** В Kubernetes GOMAXPROCS должен видеть cgroup quota; иначе oversubscription.

@@ -1,0 +1,80 @@
+---
+id: 1537
+title: "Чем горутина выгоднее OS thread?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем горутина выгоднее OS thread?
+
+## Суть
+
+Горутина стартует с маленького стека (kilobytes) и растёт/сжимается runtime'ом, тогда как OS thread несёт мегабайты стека и дорогой контекстный switch. M:N scheduling Go мультиплексирует тысячи G на ограниченное число потоков, снижая RAM и стоимость создания.
+
+## Что ответить на собесе
+
+- Старт горутины дешевле thread: нет syscall на каждый spawn, стек растёт по demand.
+- Масштаб: десятки тысяч goroutines на типичном сервере vs сотни threads.
+- Синхронизация через channels и sync вместо ручного pthread API.
+- Честно: CPU-bound без блокировок всё равно упирается в GOMAXPROCS ядер; goroutine не даёт «бесплатного параллелизма».
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func worker(id int, jobs <-chan int, out chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for job := range jobs {
+		out <- fmt.Sprintf("worker %d handled %d", id, job)
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func main() {
+	const poolSize = 64
+	jobs := make(chan int, 128)
+	results := make(chan string, 128)
+	var wg sync.WaitGroup
+	for w := 0; w < poolSize; w++ {
+		wg.Add(1)
+		go worker(w, jobs, results, &wg)
+	}
+	go func() {
+		for i := 0; i < 200; i++ {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+	count := 0
+	for range results {
+		count++
+	}
+	fmt.Println("done:", count)
+}
+```
+
+64 goroutines на нескольких OS threads обслуживают 200 задач; blocking на Sleep отдаёт M другим G. Аналог на 64 pthread потребовал бы больше памяти на стеки и OS scheduling overhead.
+
+## Подводные камни
+
+**Утечка goroutine.** Дешевизна spawn провоцирует «go на всё»; без cancel/context goroutines копятся.
+
+**GOMAXPROCS=1 и CPU-bound.** Тысячи горутин в compute loop не ускорят код на одном P.
+
+**Stack growth copies.** Глубокая рекурсия или большие stack frames триггерят realloc стека; это скрытая цена «маленького стека».
+
+**CGO и thread.** CGO call может занять dedicated OS thread; смешивание heavy CGO с million goroutines требует осторожности.
+
+**Сравнение с async/await других языков.** Goroutine blocking прозрачен в коде, но блокировка всё равно снимает поток с run queue только через runtime, не magic.

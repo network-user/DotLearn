@@ -1,0 +1,54 @@
+---
+id: 2010
+title: "Which certificate encrypts HTTPS traffic?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which certificate encrypts HTTPS traffic?
+
+## In short
+
+HTTPS relies on the server's X.509 TLS certificate: public key plus a CA signature binding the domain. The certificate itself does not encrypt bulk traffic; it participates in the handshake, then both sides agree on a symmetric session key for AES-GCM/ChaCha20.
+
+## How to answer in an interview
+
+- Certificate = identity + public key; data encryption uses the session symmetric key.
+- Types: DV for public sites, EV rarely, wildcard `*.example.com` is convenient but wider blast radius.
+- Java trust store holds root CAs; the server private key never goes to the client.
+- mTLS adds a client certificate for mutual authentication.
+- Honestly: self-signed is fine for dev; browsers without imported CA will not trust it.
+
+## How it works
+
+The client opens `https://shop.example`. The server sends leaf + intermediate chain:
+
+```
+Client -> ServerHello, supported ciphers
+Server -> Certificate (CN=shop.example, pubkey RSA/EC)
+Client -> verify chain to trusted root in cacerts
+Client -> ClientKeyExchange (encrypted premaster / ECDHE share)
+Both   -> derive session keys, Finished
+```
+
+In Java, hostname verification with HTTPS URL:
+
+```java
+URL endpoint = new URL("https://shop.example/api/health");
+HttpsURLConnection conn = (HttpsURLConnection) endpoint.openConnection();
+conn.setSSLSocketFactory(sslContext.getSocketFactory());
+conn.connect();
+```
+
+The server keystore (`PKCS12` or PEM) holds private key + leaf cert. The certificate public key is used only during key agreement; AES encrypts the HTTP body afterward. Let's Encrypt and corporate CAs issue the same X.509 format.
+
+## Pitfalls
+
+- **Confusing cert vs cipher.** A weak cert does not fix TLS 1.0 with RC4.
+- **Expired / wrong SAN.** `api.example` is not covered by a cert for `www.example`.
+- **Private key in the repo.** Leak means full impersonation.
+- **Incomplete chain.** Older Android may not build the intermediate.
+- **Termination at CDN without end-to-end.** TLS to edge, plain HTTP inside VPC without mTLS.

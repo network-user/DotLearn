@@ -1,0 +1,62 @@
+---
+id: 4642
+title: "Когда возникает deadlock?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда возникает deadlock?
+
+## Суть
+
+Deadlock наступает, когда потоки навсегда ждут ресурсы друг друга по замкнутому циклу. Классическая модель Coffman требует четырёх условий одновременно: взаимное исключение, удержание и ожидание, отсутствие вытеснения и циклическое ожидание.
+
+## Что ответить на собесе
+
+- Типичный сценарий: поток A держит lock1 и ждёт lock2, поток B держит lock2 и ждёт lock1.
+- Нарушение фиксированного порядка захвата нескольких mutex почти гарантирует риск.
+- Симптом в проде: потоки живы, CPU низкий, прогресс нулевой, профайлер на mutex wait.
+- Профилактика: один порядок lock, `std::scoped_lock`, таймауты, меньше вложенных lock.
+- Честно: deadlock можно не поймать в тестах; нужны stress-тесты и таймауты на операции.
+
+## Как это работает
+
+```cpp
+#include <mutex>
+#include <thread>
+
+std::mutex leftGate;
+std::mutex rightGate;
+
+void routeA() {
+    std::lock_guard a(leftGate);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::lock_guard b(rightGate);
+}
+
+void routeB() {
+    std::lock_guard b(rightGate);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::lock_guard a(leftGate);
+}
+
+int main() {
+    std::thread t1(routeA);
+    std::thread t2(routeB);
+    t1.join();
+    t2.join();
+}
+```
+
+`routeA` берёт `leftGate` затем `rightGate`; `routeB` наоборот. После короткой паузы каждый держит свой первый mutex и блокируется на втором. Цикл ожидания не разрывается без таймаута или перезапуска.
+
+## Подводные камни
+
+- **Скрытые lock.** Вызов чужого API под вашим mutex может взять второй lock внутри.
+- **condition_variable + mutex.** Ждать на одном mutex, будить под другим ломает инвариант и даёт вечный sleep.
+- **База данных и файлы.** Внешние блокировки участвуют в том же графе ожидания.
+- **try_lock без backoff.** Бесконечный spin на двух mutex тоже может зациклить логику.
+- **Диагностика.** Без дампа стеков всех потоков легко спутать deadlock с медленным I/O.

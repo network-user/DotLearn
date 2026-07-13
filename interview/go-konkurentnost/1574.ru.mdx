@@ -1,0 +1,63 @@
+---
+id: 1574
+title: "Два send в один channel одновременно"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Два send в один channel одновременно
+
+## Суть
+
+Runtime сериализует sends: один proceed, второй blocks until buffer slot or receiver ready. Data race на chan нет; порядок delivery для buffered может не match send start order under contention. Unbuffered: rendezvous по одному значению.
+
+## Что ответить на собесе
+
+- Concurrent send safe; не нужен mutex на chan.
+- Close + concurrent send race → panic.
+- Select among multiple sends: pseudo-random if several ready.
+- Честно: «одновременно» = serialized by runtime, not parallel write to buffer.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	ch := make(chan int, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ch <- 1
+	}()
+	go func() {
+		defer wg.Done()
+		ch <- 2
+	}()
+	wg.Wait()
+	fmt.Println(<-ch, <-ch)
+}
+```
+
+Buffer size 1: first send wins, second blocks until recv drains. Both completes after two recv if we add consumer; example shows serialization.
+
+## Подводные камни
+
+**Assume FIFO writers.** Not guaranteed under scheduler.
+
+**Send after close.** Panic regardless of other senders.
+
+**Unbuffered no receiver.** Both senders block forever.
+
+**Large struct send copy cost.** Each send copies value.
+
+**Select default with send.** Non-blocking try send pattern only when buffer free.

@@ -1,0 +1,64 @@
+---
+id: 4195
+title: "How do you handle errors in a bash script?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you handle errors in a bash script?
+
+## In short
+
+A reliable script combines `set -euo pipefail`, explicit `$?` checks where failure is acceptable, and `trap` on ERR/EXIT for cleanup. stderr logging supplements but does not replace exit status control.
+
+## How to answer in an interview
+
+- `set -e` stops the script on a non-zero command status.
+- `set -u` catches typos in variables before a production incident.
+- `trap 'handler' ERR` with `echo "$LINENO"` speeds RCA in CI/CD.
+- Honestly: `set -e` is ignored inside `if cmd`, `while`, and some subshells; I check critical paths explicitly.
+
+## How it works
+
+Deploy script template:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_err() { echo "[$(date -Iseconds)] $*" >> /var/log/deploy.err; }
+
+cleanup() {
+  [[ -n "${TMP_WORKDIR:-}" && -d "$TMP_WORKDIR" ]] && rm -rf "$TMP_WORKDIR"
+}
+trap cleanup EXIT
+trap 'log_err "failed at line $LINENO"; exit 1' ERR
+
+TMP_WORKDIR=$(mktemp -d)
+cp manifests/*.yaml "$TMP_WORKDIR/"
+kubectl apply -f "$TMP_WORKDIR/"
+```
+
+Command where failure is expected:
+
+```bash
+if grep -q 'image:' "$TMP_WORKDIR/deployment.yaml"; then
+  echo "image pin present"
+else
+  echo "missing image pin" >&2
+  exit 1
+fi
+```
+
+With `set -o pipefail` a pipeline propagates any stage's code, not only `tail`.
+
+## Pitfalls
+
+- **`set -e` and `&&` on one line.** False confidence with command substitution.
+- **EXIT trap on success.** Cleanup deletes artifacts needed for post-mortem.
+- **ERR without `set -E`.** Inside a function the trap may not fire without `set -E` / `shopt -s extdebug`.
+- **Blind `|| true`.** Masks real failures without metrics.
+- **Subshell `( set -e; cmd )`.** Failure does not kill the parent script.

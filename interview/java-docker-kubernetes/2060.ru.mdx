@@ -1,0 +1,93 @@
+---
+id: 2060
+title: "Deployment и StatefulSet: когда что выбирать"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Deployment и StatefulSet: когда что выбирать
+
+## Суть
+
+Deployment управляет взаимозаменяемыми Pod без сохранения идентичности: rolling update, масштабирование, откат. StatefulSet даёт стабильные имена Pod, упорядоченный rollout и персистентные тома на реплику. Выбор зависит от того, нужен ли приложению sticky identity и локальное состояние.
+
+## Что ответить на собесе
+
+- Deployment для stateless HTTP/API сервисов; любой Pod равнозаменим.
+- StatefulSet для БД, очередей, кластеров с leader election и stable network ID.
+- StatefulSet создаёт Pod с именами вида `web-0`, `web-1` и headless Service для DNS.
+- Deployment обновляет параллельно (RollingUpdate); StatefulSet часто по одному Pod с сохранением порядка.
+- Честно: StatefulSet без правильного backup/storageClass сложнее эксплуатировать, чем managed DB.
+
+## Как это работает
+
+Stateless API:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: catalog-api
+  template:
+    metadata:
+      labels:
+        app: catalog-api
+    spec:
+      containers:
+      - name: api
+        image: catalog-api:2.1.0
+        ports:
+        - containerPort: 8080
+```
+
+Stateful сервис:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+spec:
+  serviceName: redis-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.2
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+Deployment не гарантирует, что Pod `catalog-api-x` после рестарта сохранит имя или том. StatefulSet привязывает PVC `data-redis-cluster-0` к Pod `redis-cluster-0`, DNS `redis-cluster-0.redis-headless` стабилен внутри namespace.
+
+## Подводные камни
+
+- **StatefulSet для stateless.** Лишние PVC и медленный ordered update без выгоды.
+- **Deployment для БД.** Потеря данных при reschedule без external storage.
+- **ReadWriteOnce и multi-AZ.** Pod может не стартовать, если том привязан к другой зоне.
+- **Selector mismatch.** Изменение labels в template без обновления selector ломает rollout.
+- **Parallel policy на StatefulSet.** Без понимания orderedReady риск split-brain в кластерах.

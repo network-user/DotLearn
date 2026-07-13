@@ -1,0 +1,57 @@
+---
+id: 1773
+title: "What hanging transactions are and how to find them"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What hanging transactions are and how to find them
+
+## In short
+
+A "hanging" transaction stays open after an error, session drop, or a missing `ЗафиксироватьТранзакцию()` / `ОтменитьТранзакцию()`. It holds locks and blocks other users' writes until the platform or DBMS rolls it back on timeout.
+
+## How to answer in an interview
+
+- I define a hanging transaction as one with no completion: neither commit nor rollback at check time.
+- In an interview I mention the lock and transaction monitor in cluster administration.
+- I stress a typical cause: `НачатьТранзакцию()` without `Попытка`/`Исключение` and without rollback on every branch.
+- I honestly say that killing the session removes the symptom but the problem returns without a code fix.
+- For PostgreSQL and MS SQL I also check active transaction views on the DBMS side.
+
+## How it works
+
+Code opens a transaction, writes a document, then fails before commit. If the exception is not caught or rollback is skipped, the block stays active until the server call ends or longer on a platform error.
+
+```bsl
+НачатьТранзакцию();
+Попытка
+    ДокОбъект = Документы.Реализация.СоздатьДокумент();
+    ДокОбъект.Дата = ТекущаяДата();
+    ДокОбъект.Записать(РежимЗаписиДокумента.Запись);
+    ВыполнитьНекорректныйРасчет();
+    ЗафиксироватьТранзакцию();
+Исключение
+    ОтменитьТранзакцию();
+    ЗаписьЖурналаРегистрации("Проведение", УровеньЖурналаРегистрации.Ошибка,,,
+        ПодробноеПредставлениеОшибки(ИнформацияОбОшибке()));
+    ВызватьИсключение;
+КонецПопытки;
+```
+
+Start with the lock monitor: session number, object, hold time. In the event log and technology log look for the call stack and the last `НачатьТранзакцию()` without a matching finish.
+
+At the DBMS level, MS SQL uses `sys.dm_tran_active_transactions` and blocking SPIDs; PostgreSQL uses `pg_stat_activity` with `state = 'idle in transaction'`. Mapping the 1C session SPID to the DBMS PID helps find the responsible rphost.
+
+Prevention: the `НачатьТранзакцию()` + `Попытка` + mandatory rollback in `Исключение` pattern, short transactions, no UI inside the block.
+
+## Pitfalls
+
+- **No rollback on one branch.** An early `Возврат` bypassing `Исключение` leaves the transaction open.
+- **Repeated НачатьТранзакцию without a check.** Nesting does not give independent commit.
+- **Killing the session as the only fix.** Data rolls back but the code cause remains.
+- **Confusion with managed locks.** The SQL transaction is closed but an application lock still lives.
+- **Overnight jobs without timeout.** "Idle in transaction" builds until the morning load peak.

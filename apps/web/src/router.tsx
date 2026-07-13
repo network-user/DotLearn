@@ -274,7 +274,29 @@ export interface InterviewSearch {
   status?: 'studied' | 'not-studied' | undefined;
   sort?: 'title' | 'topic' | 'stage' | undefined;
   forMe?: boolean | undefined;
+  direction?: string | undefined;
 }
+
+export interface InterviewExamSearch {
+  direction?: string | undefined;
+}
+
+const validateInterviewDirection = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  const allowed = new Set([
+    'python',
+    'go',
+    'frontend',
+    'java',
+    '1c',
+    'cpp',
+    'devops',
+    'qa',
+    'aqa',
+    'all',
+  ]);
+  return allowed.has(value) ? value : undefined;
+};
 
 const validateInterviewSearch = (search: Record<string, unknown>): InterviewSearch => {
   const str = (value: unknown): string | undefined =>
@@ -296,8 +318,13 @@ const validateInterviewSearch = (search: Record<string, unknown>): InterviewSear
     status,
     sort,
     forMe,
+    direction: validateInterviewDirection(search.direction),
   };
 };
+
+const validateInterviewExamSearch = (search: Record<string, unknown>): InterviewExamSearch => ({
+  direction: validateInterviewDirection(search.direction),
+});
 
 const enLayoutRoute = new Route({
   getParentRoute: () => rootRoute,
@@ -374,6 +401,7 @@ const interviewExamRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/interview/exam',
   component: InterviewExamPage,
+  validateSearch: validateInterviewExamSearch,
 });
 
 const interviewQuestionRoute = new Route({

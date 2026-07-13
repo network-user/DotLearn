@@ -1,0 +1,69 @@
+---
+id: 3545
+title: "Борьба с flaky в PyTest"
+category: aqa-pytest
+categoryLabel: "PyTest"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Борьба с flaky в PyTest
+
+## Суть
+
+Flaky тест нестабилен при неизменном коде: timing, shared state, внешние сервисы. Правильный путь root cause analysis, изоляция данных, явные waits, deterministic clock. Rerun (`pytest-rerunfailures`) допустим как временная подушка для внешних сбоев, не как маскировка багов в тесте.
+
+## Что ответить на собесе
+
+- Сначала воспроизвожу локально с `--count=20` или random order.
+- Убираю sleep, ставлю poll until condition (tenacity, playwright expect).
+- Уникальный user/email per test, не shared DB row.
+- `@pytest.mark.flaky(reruns=2)` только с ticket и дедлайном на fix.
+- Честно: rerun в CI без quarantine превращает красный pipeline в «может зелёный».
+
+## Как это работает
+
+Изоляция temp resource:
+
+```python
+import pytest
+import tempfile
+import os
+
+
+@pytest.fixture
+def temp_path():
+    fd, path = tempfile.mkstemp()
+    os.close(fd)
+    yield path
+    os.remove(path)
+
+
+def test_write(temp_path):
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        handle.write("ok")
+```
+
+Ограниченный rerun:
+
+```python
+import pytest
+
+
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
+def test_external_ping():
+    assert ping_gateway()
+```
+
+## Подводные камни
+
+**reruns без root cause.** Техдолг копится, доверие к suite падает.
+
+**Параллель + shared file.** Классический order-dependent flake.
+
+**Нестабильный assert на timestamp.** now() без frozen clock.
+
+**Сеть без mock.** Внешний API outage красит не ваш код.
+
+**flaky marker на весь module.** Скрывает соседние стабильные тесты в отчёте.

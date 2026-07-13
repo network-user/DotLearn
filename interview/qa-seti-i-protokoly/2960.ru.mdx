@@ -1,0 +1,69 @@
+---
+id: 2960
+title: "Timeout и retransmit: как QA отличает сеть от медленного API?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Timeout и retransmit: как QA отличает сеть от медленного API?
+
+## Суть
+
+Timeout это предел ожидания ответа: по истечении клиент или сервер прерывает операцию и возвращает ошибку. Retransmit (TCP) повторно шлёт сегмент, если ACK не пришёл в RTO. На уровне приложения QA видит read timeout в HTTP client, 504 Gateway Timeout от proxy и spinner без feedback при слишком коротком client timeout.
+
+## Что ответить на собесе
+
+- TCP retransmit прозрачен для HTTP, но растит latency; в DevTools это длинный Waiting без явной ошибки.
+- Application timeout в Postman/axios задаёт потолок ожидания; меньше server processing time даёт ложный timeout QA.
+- 504 от nginx значит upstream не ответил в proxy_read_timeout; 408 реже, чаще client abort.
+- Честно: бесконечный retry без backoff DDOSит восстановившийся сервис; проверяю idempotency и jitter.
+
+## Как это работает
+
+Цепочка таймаутов:
+
+```
+Client read timeout 30s
+  -> LB idle 60s
+    -> App thread 120s
+      -> DB statement 30s
+```
+
+Gherkin негативных сценариев:
+
+```gherkin
+Feature: Timeout и повторные попытки
+
+  Scenario: Медленный upstream возвращает 504 через proxy
+    Given upstream sleep 65s
+    And proxy_read_timeout 60s
+    When клиент GET "/api/report"
+    Then статус 504 Gateway Timeout
+    And тело содержит понятный код без stack trace
+
+  Scenario: Client timeout короче server processing
+    Given server отвечает за 15s
+    And client timeout 10s
+    When клиент GET "/api/report"
+    Then клиент получает timeout error
+    And сервер eventually завершает job без отмены
+
+  Scenario: Retry с backoff на idempotent GET
+    Given первые два запроса reset connection
+    When клиент GET "/api/health" с retry max 3
+    Then третья попытка status 200
+    And не более 3 запросов за 10 секунд
+```
+
+Wireshark/tcpdump для retransmit на стенде; для web QA достаточно curl `--max-time` и throttling DevTools.
+
+## Подводные камни
+
+- **Один timeout на всю цепочку.** DB висит 2 минуты, UI timeout 5s; винят «сеть».
+- **Retry POST без idempotency.** Дубликаты заказов после packet loss.
+- **Keep-alive + idle LB.** Первый запрос после паузы 502, второй OK; кажется flaky UI.
+- **0 timeout = бесконечность.** Зависший tab; нет cancel на navigation away.
+- **Путают TCP retransmit и HTTP retry.** Разные уровни, разные метрики.

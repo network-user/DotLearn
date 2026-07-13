@@ -1,0 +1,68 @@
+---
+id: 4640
+title: "Зачем нужна std::condition_variable?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужна std::condition_variable?
+
+## Суть
+
+`std::condition_variable` переводит поток в ожидание, пока не выполнится условие на разделяемых данных, и будит его по `notify_one` / `notify_all`. Работает в паре с mutex: без активного spin-wait экономит CPU и даёт корректную публикацию состояния.
+
+## Что ответить на собесе
+
+- Использую для producer/consumer, очередей задач, «данные готовы» / «буфер освободился».
+- Всегда жду в цикле с предикатом: `wait(lock, pred)` защищает от spurious wakeup и lost wakeup при неправильном notify.
+- Меняю shared state под mutex, затем notify вне длительной секции или сразу после unlock.
+- Для нескольких waiters на одно событие часто `notify_all`; для одного слота `notify_one`.
+- Честно: без связанного mutex и инварианта condition_variable бессмысленна; это не замена mutex.
+
+## Как это работает
+
+```cpp
+#include <condition_variable>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex mtx;
+std::condition_variable ready;
+bool payloadDone = false;
+
+void consumer() {
+    std::unique_lock lock(mtx);
+    ready.wait(lock, [] { return payloadDone; });
+    std::cout << "consume\n";
+}
+
+void producer() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::lock_guard lock(mtx);
+        payloadDone = true;
+    }
+    ready.notify_one();
+}
+
+int main() {
+    std::thread c(consumer);
+    std::thread p(producer);
+    c.join();
+    p.join();
+}
+```
+
+`consumer` блокирует `mtx` и засыпает в `wait`, временно отпуская mutex. `producer` выставляет `payloadDone` под тем же mutex и сигналит. Предикат `return payloadDone` защищает от ложных пробуждений.
+
+## Подводные камни
+
+- **notify без lock.** Допустимо после изменения флага, но состояние должно быть опубликовано до notify (happens-before).
+- **Lost wakeup.** `notify` до `wait` без предиката теряет сигнал; предикат или счётчик семафора решают.
+- **notify_all шторм.** Все потоки просыпаются и снова конкурируют за mutex; иногда нужен, иногда избыточен.
+- **unique_lock обязателен.** `wait` требует `unique_lock`, не `lock_guard`.
+- **Забытый shutdown.** Без флага остановки consumer зависнет навсегда; в проде нужен join и сигнал завершения.

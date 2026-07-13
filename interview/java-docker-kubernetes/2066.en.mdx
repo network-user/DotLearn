@@ -1,0 +1,63 @@
+---
+id: 2066
+title: "Docker image anatomy: layers and cache"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Docker image anatomy: layers and cache
+
+## In short
+
+A Docker image is a read-only Union FS stack: each RUN, COPY, ADD adds a diff on top of the previous layer. Image ID and tag point to a manifest; `docker run` adds a writable container layer. Shared base layers (temurin JRE) are reused across images and save disk and pull time.
+
+## How to answer in an interview
+
+- A layer = immutable filesystem diff + metadata (parent pointer).
+- Instructions without FS changes (WORKDIR, EXPOSE, CMD) do not create a layer (except legacy).
+- Build cache invalidates from the changed Dockerfile line downward.
+- `docker history` shows each layer size.
+- Honestly: too many small RUN steps increase metadata overhead; merge apt steps instead.
+
+## How it works
+
+```dockerfile
+FROM eclipse-temurin:21-jre-alpine
+RUN addgroup -S app && adduser -S app -G app
+WORKDIR /opt/reporting
+COPY build/reporting.jar app.jar
+USER app
+CMD ["java", "-jar", "app.jar"]
+```
+
+Structure after build:
+
+```
+Layer 4: CMD + USER metadata
+Layer 3: reporting.jar bytes
+Layer 2: /opt/reporting dir + user/group
+Layer 1: temurin 21 JRE alpine (shared)
+Layer 0: alpine base (shared)
+```
+
+If only the JAR changes, layers 3-4 rebuild; layers 0-2 come from cache.
+
+Inspect:
+
+```bash
+docker image inspect reporting:1.0 --format '{{.RootFS.Layers}}'
+docker history reporting:1.0
+```
+
+The container runtime mounts all layers read-only and adds a thin R/W layer for `/tmp`, logs, heap dumps. Removing the container drops the R/W layer; image layers remain until `docker rmi`.
+
+## Pitfalls
+
+- **Secrets in a layer.** COPY .env lands in history forever, even if a later RUN deletes the file.
+- **Dangling layers.** Frequent rebuilds without prune fill CI runner disk.
+- **Cache miss from timestamp.** COPY of the whole repo invalidates on any git commit.
+- **Whiteout files.** Deleting a file in an upper layer does not shrink total base pull size.
+- **Platform mismatch.** arm64 layer on amd64 node = ImagePullBackOff without manifest list.

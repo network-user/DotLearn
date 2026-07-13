@@ -1,0 +1,70 @@
+---
+id: 4222
+title: "How does AWS CloudFormation work?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does AWS CloudFormation work?
+
+## In short
+
+CloudFormation is AWS IaC: a YAML/JSON template describes resources, the service creates a stack, and manages lifecycle as one unit. It supports drift detection, change sets, nested stacks, and custom resources. It competes with Terraform but offers native IAM integration and AWS rollout policies.
+
+## How to answer in an interview
+
+- Template in Git, deploy via `aws cloudformation deploy` or a pipeline; stack name anchors the environment.
+- Parameters and mappings parameterize dev/stage/prod without duplicating templates.
+- DeletionPolicy Retain on stateful resources (RDS, S3) prevents accidental wipes.
+- Change sets show the diff before apply; production goes through them only.
+- Honestly: complex template logic gets unreadable fast; for modularity I consider CDK or Terraform modules.
+
+## How it works
+
+Stack events trace create/update/delete. Dependencies come from `Ref`, `GetAtt`, and implicit links.
+
+Minimal EC2 template:
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Single app host
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+
+Resources:
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: ami-0c55b159cbfafe1f0
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: cf-app-host
+```
+
+Deploy:
+
+```bash
+aws cloudformation deploy \
+  --template-file app-host.yaml \
+  --stack-name app-dev \
+  --parameter-overrides KeyName=deploy-key \
+  --capabilities CAPABILITY_IAM \
+  --no-fail-on-empty-changeset
+```
+
+Updates replace resources per policy (replacement vs in-place); CloudFormation orchestrates rolling where supported.
+
+## Pitfalls
+
+- **Rollback trap.** Failed updates roll back the stack; stateful resources may sit in a half-changed state.
+- **Drift.** Console edits break the next deploy; run drift detection in CI.
+- **Export name collision.** Cross-stack exports are regional; prefix names with org/env.
+- **Custom resource timeouts.** Lambda-backed custom resources hang on errors; implement robust rollback handlers.
+- **Template size limit.** 1 MB body; large projects split into nested stacks or CDK synthesis.

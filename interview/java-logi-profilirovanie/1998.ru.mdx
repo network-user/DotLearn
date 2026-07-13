@@ -1,0 +1,53 @@
+---
+id: 1998
+title: "Чем отличаются heap dump и thread dump?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем отличаются heap dump и thread dump?
+
+## Суть
+
+Heap dump это снимок всех объектов в heap на момент capture: кто удерживает память и сколько. Thread dump это снимок всех потоков: state, stack, locks и park/wait targets. Heap отвечает на OOM и leak; thread dump на deadlock, starvation и зависший I/O.
+
+## Что ответить на собесе
+
+- Heap: `.hprof`, анализ в MAT/VisualVM, dominator tree, leak suspects.
+- Thread: `jstack`, состояния RUNNABLE/BLOCKED/WAITING/TIMED_WAITING.
+- Команды: `jcmd <pid> GC.heap_dump`, `jcmd <pid> Thread.print`.
+- Упоминаю `jmap -dump` legacy и impact на pause при full heap dump.
+- Честно добавляю: thread dump без нескольких снимков подряд может не поймать race; heap dump тяжёлый для prod без планирования.
+
+## Как это работает
+
+Снятие дампов с running JVM:
+
+```bash
+jcmd 41872 VM.native_memory summary
+jcmd 41872 GC.heap_dump /tmp/heap-41872.hprof
+jcmd 41872 Thread.print > /tmp/threads-41872.txt
+```
+
+В thread dump фрагмент:
+
+```
+"pool-2-thread-5" #27 prio=5 os_prio=0 cpu=123.45ms elapsed=300.12s tid=0x... nid=0x8c waiting on condition
+   java.lang.Thread.State: WAITING (parking)
+        at jdk.internal.misc.Unsafe.park(...)
+        at java.util.concurrent.locks.LockSupport.park(...)
+        at com.acme.queue.WorkerLoop.pollTask(WorkerLoop.java:88)
+```
+
+`WAITING (parking)` на `WorkerLoop.pollTask` указывает на пустую очередь или missed signal. Heap dump того же PID покажет, растёт ли `byte[]` или `HashMap$Node` из кэша без eviction. Вместе они локализуют memory leak vs thread pool exhaustion.
+
+## Подводные камни
+
+- **Heap dump на 32GB heap в peak.** Stop-the-world и дисковое место.
+- **Один thread dump при flaky deadlock.** Нужна серия с интервалом.
+- **Анализ без retained set.** Считают все объекты, игнорируя GC roots path.
+- **Смешение PID после restart.** Дамп от старого процесса.
+- **Thread dump без lock info.** Старые JDK или stripped build скрывают monitor owner.

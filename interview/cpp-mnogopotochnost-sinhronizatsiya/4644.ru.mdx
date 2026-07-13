@@ -1,0 +1,64 @@
+---
+id: 4644
+title: "Как предотвратить deadlock?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как предотвратить deadlock?
+
+## Суть
+
+Стратегии сводятся к разрыву одного из четырёх условий Coffman: единый порядок захвата lock, атомарный захват нескольких mutex (`std::lock` / `scoped_lock`), таймауты с откатом, уменьшение числа одновременно удерживаемых ресурсов и иерархия блокировок.
+
+## Что ответить на собесе
+
+- Всегда беру mutex по возрастанию адреса или заранее заданному rank.
+- Для пары lock использую `std::scoped_lock(m1, m2)` или `std::lock` + `adopt_lock`.
+- `try_lock_for` / `try_lock` с backoff вместо бесконечного ожидания.
+- Дизайн без вложенных lock: один mutex на подсистему, lock-free очередь между стадиями.
+- Честно: таймауты лечат симптом; без отката и повторной логики можно потерять инвариант.
+
+## Как это работает
+
+```cpp
+#include <mutex>
+#include <thread>
+
+std::mutex alpha;
+std::mutex beta;
+
+void safeWork() {
+    std::scoped_lock guard(alpha, beta);
+}
+
+int main() {
+    std::thread t1(safeWork);
+    std::thread t2(safeWork);
+    t1.join();
+    t2.join();
+}
+```
+
+`scoped_lock` захватывает оба mutex без фиксированного порядка в коде пользователя: реализация подбирает порядок так, чтобы не зациклиться с другим `scoped_lock` в соседнем потоке. Альтернатива с явным rank:
+
+```cpp
+void ranked() {
+    std::lock(alpha, beta);
+    std::lock_guard a(alpha, std::adopt_lock);
+    std::lock_guard b(beta, std::adopt_lock);
+}
+```
+
+Оба потока всегда берут `alpha` перед `beta`.
+
+## Подводные камни
+
+- **Три и более mutex.** Rank должен быть глобальным; `scoped_lock` масштабируется лучше ad-hoc порядка.
+- **Ложный успех try_lock.** Откат должен освобождать уже взятые lock, иначе hold-and-wait остаётся.
+- **База и внешние API.** Внутренний порядок не спасает, если библиотека берёт lock в другом порядке.
+- **Читатели и writers.** `shared_mutex` тоже deadlock при неверном upgrade shared → unique.
+- **Отказ от lock.** Lock-free сложнее; ошибки в memory order дороже, чем mutex deadlock.

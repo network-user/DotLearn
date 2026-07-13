@@ -1,0 +1,74 @@
+---
+id: 3448
+title: "Event loop and assertion order in JS tests"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Event loop and assertion order in JS tests
+
+## In short
+
+The event loop in browser and Node keeps a single JS thread: the call stack runs sync code, Web APIs/libuv handle timers and I/O, callbacks land in queues (macrotask/microtask). When the stack is empty, the loop drains microtasks (Promise) before the next macrotask (`setTimeout`). Flakiness often comes from expecting the wrong order.
+
+## How to answer in an interview
+
+- Sync code always finishes before a zero-delay timer callback... except microtasks in between.
+- `setTimeout(fn, 0)` does not run instantly after a `fetch` thenable.
+- In tests I wait on a condition (Playwright `expect.poll`), not a fixed sleep.
+- In Node API suites I split unit without I/O and integration with real loop timing.
+- Honestly: `queueMicrotask` and `Promise.resolve().then` can beat `setTimeout(0)` and break naive log-order asserts.
+
+## How it works
+
+Order demo:
+
+```
+console.log("A");
+setTimeout(() => console.log("B"), 0);
+Promise.resolve().then(() => console.log("C"));
+console.log("D");
+```
+
+Output: A, D, C, B. The timer went to Web APIs; `then` entered the microtask queue.
+
+Flow sketch:
+
+<figure aria-label="event loop · stack · queues">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="8" y="20" width="70" height="40" rx="4"/>
+  <text x="43" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Stack</text>
+  <path d="M88 40 H110"/>
+  <polygon points="110,36 118,40 110,44" fill="currentColor"/>
+  <rect x="124" y="20" width="80" height="40" rx="4"/>
+  <text x="164" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Microtasks</text>
+  <path d="M214 40 H236"/>
+  <polygon points="236,36 244,40 236,44" fill="currentColor"/>
+  <rect x="250" y="20" width="62" height="40" rx="4"/>
+  <text x="281" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Timers</text>
+</svg>
+</figure>
+
+In pytest I pin the expected sequence of test-log events:
+
+```python
+def test_expected_async_log_order():
+    events = ["sync_start", "sync_end", "microtask", "macrotask"]
+    assert events.index("microtask") < events.index("macrotask")
+    assert events.index("sync_end") < events.index("microtask")
+```
+
+## Pitfalls
+
+**Hard sleep 1000ms.** Hides bugs and slows the pipeline.
+
+**Blocking while in a test.** Freezes the tab/process; timers do not tick.
+
+**Awaiting only the first then.** The second microtask has not run yet.
+
+**requestAnimationFrame in headless.** Frames are throttled; paint asserts flake.
+
+**Parallel Jest workers.** Shared timer mocks need `jest.isolateModules` for isolation.

@@ -1,0 +1,50 @@
+---
+id: 4203
+title: "NAT Gateway vs Internet Gateway in AWS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# NAT Gateway vs Internet Gateway in AWS?
+
+## In short
+
+An Internet Gateway (IGW) gives a public subnet two-way internet: inbound and outbound traffic to resources with public IPs. A NAT Gateway in a public subnet translates outbound traffic from a private subnet to the internet; inbound initiated connections to private resources do not pass through.
+
+## How to answer in an interview
+
+- Attach IGW to the VPC; route `0.0.0.0/0` → igw in the public route table.
+- NAT GW in a public AZ; private route table `0.0.0.0/0` → nat-xxx.
+- ALB in public, app/DB in private behind NAT for patches and outbound API calls.
+- Honestly: NAT Gateway bills per hour and per GB; for dev I sometimes use a NAT instance or VPC endpoints instead of full NAT.
+
+## How it works
+
+Typical VPC layout:
+
+```bash
+aws ec2 create-internet-gateway --query InternetGateway.InternetGatewayId --output text
+aws ec2 attach-internet-gateway --internet-gateway-id igw-0abc --vpc-id vpc-0def
+
+aws ec2 create-nat-gateway --subnet-id subnet-public1a \
+  --allocation-id eipalloc-0aaa --query NatGateway.NatGatewayId --output text
+
+aws ec2 create-route --route-table-id rtb-public \
+  --destination-cidr-block 0.0.0.0/0 --gateway-id igw-0abc
+
+aws ec2 create-route --route-table-id rtb-private \
+  --destination-cidr-block 0.0.0.0/0 --nat-gateway-id nat-0bbb
+```
+
+EC2 in a private subnet without a public IP reaches S3 via NAT or a Gateway Endpoint (no NAT charge). DB security groups still deny ingress from 0.0.0.0/0.
+
+## Pitfalls
+
+- **Single-AZ NAT.** An AZ outage cuts private subnet internet without a second NAT.
+- **IGW on a private subnet by mistake.** Instances with public IPs are exposed.
+- **Missing default route.** Private subnet without 0.0.0.0/0 to NAT cannot pull images.
+- **NACL vs SG confusion.** An open SG defeats NAT "hiding."
+- **IPv6 different path.** Egress-only IGW for v6, not the same NAT GW.

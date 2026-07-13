@@ -1,0 +1,63 @@
+---
+id: 1567
+title: "Must you call cancel after WithTimeout?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Must you call cancel after WithTimeout?
+
+## In short
+
+Yes, always: `defer cancel()` even if the deadline passed or work finished early. Cancel frees the timer and internal nodes in the context tree; without it you leak on hot paths (HTTP handler per request).
+
+## How to answer in an interview
+
+- WithTimeout and WithCancel both return a cancel func.
+- defer cancel right after creating the child ctx.
+- Early success: cancel stops the timer, you do not wait for expiry.
+- Honestly: linters staticcheck and vet remind you; treat it as mandatory hygiene.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func job(ctx context.Context) error {
+	select {
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	fmt.Println(job(ctx))
+}
+```
+
+Success at 100ms: defer cancel still runs on return and releases the timer goroutine tied to ctx.
+
+## Pitfalls
+
+**Only cancel on error path.** Leak on success branch.
+
+**Cancel twice.** Second cancel is a safe no-op in stdlib.
+
+**Forget cancel in a loop creating ctx.** N requests means N timers.
+
+**Parent cancel vs child cancel.** Child cancel does not cancel parent.
+
+**WithTimeout 0.** Immediate Done; still defer cancel.

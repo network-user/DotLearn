@@ -1,0 +1,72 @@
+---
+id: 2040
+title: "A typical CI pipeline for a Java service"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# A typical CI pipeline for a Java service
+
+## In short
+
+A CI pipeline automates checks on every push/PR: checkout, restore cache, build, tests, static analysis, artifact packaging, and (optionally) deploy to staging. The goal is to catch breakage before merge and produce a reproducible binary. For Java the norm is an JDK matrix or single LTS, `mvn verify` / `./gradlew build`, and publishing a jar/docker image.
+
+## How to answer in an interview
+
+- Triggers: push to main, pull request, nightly cron for long tests.
+- Stages: build → unit tests → integration (Testcontainers) → quality gate (Sonar) → artifact.
+- I cache `.m2` / Gradle user home keyed on lockfiles.
+- Staging deploy only from main; production via manual approval or tag.
+- Honestly: without flaky-test quarantine the pipeline becomes noise and teams ignore red status.
+
+## How it works
+
+Minimal GitHub Actions fragment:
+
+```yaml
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - run: mvn -B verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: service-jar
+          path: target/*.jar
+```
+
+Jenkins declarative equivalent:
+
+```groovy
+pipeline {
+  agent any
+  stages {
+    stage('Build') { steps { sh 'mvn -B verify' } }
+    stage('Docker') {
+      steps { sh 'docker build -t registry/acme/payments:${GIT_COMMIT} .' }
+    }
+  }
+  post {
+    failure { mail to: 'team@acme.io', subject: 'CI failed' }
+  }
+}
+```
+
+Typical flow: developer opens a PR → CI clones the repo → sets up JDK → downloads dependencies (or from cache) → compiles → Surefire → (optional) OWASP dependency-check → pushes jar to artifact registry. A successful merge to main triggers a deploy job with the same image digest for traceability.
+
+## Pitfalls
+
+- **Different JDK locally vs CI.** Compiler plugin `release` flag is mandatory.
+- **Secrets in logs.** Mask `settings.xml` passwords via CI secret store.
+- **Integration without service container.** Flaky localhost Postgres connections.
+- **skip tests in CI.** `-DskipTests` hides regressions until production.
+- **Artifact without SBOM.** Supply-chain audit is impossible during a CVE incident.

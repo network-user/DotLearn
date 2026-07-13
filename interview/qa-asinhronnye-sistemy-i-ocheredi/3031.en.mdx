@@ -1,0 +1,62 @@
+---
+id: 3031
+title: "Why is RabbitMQ used in the architecture QA tests?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why is RabbitMQ used in the architecture QA tests?
+
+## In short
+
+RabbitMQ decouples services through async queues: the web tier accepts an order; independent workers update the DB, send SMS, and reserve stock. Flexible exchange/binding routing lets one event feed several subsystems. QA tests every bound queue and consumer outage scenarios.
+
+## How to answer in an interview
+
+- Order API publishes to an exchange without waiting for email and billing synchronously.
+- Fanout for broadcast; direct/topic for selective routing.
+- Queues buffer Black Friday peaks without API collapse.
+- I check management UI: rates, consumers, memory alarm.
+- Honestly: without HA policy and mirrored/quorum queues a single node restart loses non-persistent messages.
+
+## How it works
+
+```gherkin
+Feature: RabbitMQ in order architecture
+
+  Scenario: New order fans out
+    Given publish routing key order.created to exchange shop.events
+    When bindings to billing queue and notify queue exist
+    Then both queues receive within 1 second
+    And API response time under 200 ms
+
+  Scenario: Slow email worker
+    Given notify queue depth grows
+    When billing consumer healthy
+    Then charges still process emails delayed acceptable per SLA
+
+  Scenario: Order payload contract
+    Given JSON schema orderId uuid amount decimal
+    When invalid amount string published
+    Then consumer nack to DLQ no partial charge
+```
+
+```gherkin
+Feature: Publish order event
+
+  Scenario: Fire and forget from API
+    Given channel queue order_pipeline durable true
+    When basic_publish body New order 8812
+    Then log shows x Sent and connection closed cleanly
+```
+
+## Pitfalls
+
+- **HTTP path only.** Async workers uncovered.
+- **One queue instead of real topology.** Routing bugs missed.
+- **Broker memory alarm.** Publish blocked; looks like API bug.
+- **Guest user on staging.** Permissions unlike prod vhost.
+- **No vhost isolation test.** Message leaks to foreign queue.

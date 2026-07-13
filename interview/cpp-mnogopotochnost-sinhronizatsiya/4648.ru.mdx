@@ -1,0 +1,62 @@
+---
+id: 4648
+title: "Какие примитивы синхронизации есть в STL?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие примитивы синхронизации есть в STL?
+
+## Суть
+
+`<mutex>`, `<shared_mutex>`, `<condition_variable>`, `<semaphore>`, `<atomic>`, `<barrier>` и `<latch>` (C++20) покрывают блокировки, ожидание условий, счётные допуски, lock-free операции и фазовую синхронизацию. RAII-обёртки (`lock_guard`, `unique_lock`, `shared_lock`, `scoped_lock`) управляют временем жизни lock.
+
+## Что ответить на собесе
+
+- Mutex family + condition_variable для классического producer/consumer.
+- `std::atomic` и `atomic_flag` для счётчиков, флагов, lock-free структур.
+- `counting_semaphore` / `binary_semaphore` (C++20) для пула слотов.
+- `barrier` / `latch` для «все дошли до точки» в параллельных алгоритмах.
+- Честно: spinlock в STL нет; его делают на `atomic` вручную, обычно не нужен на user space x86.
+
+## Как это работает
+
+```cpp
+#include <atomic>
+#include <barrier>
+#include <iostream>
+#include <thread>
+
+std::barrier<> phase(3);
+std::atomic<int> done{0};
+
+void stage(int id) {
+    ++done;
+    phase.arrive_and_wait();
+    if (id == 0) {
+        std::cout << "all reached: " << done.load() << '\n';
+    }
+}
+
+int main() {
+    std::thread a(stage, 0);
+    std::thread b(stage, 1);
+    std::thread c(stage, 2);
+    a.join();
+    b.join();
+    c.join();
+}
+```
+
+Каждый поток инкрементирует `done` атомарно, затем `barrier` блокирует до прихода всех трёх. После барьера безопасно читать итог (здесь 3). Комбинация atomic + barrier типична для параллельных пайплайнов.
+
+## Подводные камни
+
+- **C++20 availability.** `barrier`/`semaphore` могут отсутствовать на старых libstdc++; проверяю toolchain.
+- **atomic memory order.** По умолчанию `seq_cst` дорогой; для счётчиков иногда достаточно `relaxed`.
+- **condition_variable_any.** Гибче, но тяжелее; нужен только с non-mutex lockable.
+- **Не всё в STL.** IPC, futex-настройки, read-write lock с приоритетом остаются OS API.
+- **Забытый notify.** Без `notify` после `wait` потоки спят вечно.

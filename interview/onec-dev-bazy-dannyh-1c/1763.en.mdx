@@ -1,0 +1,58 @@
+---
+id: 1763
+title: "Clustered vs non-clustered index under 1C: what differs"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Clustered vs non-clustered index under 1C: what differs
+
+## In short
+
+A clustered index defines the physical row order in a table and only one is allowed per table. A non-clustered index is stored separately and points to rows; there can be many. The 1C platform creates these structures when metadata is deployed; the developer controls them through field indexing.
+
+## How to answer in an interview
+
+- I explain with MS SQL: clustered defines leaf page order, nonclustered is an extra B-tree with key pointers.
+- In an interview I say that in 1C tables the cluster is often the reference `_IDRRef` or a register composite key; the exact layout depends on object type.
+- I stress that range queries on date benefit from a cluster on period, while point lookup by counterparty usually uses a nonclustered index.
+- I honestly note that PostgreSQL has no direct MS SQL clustered index analogue; terminology transfers carefully.
+- An application index in the Designer is almost always nonclustered from a DBA perspective.
+
+## How it works
+
+On database configuration update the platform generates DDL. For a document table the clustered key keeps rows of one document and its tabular sections in adjacent pages during sequential writes.
+
+A nonclustered index on `Контрагент` finds document references quickly but physical table order stays by the clustered key. The plan does a nonclustered seek and a clustered lookup for other columns.
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Реализация.Ссылка,
+|    Реализация.Дата,
+|    Реализация.СуммаДокумента
+|ИЗ
+|    Документ.РеализацияТоваров КАК Реализация
+|ГДЕ
+|    Реализация.Контрагент = &Контрагент
+|    И Реализация.Дата МЕЖДУ &Начало И &Конец
+|УПОРЯДОЧИТЬ ПО
+|    Реализация.Дата";
+Запрос.УстановитьПараметр("Контрагент", КонтрагентОтбора);
+```
+
+If a nonclustered index covers `(Контрагент, Дата)`, the optimizer may skip a sort. If the cluster is on `Дата`, the date range reads sequential pages with minimal random IO.
+
+Too many nonclustered indexes on a movement register slow posting: every insert updates all trees.
+
+## Pitfalls
+
+- **Confusing with a unique index.** Uniqueness can be on clustered or nonclustered; those are different axes.
+- **Wide nonclustered index.** Putting all columns in a covering index bloats the tree and slows writes.
+- **Transferring terms to PostgreSQL.** There cluster means the `CLUSTER` command, not a permanent clustered index.
+- **Manual CREATE INDEX in SSMS.** An index outside 1C metadata disappears when the table is recreated from the Designer.
+- **Expecting a cluster on any field.** Only one clustered per table; a second cluster is impossible.

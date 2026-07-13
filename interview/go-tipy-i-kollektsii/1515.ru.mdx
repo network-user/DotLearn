@@ -1,0 +1,53 @@
+---
+id: 1515
+title: "Всегда ли lookup в map за O(1)?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Всегда ли lookup в map за O(1)?
+
+## Суть
+
+В среднем и амортизированно доступ по ключу O(1), но худший случай при множественных коллизиях в bucket растёт до O(n) по числу элементов в цепочке. Go перераспределяет map при высоком load factor, чтобы держать цепочки короткими.
+
+## Что ответить на собесе
+
+- Хэш + bucket index дают быстрый путь в типичном случае.
+- Коллизии укладываются в тот же bucket и overflow buckets; длинные цепочки замедляют поиск.
+- Атака на хэш (злонамеренные ключи) теоретически деградирует до O(n); в Go есть seed per-map mitigation.
+- Честно говорю: для hard real-time или adversarial input рассматриваю tree или sorted slice, не map.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	cache := make(map[string]int)
+	cache["user:42"] = 1
+
+	if score, ok := cache["user:42"]; ok {
+		fmt.Println("hit", score)
+	}
+
+	delete(cache, "user:42")
+	_, still := cache["user:42"]
+	fmt.Println("after delete", still)
+}
+```
+
+Runtime вычисляет hash ключа, выбирает bucket, сравнивает ключи в слотах. При росте таблицы элементы эвакуируются в расширенный массив bucket, чтобы средняя длина цепочки оставалась константной.
+
+## Подводные камни
+
+- **Сложные ключи.** Большие struct ключи удорожают сравнение в bucket даже при O(1) индексе.
+- **Итерация O(n).** Полный обход всегда линейный по размеру map.
+- **Память vs скорость.** Map всегда платит overhead bucket; маленькие N иногда выигрывают у slice scan.
+- **Concurrent read/write.** Не про сложность, но lookup во время write без sync даёт race или panic.
+- **Удалённые ключи.** `delete` не сжимает map сразу; память может оставаться до GC и shrink (если есть).

@@ -1,0 +1,94 @@
+---
+id: 1459
+title: "What does TCP do when a response never arrives?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does TCP do when a response never arrives?
+
+## In short
+
+TCP guarantees delivery through acknowledgements and retransmissions, but when packets are lost, latency is high, or the remote side fails, waiting is not infinite: retransmission timers fire and the connection eventually closes with an error.
+
+## How to answer in an interview
+
+- I name typical causes: lost segments, network congestion, a stuck server, firewalls, broken routes.
+- I explain the mechanics: the sender waits for ACKs, retries on timeout with exponential backoff, and shrinks the window (congestion control).
+- I show the application layer: in Go I set `SetDeadline`/`context` and handle `timeout`/`connection reset` instead of relying on endless TCP waits.
+- I add honestly: TCP is reliable within an established connection but does not fix application-level timeouts or "server accepted the request but never sent a body".
+
+## How it works
+
+The protocol numbers bytes and requires ACKs for received ranges. If no acknowledgement arrives within RTO (retransmission timeout), the stack treats the segment as lost and sends a copy. Algorithms like slow start and congestion avoidance reduce the rate to avoid making congestion worse. After repeated failures TCP declares the connection dead and surfaces an error to application code.
+
+On the Go side `net.Conn` wraps the OS socket. Without a deadline `Read` may wait a long time until TCP gives up. The right pattern is to cap waiting in the app and close the socket cleanly.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"time"
+)
+
+func fetchWithTimeout(host string) error {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.Dial("tcp", host+":80")
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+
+	request := []byte("GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n")
+	if _, err := conn.Write(request); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	buf := make([]byte, 2048)
+	n, err := conn.Read(buf)
+	if err != nil {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return fmt.Errorf("read timed out after TCP retries exhausted or app deadline hit")
+		}
+		return fmt.Errorf("read: %w", err)
+	}
+	fmt.Printf("received %d bytes\n", n)
+	return nil
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- fetchWithTimeout("example.com") }()
+
+	select {
+	case err := <-done:
+		fmt.Println("result:", err)
+	case <-ctx.Done():
+		fmt.Println("outer context expired")
+	}
+}
+```
+
+`Dialer.Timeout` caps connection setup; `SetDeadline` bounds read waiting. TCP still retransmits underneath, but the application does not hang forever.
+
+## Pitfalls
+
+- **TCP only, no deadlines.** Protocol reliability does not replace service SLAs; you still need timeouts and idempotency.
+- **RTO vs app timeout.** An application deadline may fire before TCP exhausts its retries.
+- **Half-open connections.** One side thinks the link is alive while the other closed; keepalive and health checks help detect this.
+- **Retransmits and duplicates.** TCP deduplicates on the wire, but idempotent APIs remain mandatory in business logic.
+- **TLS on top of TCP.** Failures may show up as `tls handshake timeout` even when the root cause is plain network unreachability.

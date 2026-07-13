@@ -1,0 +1,63 @@
+---
+id: 2035
+title: "Фазы default lifecycle Maven по порядку"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Фазы default lifecycle Maven по порядку
+
+## Суть
+
+Default lifecycle Maven проходит фиксированную цепочку: `validate`, `compile`, `test`, `package`, `verify`, `install`, `deploy`. Каждая фаза агрегирует goals плагинов. Указание одной фазы запускает её и все предыдущие. `compile` собирает main sources, `test` запускает unit-тесты перед упаковкой.
+
+## Что ответить на собесе
+
+- Перечисляю фазы и что реально происходит: validate проверяет POM, compile → `target/classes`, test → Surefire, package → jar/war.
+- `verify` добавляет integration/quality gates (Failsafe, SpotBugs), если подключены.
+- `install` кладёт артефакт в `~/.m2`, `deploy` пушит в remote Nexus/Artifactory.
+- В pipeline чаще останавливаюсь на `verify`, deploy выношу в отдельный job с credentials.
+- Честно: `mvn compile` не гарантирует зелёные тесты, это частая ловушка на code review.
+
+## Как это работает
+
+Фаза `validate` ловит битый POM до компиляции. `compile` вызывает `maven-compiler-plugin`; без явной конфигурации берётся Java из toolchain или parent POM:
+
+```xml
+<plugin>
+  <artifactId>maven-compiler-plugin</artifactId>
+  <configuration>
+    <release>21</release>
+  </configuration>
+</plugin>
+```
+
+На `test` Surefire ищет `*Test.java` / `@Test` методы. Зависимости тестов держу в `scope=test`:
+
+```xml
+<dependency>
+  <groupId>org.junit.jupiter</groupId>
+  <artifactId>junit-jupiter</artifactId>
+  <version>5.10.2</version>
+  <scope>test</scope>
+</dependency>
+```
+
+`package` формирует артефакт согласно `<packaging>`. `verify` не меняет jar, но может гонять Failsafe против поднятого Testcontainers Postgres. `install` публикует в local repository, что удобно при multi-module reactor:
+
+```bash
+mvn -pl payments-api -am install
+```
+
+`deploy` требует server id в `settings.xml` и совпадения с `distributionManagement`.
+
+## Подводные камни
+
+- **test-compile vs test.** Ошибки тестовых sources всплывают на `test-compile`, не на `test`.
+- **package без тестов.** `-DskipTests` пропускает Surefire, но фаза `test` всё равно «пройдена» пустой.
+- **verify ≠ security scan.** Без плагинов фаза почти ничего не делает.
+- **install засоряет local repo.** Снапшоты с одинаковым timestamp перезаписываются неочевидно.
+- **deploy из ноутбука.** Случайный `mvn deploy` с dev credentials может опубликовать SNAPSHOT в shared Nexus.

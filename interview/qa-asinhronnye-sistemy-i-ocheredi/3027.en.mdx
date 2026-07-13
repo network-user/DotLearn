@@ -1,0 +1,64 @@
+---
+id: 3027
+title: "RabbitMQ core components: what does QA verify?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# RabbitMQ core components: what does QA verify?
+
+## In short
+
+A producer publishes to an exchange; bindings with routing keys route to queues; consumers read and ack. Exchange types (direct, fanout, topic, headers) define routing. QA validates the message reaches the right queue, the consumer acks processing, and DLX/retry runs on failure.
+
+## How to answer in an interview
+
+- Producers do not write directly to a queue without a binding.
+- Direct: exact routing key match; topic: patterns like `orders.*.eu`.
+- Fanout: copy to all bound queues.
+- Manual ack: nack requeue vs reject to DLQ.
+- Honestly: auto_ack=true on staging hides loss on consumer crash.
+
+## How it works
+
+```gherkin
+Feature: RabbitMQ components
+
+  Scenario: Topic routing to region queue
+    Given exchange orders.topic type topic
+    And binding routing key orders.created.ru to queue ru-fulfillment
+    When publish routing key orders.created.ru
+    Then ru-fulfillment receives message eu queue empty
+
+  Scenario: Fanout notification broadcast
+    Given fanout exchange alerts.broadcast
+    When critical alert published
+    Then sms queue and email queue both receive
+
+  Scenario: Manual ack after DB commit
+    Given consumer manual ack mode
+    When DB transaction commits
+    Then basicAck called message removed from queue
+```
+
+```gherkin
+Feature: Consumer startup
+
+  Scenario: Wait for messages
+    Given queue alerts.pending bound to exchange
+    When consumer subscribed with prefetch 10
+    Then callback processes each body until channel closed
+```
+
+Management UI: check rates, consumers, unacked count.
+
+## Pitfalls
+
+- **Publish without queue declare on staging.** Auto-create with different flags in prod.
+- **Wrong exchange type.** Messages go nowhere.
+- **No DLQ binding.** Poison message loops forever.
+- **Multiple consumers without prefetch.** One takes all messages.
+- **Confuse routing key and queue name.** Test targets a nonexistent route.

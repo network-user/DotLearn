@@ -1,0 +1,54 @@
+---
+id: 2462
+title: "Clickjacking and X-Frame-Options / CSP headers"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Clickjacking and X-Frame-Options / CSP headers
+
+## In short
+
+Clickjacking embeds your page in a transparent iframe and steals user clicks. HTTP defenses are `X-Frame-Options` (legacy) and CSP `frame-ancestors`, which block or allowlist embedding. On the frontend I also ensure critical actions need explicit confirmation.
+
+## How to answer in an interview
+
+- For SPAs I set `Content-Security-Policy: frame-ancestors 'self'` at the CDN/SSR layer.
+- I keep `X-Frame-Options: DENY` for older browsers alongside CSP.
+- If embed is required (widget), I allowlist specific origins, not deprecated `ALLOW-FROM`.
+- Honestly: frame-busting via `if (top !== self)` is bypassable; I rely on headers.
+- For OAuth/login pages I forbid embedding entirely.
+
+## How it works
+
+An attacker overlays a decoy button on an iframe pointing to your `/settings/delete`. The user thinks they click Play, but the click lands inside the iframe.
+
+```ts
+const securityHeaders: Record<string, string> = {
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Content-Security-Policy': "frame-ancestors 'self' https://partner.example",
+};
+
+export function applyFrameGuards(response: Response): Response {
+  const guarded = new Response(response.body, response);
+  for (const [key, value] of Object.entries(securityHeaders)) {
+    guarded.headers.set(key, value);
+  }
+  return guarded;
+}
+```
+
+`frame-ancestors` controls who may embed **your** document (not `frame-src`, which governs what you embed). `SAMEORIGIN` allows iframe only from the same site. `none` matches DENY.
+
+For widgets you may allow a minimal embed subdomain with strict CSP and no sensitive actions inside the iframe.
+
+## Pitfalls
+
+- **Meta CSP vs header.** `<meta>` cannot set `frame-ancestors`; only HTTP headers work.
+- **Design tool previews.** Strict DENY breaks embedded previews; relax on staging only.
+- **OAuth consent screens.** Banks and IdPs need embedding; DENY breaks integration without partner agreement.
+- **Sandbox iframe.** Child `sandbox` does not replace parent `frame-ancestors`.
+- **Double framing.** Whitelisting a partner does not help if their iframe is hijacked because they lack CSP.

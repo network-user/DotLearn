@@ -1,0 +1,64 @@
+---
+id: 2059
+title: "Dockerfile: декларативная сборка образа"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Dockerfile: декларативная сборка образа
+
+## Суть
+
+Dockerfile это текстовый сценарий, по которому Docker Engine собирает образ слой за слоем. Каждая инструкция фиксирует изменение файловой системы; результат кэшируется и переиспользуется. Команда `docker build` читает Dockerfile и контекст каталога, создаёт immutable image с метаданными для запуска контейнера.
+
+## Что ответить на собесе
+
+- Dockerfile описывает базовый образ, зависимости, артефакты и точку входа.
+- `docker build` выполняет инструкции последовательно; каждый RUN/COPY добавляет слой.
+- Кэш слоёв ускоряет повторные сборки, пока инструкция и контекст не изменились.
+- Multi-stage Dockerfile уменьшает финальный образ, отделяя build и runtime.
+- Честно: без `.dockerignore` и pin версий базового образа сборка нестабильна и тяжёлая.
+
+## Как это работает
+
+```dockerfile
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /opt/billing
+
+COPY build/libs/billing-service.jar app.jar
+
+EXPOSE 8080
+
+ENV SPRING_PROFILES_ACTIVE=prod
+
+USER 10001
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Сборка:
+
+```
+docker build -t billing-service:1.4.0 .
+```
+
+Порядок работы engine:
+
+1. **Контекст.** В daemon уходит каталог (обычно `.`), список файлов фильтруется `.dockerignore`.
+2. **FROM.** Базовый слой (JRE Alpine) становится первым слоем нового образа.
+3. **COPY/RUN.** Каждая команда создаёт новый слой; изменившаяся строка инвалидирует кэш ниже по цепочке.
+4. **Метаданные.** WORKDIR, ENV, EXPOSE, CMD/ENTRYPOINT записываются в config образа без отдельного слоя (кроме ENV, влияющих на runtime).
+
+Для Java типичен двухэтапный вариант: Gradle/Maven stage собирает JAR, финальный stage содержит только runtime и артефакт.
+
+## Подводные камни
+
+- **Толстый контекст.** `COPY . .` без ignore тащит `.git` и локальные секреты в daemon.
+- **Root по умолчанию.** Процесс в контейнере с uid 0 расширяет blast radius при escape.
+- **Плавающий tag.** `FROM node:latest` ломает воспроизводимость между CI и prod.
+- **Слои apt без очистки.** Каждый RUN с кэшем пакетного менеджера раздувает образ.
+- **CMD vs ENTRYPOINT.** Shell-form CMD не пробрасывает сигналы SIGTERM корректно для graceful shutdown JVM.

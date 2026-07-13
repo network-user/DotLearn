@@ -1,0 +1,53 @@
+---
+id: 4272
+title: "Что происходит при обрыве TCP-соединения?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что происходит при обрыве TCP-соединения?
+
+## Суть
+
+При потере пакетов или reset peer TCP включает retransmit с exponential backoff. Если ACK не приходит до retrans limit, stack закрывает socket и app получает error (ECONNRESET, ETIMEDOUT). Graceful close: FIN four-way handshake через TIME-WAIT.
+
+## Что ответить на собесе
+
+- Fast retransmit on three duplicate ACKs.
+- RST немедленно abort; FIN orderly shutdown with buffered data flush.
+- Keepalive (`SO_KEEPALIVE`, `TCP_USER_TIMEOUT`) detect dead peer on long idle SSH/DB pool.
+- App must retry idempotent ops; use circuit breaker on cascade failure.
+- Честно: «TCP always recovers» false; partition может длиться дольше app timeout.
+
+## Как это работает
+
+Observe connections:
+
+```bash
+ss -tn state time-wait | head
+ss -tn state retrans
+```
+
+Simulate reset impact (concept):
+
+```bash
+curl -v --max-time 5 http://unreachable.internal:8080/ 2>&1 | tail -3
+```
+
+Graceful vs hard close:
+
+```
+FIN -> ACK -> FIN -> ACK   (orderly)
+RST                        (abort)
+```
+
+## Подводные камни
+
+- **TIME-WAIT pile-up.** Many short connections exhaust ephemeral ports on client.
+- **Half-open connection.** Remote died without FIN; app hangs until keepalive fires.
+- **LB idle timeout < app timeout.** Silent drop; TCP unaware until send fails.
+- **Retry storm.** All clients reconnect at once after blip; thundering herd.
+- **Ignore retrans metric.** Rising retrans rate early sign before user-visible outage.

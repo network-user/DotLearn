@@ -1,0 +1,57 @@
+---
+id: 3013
+title: "Как QA отделяет клиентскую ошибку от серверной по коду, логам и таймингам?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как QA отделяет клиентскую ошибку от серверной по коду, логам и таймингам?
+
+## Суть
+
+HTTP-коды 4xx указывают на некорректный запрос или права на стороне клиента, 5xx на сбой backend. Логи и waterfall в DevTools показывают, где именно застряло время: DNS, TLS, TTFB или рендер. QA связывает request id из Network с записью в серверном логе и фиксирует слой, где воспроизводится дефект.
+
+## Что ответить на собесе
+
+- Сначала смотрю статус в Network: 400/404/422 чаще клиент, 500/502/503 сервер.
+- Сопоставляю `X-Request-Id` или trace id между браузером и Kibana.
+- Анализирую тайминги: долгий TTFB при 200 может быть backend, а 4xx за 20 мс без server ERROR часто валидация на gateway.
+- В багрепорте указываю, какой слой доказал root cause.
+- Честно: прокси и CDN могут подменять код; без доступа к prod-логам опираюсь на staging с тем же маппингом ошибок.
+
+## Как это работает
+
+```gherkin
+Feature: Client vs server triage
+
+  Scenario: 404 missing resource
+    Given GET /api/v2/orders/99999
+    When response status is 404 in 45 ms
+    And server log has no ERROR stack
+    Then classify as client or routing misconfiguration
+
+  Scenario: 500 payment failure
+    Given POST /checkout returns 500
+    When Kibana trace pay-42 shows NullPointerException
+    And TTFB 1200 ms before body
+    Then classify as server defect
+
+  Scenario: 400 validation
+    Given POST body missing required field email
+    When status 400 and response JSON field errors
+    And no matching ERROR in api log
+    Then classify as client payload issue
+```
+
+Схема waterfall: waiting (TTFB) доминирует при backend bottleneck; stalled при proxy. 2xx с пустым телом и console error часто SPA, не API.
+
+## Подводные камни
+
+- **Слепая вера 4xx.** Gateway отдаёт 404, когда упал upstream.
+- **Один скрин Network.** Без server log id нельзя закрыть спор с backend.
+- **Кэш CDN.** Старый 200 маскирует свежий 500 на origin.
+- **CORS.** Браузер скрывает тело 5xx, кажется frontend-баг.
+- **Разные окружения.** Тест на staging UI, grep prod логов.

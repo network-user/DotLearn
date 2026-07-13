@@ -1,0 +1,57 @@
+---
+id: 1757
+title: "Why 1C indexes database fields"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why 1C indexes database fields
+
+## In short
+
+An index cuts lookup and sort time on chosen columns because the DBMS walks an ordered structure instead of scanning the whole table. In large 1C infobases this is the difference between seconds in a document list and minutes of waiting on a report.
+
+## How to answer in an interview
+
+- I explain an index as a trade-off: faster reads for a query pattern, more expensive writes on every post.
+- In an interview I give three motives: faster WHERE filters, ORDER BY without sorting the full set, and help for the optimizer on joins.
+- I clarify that in 1C indexes are defined in metadata and materialized in the DBMS when the configuration is updated.
+- I am honest that without measuring real queries an index may never enter the plan and only grows database size.
+- I watch the balance: one heavy nightly report does not justify ten indexes on fields that change on every document.
+
+## How it works
+
+When a user opens a sales journal filtered by counterparty and period, the platform generates SQL with predicates on the matching document table columns. If an index exists on those columns, the DBMS engine walks B-tree nodes (or the equivalent in the specific DBMS) and quickly finds the row range.
+
+Without an index the same query triggers a sequential scan: every table page is read from disk and rows are filtered in memory. On a register movement table spanning several years this becomes a cluster-wide bottleneck.
+
+A query that benefits from an index on the item code:
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Номенклатура.Ссылка,
+|    Номенклатура.Наименование
+|ИЗ
+|    Справочник.Номенклатура КАК Номенклатура
+|ГДЕ
+|    Номенклатура.Код = &КодПоиска";
+Запрос.УстановитьПараметр("КодПоиска", "АРТ-00421");
+Выборка = Запрос.Выполнить().Выбрать();
+```
+
+When a document is written the platform updates not only the table row but every index that includes changed fields. Indexing tabular section fields with hundreds of lines per document noticeably raises posting cost.
+
+The optimizer may ignore an index when selectivity is low: a Boolean `ПометкаУдаления` field that is almost always false across an active database can make a full scan cheaper than random index lookups.
+
+## Pitfalls
+
+- **Indexing for its own sake.** Every new index increases UPDATE time on posting and backup size.
+- **Mismatch with the query.** An index on (Organization, Date) is useless for date-only filters in typical MS SQL plans.
+- **Functions in the predicate.** A filter `ГОД(Дата) = 2024` does not use a date index; you need a date range.
+- **Stale statistics.** After a bulk data migration the optimizer chooses a scan until statistics are refreshed.
+- **Hardware without profiling.** More RAM does not replace a missing index on a field every DCS report filters on.

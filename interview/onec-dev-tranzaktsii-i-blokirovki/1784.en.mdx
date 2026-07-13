@@ -1,0 +1,56 @@
+---
+id: 1784
+title: "DBMS lock types in the 1C context"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# DBMS lock types in the 1C context
+
+## In short
+
+Below 1C application code the DBMS uses row, page, table, and metadata locks in shared and exclusive modes. The platform maps object writes and register movements to INSERT/UPDATE/DELETE, and SQL Server and PostgreSQL choose granularity and escalation on their own.
+
+## How to answer in an interview
+
+- I name row lock as the main one for point writes and page/table lock for bulk operations.
+- In an interview I mention `UPDLOCK`, `ROWLOCK`, `TABLOCK` for MS SQL and `FOR UPDATE` for PostgreSQL.
+- I stress isolation levels: read committed by default in PostgreSQL, snapshot/read committed in SQL Server.
+- I honestly say 1C exclusive mode is an application analogue of exclusivity, it does not cancel SQL mechanics.
+- For investigation I check DMVs or `pg_locks`, not only the 1C monitor.
+
+## How it works
+
+Writing one catalog item becomes an UPDATE on `_Reference12345`:
+
+```sql
+UPDATE dbo._Reference12345
+SET _Description = @Name
+WHERE _IDRRef = @Ref;
+```
+
+The DBMS sets an exclusive lock on the row. Parallel read with shared lock is possible until commit depending on isolation.
+
+Bulk posting generates a batch of INSERTs into `_AccumReg*`. As row lock count grows SQL Server may escalate to page or table lock, blocking concurrent posting wider than the developer intended.
+
+```sql
+BEGIN TRANSACTION;
+INSERT INTO dbo._AccumReg789 (_Period, _Fld1RRef, _Fld2RRef, _Fld3)
+VALUES (@Period, @Item, @Warehouse, @Qty);
+COMMIT TRANSACTION;
+```
+
+In PostgreSQL `SELECT ... FOR UPDATE` matches explicit row capture before update. Idle in transaction holds a lock even without an active query.
+
+Exclusive configuration mode forbids user writes but server structure update processes still use table-level locks on system objects.
+
+## Pitfalls
+
+- **Escalation during overnight jobs.** Daytime documents wait on table lock.
+- **Long SELECT inside a transaction.** Shared lock or snapshot blocks vacuum/rollback.
+- **NOLOCK as a fix.** Dirty read breaks accounting.
+- **Judging only by the 1C monitor.** The real queue is visible in the DBMS.
+- **Different isolation settings per cluster.** The same code behaves differently.

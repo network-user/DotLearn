@@ -1,0 +1,52 @@
+---
+id: 4182
+title: "Что такое JWT и где его применяют?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое JWT и где его применяют?
+
+## Суть
+
+JWT это подписанный (или зашифрованный JWE) JSON в формате `header.payload.signature` base64url. Claims несут subject, roles, exp; сервер проверяет signature shared secret или JWKS public key. Stateless для API gateway, но revoke и размер payload требуют дисциплины.
+
+## Что ответить на собесе
+
+- Три части: alg/typ в header, claims в payload, HMAC/RSA/ECDSA signature.
+- Не храню PII и secrets в payload: base64 не шифрование.
+- Prefer RS256/ES256 с rotation JWKS; HS256 только service-to-service с коротким TTL.
+- Честно добавляю: для session revoke использую opaque token + Redis или короткий TTL + refresh rotation.
+
+## Как это работает
+
+Проверка JWT через `jq` и openssl (RS256 verify упрощённо через jwt CLI):
+
+```bash
+TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1LTEyMyIsInJvbGUiOiJkZXBsbyIsImV4cCI61893456000fQ.sig'
+
+payload=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null)
+echo "$payload" | jq .
+
+# генерация HS256 для internal smoke test
+SECRET='smoke-test-only-not-prod'
+header=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+body=$(printf '{"sub":"u-123","exp":'$(($(date +%s)+300))'}' | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+sig=$(printf '%s.%s' "$header" "$body" | openssl dgst -sha256 -hmac "$SECRET" -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+echo "${header}.${body}.${sig}"
+```
+
+Gateway проверяет `exp`/`nbf`, `iss`, `aud`, signature. Короткий TTL (5-15m) + refresh token в httpOnly cookie снижает риск theft.
+
+Ingress (nginx) может передать `Authorization: Bearer` upstream; Istio/OPA валидирует JWKS из IdP.
+
+## Подводные камни
+
+- **alg=none / key confusion.** Принимаю только allowlist algs; RS256 token не проверяю HS256 ключом от pubkey.
+- **Long-lived JWT в localStorage.** XSS = полный account takeover.
+- **Sensitive claims.** email/roles видны любому, кто перехватил token.
+- **No revocation.** Компромисс token valid до exp; нужен blocklist или short TTL.
+- **Oversized cookie.** JWT >4KB ломает headers; BFF pattern с session id лучше.

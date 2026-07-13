@@ -1,0 +1,83 @@
+---
+id: 4244
+title: "В чём суть подхода GitOps?"
+category: devops-git
+categoryLabel: "Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# В чём суть подхода GitOps?
+
+## Суть
+
+GitOps описывает желаемое состояние инфраструктуры и приложений в Git и автоматически сводит кластер к этому состоянию. Репозиторий становится единственным источником правды: любое изменение проходит через commit и review, а контроллер (Argo CD, Flux) применяет манифесты без ручного kubectl apply в проде.
+
+## Что ответить на собесе
+
+- Описываю desired state в YAML/Helm/Kustomize в Git; prod меняю только merge в main.
+- Контроллер в кластере постоянно сравнивает live state с Git и sync/alert при drift.
+- Rollback: revert commit или pin на предыдущий tag, контроллер откатит ресурсы.
+- CI проверяет lint/validate; CD делает sync, а не «скрипт с SSH на сервер».
+- Честно: GitOps не заменяет секреты и bootstrap кластера; первичная установка контроллера всё равно вне Git или через отдельный repo.
+
+## Как это работает
+
+Типичный цикл для Kubernetes:
+
+```bash
+git clone git@github.com:org/platform-config.git
+cd platform-config/apps/payments
+
+cat > deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: billing-api
+  template:
+    metadata:
+      labels:
+        app: billing-api
+    spec:
+      containers:
+      - name: api
+        image: registry.example/billing:2.4.1
+        ports:
+        - containerPort: 8080
+EOF
+
+git add deployment.yaml
+git commit -m "feat(payments): bump billing-api to 2.4.1"
+git push origin main
+```
+
+Argo CD Application следит за `platform-config`; после push sync поднимет три реплики с новым образом. Drift (ручной scale или edit) подсветится OutOfSync.
+
+<figure aria-label="GitOps loop">
+<svg viewBox="0 0 320 80" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="20" width="70" height="40" rx="4"/>
+  <text x="39" y="45" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">Git</text>
+  <path d="M74 40h40"/>
+  <polygon points="114,40 108,36 108,44" fill="currentColor"/>
+  <rect x="118" y="20" width="80" height="40" rx="4"/>
+  <text x="158" y="45" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">Controller</text>
+  <path d="M198 40h40"/>
+  <polygon points="238,40 232,36 232,44" fill="currentColor"/>
+  <rect x="242" y="20" width="74" height="40" rx="4"/>
+  <text x="279" y="45" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">Cluster</text>
+</svg>
+</figure>
+
+## Подводные камни
+
+- **Secret leakage.** Пароли в plain YAML в Git недопустимы; использую SOPS, External Secrets или sealed-secrets.
+- **Bootstrap chicken-and-egg.** Сам Argo CD нужно установить до того, как Git станет источником правды.
+- **Drift tolerance.** Auto-sync без policy может перезаписать легитимный emergency patch; настраиваю sync windows и RBAC.
+- **Monorepo vs multirepo.** Один repo на всё упрощает review, но blast radius шире; разбиваю по доменам осознанно.
+- **Helm values drift.** Chart version в Git, а values локально на сервере ломают воспроизводимость; всё values в repo.

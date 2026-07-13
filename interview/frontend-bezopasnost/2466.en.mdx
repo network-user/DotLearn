@@ -1,0 +1,72 @@
+---
+id: 2466
+title: "Should the refresh token go on every request"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Should the refresh token go on every request
+
+## In short
+
+Use the refresh token only on a dedicated endpoint to obtain a new access token. Regular API calls carry the short-lived access token (Bearer). That limits refresh exposure in logs and XSS.
+
+## How to answer in an interview
+
+- Access token in the Authorization header on every protected request.
+- Refresh goes POST to `/auth/refresh` only on 401 or proactively before access expiry.
+- I store refresh in httpOnly Secure SameSite cookies, not JS-readable storage.
+- Honestly: background silent refresh needs a mutex or multiple tabs race.
+- On refresh compromise I use rotation plus reuse detection on the server.
+
+## How it works
+
+```ts
+let accessToken: string | null = null;
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = fetch('/auth/refresh', {
+    method: 'POST',
+    credentials: 'include',
+  })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('refresh failed');
+      const body = (await res.json()) as { accessToken: string };
+      accessToken = body.accessToken;
+      return body.accessToken;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
+async function authorizedFetch(input: RequestInfo, init: RequestInit = {}) {
+  const token = accessToken ?? (await refreshAccessToken());
+  const res = await fetch(input, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${token}` },
+  });
+  if (res.status !== 401) return res;
+  const next = await refreshAccessToken();
+  return fetch(input, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${next}` },
+  });
+}
+```
+
+Access lives 5–15 minutes, refresh days/weeks. Sending refresh on every call increases leak risk via proxy logs or extensions.
+
+## Pitfalls
+
+- **Refresh in every body.** Some mobile SDKs do this; on the web it is an anti-pattern.
+- **Parallel 401 storm.** Ten requests trigger ten refreshes; dedupe with a shared promise.
+- **Logout.** Clear in-memory access and revoke refresh server-side.
+- **SSR.** Cookie refresh is unavailable to Node SSR fetch without forwarding cookies.
+- **Long-lived tabs.** Proactive refresh before exp beats failing mid-action.

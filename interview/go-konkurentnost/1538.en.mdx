@@ -1,0 +1,71 @@
+---
+id: 1538
+title: "Where does a goroutine get stack memory?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where does a goroutine get stack memory?
+
+## In short
+
+On `go fn()` the runtime creates G and allocates an initial stack (on the order of 2 KiB in recent versions) from the heap allocator. When space runs out, stack growth allocates a larger segment, copies active frames, and fixes pointers; shrink frees excess space.
+
+## How to answer in an interview
+
+- A goroutine stack lives in heap-managed memory, not a fixed multi-megabyte pthread stack.
+- Escape analysis may place data on the heap even when logic looks stack-local.
+- `debug.SetMaxStack` caps growth; overflow triggers a stack overflow panic.
+- Honestly: the exact minimum stack size shifted (2K vs 4K on some arches); order of magnitude matters more than the exact number.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+)
+
+func depth(n int) {
+	if n == 0 {
+		return
+	}
+	var pad [64]byte
+	_ = pad[n%64]
+	depth(n - 1)
+}
+
+func stackKB() int {
+	var buf [64]byte
+	return len(buf)/1024 + runtime.Stack(buf[:], false)
+}
+
+func main() {
+	before := stackKB()
+	go func() {
+		depth(32)
+		fmt.Println("nested done")
+	}()
+	runtime.Gosched()
+	fmt.Println("main stack hint kb:", before)
+}
+```
+
+Recursion in `depth` grows the current G's stack; the runtime copies the stack at a threshold. Locals stay on the stack until the compiler escapes them to the heap (e.g., returning a pointer to a local).
+
+## Pitfalls
+
+**Large stack arrays.** `var huge [N]byte` in a goroutine can bloat the stack or move to the heap for large N.
+
+**Leaks via unsafe stack pointers.** After stack copy old pointers are invalid; the compiler inserts stack barriers, but unsafe breaks the invariant.
+
+**Millions of goroutines × 2 KiB.** Even tiny stacks add up to gigabytes; use pooling or worker limits.
+
+**No user-level stack sizing.** Go does not expose per-goroutine stack size knobs in normal code.
+
+**Profiling heap vs stack.** pprof heap reflects stack allocations indirectly; for deep stacks use the execution tracer and `runtime/debug`.

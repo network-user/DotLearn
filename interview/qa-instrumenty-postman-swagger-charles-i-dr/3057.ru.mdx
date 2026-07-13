@@ -1,0 +1,64 @@
+---
+id: 3057
+title: "Зачем QA-инженеру DBeaver и как им проверять данные?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем QA-инженеру DBeaver и как им проверять данные?
+
+## Суть
+
+DBeaver это универсальный GUI-клиент к SQL базам (PostgreSQL, MySQL, Oracle, SQL Server и др.): подключение по JDBC, редактор запросов, ER-диаграммы, export/import. QA проверяет side effects после API/UI действий: запись в таблице, статус заказа, audit trail, seed тестовых данных на staging read-only или через controlled write.
+
+## Что ответить на собесе
+
+- Подключаюсь read-only user к staging replica, не prod write без approval.
+- После POST /orders проверяю `orders.status = PAID` и строку в `payment_events`.
+- SQL только SELECT на регрессе; INSERT/UPDATE через approved scripts или fixtures pipeline.
+- Export CSV sample для бага без выгрузки всей таблицы.
+- Честно: прямой SQL не заменяет API assert; это cross-check когда UI скрывает internal state.
+
+## Как это работает
+
+```gherkin
+Feature: DBeaver data verification for QA
+
+  Scenario: Confirm order persisted after checkout UI
+    Given user completed checkout for order ext-8821
+    When QA runs SELECT status, total_cents FROM orders WHERE ext_id = 'ext-8821'
+    Then status is fulfilled and total_cents matches UI receipt
+
+  Scenario: Detect duplicate webhook processing
+    Given payment provider sends idempotent webhook twice
+    When QA counts rows in payment_events where idempotency_key = 'pay-991'
+    Then count equals 1 not 2
+
+  Scenario: Seed test user on staging
+    Given approved sql script seed_qa_wallet.sql executed once
+    When login as qa_wallet_user
+    Then balance matches seeded value in wallets table
+```
+
+Пример запроса (переименованные таблицы):
+
+```sql
+SELECT o.id, o.status, p.provider_ref
+FROM shop_orders o
+JOIN shop_payments p ON p.order_id = o.id
+WHERE o.external_id = 'ext-8821'
+  AND o.created_at > now() - interval '1 day';
+```
+
+DBeaver показывает explain plan для медленных запросов, diff данных между сессиями, генерацию ER. Для NoSQL есть отдельные drivers; QA уточняет, что DBeaver это SQL-first tool.
+
+## Подводные камни
+
+- **Write на prod по ошибке.** Только read-only role по default; цветовая маркировка connection.
+- **SELECT * на большой таблице.** Lock и timeout; всегда LIMIT и indexed WHERE.
+- **PII в export.** Маскируй email/phone в приложенных CSV.
+- **Replica lag.** Staging replica отстаёт; «нет строки» ложный fail, retry или primary read с approval.
+- **Ручной UPDATE без rollback plan.** Портит shared staging; используй transaction + ROLLBACK в сессии.

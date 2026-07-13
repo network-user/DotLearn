@@ -1,0 +1,70 @@
+---
+id: 3044
+title: "Что такое Docker и зачем он QA-инженеру?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое Docker и зачем он QA-инженеру?
+
+## Суть
+
+Docker упаковывает приложение с зависимостями в образ и запускает изолированный контейнер на общем Linux kernel. Для QA это воспроизводимый stand: один `docker compose up` поднимает API, БД, mock и wiremock с фиксированными версиями. Контейнер легче VM, стартует за секунды и одинаково ведёт себя на ноутбуке и в CI.
+
+## Что ответить на собесе
+
+- Образ (image) immutable; контейнер это runtime instance с writable layer.
+- Dockerfile описывает сборку; compose orchestrates несколько сервисов и volumes.
+- QA использует для локального стенда, изолированных БД seed, parallel job agents.
+- Перед регрессом фиксирую tag образа, не `latest`, чтобы сравнивать build-to-build.
+- Честно: Docker не эмулирует iOS и не заменяет device farm; mobile native всё ещё на реальных девайсах.
+
+## Как это работает
+
+```gherkin
+Feature: Docker test environment for QA
+
+  Scenario: Spin up integration stack locally
+    Given docker compose file defines api postgres redis mailhog
+    When QA runs docker compose up -d
+    Then healthcheck on api returns 200 within 90 seconds
+    And tests hit http://localhost:8080 with seeded data volume
+
+  Scenario: Tear down after regression
+    Given containers running for feature branch tests
+    When QA runs docker compose down -v
+    Then ports freed and database volume removed for clean next run
+
+  Scenario: CI agent pulls pinned image
+    Given pipeline uses image registry.example/shop-api:4.2.1-rc3
+    When newman suite executes against container network alias api
+    Then same digest runs on every agent without drift
+```
+
+Минимальный Dockerfile для static mock (переименованные пути):
+
+```dockerfile
+FROM nginx:1.27-alpine
+COPY ./mocks/ /usr/share/nginx/html/
+EXPOSE 80
+```
+
+Запуск:
+
+```
+docker build -t qa-wiremock-static:1.0 .
+docker run -d --name wiremock-static -p 9090:80 qa-wiremock-static:1.0
+```
+
+Отличие от VM: контейнер делит kernel хоста, нет guest OS; изоляция через namespaces и cgroups. Для QA критичны **volume** (данные БД между рестартами), **network** (alias сервисов в compose), **env file** (feature flags staging).
+
+## Подводные камни
+
+- **`:latest` в compose.** Ночной прогон вчера и сегодня на разных слоях; pin digest.
+- **Конфликт портов 5432/6379.** Локальный Postgres мешает compose; маппинг на 15432.
+- **Root в контейнере на CI.** Permission denied на volume; используй user directive или fix ownership.
+- **Забытый `down -v`.** Следующий прогон видит грязные данные и flaky assertions.
+- **ARM vs x86 образ.** M1 Mac тянет другой manifest; проверяй platform в pipeline.

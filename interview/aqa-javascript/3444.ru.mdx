@@ -1,0 +1,76 @@
+---
+id: 3444
+title: "Типы данных JavaScript для автотестов"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Типы данных JavaScript для автотестов
+
+## Суть
+
+JavaScript делит значения на семь примитивов (`undefined`, `null`, `boolean`, `number`, `string`, `bigint`, `symbol`) и ссылочный тип `object` (объекты, массивы, функции, даты). В API/UI тестах от типа зависит сравнение expected/actual и сериализация в JSON.
+
+## Что ответить на собесе
+
+- Примитивы копируются по значению, объекты передаются по ссылке.
+- `typeof null` даёт `"object"` (исторический баг), для проверок использую строгое сравнение.
+- `bigint` не смешиваю с `number` без явного cast в assertion.
+- В контрактных тестах валидирую схему ответа, а не только `typeof`.
+- Честно: `symbol` в payload редок, но ломает deep equal без кастомного replacer.
+
+## Как это работает
+
+Примитивы хранятся inline в переменной:
+
+```
+const passed = true;
+const retries = 3;
+const label = "smoke";
+```
+
+Ссылочные типы указывают на общую область памяти:
+
+```
+const payload = { userId: 42, roles: ["qa"] };
+const copy = payload;
+copy.roles.push("admin");
+```
+
+Проверяю глубокое равенство в Python-раннере, который гоняет JS snippet:
+
+```python
+import json
+
+
+def normalize_api_body(raw: str) -> dict:
+    data = json.loads(raw)
+    if isinstance(data.get("id"), str) and data["id"].isdigit():
+        data["id"] = int(data["id"])
+    return data
+
+
+def test_types_after_normalization():
+    body = '{"id":"7","ok":true,"tags":[]}'
+    parsed = normalize_api_body(body)
+    assert isinstance(parsed["id"], int)
+    assert isinstance(parsed["ok"], bool)
+    assert isinstance(parsed["tags"], list)
+```
+
+`undefined` в JSON отсутствует, `null` сериализуется явно.
+
+## Подводные камни
+
+**Сравнение массивов через `==`.** Два разных массива с одинаковым содержимым не равны по ссылке.
+
+**Number и NaN.** `typeof NaN` это `number`, обычный assert путает с валидным числом.
+
+**BigInt в REST.** JSON.stringify падает на bigint без replacer.
+
+**Путаница null/undefined.** Фронт шлёт `null`, тест ждёт отсутствие ключа.
+
+**Date как object.** `typeof new Date()` не `date`, нужен instance check.

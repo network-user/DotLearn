@@ -1,0 +1,79 @@
+---
+id: 3363
+title: "POST, PUT и PATCH: семантика для API-тестов"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# POST, PUT и PATCH: семантика для API-тестов
+
+## Суть
+
+POST создаёт новый ресурс и не идемпотентен: повтор может породить дубликат. PUT заменяет ресурс по URI целиком и идемпотентен. PATCH вносит частичные изменения; на практике тоже стремятся к идемпотентности, но семантика зависит от API.
+
+## Что ответить на собесе
+
+- POST `/users` без id в path: ожидаю 201 и Location; повтор с тем же телом может дать два ресурса.
+- PUT `/users/42` передаёт полное представление; второй такой же запрос не меняет результат.
+- PATCH `/users/42` шлёт только изменившиеся поля; проверяю merge semantics и 409 при конфликте версий.
+- Тестирую idempotency-key header там, где POST должен быть безопасен при retry.
+- Честно добавляю: многие API путают PUT и PATCH; читаю контракт, а не только RFC.
+
+## Как это работает
+
+Клиент выбирает метод по intent. В pytest parametrizую сценарии и проверяю side effects в БД или follow-up GET.
+
+```python
+import httpx
+import uuid
+
+BASE = "https://staging.example.com"
+
+
+def test_post_creates_new_user():
+    payload = {"name": "Ada", "email": f"ada-{uuid.uuid4()}@test.io"}
+    with httpx.Client(base_url=BASE, timeout=10.0) as client:
+        created = client.post("/api/users", json=payload)
+        assert created.status_code == 201
+        user_id = created.json()["id"]
+        again = client.post("/api/users", json=payload)
+    assert again.status_code == 201
+    assert again.json()["id"] != user_id
+
+
+def test_put_is_idempotent():
+    user_id = 42
+    body = {"name": "Grace", "email": "grace@test.io", "role": "admin"}
+    with httpx.Client(base_url=BASE, timeout=10.0) as client:
+        first = client.put(f"/api/users/{user_id}", json=body)
+        second = client.put(f"/api/users/{user_id}", json=body)
+    assert first.status_code in (200, 204)
+    assert second.status_code == first.status_code
+
+
+def test_patch_updates_single_field():
+    user_id = 42
+    with httpx.Client(base_url=BASE, timeout=10.0) as client:
+        patched = client.patch(f"/api/users/{user_id}", json={"name": "Grace H."})
+        fetched = client.get(f"/api/users/{user_id}")
+    assert patched.status_code == 200
+    assert fetched.json()["name"] == "Grace H."
+    assert fetched.json()["email"] == "grace@test.io"
+```
+
+Негативы: PATCH на несуществующий id (404), PUT без обязательного поля (400), POST без Content-Type.
+
+## Подводные камни
+
+**POST вместо GET с телом.** Кэши и прокси ведут себя иначе; тесты не покрывают реальный клиент.
+
+**PUT без полного body.** Сервер затирает поля null, тест green, данные потеряны.
+
+**PATCH JSON Merge Patch vs JSON Patch.** Разный Content-Type, разные ожидания.
+
+**Идемпотентность POST через retry middleware.** Без ключа дубликаты заказов.
+
+**204 без тела.** Assert на JSON падает при успехе.

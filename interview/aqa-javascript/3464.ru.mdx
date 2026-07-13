@@ -1,0 +1,82 @@
+---
+id: 3464
+title: "Может ли первичный ключ содержать NULL"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Может ли первичный ключ содержать NULL
+
+## Суть
+
+Первичный ключ в реляционной таблице обязан быть NOT NULL и уникальным: каждая строка должна иметь однозначный идентификатор. NULL означает «значение неизвестно», поэтому две строки с NULL в PK нарушили бы уникальность и сделали ссылку из внешнего ключа неопределённой. СУБД запрещают NULL в столбцах PK на уровне ограничений.
+
+## Что ответить на собесе
+
+- PK всегда NOT NULL; nullable surrogate id допустим только до назначения, но не в финальной схеме.
+- В интеграционных тестах проверяю INSERT без id и ожидаю constraint violation или auto-increment.
+- Составной PK: каждый столбец PK тоже NOT NULL, иначе FK не собрать.
+- Для soft-delete иногда делают partial unique index, но PK остаётся стабильным числом.
+- Честно: UUID v4 nullable «временно» в миграциях ломает join в staging, генерирую default заранее.
+
+## Как это работает
+
+Объявление таблицы:
+
+```
+CREATE TABLE test_runs (
+    run_id   BIGINT PRIMARY KEY,
+    suite    VARCHAR(80) NOT NULL,
+    started  TIMESTAMPTZ NOT NULL
+);
+```
+
+Попытка NULL:
+
+```
+INSERT INTO test_runs (run_id, suite, started)
+VALUES (NULL, 'checkout', NOW());
+-- ERROR: null value in column "run_id" violates not-null constraint
+```
+
+Связь через FK:
+
+```
+CREATE TABLE run_artifacts (
+    artifact_id BIGINT PRIMARY KEY,
+    run_id      BIGINT NOT NULL REFERENCES test_runs(run_id)
+);
+```
+
+Проверка контракта в pytest с sqlite:
+
+```python
+import sqlite3
+
+import pytest
+
+
+def test_primary_key_rejects_null():
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE runs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO runs (id, name) VALUES (NULL, 'smoke')")
+    conn.close()
+```
+
+## Подводные камни
+
+**NULL в составном PK.** Две строки (NULL, 'a') считаются distinct в SQL, но PK теряет смысл.
+
+**ORM скрывает NOT NULL.** TypeScript entity без `@PrimaryColumn` nullable пропускает баг до prod.
+
+**SERIAL без явного PK.** Postgres создаёт PK, но nullable колонка вручную всё равно запрещена.
+
+**Тестовые фикстуры с undefined.** JS `undefined` в ORM превращается в omit column, не в NULL PK.
+
+**Миграция ADD PK на legacy.** Существующие NULL id нужно backfill до включения constraint.

@@ -1,0 +1,60 @@
+---
+id: 2958
+title: "IP vs MAC: зачем QA различает L3 и L2 адреса?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# IP vs MAC: зачем QA различает L3 и L2 адреса?
+
+## Суть
+
+MAC (48 бит, прошит/заводской) работает в пределах broadcast domain: доставка кадра соседу по Ethernet/Wi‑Fi. IP (логический, DHCP или static) используется для маршрутизации между сетями через интернет. ARP связывает «знаю IP соседа» → «нужен MAC». QA редко дебажит ARP, но понимает, почему смена IP не меняет MAC и наоборот.
+
+## Что ответить на собесе
+
+- MAC уникален на NIC, меняется при подмене адаптера; IP может меняться каждый reconnect домашнего роутера.
+- Маршрутизатор смотрит IP заголовок; switch в LAN смотрит MAC таблицу.
+- Wi‑Fi captive portal и DHCP reservation привязаны к MAC на роутере офиса/guest сети.
+- Честно: в облачном web QA MAC почти не виден; важнее IP, X-Forwarded-For и device id в приложении.
+
+## Как это работает
+
+Отправка пакета на 203.0.113.8 из домашней LAN:
+
+1. PC знает: цель вне подсети → шлюз 192.168.1.1.
+2. ARP: «кто 192.168.1.1?» → MAC роутера aa:bb:cc:dd:ee:ff.
+3. Кадр Ethernet: dst MAC роутера, payload IP пакета к 203.0.113.8.
+4. Дальше маршрутизаторы по IP; на последнем hop ARP к хосту назначения.
+
+Gherkin для guest Wi‑Fi и ACL:
+
+```gherkin
+Feature: MAC и IP в доступе к guest portal
+
+  Scenario: Guest portal выдаёт IP по DHCP
+    When устройство подключается к guest Wi‑Fi
+    Then DHCP выдаёт IP из пула 10.88.0.0/24
+    And MAC адрес клиента виден в admin панели AP
+
+  Scenario: Блокировка по MAC после abuse
+    Given клиент с MAC "02:11:22:33:44:55" заблокирован
+    When тот же MAC подключается снова
+    Then captive portal отклоняет доступ даже при новом IP
+
+  Scenario: API rate limit по IP не путается с MAC
+    When два разных устройства за одним NAT выходят с одним public IP
+    Then rate limit применяется к shared IP
+    And QA документирует ожидаемое поведение для офиса
+```
+
+## Подводные камни
+
+- **Random MAC на iOS/Android.** Guest rules «запомнили MAC» flaky после privacy rotate.
+- **Путаница ARP и DNS.** «Не пингуется IP» лечат сменой DNS без проверки ARP/neighbor.
+- **VIP/failover IP.** MAC может смениться при failover, IP остаётся; краткий disconnect.
+- **Docker bridge MAC.** Не равен MAC хоста; путаница в локальной отладке.
+- **Ответ «MAC это IP версии 2».** Неверная аналогия; разные уровни OSI.

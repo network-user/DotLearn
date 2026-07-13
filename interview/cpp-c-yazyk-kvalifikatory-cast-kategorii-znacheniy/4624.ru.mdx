@@ -1,0 +1,72 @@
+---
+id: 4624
+title: "Когда vector при реаллокации move-ит элементы?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда vector при реаллокации move-ит элементы?
+
+## Суть
+
+При росте capacity `std::vector` переносит элементы в новый буфер через move, если move constructor `T` помечен `noexcept` (или copy deprecated path). Иначе копирует, чтобы сохранить strong exception guarantee при возможном rollback.
+
+## Что ответить на собесе
+
+- Нужны move ctor/assign; без них только copy.
+- `noexcept` на move ops критичен для `vector<T>` reallocation.
+- `reserve` заранее снижает число reallocations.
+- Move-only типы (unique_ptr) требуют move; copy impossible.
+- Честно: даже с move, reallocation O(n); профилирую частоту push_back.
+
+## Как это работает
+
+`emplace_back` overflow → allocate new buffer → `std::uninitialized_move` или copy → destroy old.
+
+```cpp
+#include <iostream>
+#include <vector>
+
+struct Payload {
+    int* heap;
+
+    explicit Payload(int v) : heap(new int(v)) {
+        std::cout << "build " << v << '\n';
+    }
+
+    Payload(Payload&& other) noexcept : heap(other.heap) {
+        other.heap = nullptr;
+        std::cout << "move\n";
+    }
+
+    ~Payload() {
+        delete heap;
+        std::cout << "destroy\n";
+    }
+
+    Payload(const Payload&) = delete;
+    Payload& operator=(const Payload&) = delete;
+};
+
+int main() {
+    std::vector<Payload> bag;
+    bag.reserve(2);
+    bag.emplace_back(1);
+    bag.emplace_back(2);
+    bag.emplace_back(3);
+    return 0;
+}
+```
+
+Третий элемент триггерит reallocation; первые два move-ятся благодаря `noexcept` move ctor.
+
+## Подводные камни
+
+- **Move without noexcept.** Vector copies all elements on growth.
+- **Self-referential elements.** Rare, но pointers into vector invalidate on realloc.
+- **Iterator invalidation.** Любой realloc invalidates iterators/pointers/references.
+- **Small vector optimization.** Нет для `vector<T>` general T; только string-like types.
+- **PMR vector.** Allocator propagation меняет когда происходит move/copy.

@@ -1,0 +1,56 @@
+---
+id: 4262
+title: "Чем могут дополнить или заменить SSH?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем могут дополнить или заменить SSH?
+
+## Суть
+
+SSH остаётся стандартом shell-доступа, но Zero Trust (BeyondCorp, Teleport, Cloudflare Access) заменяет flat VPN+SSH на identity-aware sessions с audit. WireGuard строит L3 mesh вместо jump hosts. Для automation чаще SSM Session Manager, kubectl exec или CI deploy keys без interactive shell.
+
+## Что ответить на собесе
+
+- ZTNA: каждый session через IdP MFA, short-lived cert, no static SSH key on laptop.
+- WireGuard: encrypted overlay, ssh внутри WG или replace bastion entirely.
+- AWS SSM / GCP OS Login: no open port 22, IAM-bound access.
+- Kubernetes: `kubectl exec`, GitOps вместо ssh на node для app deploy.
+- Честно: «замена SSH» в enterprise редко total; скорее shrink blast radius и add audit.
+
+## Как это работает
+
+WireGuard point-to-site sketch:
+
+```bash
+sudo apt install wireguard
+wg genkey | tee /etc/wireguard/server.key | wg pubkey > /etc/wireguard/server.pub
+chmod 600 /etc/wireguard/server.key
+
+cat <<EOF | sudo tee /etc/wireguard/wg0.conf
+[Interface]
+Address = 10.8.0.1/24
+ListenPort = 51820
+PrivateKey = $(sudo cat /etc/wireguard/server.key)
+
+[Peer]
+PublicKey = CLIENT_PUBLIC_KEY
+AllowedIPs = 10.8.0.2/32
+EOF
+
+sudo systemctl enable --now wg-quick@wg0
+```
+
+Then ssh over `10.8.0.0/24` without public port 22.
+
+## Подводные камни
+
+- **ZTNA vendor lock-in.** Egress policy tied to one broker; plan break-glass SSH.
+- **WG key rotation.** Static keys on laptops leak; automate expiry.
+- **SSM agent missing.** Instance unreachable if agent down; monitor agent health.
+- **kubectl exec as root.** Same risk as SSH; RBAC and audit logs mandatory.
+- **Hype replaces basics.** Fancy mesh without patching sshd config leaves old path open.

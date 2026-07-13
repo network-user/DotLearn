@@ -1,0 +1,64 @@
+---
+id: 1471
+title: "How does var m map differ from m := make(map)?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does var m map differ from m := make(map)?
+
+## In short
+
+`var m map[K]V` creates a nil map: reads work (zero value), writes panic. `m := make(map[K]V)` or a `map[K]V{}` literal allocates an empty, ready table.
+
+## How to answer in an interview
+
+- A nil map acts empty on lookup/delete, but `m[k]=v` panics.
+- `make` and `{}` literals both yield an empty writable map; `make` accepts a capacity hint.
+- I mention JSON unmarshal: a struct field stays nil until the unmarshaller creates a map on first write.
+- I add honestly: `==` on maps compares runtime header pointers; two empty initialized maps are not "equal by content" via `==`, only nil vs non-nil checks compile.
+
+## How it works
+
+The zero value for a map is a nil pointer to `hmap`. Read/delete are safe and mean "key missing". Insert needs an allocated `hmap`, provided by `make` or assignment from an existing map.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	var idle map[string]int
+	fmt.Println(idle == nil)
+	if v, ok := idle["missing"]; ok {
+		fmt.Println(v)
+	} else {
+		fmt.Println("lookup on nil map is safe")
+	}
+
+	active := make(map[string]int, 4)
+	active["go"] = 1
+	fmt.Println(active["go"])
+
+	literal := map[string]int{}
+	literal["rust"] = 2
+	fmt.Println(literal["rust"])
+
+	// idle["x"] = 1 // panic: assignment to entry in nil map
+}
+```
+
+`make(..., 4)` reserves space for roughly four elements without filling them. The `map[string]int{}` literal gives a writable map with no hint.
+
+Lazy init pattern: keep nil when a map is optional and allocate on first insert via a helper to avoid wasted allocation.
+
+## Pitfalls
+
+- **Nil vs empty map confusion.** `len(nil map)` and `len(empty map)` are both 0, but only non-nil accepts inserts.
+- **Passing nil map to a writing function.** Callee must `make` when `m == nil`.
+- **range over nil map.** Safe, zero iterations; do not confuse with nil slice, which is also range-safe.
+- **Serialization.** `json.Marshal(nil map)` yields `null`; an empty map yields `{}`.
+- **Comparing maps with ==.** Only nil checks compile; otherwise compile error.

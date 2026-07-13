@@ -1,0 +1,74 @@
+---
+id: 1572
+title: "Что такое goroutine leak?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое goroutine leak?
+
+## Суть
+
+Goroutine leak: G never exits, blocked forever (chan, mutex, sleep loop) while holding stack and references → memory growth, pprof goroutine count climb. Отличие от intentional long-lived worker: leak serves no purpose after parent done.
+
+## Что ответить на собесе
+
+- Типично: send без receiver, recv без sender/close, WaitGroup mismatch, ctx без cancel listener.
+- Детект: pprof goroutine, runtime.NumGoroutine in tests, leaktest patterns.
+- Fix: ctx cancel, close chan, timeout, ensure Done paths.
+- Честно: leak не OOM сразу; slow burn в long-running servers.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func leaky() {
+	ch := make(chan struct{})
+	go func() {
+		<-ch
+	}()
+}
+
+func safe(ctx context.Context) {
+	ch := make(chan struct{})
+	go func() {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func main() {
+	leaky()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	safe(ctx)
+	time.Sleep(5 * time.Millisecond)
+	fmt.Println("done")
+}
+```
+
+leaky goroutine ждёт на ch forever. safe exits on ctx.Done().
+
+## Подводные камни
+
+**Fire-and-forget go.** No lifecycle ownership.
+
+**Timer leak + goroutine.** time.After loop without cancel.
+
+**HTTP body unread.** Transport goroutines linger.
+
+**Test passes locally.** Leak under load only.
+
+**Ignore pprof spike after deploy.** Treat rising goroutine count as alert.

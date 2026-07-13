@@ -1,0 +1,64 @@
+---
+id: 2008
+title: "How does CSRF work and how do Spring apps defend against it?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does CSRF work and how do Spring apps defend against it?
+
+## In short
+
+CSRF tricks the victim's browser into sending a state-changing request to a site where they are already logged in. The session cookie goes automatically and the server may treat the action as legitimate. Defense: unpredictable tokens, SameSite cookies, Origin checks.
+
+## How to answer in an interview
+
+- CSRF targets cookie-based sessions, not Bearer APIs with an explicit header.
+- For forms: synchronizer token in session plus a hidden field.
+- `SameSite=Lax/Strict` blocks cross-site POSTs with cookies.
+- I never use state-changing GET; idempotent GET is not a CSRF concern.
+- Honestly: SPAs on JWT without cookies skip CSRF, but XSS becomes more critical.
+
+## How it works
+
+Scenario: user is logged into bank.app and opens evil.site with an auto-submit form:
+
+```html
+<form action="https://bank.app/transfer" method="POST">
+  <input type="hidden" name="to" value="attacker">
+  <input type="hidden" name="amount" value="10000">
+</form>
+<script>document.forms[0].submit();</script>
+```
+
+The browser attaches the session cookie. Server-side defense in Java:
+
+```java
+@Controller
+public class TransferController {
+    @PostMapping("/transfer")
+    public String transfer(HttpSession session, @RequestParam String csrfToken,
+                           @RequestParam BigDecimal amount) {
+        String expected = (String) session.getAttribute("csrfToken");
+        if (expected == null || !MessageDigest.isEqual(
+                expected.getBytes(UTF_8), csrfToken.getBytes(UTF_8))) {
+            throw new SecurityException("csrf mismatch");
+        }
+        ledgerService.transfer(amount);
+        return "redirect:/done";
+    }
+}
+```
+
+The token is generated when rendering the form and stored in session. Spring Security enables a CSRF filter by default for session apps. For JWT REST, CSRF is disabled, but CORS and XSS hardening are mandatory.
+
+## Pitfalls
+
+- **CSRF token in cookie without double-submit.** Attacker cannot read HttpOnly, but other bugs may matter more.
+- **Referer check as the only line.** Privacy modes strip the header.
+- **SameSite=None without Secure.** Cookie leaks over HTTP.
+- **Login CSRF.** Session swap before the victim logs in is rare but real.
+- **GraphQL POST without CSRF on cookie auth.** One mutation with cookies is dangerous.

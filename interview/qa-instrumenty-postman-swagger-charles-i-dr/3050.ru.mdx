@@ -1,0 +1,73 @@
+---
+id: 3050
+title: "Какие нефункциональные проверки встраивают в CI/CD?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие нефункциональные проверки встраивают в CI/CD?
+
+## Суть
+
+NFR в pipeline дополняют функциональные тесты: performance smoke, security scan, accessibility lint, contract/load gates, artifact size и SLO checks. Они не заменяют полноценный perf audit, но ловят регрессии рано: медленный endpoint, уязвимая зависимость, рост bundle, flaky infra.
+
+## Что ответить на собесе
+
+- Performance: k6/JMeter smoke на staging после deploy, порог p95 и error rate.
+- Security: SAST (Semgrep/Sonar), dependency scan (Snyk/Trivy), DAST на schedule не каждый commit.
+- Reliability: soak на nightly, chaos experiments в отдельном env.
+- Compatibility: matrix browser/OS через Playwright grid или BrowserStack on tag.
+- Честно: гонять full load на каждый PR дорого; в CI обычно smoke, тяжёлые прогоны nightly.
+
+## Как это работает
+
+```gherkin
+Feature: Non-functional gates in CI/CD
+
+  Scenario: Post-deploy k6 smoke
+    Given pipeline stage perf_smoke after staging deploy
+    When k6 runs 50 VU for 3 minutes on /health and /checkout
+    Then p95 under 900 ms and http_req_failed under 1 percent
+    And pipeline fails before prod promotion
+
+  Scenario: Container image scan
+    Given Trivy scans api image on build
+    When CRITICAL CVE in openssl detected
+    Then merge blocked until base image bump ticket
+
+  Scenario: Lighthouse budget on web PR
+    Given frontend PR triggers Lighthouse CI
+    When performance score drops below 85
+    Then reviewer sees delta report in GitHub check
+```
+
+Фрагмент pipeline (логическая форма):
+
+```yaml
+stages:
+  - build
+  - test
+  - perf_smoke
+  - security_scan
+perf_smoke:
+  script:
+    - k6 run --vus 30 --duration 2m scripts/checkout_smoke.js
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+security_scan:
+  script:
+    - trivy image --severity CRITICAL,HIGH $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+```
+
+Категории NFR в CI: **performance** (latency, throughput), **security** (CVE, secrets), **reliability** (retry, crash loop), **compatibility** (cross-browser), **maintainability** (coverage, lint). QA участвует в порогах и интерпретации false positive.
+
+## Подводные камни
+
+- **Perf smoke на shared staging.** Соседняя команда даёт ложный fail; выделенный slot или label.
+- **Security scan без allowlist.** Legacy CVE блокирует релиз месяцами; процесс waiver.
+- **A11y только на main.** Баги копятся; хотя бы component-level axe в PR.
+- **Flaky k6 из cold start.** Первый запрос после scale-from-zero skew metrics; warm-up step обязателен.
+- **NFR без owner.** Pipeline red, никто не чинит; RACI на каждый gate.

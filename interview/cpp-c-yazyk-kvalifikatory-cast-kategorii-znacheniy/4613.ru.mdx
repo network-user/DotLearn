@@ -1,0 +1,65 @@
+---
+id: 4613
+title: "Когда уместен dynamic_cast?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда уместен dynamic_cast?
+
+## Суть
+
+`dynamic_cast` нужен для runtime-проверки downcast/crosscast в полиморфной иерархии: указатель даёт `nullptr` при неудаче, ссылка бросает. Это инструмент там, где static type базы скрывает реальный derived и нужен доступ к его API без UB.
+
+## Что ответить на собесе
+
+- Использую, когда объект доступен через `Base*`/`Base&`, а нужен метод только `Derived`.
+- Требую хотя бы одну virtual function в базе (обычно virtual dtor).
+- Для указателя всегда проверяю результат; для ссылки ловлю `std::bad_cast` или проектирую API без cast.
+- Альтернатива лучше: visitor, `std::variant`, type tag, double dispatch вместо RTTI в hot path.
+- Честно: частый `dynamic_cast` часто сигнал smell; refactors к std::variant или virtual interface предпочтительнее.
+
+## Как это работает
+
+RTTI хранит информацию о dynamic type. `dynamic_cast<Derived*>(base)` сверяет vtable; при успехе возвращает корректный адрес с учётом множественного наследования.
+
+```cpp
+#include <iostream>
+#include <memory>
+
+struct Widget {
+    virtual ~Widget() = default;
+    virtual void describe() const { std::cout << "widget\n"; }
+};
+
+struct Knob : Widget {
+    void tune() const { std::cout << "tuned\n"; }
+};
+
+void maybe_tune(Widget* item) {
+    if (auto* knob = dynamic_cast<Knob*>(item)) {
+        knob->tune();
+    } else {
+        item->describe();
+    }
+}
+
+int main() {
+    auto knob = std::make_unique<Knob>();
+    maybe_tune(knob.get());
+    return 0;
+}
+```
+
+Если `item` не `Knob`, ветка tune пропускается без UB. Cross-cast между sibling-классами через общую virtual базу тоже возможен, но дороже и реже нужен.
+
+## Подводные камни
+
+- **Non-polymorphic base.** `dynamic_cast` не применим; остаётся опасный `static_cast`.
+- **Ссылки без try/catch.** Неудачный cast на `Base&` завершит исключением, не `nullptr`.
+- **Performance.** RTTI lookup в tight loop; кэширую результат или меняю дизайн.
+- **Множественное наследование.** Адрес после cast может отличаться от исходного указателя.
+- **`-fno-rtti`.** В embedded/portable сборках `dynamic_cast` недоступен; нужен другой паттерн.

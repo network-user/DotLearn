@@ -1,0 +1,90 @@
+---
+id: 3457
+title: "beforeAll и beforeEach в JS test runner"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# beforeAll и beforeEach в JS test runner
+
+## Суть
+
+`beforeAll` выполняется один раз на describe/suite: тяжёлый setup (БД seed, launch browser). `beforeEach` перед каждым `it/test`: свежий контекст, очистка cookies, новый mock handler. В Jest/Vitest/Mocha семантика та же, имена хуков отличаются от JUnit, но идея изоляции общая.
+
+## Что ответить на собесе
+
+- `beforeAll` для дорогих операций, `beforeEach` для независимости тестов.
+- Async hook возвращает Promise или `async`, иначе runner не ждёт setup.
+- `afterEach`/`afterAll` парой снимают stub и закрывают browser context.
+- Shared mutable state только в `beforeAll` если read-only после init.
+- Честно: тяжёлый `beforeEach` (полный login UI) удваивает время пайплайна без parallel sharding.
+
+## Как это работает
+
+Vitest/Jest стиль:
+
+```
+describe("checkout", () => {
+    beforeAll(async () => {
+        await seedCatalog();
+    });
+
+    beforeEach(async ({ page }) => {
+        await page.context().clearCookies();
+        await page.goto("/cart");
+    });
+
+    test("applies coupon", async ({ page }) => {
+        await page.getByLabel("Coupon").fill("QA10");
+    });
+});
+```
+
+JUnit аналогия для mixed stack команды:
+
+```
+@BeforeAll
+static void seedCatalog() { }
+
+@BeforeEach
+void resetSession() { }
+```
+
+В pytest зеркалю scope:
+
+```python
+import pytest
+
+_catalog = []
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seed_catalog():
+    _catalog.append("item-a")
+
+
+@pytest.fixture(autouse=True)
+def fresh_cart():
+    cart = []
+    yield cart
+    cart.clear()
+
+
+def test_cart_starts_empty(fresh_cart):
+    assert fresh_cart == []
+```
+
+## Подводные камни
+
+**beforeAll без teardown.** Висящий процесс порта блокирует следующий job.
+
+**Мутация в beforeAll.** Второй test видит dirty state.
+
+**Пропущенный await в beforeEach.** Тест стартует до goto.
+
+**Глобальный beforeEach far from spec.** Непонятно, кто сбрасывает mock.
+
+**parallel suite + beforeAll DB.** Deadlock на shared migration lock.

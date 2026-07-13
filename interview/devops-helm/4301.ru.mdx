@@ -1,0 +1,73 @@
+---
+id: 4301
+title: "Из чего состоит Helm chart?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Из чего состоит Helm chart?
+
+## Суть
+
+Стандартный chart: `Chart.yaml` (metadata), `values.yaml` (defaults), `templates/` (Go templates → manifests), опционально `charts/` (vendored deps), `templates/NOTES.txt`, `README.md`. Helm 3 добавляет `values.schema.json` для валидации inputs. Файлы с `_` prefix в templates не рендерятся как отдельные ресурсы (`_helpers.tpl`).
+
+## Что ответить на собесе
+
+- `Chart.yaml`: name, version, appVersion, dependencies block.
+- `values.yaml`: replicaCount, image, resources, ingress hosts.
+- `templates/deployment.yaml`, `service.yaml`, `ingress.yaml`, `hpa.yaml`.
+- `charts/postgresql-12.tgz` subchart после `helm dependency build`.
+- Честно: `helm create` генерирует шумные defaults; перед prod чищу unused templates и tests.
+
+## Как это работает
+
+Типичное дерево:
+
+```bash
+checkout-api/
+├── Chart.yaml
+├── Chart.lock
+├── values.yaml
+├── values-prod.yaml
+├── charts/
+│   └── redis-18.5.2.tgz
+└── templates/
+    ├── NOTES.txt
+    ├── _helpers.tpl
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── ingress.yaml
+    └── servicemonitor.yaml
+```
+
+Минимальный `Chart.yaml` с dependency:
+
+```yaml
+apiVersion: v2
+name: checkout-api
+version: 2.0.0
+appVersion: "4.0.0"
+dependencies:
+  - name: redis
+    version: 18.5.2
+    repository: oci://registry.internal/bitnami-charts
+```
+
+Проверка структуры перед publish:
+
+```bash
+helm lint ./checkout-api
+helm dependency list ./checkout-api
+helm template smoke ./checkout-api -f values-prod.yaml | head -n 40
+```
+
+## Подводные камни
+
+- **Лишние templates.** Файл `ingress.yaml` без values toggle создаёт Ingress в env без controller.
+- **Helpers не exported.** Дублирование label logic без `include` ломает selector consistency.
+- **NOTES.txt с секретами.** Post-install note выводит generated password в CI log; маскирую.
+- **Schema отсутствует.** Без `values.schema.json` typo в `--set` проходит до runtime crash.
+- **Test hook в prod chart.** `templates/tests/test-connection.yaml` забывают отключить в restrictive namespace.

@@ -1,0 +1,71 @@
+---
+id: 4645
+title: "How do threads pass data to each other?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do threads pass data to each other?
+
+## In short
+
+Within one process threads share memory, so exchange goes through shared variables, containers, and queues under synchronization: mutex, condition_variable, atomic, future/promise. The goal is happens-before and no data races.
+
+## How to answer in an interview
+
+- Simple flags and counters: `std::atomic` with the right memory order.
+- Complex structures: mutex plus condition_variable or a thread-safe queue.
+- `std::promise` / `std::future` for a one-shot computation result.
+- `std::async` or a worker pool plus `std::queue` for a task stream.
+- Honestly: handing off a pointer without synchronized publication does not guarantee the other thread sees initialized fields.
+
+## How it works
+
+Producer/consumer with mutex and condition_variable:
+
+```cpp
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+#include <thread>
+
+std::mutex mtx;
+std::condition_variable dataReady;
+std::queue<int> inbox;
+bool stop = false;
+
+void producer() {
+    for (int v = 0; v < 5; ++v) {
+        std::lock_guard lock(mtx);
+        inbox.push(v);
+        dataReady.notify_one();
+    }
+    std::lock_guard lock(mtx);
+    stop = true;
+    dataReady.notify_one();
+}
+
+void consumer() {
+    while (true) {
+        std::unique_lock lock(mtx);
+        dataReady.wait(lock, [] { return !inbox.empty() || stop; });
+        if (inbox.empty() && stop) break;
+        int v = inbox.front();
+        inbox.pop();
+        lock.unlock();
+    }
+}
+```
+
+The producer pushes into `inbox` under the mutex and wakes the consumer. The consumer waits on the predicate "queue non-empty or stop", pops, and processes outside the lock.
+
+## Pitfalls
+
+- **Race on size check.** `empty()` without a mutex next to `pop()` is UB.
+- **notify before publish.** Signaling before the queue write is lost without a predicate.
+- **Copying large objects.** Holding the mutex through serialization is costly; move plus a bounded queue helps.
+- **future is one-shot.** A second `promise::set_value` throws.
+- **False sharing.** Different atomics on one cache line slow metric exchange.

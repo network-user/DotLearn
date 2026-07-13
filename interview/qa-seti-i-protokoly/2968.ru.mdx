@@ -1,0 +1,73 @@
+---
+id: 2968
+title: "VPN и Proxy: что QA проверяет в сетевых сценариях?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# VPN и Proxy: что QA проверяет в сетевых сценариях?
+
+## Суть
+
+VPN строит зашифрованный туннель на уровне ОС и гоняет через него весь трафик (или split-tunnel подмножество). HTTP proxy перенаправляет отдельные запросы приложения, обычно без шифрования самого HTTP до TLS. Для тестов geo, корпоративного доступа и MITM QA выбирает инструмент под задачу: VPN для «быть в другой сети», proxy для перехвата запросов.
+
+## Что ответить на собесе
+
+- VPN меняет маршрут и видимый egress IP для всех сокетов; проверяю геоконтент и IP whitelist после connect.
+- Forward proxy (Charles) видит HTTP(S) с расшифровкой при доверенном CA; VPN этого не даёт без отдельного proxy.
+- Split-tunnel VPN: только corp CIDR через туннель, остальное напрямую; баг «API только в VPN».
+- Честно: consumer VPN на тестовой машине маскирует реальный регион; фиксирую egress IP в отчёте.
+
+## Как это работает
+
+Два пути одного GET:
+
+```
+[VPN path]
+App → encrypted tunnel → VPN server → Internet → origin
+
+[Proxy path]
+App → HTTP CONNECT proxy → TLS → origin
+         ↑ Charles видит plaintext внутри TLS при MITM
+```
+
+Gherkin geo и доступа:
+
+```gherkin
+Feature: Доступ к региональному контенту
+
+  Scenario: Контент доступен только из EU VPN
+    Given пользователь без VPN в US
+    When GET /stream/eu-live
+    Then статус 403 с кодом GEO_BLOCKED
+    When VPN egress в Frankfurt
+    And повтор GET /stream/eu-live
+    Then статус 200
+
+  Scenario: Корпоративный API только через VPN
+    Given api.corp.internal резолвится в 10.50.0.0/16
+    And split-tunnel включает 10.50.0.0/16
+    When VPN disconnected
+    Then GET https://api.corp.internal/health fails
+    When VPN connected
+    Then статус 200
+
+  Scenario: Proxy не шифрует тело без TLS
+    Given plain HTTP через proxy
+    When QA смотрит capture
+    Then пароль в body виден
+    And баг заведён как critical на legacy endpoint
+```
+
+Проверяю `whatismyip` до/после VPN; в Charles включаю SSL proxying только для нужных host.
+
+## Подводные камни
+
+- **VPN connected, DNS leak.** Geo по DNS другой, чем по IP.
+- **System proxy игнорируется нативным app.** Только VPN помогает.
+- **MTU в VPN туннеле.** Крупные upload обрываются, мелкие OK.
+- **Corporate SSL inspection + pinning.** Мобильный клиент не стартует.
+- **Путают reverse proxy CDN и forward proxy.** Разные заголовки и TLS termination.

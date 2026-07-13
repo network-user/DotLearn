@@ -1,0 +1,63 @@
+---
+id: 2023
+title: "What do integration tests verify?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What do integration tests verify?
+
+## In short
+
+Integration tests check module boundaries: Spring context wiring, JPA mapping, HTTP controller + service + repository, message serialization. They are slower than unit tests but catch contract, transaction, and configuration errors that mocks hide.
+
+## How to answer in an interview
+
+- Real (or Testcontainers) DB, embedded Kafka, WireMock for external API.
+- `@SpringBootTest` / `@DataJpaTest` / `@WebMvcTest` slices by layer.
+- I verify SQL schema, `@Transactional` rollback, JSON field names.
+- I do not duplicate all unit cases; happy path plus critical integration edges.
+- Honestly: full `@SpringBootTest` per method bloats CI; slice plus a few full smokes.
+
+## How it works
+
+Testcontainers PostgreSQL + Spring:
+
+```java
+@SpringBootTest
+@Testcontainers
+class OrderRepositoryIT {
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+    @DynamicPropertySource
+    static void dbProps(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+    }
+
+    @Autowired OrderRepository orders;
+
+    @Test
+    void savesAndLoadsByCustomer() {
+        Order row = orders.save(OrderEntity.pending("cust-1"));
+        Optional<OrderEntity> loaded = orders.findById(row.getId());
+        assertTrue(loaded.isPresent());
+        assertEquals("cust-1", loaded.get().getCustomerId());
+    }
+}
+```
+
+`@WebMvcTest(OrderController.class)` lifts MVC slice with `@MockBean OrderService` for controller contract. Full stack test hits `MockMvc` POST `/orders` and asserts a row in DB.
+
+## Pitfalls
+
+- **Mock everything in an "integration" test.** Becomes a heavy unit test.
+- **Shared mutable DB without cleanup.** Flaky counts between tests.
+- **Skip Flyway.** Schema drift only on nightly CI.
+- **Random port without `@LocalServerPort`.** Hardcoded 8080 collides in parallel jobs.
+- **Testing vendor SDK.** Integrate your adapter, not AWS client internals.

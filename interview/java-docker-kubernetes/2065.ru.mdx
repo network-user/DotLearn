@@ -1,0 +1,61 @@
+---
+id: 2065
+title: "Зачем Java-командам Docker-контейнеры"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем Java-командам Docker-контейнеры
+
+## Суть
+
+Контейнер упаковывает JAR, JRE нужной версии и системные зависимости в immutable unit, который одинаково стартует на laptop, CI и prod. Изоляция процессов и лимиты cgroups снижают «works on my machine» и упрощают горизонтальное масштабирование в Kubernetes. Для Spring Boot это стандартный артефакт поставки вместо ручной установки JDK на VM.
+
+## Что ответить на собесе
+
+- Один образ = один сервис; версия JDK зафиксирована в FROM.
+- Dev/prod parity: те же env vars, те же JVM flags через ENTRYPOINT.
+- Быстрый rollout: pull image + restart Pod, без apt/yum на сервере.
+- Orchestrator (k8s) масштабирует replicas контейнера, не «ещё одну VM».
+- Честно: контейнер не заменяет observability и health checks; без них debug в prod сложнее.
+
+## Как это работает
+
+Multi-stage Dockerfile для Gradle:
+
+```dockerfile
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /src
+COPY gradlew settings.gradle.kts build.gradle.kts ./
+COPY gradle gradle
+RUN ./gradlew dependencies --no-daemon
+COPY src src
+RUN ./gradlew bootJar --no-daemon -x test
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=builder /src/build/libs/*.jar app.jar
+USER 10001
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+```
+
+Runtime:
+
+```bash
+docker run -p 8080:8080 \
+  -e JAVA_OPTS="-XX:MaxRAMPercentage=75.0" \
+  notification-svc:2.3.0
+```
+
+Контейнер делит kernel с хостом, но filesystem и network namespace изолированы. JVM видит cgroup memory limit и может адаптировать heap через `-XX:MaxRAMPercentage`. В k8s те же образы тиражируются Deployment'ом; ConfigMap/Secret монтируют `application.yml` без пересборки.
+
+## Подводные камни
+
+- **Fat JAR + fat image.** Забытый builder stage оставляет JDK в prod образе.
+- **PID 1 и signals.** Shell ENTRYPOINT может проглотить SIGTERM; нужен exec form или tini.
+- **Ephemeral filesystem.** Логи и temp files без volume теряются при restart.
+- **Timezone/locale drift.** Alpine musl vs glibc даёт subtle native lib bugs.
+- **Over-sharding.** Контейнер на каждый 10MB utility увеличивает ops overhead без выгоды.

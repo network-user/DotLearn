@@ -1,0 +1,58 @@
+---
+id: 2472
+title: "JWT-авторизация: базовая схема для SPA"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# JWT-авторизация: базовая схема для SPA
+
+## Суть
+
+JSON Web Token это компактный signed JSON с claims. После login сервер выдаёт JWT, клиент шлёт его как Bearer. Сервер stateless проверяет подпись и `exp`, но logout/revoke требует TTL или server-side blocklist.
+
+## Что ответить на собесе
+
+- Различаю authentication (login) и authorization (scopes/roles в token или introspection).
+- JWT не encrypted by default: base64 payload виден всем; не кладу secrets inside.
+- Prefer asymmetric signing (RS256) когда несколько resource servers.
+- Честно: «JWT session» в localStorage это tradeoff UX vs XSS; mitigated httpOnly refresh.
+- Validate `aud`, `iss`, `exp` на backend; frontend decode only for display.
+
+## Как это работает
+
+```ts
+const token =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0In0.signature';
+
+function decodePayload(jwt: string) {
+  const payload = jwt.split('.')[1];
+  const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+  return JSON.parse(json) as { sub: string; exp?: number; role?: string };
+}
+
+async function createSession(credentials: { email: string; password: string }) {
+  const res = await fetch('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credentials),
+  });
+  const { accessToken } = (await res.json()) as { accessToken: string };
+  return accessToken;
+}
+```
+
+Три сегмента: header (alg), payload (claims), signature. Signing: HMAC(secret) или RSA/ECDSA private key. Verification на API gateway с pub key или shared secret.
+
+Refresh flow отделяет long-lived credential от access JWT. Rotation + reuse detection защищает украденный refresh.
+
+## Подводные камни
+
+- **None algorithm attack.** Server must whitelist algs.
+- **Key in frontend.** Secret for HS256 verification must never ship to SPA.
+- **Stale roles.** JWT roles до exp; admin demote не instant без short TTL.
+- **Storage choice.** Memory clears on tab close; localStorage survives XSS.
+- **Size limits.** Huge custom claims break headers and caching.

@@ -1,0 +1,55 @@
+---
+id: 1997
+title: "Зачем ELK-стек в микросервисной архитектуре?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем ELK-стек в микросервисной архитектуре?
+
+## Суть
+
+В микросервисах логи распределены по десяткам pod и сервисов. ELK (Elasticsearch, Logstash/Beats, Kibana) централизует сбор, индексирует JSON-события и даёт поиск и дашборды. Это закрывает корреляцию по traceId, быстрый RCA и единый operational view без SSH на каждый инстанс.
+
+## Что ответить на собесе
+
+- Logstash/Beats/Filebeat: ship logs с нод и контейнеров.
+- Elasticsearch: full-text и field queries, retention по index lifecycle.
+- Kibana: Discover, dashboards, alerts.
+- Упоминаю замену Logstash на Fluent Bit + ES в cloud-native setups.
+- Честно добавляю: ELK без structured logs и trace id сводится к grep по тексту; инвестиция в schema окупается.
+
+## Как это работает
+
+Filebeat шипит JSON в Elasticsearch:
+
+```yaml
+filebeat.inputs:
+  - type: container
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    processors:
+      - decode_json_fields:
+          fields: ["message"]
+          target: "app"
+
+output.elasticsearch:
+  hosts: ["https://es.internal:9200"]
+  index: "billing-%{+yyyy.MM.dd}"
+
+setup.kibana:
+  host: "https://kibana.internal:5601"
+```
+
+Kibana запрос `traceId:7f3c2a1b9e004d12` покажет цепочку payment, ledger, notification across services. Index per day упрощает ILM: hot на SSD, warm delete через 30d. Alert на `level:ERROR` и рост rate WARN ловит деградацию до user complaints.
+
+## Подводные камни
+
+- **Неструктурированные multiline stack traces.** Парсер ломает event boundaries.
+- **Один giant index.** Медленный search и дорогой reindex.
+- **Отсутствие timezone/normalize.** События из регионов вразнобой.
+- **PII в индексе.** GDPR и утечки при широком доступе к Kibana.
+- **Logstash как SPOF.** Без queue backpressure теряются события при spike.

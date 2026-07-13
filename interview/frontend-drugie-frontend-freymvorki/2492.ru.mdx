@@ -1,0 +1,66 @@
+---
+id: 2492
+title: "Dependency Injection в Angular и снижение coupling"
+category: frontend-drugie-frontend-freymvorki
+categoryLabel: "Другие frontend фреймворки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Dependency Injection в Angular и снижение coupling
+
+## Суть
+
+Angular DI строится на иерархии injectors: root, module, component level. Класс объявляет зависимости в constructor или через `inject()`, контейнер создаёт и передаёт экземпляры. Компонент не знает, как собрать сервис, только контракт метода.
+
+## Что ответить на собесе
+
+- `@Injectable({ providedIn: 'root' })` даёт app-wide singleton без явного providers массива.
+- Замена реализации: mock `DataGateway` в тестах через `TestBed.overrideProvider`.
+- Coupling падает, потому что UI зависит от абстракции (`UserRepository`), не от fetch деталей.
+- Честно: DI без интерфейсов в TS всё равно привязывает к классу; для слабой связности вводят token + interface.
+- Hierarchical injectors позволяют разный scope: один сервис per component subtree.
+
+## Как это работает
+
+```ts
+import { Injectable, inject } from '@angular/core';
+
+@Injectable({ providedIn: 'root' })
+export class ProfileGateway {
+  fetchDisplayName(userId: string) {
+    return fetch(`/api/users/${userId}`).then((r) => r.json());
+  }
+}
+```
+
+```ts
+import { Component, inject } from '@angular/core';
+import { ProfileGateway } from './profile.gateway';
+
+@Component({
+  selector: 'app-profile-badge',
+  standalone: true,
+  template: `<span>{{ displayName }}</span>`,
+})
+export class ProfileBadgeComponent {
+  private readonly gateway = inject(ProfileGateway);
+  displayName = '';
+
+  async ngOnInit() {
+    const profile = await this.gateway.fetchDisplayName('u-42');
+    this.displayName = profile.name;
+  }
+}
+```
+
+Injector tree: platform → root → lazy-loaded module → component. Child injector может shadow parent provider. `InjectionToken` передаёт примитивы и фабрики. В тестах `TestBed.configureTestingModule({ providers: [{ provide: ProfileGateway, useValue: stub }] })` подменяет реализацию без правок компонента.
+
+## Подводные камни
+
+- **Circular deps.** Два сервиса инжектят друг друга; лечится `forwardRef` или рефакторинг слоёв.
+- **Transient vs singleton.** `providers: [Svc]` на component создаёт новый экземпляр на каждый instance.
+- **Tree-shaking providers.** `providedIn: 'any'` редко нужен; путаница со scope.
+- **Implicit any in tests.** Забытый provider даёт runtime `NullInjectorError`, не compile error.
+- **Over-injection.** God-service с 15 зависимостями сигналит, что модуль надо дробить.

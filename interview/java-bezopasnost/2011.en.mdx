@@ -1,0 +1,62 @@
+---
+id: 2011
+title: "Where and how do you store a TLS server private key?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where and how do you store a TLS server private key?
+
+## In short
+
+The TLS server private key stays only on the side that terminates HTTPS. It decrypts key exchange and signs (in mTLS). A key leak equals impersonating the server; storage and access control are critical.
+
+## How to answer in an interview
+
+- `.key` file or password-protected PKCS#12, mode `600`, owner `root` or a dedicated service user.
+- In containers I prefer a secrets manager or mounted volume, not the image.
+- Keystore passphrase is mandatory; auto-load via systemd credentials or a vault agent.
+- Rotation: new key + cert, overlap period, revoke old on compromise.
+- Honestly: HSM/KMS costs more than a file but is justified for payment-grade infra.
+
+## How it works
+
+Typical bare-metal layout:
+
+```
+/etc/ssl/private/shop.example.key   # PEM private key
+/etc/ssl/certs/shop.example.crt   # leaf certificate
+/etc/ssl/certs/chain.pem          # intermediate bundle
+```
+
+Permissions:
+
+```bash
+chown root:ssl-cert /etc/ssl/private/shop.example.key
+chmod 640 /etc/ssl/private/shop.example.key
+```
+
+Nginx/Caddy read the key with a process using minimal capabilities. In Java Spring Boot:
+
+```java
+@Bean
+SSLBundle sslBundle(SslBundleRegistry registry) throws Exception {
+    return registry.register("app",
+        SslBundle.of(SslStoreBundle.of(
+            new FileSystemResource("/etc/ssl/certs/shop.p12"),
+            keystorePassword.toCharArray())));
+}
+```
+
+PKCS#12 bundles key + cert; keystore password lives in env, not git. The cert public key goes to clients; the private key never leaves the server trust boundary. On Kubernetes deploy, secrets mount read-only at `/tls`, init container checks expiry.
+
+## Pitfalls
+
+- **Key in Docker layer.** `docker history` and registry scans find secrets.
+- **World-readable permissions.** `chmod 644` on `.key` is game over.
+- **Shared key across environments.** Prod key in staging leaks via weaker access.
+- **Unencrypted backup.** Tape/S3 copies the key in plaintext.
+- **Forgotten old keys.** After rotation, old keys remain in `/tmp` or CI artifacts.

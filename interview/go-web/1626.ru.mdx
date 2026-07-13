@@ -1,0 +1,57 @@
+---
+id: 1626
+title: "Почему Protobuf быстрее JSON"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему Protobuf быстрее JSON
+
+## Суть
+
+Protobuf кодирует данные в компактный бинарный wire format: тип и номер поля вместо повторяющихся имён ключей. Схема известна заранее, парсер не строит generic AST как у JSON. Меньше байт на сеть и меньше CPU на marshal/unmarshal при высоком QPS.
+
+## Что ответить на собесе
+
+- Varint encoding, field tags, отсутствие whitespace и кавычек.
+- `proto.Marshal` / `Unmarshal` vs `json` reflection или codegen.
+- JSON удобен людям и браузерам; protobuf для service-to-service.
+- Benchmark на реальных message size, не на hello world.
+- Честно: на маленьких payload разница может тонуть в сети; выигрыш растёт с полем count и трафиком.
+
+## Как это работает
+
+```protobuf
+syntax = "proto3";
+
+message Account {
+  int64 id = 1;
+  string login = 2;
+  string email = 3;
+}
+```
+
+```go
+acc := &pb.Account{Id: 99, Login: "dev", Email: "dev@corp.local"}
+wire, err := proto.Marshal(acc)
+
+var decoded pb.Account
+err = proto.Unmarshal(wire, &decoded)
+```
+
+JSON эквивалент `{"id":99,"login":"dev","email":"dev@corp.local"}` несёт имена полей в каждом сообщении. Protobuf wire хранит tag `1` + varint `99`, tag `2` + length-delimited string. Числа в varint занимают меньше байт для малых значений.
+
+## Подводные камни
+
+**Сравнивать protobuf с `json:",string"` и pretty print.** Нечестный benchmark.
+
+**Dynamic message без codegen.** Reflection protobuf медленнее, часть выигрыша теряется.
+
+**Огромные string/bytes поля.** Компактность wire не спасает от самого payload.
+
+**Human debugging.** Нужны `grpcurl`, hex dump или json transcoding.
+
+**float/double текст в JSON vs fixed64.** Разный размер, но редко решающий фактор.

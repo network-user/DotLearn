@@ -1,0 +1,77 @@
+---
+id: 2067
+title: "Deployment and Service: Kubernetes vs OpenShift"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Deployment and Service: Kubernetes vs OpenShift
+
+## In short
+
+Deployment and Service are standard Kubernetes API resources; OpenShift accepts them unchanged. Deployment reconciles desired Pod replicas; Service stabilizes cluster IP and kube-proxy load balancing to Endpoints. OpenShift adds Routes, ImageStreams, and SCCs on the same model, but Deployment/Service semantics match upstream.
+
+## How to answer in an interview
+
+- Deployment manages Pod template, rollout strategy, revision history.
+- Service selector binds traffic to Pod labels; types ClusterIP/NodePort/LoadBalancer.
+- OpenShift `oc apply -f deployment.yaml` = kubectl for apps/v1 Deployment.
+- OpenShift Route often replaces Ingress + cloud LB for HTTP expose.
+- Honestly: differences are mostly platform sugar; Pod debugging is still kubectl/oc describe.
+
+## How it works
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: inventory-api
+  template:
+    metadata:
+      labels:
+        app: inventory-api
+    spec:
+      containers:
+      - name: api
+        image: inventory-api:4.2.0
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-api
+spec:
+  selector:
+    app: inventory-api
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: ClusterIP
+```
+
+The Deployment controller creates ReplicaSet → Pods. The Service gets a virtual IP; the Endpoints controller tracks ready Pods with label `app=inventory-api`.
+
+On OpenShift additionally:
+
+```bash
+oc expose svc/inventory-api
+```
+
+creates a Route with a platform domain hostname. BuildConfig can update the image tag in Deployment via ImageChange trigger, which vanilla k8s lacks out of the box.
+
+## Pitfalls
+
+- **Service with no ready Pods.** Empty Endpoints → Connection refused on cluster IP curl.
+- **targetPort mismatch.** Service 8080, container listens on 8081 → silent blackhole.
+- **Rolling update maxUnavailable.** 50% with replicas=2 can zero capacity.
+- **OpenShift SCC vs securityContext.** runAsUser 0 blocked by restricted SCC.
+- **Label drift.** Manual Pods without selector labels miss Service endpoints.

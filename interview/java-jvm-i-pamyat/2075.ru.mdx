@@ -1,0 +1,65 @@
+---
+id: 2075
+title: "Когда GC очищает heap"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда GC очищает heap
+
+## Суть
+
+GC запускается, когда allocator не может выделить объект в нужном generation или эвристики GC (G1 IHOP, allocation rate) считают сборку выгодной. Это не детерминированный таймер: unreachable objects становятся eligible сразу после потери ссылок, но физическое освобождение происходит при следующем подходящем pause или concurrent cycle. `System.gc()` лишь hint.
+
+## Что ответить на собесе
+
+- Allocation failure в Eden триггерит minor GC.
+- Promotion failure или old gen заполнение → major/mixed GC.
+- G1 concurrent marking стартует до полного заполнения heap (IHOP threshold).
+- STW pause длительность зависит от collector (ZGC ms vs Parallel seconds).
+- Честно: `System.gc()` в библиотеках может вызвать prod pause spike; `-XX:+DisableExplicitGC` иногда оправдан.
+
+## Как это работает
+
+```java
+public final class GcTriggerDemo {
+
+    public static void main(String[] args) {
+        var cache = new ArrayList<byte[]>(10_000);
+        for (int i = 0; i < 10_000; i++) {
+            cache.add(new byte[32_768]);
+            if (i % 500 == 0) {
+                cache.subList(0, 250).clear();
+            }
+        }
+        cache = null;
+    }
+}
+```
+
+Timeline (G1, simplified):
+
+1. Массовые `byte[]` заполняют Eden → **young GC** evacuate survivors.
+2. Долгоживущие массивы promote в Old → mixed GC reclaim часть regions.
+3. После `cache = null` graph unreachable, но память free только на следующем GC touching those regions.
+
+JFR event `jdk.GarbageCollection` показывает cause: `G1 Evacuation Pause`, `G1 Humongous Allocation`, `Metadata GC Threshold`.
+
+Explicit:
+
+```java
+System.gc();
+```
+
+JVM may ignore or run concurrent cycle; no contract on timing. `finalize()` (deprecated) не триггерит GC и не гарантирует prompt cleanup.
+
+## Подводные камни
+
+- **Assuming immediate free after null.** RSS может не упасть: OS не reclaim pages instantly.
+- **Full GC on every System.gc().** Some collectors treat hint as Full GC → multi-second pause.
+- **Humongous objects in G1.** >50% region size bypass Eden, pressure Old directly.
+- **GC logs misread.** "GC pause 200ms" без context allocation rate бессмысленен.
+- **Off-heap leak ignored.** Direct memory full при «свободном» heap chart.

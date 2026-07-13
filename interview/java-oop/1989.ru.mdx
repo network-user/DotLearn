@@ -1,0 +1,68 @@
+---
+id: 1989
+title: "Зачем в Java нужен notifyAll()?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в Java нужен notifyAll()?
+
+## Суть
+
+`notifyAll()` будит все потоки, ожидающие на мониторе данного объекта после `wait()`. Его вызывают из synchronized-контекста, когда изменилось разделяемое состояние и нужно дать шанс каждому waiter перепроверить условие в цикле. В отличие от `notify()`, не оставляет остальных спящими.
+
+## Что ответить на собесе
+
+- Связываю wait/notify с intrinsic lock объекта: wait освобождает lock, notify захватывает перед пробуждением.
+- Подчёркиваю while, не if, вокруг wait: spurious wakeup и гонки.
+- Объясняю, когда notifyAll лучше notify: несколько waiters с разными условиями или пул потребителей.
+- Упоминаю, что это низкоуровневый API; в новом коде предпочитаю `java.util.concurrent`.
+- Честно добавляю: notifyAll дороже notify из-за thundering herd; выбор зависит от модели очереди.
+
+## Как это работает
+
+Классический bounded buffer на wait/notify:
+
+```java
+final class SlotBuffer {
+    private final Object[] slots = new Object[4];
+    private int head;
+    private int tail;
+    private int count;
+
+    synchronized void offer(Object item) throws InterruptedException {
+        while (count == slots.length) {
+            wait();
+        }
+        slots[tail] = item;
+        tail = (tail + 1) % slots.length;
+        count++;
+        notifyAll();
+    }
+
+    synchronized Object poll() throws InterruptedException {
+        while (count == 0) {
+            wait();
+        }
+        Object item = slots[head];
+        slots[head] = null;
+        head = (head + 1) % slots.length;
+        count--;
+        notifyAll();
+        return item;
+    }
+}
+```
+
+Producer ждёт, пока буфер полон; consumer ждёт пустоту. После изменения `count` вызывается `notifyAll()`, чтобы разбудить и producers, и consumers: любой waiter снова проверит `while` и либо продолжит, либо снова уснёт. `notify()` разбудил бы один случайный поток, что может оставить остальных голодать при неверном условии.
+
+## Подводные камни
+
+- **if вместо while.** Один spurious wakeup ломает инвариант буфера.
+- **notify без hold lock.** Вызов вне synchronized бросает `IllegalMonitorStateException`.
+- **Забытый notify после state change.** Waiters спят бесконечно.
+- **notifyAll в tight loop.** Лишние пробуждения всех потоков под нагрузкой.
+- **Смешение мониторов.** Wait на `this`, notify на другом объекте.

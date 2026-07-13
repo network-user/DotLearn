@@ -1,3 +1,7 @@
+import type { InterviewDirection } from '@dotlearn/contracts';
+
+import { resolveInterviewDirection } from './interview-directions';
+
 import { INTERVIEW_TOPIC_SLUG } from '@/lib/progress-db';
 
 import type { DeckCard } from './flashcard-decks';
@@ -7,6 +11,7 @@ export interface InterviewDeckCard extends DeckCard {
   category: string;
   categoryLabel: string;
   stage: string;
+  direction?: InterviewDirection;
 }
 
 interface FlashcardIndexEntry {
@@ -44,17 +49,21 @@ const loadLocaleIndex = async (locale: string): Promise<FlashcardsIndexLocale> =
   return data;
 };
 
-const cardFromEntry = (entry: FlashcardIndexEntry): InterviewDeckCard => ({
-  id: `q-${entry.questionId}`,
-  front: entry.front,
-  back: entry.back,
-  conceptId: entry.category,
-  tags: [entry.category, entry.stage],
-  questionId: entry.questionId,
-  category: entry.category,
-  categoryLabel: entry.categoryLabel,
-  stage: entry.stage,
-});
+const cardFromEntry = (entry: FlashcardIndexEntry): InterviewDeckCard => {
+  const direction = resolveInterviewDirection(entry.category);
+  return {
+    id: `q-${entry.questionId}`,
+    front: entry.front,
+    back: entry.back,
+    conceptId: entry.category,
+    tags: [entry.category, entry.stage],
+    questionId: entry.questionId,
+    category: entry.category,
+    categoryLabel: entry.categoryLabel,
+    stage: entry.stage,
+    ...(direction ? { direction } : {}),
+  };
+};
 
 export const interviewFlashcardSlug = (): string => INTERVIEW_TOPIC_SLUG;
 
@@ -69,6 +78,14 @@ export const loadInterviewCardsByCategory = async (
 ): Promise<InterviewDeckCard[]> => {
   const all = await loadInterviewCards(locale);
   return all.filter((card) => card.category === category);
+};
+
+export const loadInterviewCardsByDirection = async (
+  direction: InterviewDirection,
+  locale: string,
+): Promise<InterviewDeckCard[]> => {
+  const all = await loadInterviewCards(locale);
+  return all.filter((card) => card.direction === direction);
 };
 
 export interface InterviewFlashcardCoverage {

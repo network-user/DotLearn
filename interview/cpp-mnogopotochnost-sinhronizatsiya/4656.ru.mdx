@@ -1,0 +1,50 @@
+---
+id: 4656
+title: "Каким вызовом создаётся поток?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Каким вызовом создаётся поток?
+
+## Суть
+
+Новый поток появляется в момент конструирования `std::thread` (или при реальном запуске `std::async` с `launch::async`). Конструктор принимает callable и аргументы; выполнение стартует немедленно, пока вы не отложили deferred-политику у `async`.
+
+## Что ответить на собесе
+
+- Ключевой вызов: `std::thread worker(callable, args...);`
+- Альтернатива: `std::jthread worker(callable, args...);` с auto-join в деструкторе.
+- Для результата: `auto f = std::async(std::launch::async, callable, args...);`
+- После создания обязательно `join()` или `detach()` для `std::thread`.
+- Честно: на уровне ОС это `pthread_create` / `CreateThread`, но в C++ собесе ждут ответ про `std::thread`.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <thread>
+
+void banner() {
+    std::cout << "side thread\n";
+}
+
+int main() {
+    std::thread side(banner);
+    side.join();
+    std::cout << "main thread\n";
+}
+```
+
+Строка `std::thread side(banner);` создаёт объект `side` и запускает `banner` в новом потоке. `join()` ждёт завершения, иначе деструктор `side` вызовет `std::terminate`. Порядок вывода может быть любым до join, но оба сообщения появятся до выхода из `main`.
+
+## Подводные камни
+
+- **Конструктор не функция start().** Поток уже бежит после ctor; отдельного `run()` нет.
+- **Временный callable.** `std::thread t([]{...});` ок; передача ссылки на локальную лямбду без join до конца scope опасна.
+- **Копия thread запрещена.** Move-only; случайный copy не компилируется.
+- **hardware_concurrency.** Не лимит на число `thread`, а hint для планирования.
+- **async ≠ thread ctor.** `async` без политики может не создать поток до `get()`.

@@ -1,0 +1,61 @@
+---
+id: 1552
+title: "Чем управлять scheduler Go извне?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем управлять scheduler Go извне?
+
+## Суть
+
+Главный runtime knob: `GOMAXPROCS` (env или `runtime.GOMAXPROCS`). Для observability: `GODEBUG=schedtrace`, `scheddetail`, execution tracer. `GOGC` влияет на GC pauses, косвенно на scheduling; `GOTRACEBACK` только для panic stacks, не scheduler.
+
+## Что ответить на собесе
+
+- GOMAXPROCS = число P = max параллельных executing G на CPU.
+- GODEBUG schedtrace печатает runq sizes, threads, idle procs каждые N ms.
+- В коде: `runtime.GOMAXPROCS`, `debug.SetGCPercent`, trace.Start.
+- Честно: fine-grained scheduler tuning из user code нет; только эти env и профилирование.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"runtime/debug"
+)
+
+func main() {
+	prev := runtime.GOMAXPROCS(2)
+	fmt.Println("gomaxprocs was:", prev, "now:", runtime.GOMAXPROCS(0))
+	debug.SetGCPercent(100)
+	fmt.Println("num cpu:", runtime.NumCPU())
+}
+```
+
+Env до старта:
+
+```
+GOMAXPROCS=4 GODEBUG=schedtrace=1000 ./app
+```
+
+schedtrace в stderr показывает `# Threads`, `# IdleThreads`, `# Goroutines` snapshot.
+
+## Подводные камни
+
+**Путаница GOGC со scheduler.** GOGC про GC cadence, не про P count.
+
+**GOTRACEBACK для perf.** Не влияет на планирование, только panic output.
+
+**schedtrace в prod.** Verbose stderr flood; только short debug windows.
+
+**GOMAXPROCS >> cores в k8s.** Throttling и latency без automaxprocs.
+
+**LockOSThread не env.** Это API call, не переменная окружения.

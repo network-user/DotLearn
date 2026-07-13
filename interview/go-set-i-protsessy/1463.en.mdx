@@ -1,0 +1,104 @@
+---
+id: 1463
+title: "How does TCP confirm a segment was delivered?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does TCP confirm a segment was delivered?
+
+## In short
+
+TCP numbers bytes and requires ACKs: the receiver reports the next expected byte. If no ACK arrives within RTO, the sender retransmits until acknowledgement succeeds or the connection fails.
+
+## How to answer in an interview
+
+- I describe cumulative ACK: one acknowledgement covers all bytes before the given sequence number.
+- I mention selective ACK (SACK) in modern stacks for targeted retransmit, not only go-back-n.
+- I tie it to Go: `net.Conn` hides details, but `SetNoDelay`, timeouts, and buffer sizes affect ACK timing.
+- I add honestly: delayed ACK on the receiver can hold a reply for 40–200 ms; that is normal, not a lost packet.
+
+## How it works
+
+Each TCP segment carries the sequence number of its first payload byte. The receiver answers with an ACK for the next expected byte. The sender tracks a window of unacknowledged data: until the ACK edge moves, bytes are "in flight".
+
+If the RTO timer fires before an ACK, the stack retransmits the earliest unacknowledged segment. Retries use increasing delay; congestion control lowers the rate when loss is suspected.
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"time"
+)
+
+func traceRead(conn net.Conn) {
+	buf := make([]byte, 512)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("peer closed, all bytes ACKed at TCP layer")
+				return
+			}
+			fmt.Println("read error:", err)
+			return
+		}
+		fmt.Printf("app received %d bytes (kernel already ACKed at transport)\n", n)
+	}
+}
+
+func main() {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, _ := ln.Accept()
+		defer c.Close()
+		traceRead(c)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	chunks := [][]byte{[]byte("segment-1\n"), []byte("segment-2\n")}
+	for _, part := range chunks {
+		if _, err := conn.Write(part); err != nil {
+			panic(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+}
+```
+
+The application only sees successful `Read`/`Write`; ACKs and retries happen in the kernel. `Write` returns when data is accepted into the OS send buffer, not necessarily when the remote side has acknowledged end-to-end delivery.
+
+Exchange sketch:
+
+```
+Sender:   SEQ=100,len=50  ->  SEQ=150,len=30  ->
+Receiver:            <- ACK=150        <- ACK=180
+```
+
+Loss of the second segment leaves ACK=150; the sender retransmits SEQ=150 on timeout.
+
+## Pitfalls
+
+- **Application vs transport ACK.** HTTP 200 is not a TCP ACK per segment; layers differ.
+- **Small writes and delayed ACK.** Frequent tiny `Write` calls add round trips; `bufio` or situational `TCP_NODELAY` helps.
+- **Half-close.** FIN is separate from data ACKs; `CloseWrite` vs full `Close` behave differently.
+- **Lost ACK, not data.** Duplicate ACKs (fast retransmit) speed recovery; candidates often describe only timer-based retry.
+- **TLS records.** An encrypted record may span several TCP segments; visible ACK delay can grow due to fragmentation.

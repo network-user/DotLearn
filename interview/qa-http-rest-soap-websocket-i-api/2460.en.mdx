@@ -1,0 +1,63 @@
+---
+id: 2460
+title: "HTTPS: what makes the channel secure from a QA perspective?"
+category: qa-http-rest-soap-websocket-i-api
+categoryLabel: "HTTP, REST, SOAP, WebSocket и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTPS: what makes the channel secure from a QA perspective?
+
+## In short
+
+HTTPS is HTTP over TLS: the channel is encrypted, the server is authenticated with a certificate, and data integrity is checked via the TLS record MAC. For testers that means: no mixed content, a valid certificate, correct HTTP to HTTPS redirects, sensitive cookies marked Secure, and confirmation in DevTools/Charles that traffic is actually encrypted.
+
+## How to answer in an interview
+
+- TLS provides confidentiality (encryption), server authentication (certificate chain to a trusted CA), and integrity (tampered packets break decryption).
+- Handshake flow: ClientHello, server certificate, key exchange, then symmetric session encryption; ordinary HTTP requests run inside the tunnel.
+- On regression I check HSTS, certificate expiry, SAN for the right host, no self-signed certs in prod, and login forms never posting to http://.
+- Honestly: HTTPS does not fix XSS or app log leaks; it is transport security, not a substitute for secure coding.
+
+## How it works
+
+Simplified TLS 1.2+ flow:
+
+1. The client offers cipher suites and SNI (host name).
+2. The server sends a certificate chain; the client verifies CA signature, validity period, and domain name.
+3. Both sides agree on a session key (ECDHE) and encrypt application data.
+
+Gherkin for web app smoke:
+
+```gherkin
+Feature: HTTPS and transport security
+
+  Scenario: Home is reachable only over HTTPS
+    When the browser opens "http://shop.example.com/"
+    Then a 301 or 302 redirect goes to "https://shop.example.com/"
+    And the final response status is 200
+
+  Scenario: Certificate is valid for the domain
+    When the client sends GET "https://shop.example.com/health"
+    Then the TLS handshake succeeds
+    And subject alternative name includes "shop.example.com"
+    And the certificate is not expired
+
+  Scenario: Session cookie is marked Secure
+    Given the user logs in successfully
+    When the browser stores the session cookie
+    Then the Secure flag is set
+    And the cookie is not sent to http:// resources
+```
+
+In Charles/Fiddler QA confirms login/password bodies are not visible in plaintext before client decryption (or uses a trusted proxy root cert on test stands only). For API automation `verify=true` in the client catches MITM and expired certs.
+
+## Pitfalls
+
+- **Mixed content.** An https page loads a script over http; the browser blocks or weakens protection.
+- **Cert on apex without www.** Users on www hit ERR_CERT_COMMON_NAME_INVALID.
+- **Expired cert on staging.** Teams disable verify in Postman and carry the habit into CI.
+- **HSTS without preload on subdomains.** The first http:// visit is still vulnerable before redirect.
+- **TLS termination on the load balancer.** Plain HTTP may run between LB and app; internal leakage if the network is not segmented.

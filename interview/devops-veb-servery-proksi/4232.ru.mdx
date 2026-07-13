@@ -1,0 +1,66 @@
+---
+id: 4232
+title: "Какие лимиты можно настроить в Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие лимиты можно настроить в Nginx?
+
+## Суть
+
+Nginx ограничивает нагрузку через `limit_req` (rate запросов), `limit_conn` (параллельные соединения), `limit_rate` (скорость ответа клиенту), `client_max_body_size`, таймауты (`client_body_timeout`, `proxy_read_timeout`), `worker_connections` и очереди. Зоны (`limit_req_zone`, `limit_conn_zone`) хранят счётчики в shared memory по ключу ($binary_remote_addr, JWT, API key).
+
+## Что ответить на собесе
+
+- `limit_req_zone` + `limit_req burst=` для API rate limit и защиты от brute force.
+- `limit_conn` режет slowloris и скачки параллельных upload с одного IP.
+- `limit_rate` после первых байт для fair bandwidth на больших download.
+- `client_max_body_size` блокирует oversized upload до проксирования в app.
+- Честно: лимиты по IP слабы за carrier-grade NAT; для API ключей ключ зоны делаю по заголовку или JWT claim.
+
+## Как это работает
+
+```nginx
+limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+limit_conn_zone $binary_remote_addr zone=addr:10m;
+
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+
+    client_max_body_size 2m;
+
+    location /auth/login {
+        limit_req zone=login burst=3 nodelay;
+        limit_conn addr 20;
+        proxy_pass http://auth_backend;
+    }
+
+    location /export/ {
+        limit_rate 500k;
+        proxy_pass http://files_backend;
+    }
+}
+```
+
+Тест rate limit:
+
+```bash
+for i in $(seq 1 8); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.example.com/auth/login
+done
+```
+
+Ожидаю 503/429 после превышения burst.
+
+## Подводные камни
+
+- **Зона вне http context.** `limit_req_zone` только в `http {}`; include порядок ломает старт.
+- **nodelay vs burst.** Без `nodelay` запросы ставятся в очередь и растят latency вместо быстрого 503.
+- **Прокси за CDN.** `$binary_remote_addr` это IP CDN, не клиента; беру `X-Forwarded-For` с trust только от known proxy.
+- **limit_rate на весь ответ.** Клиенты с медленным read держат worker; комбинирую с `send_timeout`.
+- **False sense of security.** Rate limit не заменяет WAF и auth; только один слой defense in depth.

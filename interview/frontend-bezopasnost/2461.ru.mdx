@@ -1,0 +1,63 @@
+---
+id: 2461
+title: "XSS на фронте: виды и защита"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# XSS на фронте: виды и защита
+
+## Суть
+
+Cross-Site Scripting позволяет выполнить чужой JavaScript в контексте вашего origin. Stored XSS живёт в данных на сервере, Reflected возвращается из параметра запроса, DOM-based возникает при небезопасной работе с URL/DOM на клиенте. Защита: encoding, CSP, безопасные API рендера, sanitization.
+
+## Что ответить на собесе
+
+- Рендерю пользовательский текст через `textContent` или framework escape, не через `innerHTML`.
+- Включаю CSP: `script-src` без `unsafe-inline`, nonce/hash для inline если без выбора.
+- Для HTML из CMS прогоняю allowlist-sanitizer (DOMPurify), не regex.
+- Честно: CSP не заменяет encoding; stored XSS бьёт всех, DOM XSS обходит серверный WAF.
+- Обновляю зависимости и включаю Trusted Types там, где браузер поддерживает.
+
+## Как это работает
+
+Три класса атак:
+
+1. **Stored:** комментарий с `<script>` сохраняется и отдаётся каждому зрителю.
+2. **Reflected:** сервер вставляет `search` query в HTML без escape.
+3. **DOM-based:** клиентский код читает `location.hash` и пишет в DOM.
+
+```ts
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderGreeting(nameFromQuery: string): void {
+  const slot = document.querySelector('#greet');
+  if (!slot) return;
+  slot.textContent = nameFromQuery;
+}
+
+const meta = document.createElement('meta');
+meta.httpEquiv = 'Content-Security-Policy';
+meta.content = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'";
+document.head.appendChild(meta);
+```
+
+React/Vue/Svelte по умолчанию экранируют `{expr}`, опасность в `dangerouslySetInnerHTML` и библиотеках markdown без sanitize. HttpOnly cookies не спасают от XSS, если атакующий скрипт уже в DOM: он может дергать API от имени пользователя через same-origin fetch.
+
+## Подводные камни
+
+- **JSON в script tag.** `</script>` внутри JSON ломает парсер; использую type="application/json" + отдельный parse.
+- **href/src injection.** `javascript:` и `data:` в атрибутах дают XSS без `<script>`.
+- **postMessage.** Слушатель без проверки `origin` принимает payload от iframe.
+- **Third-party scripts.** GTM/виджеты расширяют attack surface; CSP report-only сначала.
+- **Markdown/HTML editors.** Preview панель часто рендерит raw HTML; sanitization обязателен на save и render.

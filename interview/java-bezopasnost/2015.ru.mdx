@@ -1,0 +1,63 @@
+---
+id: 2015
+title: "Что такое JWT и где его применяют в Java?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое JWT и где его применяют в Java?
+
+## Суть
+
+JWT (JSON Web Token) это compact строковый формат из header.payload.signature в Base64URL. Подпись (HMAC или RSA/ECDSA) гарантирует целостность; payload несёт claims (`sub`, `exp`, roles). Resource server проверяет подпись без обращения к БД на каждый запрос.
+
+## Что ответить на собесе
+
+- Три части через точку; payload не зашифрован, только signed.
+- Алгоритмы: HS256 для shared secret, RS256/ES256 с JWKS для распределённых сервисов.
+- Обязательные checks: signature, `exp`, `iss`, `aud`, clock skew leeway.
+- Stateless session удобен для microservices; revoke сложнее, нужен blocklist или короткий TTL.
+- Честно: JWT как session storage раздувает cookie и тащит stale roles до exp.
+
+## Как это работает
+
+Генерация на auth service (jjwt / Nimbus):
+
+```java
+Instant now = Instant.now();
+String jwt = Jwts.builder()
+    .issuer("https://auth.example.com")
+    .subject("user-42")
+    .claim("roles", List.of("VIEWER", "EDITOR"))
+    .issuedAt(Date.from(now))
+    .expiration(Date.from(now.plusSeconds(900)))
+    .signWith(signingKey, Jwts.SIG.HS256)
+    .compact();
+```
+
+Валидация на API:
+
+```java
+Jws<Claims> parsed = Jwts.parser()
+    .requireIssuer("https://auth.example.com")
+    .requireAudience("billing-api")
+    .clockSkewSeconds(30)
+    .verifyWith(signingKey)
+    .build()
+    .parseSignedClaims(rawToken);
+
+String userId = parsed.getPayload().getSubject();
+```
+
+Header задаёт alg; verifier отклоняет `none` и unexpected algs (alg confusion attack). Для RS256 public key берут из JWKS endpoint IdP, rotate без redeploy всех сервисов.
+
+## Подводные камни
+
+- **Sensitive data в payload.** PII readable любому, кто перехватил token.
+- **HS256 secret в git.** Shared symmetric key компрометирует все сервисы.
+- **Без `aud` check.** Token от mobile client принимается admin API.
+- **Долгий exp без refresh rotation.** Украденный JWT живёт часами.
+- **Algorithm confusion.** Принять RS256 token, проверив HMAC с public key as secret.

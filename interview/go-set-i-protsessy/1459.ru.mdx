@@ -1,0 +1,94 @@
+---
+id: 1459
+title: "Что делает TCP, если ответ так и не приходит?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает TCP, если ответ так и не приходит?
+
+## Суть
+
+TCP гарантирует доставку через подтверждения и повторные передачи, но при потере пакетов, больших задержках или падении удалённой стороны ожидание не бесконечно: срабатывают таймеры ретрансмиссии и в итоге соединение закрывается с ошибкой.
+
+## Что ответить на собесе
+
+- Называю типичные причины: потеря сегмента, перегрузка сети, зависший сервер, firewall, обрыв маршрута.
+- Объясняю механику: отправитель ждёт ACK, при таймауте повторяет сегмент с экспоненциальным backoff и уменьшает окно (congestion control).
+- Показываю прикладной уровень: в Go задаю `SetDeadline`/`context` и обрабатываю `timeout`/`connection reset`, не полагаясь на бесконечное ожидание TCP.
+- Честно добавляю: TCP надёжен в пределах установленного соединения, но не спасает от логических таймаутов приложения и от ситуации «сервер принял запрос, но ответ не ушёл».
+
+## Как это работает
+
+Протокол нумерует байты и требует ACK на принятые диапазоны. Если подтверждение не пришло за RTO (retransmission timeout), стек считает сегмент потерянным и отправляет копию. Алгоритмы вроде slow start и congestion avoidance снижают скорость, чтобы не усугубить перегрузку. При многократных неудачах TCP объявляет соединение мёртвым и возвращает ошибку прикладному коду.
+
+На стороне Go `net.Conn` оборачивает сокет ОС. Без дедлайна `Read` может ждать очень долго, пока TCP не сдастся. Правильный паттерн: ограничить ожидание на уровне приложения и корректно закрыть сокет.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"time"
+)
+
+func fetchWithTimeout(host string) error {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.Dial("tcp", host+":80")
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+
+	request := []byte("GET / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n")
+	if _, err := conn.Write(request); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	buf := make([]byte, 2048)
+	n, err := conn.Read(buf)
+	if err != nil {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return fmt.Errorf("read timed out after TCP retries exhausted or app deadline hit")
+		}
+		return fmt.Errorf("read: %w", err)
+	}
+	fmt.Printf("received %d bytes\n", n)
+	return nil
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- fetchWithTimeout("example.com") }()
+
+	select {
+	case err := <-done:
+		fmt.Println("result:", err)
+	case <-ctx.Done():
+		fmt.Println("outer context expired")
+	}
+}
+```
+
+Здесь `Dialer.Timeout` ограничивает установку соединения, `SetDeadline` режет ожидание чтения. TCP под капотом всё ещё ретранслирует, но приложение не зависает бесконечно.
+
+## Подводные камни
+
+- **Только TCP без дедлайнов.** Надёжность протокола не заменяет SLA сервиса; нужны таймауты и идемпотентность.
+- **Путаница RTO и app timeout.** Прикладной дедлайн может сработать раньше, чем TCP исчерпает ретраи.
+- **Half-open соединения.** Одна сторона считает линк живым, другая уже закрыла; keepalive и health-check помогают обнаружить.
+- **Повторная отправка и дубликаты.** TCP дедуплицирует на транспорте, но идемпотентные API всё равно обязательны на уровне бизнес-логики.
+- **TLS поверх TCP.** Ошибки могут прийти как `tls handshake timeout`, хотя корень в сетевой недоступности.

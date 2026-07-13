@@ -1,0 +1,55 @@
+---
+id: 1533
+title: "When does P pull goroutines from the global run queue?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When does P pull goroutines from the global run queue?
+
+## In short
+
+P hits the global run queue when its local queue is empty and work stealing from other Ps fails. Some new Gs from burst spawn land in global directly; Ps then pull batches (~half or a fixed size depending on runtime version).
+
+## How to answer in an interview
+
+- Order: local runq → steal from another P → global runq → netpoller (I/O-ready Gs).
+- The global queue is mutex-protected; burst spawn adds contention.
+- Balancing does not guarantee FIFO execution order for Gs.
+- I honestly caveat: batch and steal fractions changed across releases; "local first, then global" stays stable.
+
+## How it works
+
+```go
+package main
+
+import (
+	"sync"
+)
+
+func main() {
+	var wg sync.WaitGroup
+
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+		}()
+	}
+
+	wg.Wait()
+}
+```
+
+With a thousand `go` statements some Gs land in the global queue. A P with an empty local queue grabs a batch while others steal or also read global.
+
+## Pitfalls
+
+- **Burst spawn latency.** Early Gs start fast; the tail waits on global draining.
+- **Do not rely on order.** Global does not give fair app-level ordering.
+- **Low GOMAXPROCS.** A longer global queue with few Ps.
+- **Idle P and sysmon.** Sysmon nudges Ps to poll global and the net poller when idle.
+- **Scheduling tests.** Behavior is nondeterministic; assert invariants, not log order.

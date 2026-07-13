@@ -1,0 +1,53 @@
+---
+id: 4653
+title: "Плюсы и минусы mutex"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Плюсы и минусы mutex
+
+## Суть
+
+Mutex даёт простой и понятный взаимный доступ к критической секции. Цена: блокировки, риск deadlock, contention и накладные расходы на kernel wakeup, если секция короткая, но конкуренция высокая.
+
+## Что ответить на собесе
+
+- Плюс: легко рассуждать об инвариантах, подходит большинству shared state.
+- Плюс: широкая поддержка, RAII-обёртки, интеграция с condition_variable.
+- Минус: сериализация снижает масштабирование на много ядер.
+- Минус: неправильный порядок lock → deadlock; забытый unlock → зависание.
+- Честно: для hot path с простым счётчиком `std::atomic` часто лучше mutex.
+
+## Как это работает
+
+```cpp
+#include <atomic>
+#include <mutex>
+
+std::mutex ledgerGuard;
+int ledger = 0;
+std::atomic<int> fastHits{0};
+
+void recordSlow() {
+    std::lock_guard lock(ledgerGuard);
+    ++ledger;
+}
+
+void recordFast() {
+    ++fastHits;
+}
+```
+
+`recordSlow` безопасен для составных инвариантов вокруг `ledger`. `recordFast` обновляет счётчик без блокировки ядра. Mutex оправдан, когда под lock меняется несколько полей или неатомарная структура; для одного счётчика atomic дешевле.
+
+## Подводные камни
+
+- **Слишком грубый lock.** Один mutex на весь сервис превращает параллелизм в очередь.
+- **Priority inversion.** Низкоприоритетный владелец задерживает высокоприоритетного waiter.
+- **Exception safety.** Ручной lock/unlock без RAII оставляет mutex занятым.
+- **Reader/writer без shared_mutex.** Много читателей под exclusive mutex не масштабируются.
+- **Отладка.** Heisenbugs от таймингов; воспроизводятся stress-тестами, не unit-тестами.

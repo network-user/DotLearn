@@ -1,0 +1,82 @@
+---
+id: 4291
+title: "What is Logstash in the ELK stack?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is Logstash in the ELK stack?
+
+## In short
+
+Logstash is the JVM data pipeline in the Elastic Stack: inputs collect events, filters parse and enrich, outputs write to Elasticsearch or other sinks. It turns raw syslog/apache/json into structured documents with `@timestamp` and Kibana-friendly fields. It often sits between Beats/agents and ES, offloading heavy grok from the edge.
+
+## How to answer in an interview
+
+- Three stages: input (file, beats, kafka), filter (grok, mutate, date), output (elasticsearch).
+- Persistent queue on disk protects when ES is down.
+- Pipeline workers and batch size tune for CPU and EPS.
+- ES ingest nodes can replace some filters for simple cases.
+- Honestly: Logstash on every host is overkill; central LS or ES ingest plus Filebeat is leaner.
+
+## How it works
+
+Full apache log to ES pipeline:
+
+```bash
+cat <<'EOF' > /etc/logstash/conf.d/apache.conf
+input {
+  beats { port => 5044 }
+}
+
+filter {
+  grok {
+    match => { "message" => "%{COMBINEDAPACHELOG}" }
+  }
+  date {
+    match => [ "timestamp", "dd/MMM/yyyy:HH:mm:ss Z" ]
+    target => "@timestamp"
+  }
+  mutate {
+    convert => { "response" => "integer" }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["https://es.internal:9200"]
+    index => "apache-%{+YYYY.MM.dd}"
+    user => "logstash_writer"
+    password => "${LS_ES_PASSWORD}"
+  }
+}
+EOF
+```
+
+Enable persistent queue:
+
+```bash
+cat <<'EOF' >> /etc/logstash/logstash.yml
+queue.type: persisted
+path.queue: /var/lib/logstash/queue
+queue.max_bytes: 2gb
+EOF
+```
+
+Smoke test pipeline:
+
+```bash
+echo '127.0.0.1 - - [13/Jul/2026:10:00:00 +0000] "GET /health HTTP/1.1" 200 12' \
+  | /usr/share/logstash/bin/logstash -e 'input{stdin{}} filter{grok{match=>{message=>"%{COMBINEDAPACHELOG}"}}} output{stdout{codec=>rubydebug}}'
+```
+
+## Pitfalls
+
+- **Grok mismatch.** Non-standard log formats yield `_grokparsefailure` and empty fields; test samples in CI.
+- **Date parse fail.** Wrong timezone in the pattern shifts `@timestamp` by hours and breaks Kibana timelines.
+- **Heap OOM.** Too many workers on a small JVM; watch for `java.lang.OutOfMemoryError` in GC logs.
+- **No dead letter.** Failed events vanish; add a separate output for `tags` with grok failure.
+- **Version lock.** Logstash and ES major versions must match the compatibility matrix.

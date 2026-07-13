@@ -1,0 +1,68 @@
+---
+id: 2965
+title: "Domain resolution: where does QA catch cache and stale DNS?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Domain resolution: where does QA catch cache and stale DNS?
+
+## In short
+
+Name-to-IP conversion runs in layers: browser cache, OS cache, ISP recursive resolver, then authoritative zone servers. Each level honors TTL from the answer. After an IP change or cutover QA often sees old behavior not because of the app but because cache on one layer has not expired.
+
+## How to answer in an interview
+
+- First step when "won't open after deploy": incognito, `ipconfig /flushdns` or `sudo dscacheutil -flushcache`, another resolver (1.1.1.1).
+- Recursive resolvers cache even with low authoritative TTL; I wait 2×TTL or force a flush.
+- CNAME to a CDN adds another cache at the edge; I change origin, users still hit an old POP.
+- Honestly: if only one tester sees the bug, I start with their DNS, not a release rollback.
+
+## How it works
+
+Lookup order for `shop.example.com`:
+
+1. Browser DNS cache (Chrome `chrome://net-internals/#dns`)
+2. OS resolver (Windows `Get-DnsClientCache`)
+3. ISP / corporate recursive resolver
+4. Root → `.com` TLD → NS `example.com` → A record
+
+Gherkin after migration:
+
+```gherkin
+Feature: Resolution after A record change
+
+  Given old A 203.0.113.10
+  And new A 198.51.100.20
+  And TTL 300 seconds
+
+  Scenario: User with empty cache hits new IP
+    When QA opens shop.example.com in a new browser profile
+    Then TCP connects to 198.51.100.20
+    And the certificate is valid
+
+  Scenario: Stale cache serves old IP until TTL expires
+    Given OS cache holds 203.0.113.10
+    And 120 seconds passed since the change
+    When QA opens shop.example.com without flush
+    Then the connection is still to 203.0.113.10
+    And this is expected behavior, not an app defect
+
+  Scenario: NXDOMAIN after record removal
+    When QA queries deleted.shop.example.com
+    Then the answer is SERVFAIL or NXDOMAIN
+    And the UI shows a network error without a white screen
+```
+
+For automation I pin `/etc/hosts` or dnsmasq on the CI runner so tests do not depend on public TTL.
+
+## Pitfalls
+
+- **Negative caching.** NXDOMAIN lives in cache; new record "does not appear" for an hour.
+- **Split DNS.** VPN on/off changes resolver answers.
+- **Hosts file wins.** Local override hides a prod bug.
+- **DoH in browser, system dig differs.** Team disputes without a shared tool.
+- **Zero TTL still cached.** Some resolvers enforce a 30s minimum.

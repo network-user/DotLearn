@@ -1,0 +1,64 @@
+---
+id: 1568
+title: "Context value на разных уровнях call stack"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Context value на разных уровнях call stack
+
+## Суть
+
+Context immutable: WithValue возвращает новый ctx, parent не меняется. Child видит parent values plus own; sibling branches не видят values друг друга. Cancel/deadline propagates down entire subtree.
+
+## Что ответить на собесе
+
+- Pass derived ctx down stack; не мутирую global.
+- Value set на mid-layer виден deeper layers через тот же ctx reference.
+- Parent caller без reassign не видит WithValue сделанный в callee unless returned.
+- Честно: «два уровня» = parent ctx vs child WithValue; не shared mutable bag.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+)
+
+type reqIDKey struct{}
+
+func middleware(ctx context.Context) context.Context {
+	return context.WithValue(ctx, reqIDKey{}, "abc")
+}
+
+func service(ctx context.Context) {
+	id, _ := ctx.Value(reqIDKey{}).(string)
+	fmt.Println("service:", id)
+}
+
+func main() {
+	base := context.Background()
+	ctx := middleware(base)
+	service(ctx)
+}
+```
+
+middleware returns new ctx; service reads req id. base unchanged if caller keeps only base variable.
+
+## Подводные камни
+
+**Shadow ctx variable.** `ctx = WithValue` in one layer but pass old ctx elsewhere.
+
+**Expect upward propagation.** Values do not bubble to parent.
+
+**Sibling subtrees.** Two WithValue from same parent invisible to each other.
+
+**Type assertion panic.** Use comma ok for Value.
+
+**Deadline parent vs child.** Shorter child deadline; parent deadline still cancels child.

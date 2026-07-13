@@ -1,0 +1,61 @@
+---
+id: 3015
+title: "Что такое лог-файл и зачем он QA при расследовании багов?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое лог-файл и зачем он QA при расследовании багов?
+
+## Суть
+
+Лог-файл это последовательная текстовая запись событий приложения или ОС с меткой времени, уровнем и контекстом. QA использует его как доказательную базу: что произошло на сервере в момент воспроизведения, когда UI уже не хранит деталей. Уровни DEBUG/INFO/WARN/ERROR задают приоритет triage.
+
+## Что ответить на собесе
+
+- Лог фиксирует запросы, исключения, бизнес-события и audit trail.
+- При баге ищу ERROR/CRITICAL вокруг timestamp теста и correlation id.
+- Структурированный JSON-лог проще фильтровать в Kibana, чем plain text.
+- Ротация и retention ограничивают глубину истории; воспроизвожу быстро.
+- Честно: в prod DEBUG выключен; на staging проверяю, что уровни совпадают с prod политикой.
+
+## Как это работает
+
+```gherkin
+Feature: Log file investigation
+
+  Scenario: Trace failed checkout
+    Given app writes JSON lines to /var/log/checkout/app.log
+    When user completes payment at 2024-03-15T10:05:12Z
+    And log line contains level ERROR traceId pay-88
+    Then bug report cites log excerpt with traceId
+
+  Scenario: Level filtering
+    Given grep pattern '"level":"ERROR"'
+    When scan last 500 lines after reproduction
+    Then only handled failures visible not noisy INFO
+
+  Scenario: Audit security event
+    Given auth.log records failed login
+    When brute force test runs
+    Then log file shows IP and timestamp for security ticket
+```
+
+Пример записи (переименованные поля):
+
+```json
+{"ts":"2024-03-15T10:05:12Z","level":"ERROR","trace":"pay-88","msg":"gateway timeout","userId":"u-104"}
+```
+
+QA не пишет логи, но читает их как контракт между ожидаемым и фактическим поведением backend.
+
+## Подводные камни
+
+- **PII в логах.** Копирую в тикет только обезличенные фрагменты.
+- **Неструктурированный grep.** Regex по свободному тексту ломается при смене формата.
+- **Несколько инстансов.** Лог одного pod не полная картина без trace id.
+- **Часовой пояс в ts.** Смещение ломает корреляцию с HAR.
+- **Лог без request context.** Stack trace без user id бесполезен для воспроизведения.

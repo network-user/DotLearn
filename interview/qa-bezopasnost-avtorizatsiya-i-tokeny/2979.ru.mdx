@@ -1,0 +1,62 @@
+---
+id: 2979
+title: "HTTPS и TLS: что QA проверяет в безопасной передаче?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HTTPS и TLS: что QA проверяет в безопасной передаче?
+
+## Суть
+
+HTTPS это HTTP поверх TLS: шифрование канала, проверка сертификата сервера и целостность данных. QA смотрит принудительный редирект с HTTP, валидность цепочки сертификатов, HSTS, отсутствие mixed content и версию TLS на staging/prod. Без TLS логин и токены не тестирую как «безопасные».
+
+## Что ответить на собесе
+
+- Padlock в браузере недостаточен: проверяю issuer, SAN на hostname, срок действия, OCSP stapling на критичных стендах.
+- Mixed content: HTTPS страница не грузит active HTTP (скрипты, XHR); passive images иногда warning.
+- HSTS preload защищает первый визит после попадания в список; без HSTS возможен sslstrip на первом HTTP hop.
+- Честно: self-signed на internal staging принимаю только с импортом CA в тестовый trust store, не «продолжить anyway» в регрессии.
+
+## Как это работает
+
+Упрощённый handshake:
+
+```
+ClientHello → ServerHello + Certificate → key exchange → encrypted HTTP
+```
+
+Gherkin:
+
+```gherkin
+Feature: TLS на публичных endpoint
+
+  Scenario: HTTP редирект на HTTPS
+    When QA GET http://app.example.com/
+    Then ответ 301 или 308
+    And Location начинается с https://
+
+  Scenario: Нет mixed active content на login
+    Given страница https://app.example.com/login
+    When QA открывает Console
+    Then нет Mixed Content ошибок на script и xhr
+
+  Scenario: Просроченный сертификат блокирует доступ
+    Given staging cert expired вчера
+    When пользователь открывает URL
+    Then браузер показывает certificate error
+    And приложение не отправляет пароль в обход warning
+```
+
+Инструменты: `openssl s_client -connect host:443 -servername host`, SSL Labs на prod по согласованию, Charles только с corporate CA.
+
+## Подводные камни
+
+- **TLS termination на CDN.** Origin HTTP внутри, забыт redirect на edge.
+- **Сертификат на apex, не на www.** Один hostname падает.
+- **Слабый TLS 1.0 на legacy LB.** Клиенты банков отказываются.
+- **Certificate pinning в app.** Staging rotate ломает мобильный клиент.
+- **Проверяют только главную.** API subdomain без валидного cert.

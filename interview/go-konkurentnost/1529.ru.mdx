@@ -1,0 +1,56 @@
+---
+id: 1529
+title: "Кто и как закрывает channel?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Кто и как закрывает channel?
+
+## Суть
+
+Закрытие только через `close(ch)` и только отправителем (producer), когда новых значений не будет. Получатели читают остаток; после drain `v, ok := <-ch` даёт zero value и `ok=false`. Send в closed channel panic.
+
+## Что ответить на собесе
+
+- `for v := range ch` завершается после close и чтения всех значений.
+- Double close panic; receive на nil channel блокируется навсегда.
+- Close служит сигналом «больше данных не будет», не обязательно ошибкой.
+- Честно добавляю: если несколько producer, координирую одного closer через WaitGroup или отдельный coordinator goroutine.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func producer(out chan<- int) {
+	for i := 0; i < 3; i++ {
+		out <- i
+	}
+	close(out)
+}
+
+func main() {
+	ch := make(chan int)
+	go producer(ch)
+
+	for v := range ch {
+		fmt.Println(v)
+	}
+}
+```
+
+После `close` буферизированный channel отдаёт накопленные значения, затем `ok=false`. Несколько receiver могут range по одному channel, но типичный паттерн один consumer.
+
+## Подводные камни
+
+- **Close не consumer.** Получатель не должен закрывать, если sender ещё пишет.
+- **Send after close.** Panic; нужен select с `ctx.Done()` или отдельный done signal.
+- **Проверка closed перед send.** Нет безопасного API; договорённость по владению.
+- **Значение после close.** Zero value неотличимо от реального zero без отдельного протокола.
+- **WG + close race.** Close только после подтверждения, что все producer завершили send.

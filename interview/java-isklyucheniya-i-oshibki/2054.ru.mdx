@@ -1,0 +1,82 @@
+---
+id: 2054
+title: "Исключение в finally: подавление primary exception"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Исключение в finally: подавление primary exception
+
+## Суть
+
+Если в `finally` выбрасывается новое исключение, оно **подавляет** (suppressed) исключение из `try` или `catch`: наружу уходит только finally-исключение. Исходная причина сбоя теряется в stack trace, если не использовать `addSuppressed` или не логировать try-exception до finally. Это классический anti-pattern при close/cleanup.
+
+## Что ответить на собесе
+
+- Исключение из finally «побеждает» при unwind стека.
+- try-with-resources (Java 7+) добавляет suppressed exceptions автоматически при close failure.
+- В finally предпочитаю логировать ошибку close, не rethrow, если try уже failed.
+- `Throwable.addSuppressed()` вручную связывает primary и secondary.
+- Честно: throw из finally почти всегда хуже, чем swallow + log при cleanup.
+
+## Как это работает
+
+```java
+void process() {
+    try {
+        throw new IllegalStateException("business rule violated");
+    } catch (IllegalStateException ex) {
+        log.warn("handled in catch", ex);
+        throw ex;
+    } finally {
+        throw new IOException("failed to flush buffer");
+    }
+}
+```
+
+Caller увидит только `IOException` из finally; `IllegalStateException` исчезнет из propagated chain (без suppressed).
+
+Правильный cleanup при двойной ошибке:
+
+```java
+IllegalStateException primary = null;
+try {
+    validate();
+} catch (IllegalStateException ex) {
+    primary = ex;
+} finally {
+    try {
+        flush();
+    } catch (IOException closeEx) {
+        if (primary != null) {
+            primary.addSuppressed(closeEx);
+            throw primary;
+        }
+        throw closeEx;
+    }
+    if (primary != null) {
+        throw primary;
+    }
+}
+```
+
+try-with-resources эквивалент:
+
+```java
+try (var writer = Files.newBufferedWriter(path)) {
+    writer.write(payload);
+}
+```
+
+Если `write` и `close` оба бросают, primary остаётся от write, close идёт в `getSuppressed()`.
+
+## Подводные камни
+
+- **Молчаливое подавление.** Production incident без root cause в логах.
+- **return в try + throw в finally.** return теряется, наружу только finally exception.
+- **Дублирующий throw в catch и finally.** Отладка показывает не тот тип.
+- **Логирование только finally ex.** RCA указывает на I/O, не на бизнес-ошибку.
+- **Считать suppressed автоматическим везде.** Ручной finally без addSuppressed не даёт цепочки.

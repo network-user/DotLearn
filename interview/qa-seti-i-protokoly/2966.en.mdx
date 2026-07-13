@@ -1,0 +1,65 @@
+---
+id: 2966
+title: "Port 53: how does QA test DNS UDP and TCP fallback?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Port 53: how does QA test DNS UDP and TCP fallback?
+
+## In short
+
+Standard DNS listens on port 53 over UDP for fast queries and over TCP for large answers, zone transfer, and truncation (TC bit). Corporate firewalls often block outbound UDP/53 while allowing TCP or DoH. QA reproduces blocking and checks whether resolution breaks in the app.
+
+## How to answer in an interview
+
+- Most lookups use UDP; answers over 512 bytes (DNSSEC, many A records) trigger TCP retry.
+- Closed UDP/53 causes timeout; some networks allow only TCP/53 to a corporate resolver.
+- dig `+tcp` and `+bufsize=1232` help reproduce truncation on a stand.
+- Honestly: on guest Wi-Fi DNS may be hijacked by a captive portal; that is environment, not product regression.
+
+## How it works
+
+Typical exchange:
+
+```
+Client --UDP 53 query--> Resolver
+Resolver --UDP 53 response TC=1--> Client
+Client --TCP 53 query--> Resolver
+Resolver --TCP 53 full response--> Client
+```
+
+Gherkin network negatives:
+
+```gherkin
+Feature: DNS reachability on port 53
+
+  Scenario: UDP resolve staging domain
+    When QA runs dig @8.8.8.8 staging.example.com A +time=2
+    Then status is NOERROR
+    And the answer arrived over UDP
+
+  Scenario: TCP fallback on large response
+    When QA runs dig @8.8.8.8 many-records.example.com ANY +bufsize=512
+    Then the response has TC flag or retries over TCP
+    And the full record set is received
+
+  Scenario: Firewall blocks UDP 53
+    Given egress denies UDP 53
+    When the app resolves api.internal
+    Then the UI shows a network error within client timeout
+    And the log has no infinite retry without backoff
+```
+
+`nmap -sU -p 53` on a lab resolver; in prod only with secops approval.
+
+## Pitfalls
+
+- **DoH on 443 instead of 53.** dig fails, Chrome works.
+- **Split-horizon resolver.** External 53 closed, internal open only on VPN.
+- **Rate limit on recursive.** Mass parallel e2e causes SERVFAIL.
+- **EDNS0 disabled.** Old firewall breaks large answers.
+- **Confusing DNS port and HTTP health.** Service on 8053 is not DNS.

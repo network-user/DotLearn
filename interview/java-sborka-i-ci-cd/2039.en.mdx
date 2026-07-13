@@ -1,0 +1,78 @@
+---
+id: 2039
+title: "Gradle tasks: build atoms and dependency graphs"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Gradle tasks: build atoms and dependency graphs
+
+## In short
+
+A Gradle task is a named unit of work with inputs, outputs, and an action. Gradle builds a DAG: `dependsOn`, `mustRunAfter`, `finalizedBy`. Unlike Maven phases, tasks are declared and wired freely. Running `./gradlew test` runs `test` and all dependencies; up-to-date checks skip unchanged tasks.
+
+## How to answer in an interview
+
+- Standard Java tasks: `compileJava`, `test`, `jar`, `bootJar` (Spring).
+- Custom tasks via `tasks.register` (lazy) are preferred over eager `task`.
+- `dependsOn` sets order; `onlyIf` and `enabled` for conditional runs.
+- Configuration cache needs serializable inputs or the build fails on CI.
+- Honestly: heavy logic in the configuration phase slows every `./gradlew tasks`.
+
+## How it works
+
+Three Gradle run phases: initialization (settings), configuration (scripts, graph), execution (requested tasks only).
+
+Custom task in Kotlin DSL:
+
+```kotlin
+tasks.register("generateOpenApi") {
+    group = "documentation"
+    description = "Renders OpenAPI spec from annotations"
+    dependsOn("compileJava")
+    doLast {
+        println("OpenAPI written to build/docs/openapi.yaml")
+    }
+}
+```
+
+Chain with explicit ordering:
+
+```kotlin
+tasks.named("integrationTest") {
+    dependsOn("test")
+    mustRunAfter("dockerComposeUp")
+}
+```
+
+Groovy legacy equivalent:
+
+```groovy
+tasks.register('lintSql') {
+    dependsOn compileJava
+    doLast {
+        println 'SQL migrations validated'
+    }
+}
+```
+
+Incremental build: if `@InputFiles` did not change, Gradle marks the task UP-TO-DATE. Build cache can reuse outputs from another agent when fingerprints match.
+
+Run:
+
+```bash
+./gradlew build -x test
+```
+
+`-x` excludes a task from the graph but does not cancel other tasks' `dependsOn`.
+
+## Pitfalls
+
+- **Configuration phase side effects.** IO at script top level slows every command.
+- **Circular dependsOn.** Gradle fails while building the graph.
+- **doFirst/doLast order.** Multiple blocks run in registration order, easy to confuse.
+- **Implicit dependency.** Generated sources changed but inputs not declared: stale outputs.
+- **Parallel without thread safety.** Shared mutable state in task actions causes flaky CI.

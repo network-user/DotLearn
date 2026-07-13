@@ -1,0 +1,64 @@
+---
+id: 1464
+title: "How does a Go map resolve hash collisions?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a Go map resolve hash collisions?
+
+## In short
+
+Under the hood a map is a hash table with buckets: colliding keys land in the same bucket and are scanned sequentially (chaining inside the bucket). When load grows, the table expands and entries are rebalanced.
+
+## How to answer in an interview
+
+- I explain: the hash picks a bucket index; inside the bucket there are up to eight slots (in current versions) plus overflow buckets when needed.
+- I clarify: collisions are normal; even hash spread and full key equality matter, not hash equality alone.
+- I link to performance: a poor hash distribution degrades to linear search inside a bucket chain.
+- I add honestly: I remember the internal layout (`hmap`, `bmap`) conceptually; for interviews bucket + overflow + grow is enough.
+
+## How it works
+
+The key goes through a runtime hash (for strings, integers, structs with comparable fields). Low bits of the hash pick a bucket. On insert the runtime finds a free slot in the bucket or overflow chain. On lookup it compares the full key because different keys can share a hash.
+
+When load factor crosses a threshold, the map doubles buckets (grow) and gradually evacuates old entries. Iteration during grow is safe, but key order stays nondeterministic.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	stock := make(map[string]int)
+	keys := []string{"apple", "apricot", "banana", "cherry", "date"}
+	for i, k := range keys {
+		stock[k] = (i + 1) * 10
+	}
+
+	lookup := "banana"
+	if qty, ok := stock[lookup]; ok {
+		fmt.Printf("%s -> %d\n", lookup, qty)
+	}
+
+	for k, v := range stock {
+		fmt.Printf("%s=%d ", k, v)
+	}
+	fmt.Println()
+}
+```
+
+Even if `apple` and `apricot` share a bucket due to similar hashes, `stock["banana"]` finds the right pair via string comparison, not hash alone.
+
+Collisions are not "fixed" by picking another key; the table structure handles them. Users influence this indirectly: avoid huge maps without need, never use mutable keys, and watch growth via `len`.
+
+## Pitfalls
+
+- **Treating map as ordered.** Traversal order is random and changes between runs; sort keys separately when order matters.
+- **Mutable keys.** Slices or maps as keys fail to compile; structs with pointers inside can surprise you if fields change after insert.
+- **Races without sync.** Concurrent writes to a plain map cause a fatal error; use a mutex or `sync.Map`.
+- **Confusion with Java HashMap.** Go has no user-visible linked list per bucket; details live in the runtime.
+- **Prealloc with make hint.** `make(map[K]V, hint)` cuts grows when size is known but does not remove collisions as a phenomenon.

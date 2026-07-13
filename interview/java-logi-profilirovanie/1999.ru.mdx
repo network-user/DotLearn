@@ -1,0 +1,59 @@
+---
+id: 1999
+title: "Как traceId появляется и идёт через микросервисы?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как traceId появляется и идёт через микросервисы?
+
+## Суть
+
+TraceId это сквозной идентификатор одного пользовательского запроса через всю цепочку сервисов. Entry service генерирует его (или принимает от gateway) и прокидывает в downstream через HTTP/gRPC headers и message metadata. Все логи и spans с тем же traceId склеиваются в единую timeline для RCA.
+
+## Что ответить на собесе
+
+- Генерация на edge: API gateway или первый backend, формат UUID или W3C traceparent.
+- Propagation: `traceparent`, `X-Request-Id`, OpenTelemetry baggage.
+- В Java: servlet filter / WebClient interceptor / gRPC ClientInterceptor.
+- Связываю с MDC и structured logging.
+- Честно добавляю: без единого стандарта заголовков между командами корреляция ломается; договорённость важнее конкретного UUID.
+
+## Как это работает
+
+```java
+final class TraceHeaders {
+    static final String TRACE = "traceparent";
+
+    static String beginTrace() {
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        return "00-" + traceId + "-" + randomSpan() + "-01";
+    }
+
+    static void inject(HttpHeaders headers, String traceparent) {
+        headers.set(TRACE, traceparent);
+    }
+
+    static String extract(HttpHeaders headers) {
+        String incoming = headers.getFirst(TRACE);
+        return incoming != null ? incoming : beginTrace();
+    }
+
+    private static String randomSpan() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+}
+```
+
+Gateway получает запрос без traceparent, вызывает `beginTrace()`, кладёт значение в header к billing-service. Billing читает `extract`, пишет traceId в MDC и передаёт дальше к inventory через тот же header. Kibana/Jaeger фильтр по traceId показывает полный путь: auth → billing → inventory → DB.
+
+## Подводные камни
+
+- **Новый traceId на каждый hop.** Теряется связность цепочки.
+- **Потеря в async.** `CompletableFuture` без context propagation обрывает trace.
+- **Доверие клиентскому traceId без валидации.** Collisions и spoofing.
+- **Забытый MDC.clear().** Следующий запрос в thread pool наследует чужой id.
+- **Разные имена заголовков.** `X-Trace-Id` vs `traceparent` между сервисами.

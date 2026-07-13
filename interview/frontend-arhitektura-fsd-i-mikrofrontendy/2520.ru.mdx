@@ -1,0 +1,76 @@
+---
+id: 2520
+title: "Dependency Injection vs Service Locator"
+category: frontend-arhitektura-fsd-i-mikrofrontendy
+categoryLabel: "Архитектура, FSD и микрофронтенды"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Dependency Injection vs Service Locator
+
+## Суть
+
+Dependency Injection передаёт зависимости снаружи (constructor/factory param): класс не знает, где взять logger. Service Locator даёт глобальный registry `Locator.get('Logger')` внутри класса. DI делает зависимости явными в сигнатуре; Locator прячет их и усложняет тесты.
+
+## Что ответить на собесе
+
+- Constructor DI: `new OrderService(paymentGateway, auditLog)` видно в composition root.
+- React analogue: pass props/context provider, не `window.__services.fetch`.
+- Service Locator уместен в legacy bootstrap, но скрывает graph для static analysis.
+- Честно: фронт редко нуждается в enterprise DI container; manual wiring в `main.tsx` часто достаточно.
+- Тесты: DI → inject fake; Locator → global mock registry reset между tests.
+
+## Как это работает
+
+DI style:
+
+```ts
+export interface Mailer {
+  send(to: string, body: string): Promise<void>;
+}
+
+export class InviteService {
+  constructor(private readonly mailer: Mailer) {}
+
+  async invite(email: string) {
+    await this.mailer.send(email, 'You are invited');
+  }
+}
+
+const mailer: Mailer = { send: async () => undefined };
+const invites = new InviteService(mailer);
+```
+
+Service Locator style:
+
+```ts
+const services = new Map<string, unknown>();
+
+export const ServiceLocator = {
+  register<T>(key: string, instance: T) {
+    services.set(key, instance);
+  },
+  resolve<T>(key: string) {
+    return services.get(key) as T;
+  },
+};
+
+export class InviteService {
+  async invite(email: string) {
+    const mailer = ServiceLocator.resolve<Mailer>('mailer');
+    await mailer.send(email, 'You are invited');
+  }
+}
+```
+
+Locator dependency невидима в constructor signature. Composition root в DI одно место wiring; Locator размазывает lookup по codebase.
+
+## Подводные камни
+
+- **Hidden deps.** Locator → grep не находит coupling.
+- **Global mutable registry.** Flaky parallel tests без reset.
+- **Over-container.** Angular-style DI для 5 services на landing page.
+- **React anti-pattern.** Locator в render path ломает pure component model.
+- **Migration trap.** Locator + DI одновременно → двойной source of truth.

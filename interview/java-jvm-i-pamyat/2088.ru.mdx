@@ -1,0 +1,58 @@
+---
+id: 2088
+title: "ZGC: масштабируемый low-latency сборщик"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# ZGC: масштабируемый low-latency сборщик
+
+## Суть
+
+Z Garbage Collector (ZGC) это concurrent collector с region-based heap и colored pointers: metadata в pointer bits отслеживает mark/remap state. Relocation и compaction выполняются параллельно application threads с load barriers. Цель: pause time не растёт линейно с heap size (ms-scale даже на сотнях GB).
+
+## Что ответить на собесе
+
+- `-XX:+UseZGC`, production ready Java 15+ (11 experimental).
+- Sub-millisecond STW на root scanning phases в типичных конфигах.
+- Supports large heaps (TB range) on 64-bit.
+- `-Xmx` equals `-Xms` common to avoid resize pauses.
+- Честно: throughput workload может проиграть Parallel GC на CPU efficiency.
+
+## Как это работает
+
+```bash
+java -XX:+UseZGC \
+  -Xms16g -Xmx16g \
+  -XX:+AlwaysPreTouch \
+  -XX:ConcGCThreads=4 \
+  -jar analytics-node.jar
+```
+
+Phases:
+
+1. **Pause mark start.** Short STW setup concurrent mark.
+2. **Concurrent mark / relocate.** ZGC walks heap, moves objects between ZPages.
+3. **Load barrier.** Mutator read may trigger color check + remapping.
+4. **Pause mark end / relocate start.** Brief STW bookends.
+
+Colored pointer (concept):
+
+```
+64-bit ref: [ metadata bits | compressed address ]
+```
+
+Metadata tells barrier if object moved; forwarding without full stop-the-world copy phase like Parallel Old.
+
+Monitoring: `-Xlog:gc*` shows `Garbage Collection (Allocation Stall)` if mutator outruns concurrent GC.
+
+## Подводные камни
+
+- **Experimental flag on old JDK.** `-XX:+UnlockExperimentalVMOptions` was required pre-15.
+- **Single-gen only.** No classic young/old tuning knobs.
+- **Native memory for ZPages.** RSS higher than Parallel for same `-Xmx`.
+- **Wrong workload.** Batch ETL rarely needs ZGC complexity.
+- **ARM/x86 differences.** Verify platform support on deployment arch.

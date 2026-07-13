@@ -1,0 +1,61 @@
+---
+id: 2065
+title: "Why Java teams use Docker containers"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why Java teams use Docker containers
+
+## In short
+
+A container packages the JAR, the required JRE version, and system dependencies into an immutable unit that starts the same on laptop, CI, and prod. Process isolation and cgroup limits reduce "works on my machine" and simplify horizontal scaling in Kubernetes. For Spring Boot this is the standard delivery artifact instead of manual JDK installs on VMs.
+
+## How to answer in an interview
+
+- One image = one service; JDK version is pinned in FROM.
+- Dev/prod parity: same env vars, same JVM flags via ENTRYPOINT.
+- Fast rollout: pull image + restart Pod, no apt/yum on the server.
+- An orchestrator (k8s) scales container replicas, not "another VM".
+- Honestly: a container does not replace observability and health checks; without them, prod debugging is harder.
+
+## How it works
+
+Multi-stage Dockerfile for Gradle:
+
+```dockerfile
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /src
+COPY gradlew settings.gradle.kts build.gradle.kts ./
+COPY gradle gradle
+RUN ./gradlew dependencies --no-daemon
+COPY src src
+RUN ./gradlew bootJar --no-daemon -x test
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=builder /src/build/libs/*.jar app.jar
+USER 10001
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+```
+
+Runtime:
+
+```bash
+docker run -p 8080:8080 \
+  -e JAVA_OPTS="-XX:MaxRAMPercentage=75.0" \
+  notification-svc:2.3.0
+```
+
+The container shares the host kernel but isolates filesystem and network namespaces. The JVM sees cgroup memory limits and can adapt heap via `-XX:MaxRAMPercentage`. In k8s the same images are replicated by a Deployment; ConfigMap/Secret mount `application.yml` without rebuild.
+
+## Pitfalls
+
+- **Fat JAR + fat image.** A forgotten builder stage leaves the JDK in the prod image.
+- **PID 1 and signals.** Shell ENTRYPOINT may swallow SIGTERM; use exec form or tini.
+- **Ephemeral filesystem.** Logs and temp files without volumes are lost on restart.
+- **Timezone/locale drift.** Alpine musl vs glibc causes subtle native lib bugs.
+- **Over-sharding.** A container per 10MB utility increases ops overhead with little gain.

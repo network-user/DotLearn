@@ -1,0 +1,72 @@
+---
+id: 2040
+title: "Типовой CI pipeline для Java-сервиса"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Типовой CI pipeline для Java-сервиса
+
+## Суть
+
+CI pipeline автоматизирует проверку каждого push/PR: checkout, restore cache, сборка, тесты, статический анализ, сбор артефакта и (опционально) deploy в staging. Цель: поймать поломку до merge и дать воспроизводимый binary. Для Java стандарт: JDK matrix или единая LTS, `mvn verify` / `./gradlew build`, публикация jar/docker image.
+
+## Что ответить на собесе
+
+- Триггеры: push в main, pull request, nightly cron для long tests.
+- Stages: build → unit tests → integration (Testcontainers) → quality gate (Sonar) → artifact.
+- Кэширую `.m2` / Gradle user home по hash lockfiles.
+- Deploy в staging только с main; production через manual approval или tag.
+- Честно: без flaky-test quarantine pipeline превращается в шум, команда игнорирует красный статус.
+
+## Как это работает
+
+Минимальный GitHub Actions фрагмент:
+
+```yaml
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - run: mvn -B verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: service-jar
+          path: target/*.jar
+```
+
+Jenkins declarative аналог:
+
+```groovy
+pipeline {
+  agent any
+  stages {
+    stage('Build') { steps { sh 'mvn -B verify' } }
+    stage('Docker') {
+      steps { sh 'docker build -t registry/acme/payments:${GIT_COMMIT}' .' }
+    }
+  }
+  post {
+    failure { mail to: 'team@acme.io', subject: 'CI failed' }
+  }
+}
+```
+
+Типичный flow: разработчик открывает PR → CI клонирует репо → поднимает JDK → скачивает dependencies (или из cache) → компилирует → Surefire → (опционально) OWASP dependency-check → пушит jar в artifact registry. Успешный merge в main триггерит deploy job с тем же digest image для traceability.
+
+## Подводные камни
+
+- **Разные JDK локально и в CI.** `release` flag в compiler plugin обязателен.
+- **Секреты в логах.** `settings.xml` с password маскирую через CI secret store.
+- **integration без service container.** Flaky подключение к localhost Postgres.
+- **skip tests в CI.** `-DskipTests` маскирует регресс до production.
+- **artifact без SBOM.** Supply-chain audit невозможен при инциденте CVE.

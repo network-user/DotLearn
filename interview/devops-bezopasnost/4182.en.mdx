@@ -1,0 +1,52 @@
+---
+id: 4182
+title: "What is a JWT and where is it used?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is a JWT and where is it used?
+
+## In short
+
+A JWT is signed (or encrypted JWE) JSON as `header.payload.signature` in base64url. Claims carry subject, roles, exp; the server verifies signature with a shared secret or JWKS public key. Stateless for API gateways, but revocation and payload size need discipline.
+
+## How to answer in an interview
+
+- Three parts: alg/typ in header, claims in payload, HMAC/RSA/ECDSA signature.
+- Do not store PII or secrets in payload: base64 is not encryption.
+- Prefer RS256/ES256 with JWKS rotation; HS256 only service-to-service with short TTL.
+- I add honestly: for session revoke use opaque tokens + Redis or short TTL + refresh rotation.
+
+## How it works
+
+Inspect JWT via shell tools:
+
+```bash
+TOKEN='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1LTEyMyIsInJvbGUiOiJkZXBsbyIsImV4cCI61893456000fQ.sig'
+
+payload=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null)
+echo "$payload" | jq .
+
+# generate HS256 for internal smoke test
+SECRET='smoke-test-only-not-prod'
+header=$(printf '{"alg":"HS256","typ":"JWT"}' | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+body=$(printf '{"sub":"u-123","exp":'$(($(date +%s)+300))'}' | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+sig=$(printf '%s.%s' "$header" "$body" | openssl dgst -sha256 -hmac "$SECRET" -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+echo "${header}.${body}.${sig}"
+```
+
+Gateway checks `exp`/`nbf`, `iss`, `aud`, signature. Short TTL (5-15m) plus refresh in httpOnly cookie reduces theft risk.
+
+Ingress (nginx) forwards `Authorization: Bearer` upstream; Istio/OPA validates JWKS from IdP.
+
+## Pitfalls
+
+- **alg=none / key confusion.** Allowlist algs only; never verify RS256 token with HS256 key derived from pubkey.
+- **Long-lived JWT in localStorage.** XSS equals full account takeover.
+- **Sensitive claims.** email/roles visible to anyone who captures the token.
+- **No revocation.** Compromised token valid until exp; need blocklist or short TTL.
+- **Oversized cookie.** JWT >4KB breaks headers; BFF with session id is safer.

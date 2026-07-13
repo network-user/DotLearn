@@ -1,0 +1,90 @@
+---
+id: 4290
+title: "Что такое Fluentd и зачем он в pipeline?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое Fluentd и зачем он в pipeline?
+
+## Суть
+
+Fluentd это open-source log collector и router: принимает события через input plugins, трансформирует filter'ами, отправляет output'ами в Elasticsearch, S3, Kafka и др. Архитектура tag-based (`<match>`) с буферизацией на диске даёт at-least-once доставку при кратковременных outage sink'ов. В k8s чаще ставят облегчённый Fluent Bit, но полный Fluentd нужен для сложного routing.
+
+## Что ответить на собесе
+
+- Pipeline: `source` (tail, forward, systemd) → `filter` (parser, record_transformer) → `match` (es, s3).
+- Tag маршрутизирует потоки: `web.**` в ES, `audit.**` в S3 immutable bucket.
+- Buffer `file` или `memory` с `retry_forever` и exponential backoff.
+- CNCF graduated project; единый JSON event model между источниками.
+- Честно: на edge nodes с 512 Mi RAM Fluentd тяжеловат; Fluent Bit покрывает 80% кейсов.
+
+## Как это работает
+
+Конфиг tail nginx + enrich + dual output:
+
+```bash
+cat <<'EOF' > /etc/fluent/fluent.conf
+<source>
+  @type tail
+  path /var/log/nginx/access.log
+  pos_file /var/log/fluentd/nginx.pos
+  tag web.nginx
+  <parse>
+    @type nginx
+  </parse>
+</source>
+
+<filter web.nginx>
+  @type record_transformer
+  <record>
+    host ${hostname}
+    env prod
+  </record>
+</filter>
+
+<match web.nginx>
+  @type copy
+  <store>
+    @type elasticsearch
+    host es.internal
+    port 9200
+    logstash_format true
+    <buffer>
+      @type file
+      path /var/log/fluentd/buffer/es
+    </buffer>
+  </store>
+  <store>
+    @type s3
+    aws_key_id "#{ENV['AWS_KEY']}"
+    aws_sec_key "#{ENV['AWS_SECRET']}"
+    s3_bucket logs-archive
+    s3_object_key_format %{path}%{time_slice}_%{index}.gz
+    <buffer time>
+      @type file
+      path /var/log/fluentd/buffer/s3
+      timekey 3600
+    </buffer>
+  </store>
+</match>
+EOF
+```
+
+Проверка, что агент читает с правильного offset:
+
+```bash
+sudo cat /var/log/fluentd/nginx.pos
+sudo fluentd --dry-run -c /etc/fluent/fluent.conf
+```
+
+## Подводные камни
+
+- **Tag typo.** Опечатка в `match` тихо дропает весь поток; включаю `@label @ERROR` routing.
+- **POS file permissions.** Fluentd не может писать pos после rotate под другим user; ломается duplicate ship.
+- **Memory buffer OOM.** Большой burst без file buffer убивает процесс; лимитирую `chunk_limit_size`.
+- **Plugin maintenance.** Obscure output plugin без upstream security patch; pin и сканирую CVE.
+- **Timezone в S3 key.** `timekey` без UTC даёт неожиданные границы архива при DST.

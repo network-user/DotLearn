@@ -1,0 +1,66 @@
+---
+id: 2986
+title: "Исключения в рантайме: как QA тестирует обработку ошибок?"
+category: qa-osnovy-programmirovaniya-dlya-qa
+categoryLabel: "Основы программирования для QA"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Исключения в рантайме: как QA тестирует обработку ошибок?
+
+## Суть
+
+Исключение прерывает обычный поток выполнения при нарушении инварианта: деление на ноль, out-of-range index, I/O failure. Обработчик (try/catch, middleware) переводит crash в контrolled response. QA проверяет HTTP-код, тело ошибки, логи и отсутствие stack trace наружу.
+
+## Что ответить на собесе
+
+- Различаю compile-time ошибки (не запускается) и runtime exceptions (падает в prod path).
+- Negative testing: invalid input, null, boundary values, simulated timeout.
+- Ожидаю structured error `{ code, message }`, не 500 с SQL в теле.
+- Логи на сервере содержат stack; клиент получает generic message.
+- Честно: swallow exception без log маскирует баг; проверяю observability, не только UI toast.
+
+## Как это работает
+
+Цепочка в web API:
+
+1. Controller вызывает service
+2. Service бросает `NotFoundError`
+3. Global exception filter маппит в `404` JSON
+4. `finally`/cleanup закрывает connection
+
+Gherkin:
+
+```gherkin
+Feature: Runtime exceptions в API
+
+  Scenario: Деление на ноль не отдаёт 500 наружу
+    Given endpoint /api/stats/ratio принимает denominator
+    When GET /api/stats/ratio?denominator=0
+    Then статус 400
+    And body.code равен INVALID_ARGUMENT
+    And body не содержит stack trace
+
+  Scenario: Index out of range на пустой коллекции
+    When GET /api/items/999999
+    Then статус 404
+    And message user-friendly
+
+  Scenario: Timeout upstream обрабатывается gracefully
+    Given mock payment gateway delay 30s
+    When POST /api/checkout
+    Then статус 504 или 503 с retry hint
+    And correlation id присутствует в ответе и логах
+```
+
+В UI exception может стать error boundary React: white screen vs fallback page. QA триггерит через broken API mock или feature flag.
+
+## Подводные камни
+
+- **Generic 500 на все exceptions.** Клиент не отличает retryable от fatal.
+- **Stack trace в production JSON.** Information disclosure.
+- **Silent catch.** Пользователь видит success, данные не сохранились.
+- **Exception type mismatch.** Ловят broad `Exception`, проглатывают `OutOfMemory`.
+- **Flaky только под нагрузкой.** Race не воспроизводится в single-thread manual test.

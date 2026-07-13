@@ -1,0 +1,72 @@
+---
+id: 4670
+title: "Что будет при повторном lock std::mutex в том же потоке?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что будет при повторном lock std::mutex в том же потоке?
+
+## Суть
+
+`std::mutex` не реентерабелен: второй `lock()` в том же потоке блокирует его навсегда (self-deadlock). Это не UB по стандарту для blocking lock, но программа зависает; для вложенных захватов нужен `std::recursive_mutex`.
+
+## Что ответить на собесе
+
+- Обычный `std::mutex`: повторный lock в owner thread = deadlock с самим собой.
+- `std::lock_guard` дважды на одном mutex в nested scope даёт ту же проблему.
+- Решение дизайна: сузить critical section, не вызывать код, который снова lock'ит тот же mutex.
+- Альтернатива: `std::recursive_mutex` с парным числом unlock.
+- Честно: на собесе это называют deadlock, хотя формально это single-thread self-deadlock, не Coffman cycle между потоками.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate;
+
+void nested_trap() {
+    gate.lock();
+    std::cout << "first acquire\n";
+    gate.lock(); // hangs forever on plain mutex
+    std::cout << "never reached\n";
+    gate.unlock();
+    gate.unlock();
+}
+
+int main() {
+    std::thread worker(nested_trap);
+    worker.join();
+}
+```
+
+С `recursive_mutex`:
+
+```cpp
+#include <mutex>
+
+std::recursive_mutex nested_gate;
+
+void nested_ok() {
+    nested_gate.lock();
+    nested_gate.lock();
+    nested_gate.unlock();
+    nested_gate.unlock();
+}
+```
+
+Количество `unlock` должно совпадать с числом успешных `lock`. RAII с `lock_guard<recursive_mutex>` упрощает баланс.
+
+## Подводные камни
+
+- **Скрытые re-entry.** Публичный метод под mutex вызывает другой метод того же класса, который тоже lock'ит member mutex.
+- **Recursive mutex злоупотребление.** Маскирует плохую гранularность lock; refactor часто лучше.
+- **try_lock.** Второй try_lock вернёт false, а не зависнет; легко пропустить в code review.
+- **Shared mutex.** `shared_lock` дважды в одном thread на `shared_mutex` тоже problematic depending on implementation.
+- **Sanitizer silence.** TSan может не подсказать self-deadlock так же явно, как data race.

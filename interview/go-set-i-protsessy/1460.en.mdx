@@ -1,0 +1,88 @@
+---
+id: 1460
+title: "How do you rate-limit requests in Go?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you rate-limit requests in Go?
+
+## In short
+
+A rate limiter throttles operations over time so a service does not overload and clients get predictable access. In Go the usual path is `golang.org/x/time/rate` with a token bucket, or a custom middleware wrapper.
+
+## How to answer in an interview
+
+- I mention `rate.Limiter` from `golang.org/x/time/rate`: set average rate and burst, check with `Allow`, `Wait`, or `Reserve`.
+- I point to typical placements: HTTP middleware, outbound calls to third-party APIs, background workers.
+- I clarify strategy choice: token bucket allows short bursts; fixed/sliding windows cut peaks more aggressively.
+- I add honestly: for distributed limiting a single in-process limiter is not enough; you need Redis or a centralized gateway.
+
+## How it works
+
+`rate.NewLimiter(r, b)` builds a bucket: tokens arrive at rate `r` (events per second), with at most `b` stored. `Wait(ctx)` blocks the goroutine until a token is available; `Allow()` returns a bool without waiting; `Reserve()` schedules work after a computed delay.
+
+In an HTTP service you attach the limiter to a handler or route group. For outbound clients one shared `Limiter` across goroutines protects the external API from a request storm.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"golang.org/x/time/rate"
+)
+
+type gate struct {
+	limiter *rate.Limiter
+	next    http.Handler
+}
+
+func (g *gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !g.limiter.Allow() {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	g.next.ServeHTTP(w, r)
+}
+
+func work(ctx context.Context, limiter *rate.Limiter, id int) error {
+	if err := limiter.Wait(ctx); err != nil {
+		return err
+	}
+	fmt.Printf("job %d at %s\n", id, time.Now().Format(time.RFC3339))
+	return nil
+}
+
+func main() {
+	limiter := rate.NewLimiter(rate.Every(500*time.Millisecond), 2)
+
+	for i := 1; i <= 5; i++ {
+		_ = work(context.Background(), limiter, i)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("pong"))
+	})
+	_ = http.ListenAndServe(":8080", &gate{limiter: limiter, next: mux})
+}
+```
+
+The first loop shows `Wait`: five jobs spread over time. The second snippet is middleware that returns 429 when burst is exhausted.
+
+For per-IP limits keep a `map[string]*rate.Limiter` with a mutex or LRU; otherwise one client consumes the whole burst. An alternative is a leaky bucket via a fixed-capacity channel and ticker, but `x/time/rate` covers most cases.
+
+## Pitfalls
+
+- **One global limiter for all clients.** A single abusive or heavy partner blocks everyone without a key (IP, API key, tenant).
+- **Ignored burst.** Zero or tiny burst kills legitimate spikes; an oversized burst almost disables the limit.
+- **Wait without context.** `Wait(nil)` is not canceled on shutdown; pass `ctx` from the request or signal handler.
+- **Inbound only.** Outbound calls to Stripe, SMTP, or LDAP also need their own limiter.
+- **Cluster of N instances.** A local limiter multiplies allowed RPS by N; exact quotas need a shared store.

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Exercise, InterviewExerciseMeta } from '@dotlearn/contracts';
-import { Link } from '@tanstack/react-router';
+import type { Exercise, InterviewDirection, InterviewExerciseMeta } from '@dotlearn/contracts';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowRight,
@@ -21,7 +21,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Surface } from '@/components/ui/Surface';
+import type { InterviewExamSearch } from '@/router';
 import {
+  filterByDirection,
   getInterviewDifficulties,
   getInterviewExerciseTypes,
   getInterviewExercisesIndex,
@@ -30,6 +32,13 @@ import {
   localizedInterviewTitle,
   relatedTopicsForQuestion,
 } from '@/lib/interview';
+import {
+  directionLabel,
+  getInterviewDirections,
+  isInterviewDirection,
+  readStoredInterviewDirection,
+  writeStoredInterviewDirection,
+} from '@/lib/interview-directions';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
   db,
@@ -51,10 +60,11 @@ interface Facet {
 }
 
 const buildFacet = (
+  items: InterviewExerciseMeta[],
   pick: (meta: InterviewExerciseMeta) => { slug: string; label: string },
 ): Facet[] => {
   const map = new Map<string, Facet>();
-  for (const meta of getInterviewExercisesIndex()) {
+  for (const meta of items) {
     const { slug, label } = pick(meta);
     const existing = map.get(slug);
     if (existing) existing.count += 1;
@@ -82,14 +92,26 @@ interface Session {
 
 export const InterviewExamPage = () => {
   const { t } = useTranslation('interview');
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as InterviewExamSearch;
+  const locale = getCurrentLanguage();
+  const activeDirection: InterviewDirection =
+    search.direction && isInterviewDirection(search.direction)
+      ? search.direction
+      : (readStoredInterviewDirection() ?? 'python');
+
+  const directionExercises = useMemo(
+    () => filterByDirection(getInterviewExercisesIndex(), activeDirection),
+    [activeDirection],
+  );
 
   const categories = useMemo(
-    () => buildFacet((meta) => ({ slug: meta.category, label: meta.categoryLabel })),
-    [],
+    () => buildFacet(directionExercises, (meta) => ({ slug: meta.category, label: meta.categoryLabel })),
+    [directionExercises],
   );
   const stages = useMemo(
-    () => buildFacet((meta) => ({ slug: meta.stage, label: meta.stageLabel })),
-    [],
+    () => buildFacet(directionExercises, (meta) => ({ slug: meta.stage, label: meta.stageLabel })),
+    [directionExercises],
   );
 
   const [category, setCategory] = useState('all');
@@ -102,9 +124,20 @@ export const InterviewExamPage = () => {
   const studiedIds = useInterviewStudiedIds();
   const pastExams = useExamResults(EXAM_SCOPE);
 
+  useEffect(() => {
+    if (search.direction !== activeDirection) {
+      void navigate({
+        to: '/interview/exam',
+        search: { direction: activeDirection },
+        replace: true,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const matching = useMemo(
     () =>
-      getInterviewExercisesIndex().filter((meta) => {
+      directionExercises.filter((meta) => {
         if (category !== 'all' && meta.category !== category) return false;
         if (stage !== 'all' && meta.stage !== stage) return false;
         if (difficulty !== 'all' && String(meta.difficulty) !== difficulty) return false;
@@ -113,8 +146,19 @@ export const InterviewExamPage = () => {
         if (studied === 'not-studied' && studiedIds.has(meta.qid)) return false;
         return true;
       }),
-    [category, stage, difficulty, type, studied, studiedIds],
+    [directionExercises, category, stage, difficulty, type, studied, studiedIds],
   );
+
+  const setDirection = (value: InterviewDirection): void => {
+    writeStoredInterviewDirection(value);
+    setCategory('all');
+    setStage('all');
+    void navigate({
+      to: '/interview/exam',
+      search: { direction: value },
+      replace: true,
+    });
+  };
 
   const start = async (): Promise<void> => {
     const shuffled = shuffle(matching);
@@ -129,12 +173,18 @@ export const InterviewExamPage = () => {
       index: 0,
       startedAt: Date.now(),
       baseline,
-      filters: { category, stage, difficulty, type, studied },
+      filters: { direction: activeDirection, category, stage, difficulty, type, studied },
     });
   };
 
   if (session) {
-    return <ExamSession session={session} setSession={setSession} />;
+    return (
+      <ExamSession
+        session={session}
+        setSession={setSession}
+        directionLabel={directionLabel(activeDirection, locale)}
+      />
+    );
   }
 
   return (
@@ -149,7 +199,33 @@ export const InterviewExamPage = () => {
           {t('exam.title')}
         </h1>
         <p className="mt-3 max-w-prose text-fg-muted leading-relaxed">{t('exam.subtitle')}</p>
+        <div className="mt-4">
+          <Badge tone="accent" variant="outline">
+            {directionLabel(activeDirection, locale)}
+          </Badge>
+        </div>
       </header>
+
+      <Surface variant="chrome" className="p-3 sm:p-4">
+        <div className="eyebrow text-fg-subtle mb-2">{t('filterDirection')}</div>
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+          {getInterviewDirections().map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => setDirection(entry.id)}
+              aria-pressed={activeDirection === entry.id}
+              className={`shrink-0 rounded-full border px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium transition-colors ${
+                activeDirection === entry.id
+                  ? 'border-accent/70 bg-accent/[0.16] text-accent'
+                  : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]'
+              }`}
+            >
+              {directionLabel(entry.id, locale)}
+            </button>
+          ))}
+        </div>
+      </Surface>
 
       <Surface variant="chrome" className="p-4 sm:p-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -238,7 +314,11 @@ export const InterviewExamPage = () => {
       <PastExams exams={pastExams} />
 
       <p className="text-sm text-fg-subtle">
-        <Link to="/interview" className="text-accent hover:underline underline-offset-2">
+        <Link
+          to="/interview"
+          search={{ direction: activeDirection }}
+          className="text-accent hover:underline underline-offset-2"
+        >
           {t('exam.backToList')}
         </Link>
       </p>
@@ -355,9 +435,10 @@ const ExamField = ({ label, children }: { label: string; children: React.ReactNo
 interface ExamSessionProps {
   session: Session;
   setSession: (session: Session | undefined) => void;
+  directionLabel: string;
 }
 
-const ExamSession = ({ session, setSession }: ExamSessionProps) => {
+const ExamSession = ({ session, setSession, directionLabel: directionBadge }: ExamSessionProps) => {
   const { t } = useTranslation('interview');
   const { pool, index } = session;
   const current = pool[index];
@@ -460,7 +541,12 @@ const ExamSession = ({ session, setSession }: ExamSessionProps) => {
         <div className="flex-1">
           <div className="flex items-center justify-between text-[12px] text-fg-subtle mb-1.5 tabular-nums">
             <span>{t('exam.progress', { current: index + 1, total: pool.length })}</span>
-            {current && <span>{current.categoryLabel}</span>}
+            <span className="flex items-center gap-2">
+              <Badge tone="accent" variant="outline">
+                {directionBadge}
+              </Badge>
+              {current && <span>{current.categoryLabel}</span>}
+            </span>
           </div>
           <div className="h-1 rounded-full bg-surface-2 overflow-hidden">
             <div

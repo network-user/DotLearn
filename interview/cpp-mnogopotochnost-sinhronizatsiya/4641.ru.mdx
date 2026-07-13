@@ -1,0 +1,57 @@
+---
+id: 4641
+title: "Как создать и запустить поток в C++?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как создать и запустить поток в C++?
+
+## Суть
+
+Поток стартует конструктором `std::thread`, которому передают callable (функцию, лямбду, функтор) и аргументы. После запуска нужно явно `join()` (дождаться) или `detach()` (отвязать); иначе при уничтожении `std::thread` вызывается `std::terminate`.
+
+## Что ответить на собесе
+
+- `std::thread worker(task, arg1, arg2);` запускает `task` в новом потоке с копированием/перемещением аргументов.
+- По умолчанию `join()` в конце scope через RAII-обёртку или `std::jthread` (C++20).
+- `detach()` только если поток сам завершится до конца процесса и не трогает уничтоженные объекты.
+- Для пула задач чаще `std::async`, очередь + workers или executor, не сотни raw `thread`.
+- Честно: передача ссылок требует `std::ref`; иначе копируется обёртка и получается тихая ошибка.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <string>
+#include <thread>
+
+void greet(std::string name) {
+    std::cout << "hi " << name << '\n';
+}
+
+int main() {
+    std::thread t1(greet, "Ada");
+    std::thread t2([] {
+        std::cout << "from lambda\n";
+    });
+
+    t1.join();
+    t2.join();
+    std::cout << "main done\n";
+    return 0;
+}
+```
+
+Конструктор `std::thread` принимает callable и аргументы, упаковывает их и стартует OS-поток. `join` блокирует `main` до завершения. Лямбда захватывает по значению пустым `[]` и безопасна, пока не ссылается на умирающие локалы без синхронизации.
+
+## Подводные камни
+
+- **terminate на деструкторе.** Ни join, ни detach — UB через `std::terminate`.
+- **detach и lifetime.** Фоновый поток не должен обращаться к stack `main` после выхода.
+- **Копирование this.** Метод класса: `std::thread(&Obj::run, &obj)`; висячий `obj` убивает поток.
+- **Исключение в потоке.** Без try/catch в task завершит `std::terminate` при join в C++11–14; в C++20 `std::terminate` если exception escapes.
+- **Переполнение потоков.** Тысячи `std::thread` давят память на стеки; нужен пул с ограниченным числом workers.

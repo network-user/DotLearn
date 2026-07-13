@@ -1,0 +1,67 @@
+---
+id: 2033
+title: "JUnit lifecycle: @BeforeEach и @BeforeAll"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# JUnit lifecycle: @BeforeEach и @BeforeAll
+
+## Суть
+
+JUnit 5 lifecycle hooks готовят и очищают test fixtures. `@BeforeEach` / `@AfterEach` оборачивают каждый `@Test`. `@BeforeAll` / `@AfterAll` static, один раз на class. Порядок: BeforeAll → (BeforeEach → Test → AfterEach)* → AfterAll.
+
+## Что ответить на собесе
+
+- BeforeEach для fresh SUT/state; AfterEach закрывает resources.
+- BeforeAll для дорогого setup: Testcontainers start, temp schema once.
+- `@TestInstance(Lifecycle.PER_CLASS)` позволяет non-static BeforeAll.
+- `@DirtiesContext` Spring сбрасывает context, не путать с JUnit hooks.
+- Честно: тяжёлый BeforeEach на каждый test убивает скорость suite.
+
+## Как это работает
+
+```java
+class LedgerServiceTest {
+    static PostgreSQLContainer<?> postgres;
+    LedgerService service;
+
+    @BeforeAll
+    static void startDb() {
+        postgres = new PostgreSQLContainer<>("postgres:16");
+        postgres.start();
+    }
+
+    @BeforeEach
+    void initService() {
+        service = new LedgerService(dataSource(postgres));
+        service.clear();
+    }
+
+    @AfterEach
+    void rollbackOpenTransactions() {
+        service.rollbackPending();
+    }
+
+    @AfterAll
+    static void stopDb() {
+        postgres.stop();
+    }
+
+    @Test
+    void postsDebitAndCredit() { /* ... */ }
+}
+```
+
+`@BeforeEach` гарантирует пустой ledger между tests. `@BeforeAll` container reuse экономит секунды. Nested class может иметь свой `@BeforeEach` дополнительно к outer.
+
+## Подводные камни
+
+- **Non-static @BeforeAll без PER_CLASS.** JUnit startup failure.
+- **Shared mutable field без BeforeEach reset.** Flaky order dependence.
+- **AfterEach swallows exception.** Next test inherits bad state silently.
+- **BeforeAll failure skips all tests.** Hard diagnose without logging.
+- **Nested + parallel execution.** Hooks order surprises with `@Execution(CONCURRENT)`.

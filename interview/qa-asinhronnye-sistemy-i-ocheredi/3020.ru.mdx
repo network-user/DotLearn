@@ -1,0 +1,56 @@
+---
+id: 3020
+title: "Что такое асинхронное взаимодействие микросервисов с точки зрения QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое асинхронное взаимодействие микросервисов с точки зрения QA?
+
+## Суть
+
+Сервис публикует событие в брокер и не ждёт немедленного ответа от получателя. Согласованность наступает позже через consumer и saga/compensation. Для QA это значит: проверять цепочку сервисов, lag очереди, итоговое состояние и поведение при падении промежуточного звена.
+
+## Что ответить на собесе
+
+- Producer fire-and-forget: HTTP 202 или publish в Kafka/RabbitMQ.
+- Consumer обрабатывает независимо; сбой одного не блокирует UI сразу.
+- Тестирую end-to-end: заказ создан, платёж, уведомление, склад через несколько минут.
+- Мониторю dead letter и retry policy каждого сервиса.
+- Честно: без контрактных тестов на schema события ломается вся цепочка молча.
+
+## Как это работает
+
+```gherkin
+Feature: Async microservice interaction
+
+  Scenario: Order placed event flow
+    Given OrderService publishes OrderPlaced to topic sales.orders
+    When PaymentService and NotificationService consume
+    Then user receives email within SLA 2 minutes
+    And payment status COMPLETED in billing DB
+
+  Scenario: Downstream temporarily unavailable
+    Given NotificationService consumer stopped
+    When order event published
+    Then message accumulates in queue no user email yet
+    And after consumer start backlog drains without duplicate emails
+
+  Scenario: Contract on event schema
+    Given payload field totalAmount type decimal
+    When producer sends string amount
+    Then consumer rejects to DLQ and alert fires
+```
+
+Схема: Order API → broker → Payment worker → broker → Email worker. QA точки: publish ack, consumer log, финальные read models.
+
+## Подводные камни
+
+- **Синхронный mindset.** Жду мгновенный email после клика.
+- **Тест одного сервиса изолированно.** Интеграционный разрыв не виден.
+- **Нет версионирования событий.** Breaking change в JSON ломает consumer.
+- **Игнор poison message.** Одна bad запись блокирует всю очередь.
+- **Разный SLA staging.** Таймауты не совпадают с prod, false fail.

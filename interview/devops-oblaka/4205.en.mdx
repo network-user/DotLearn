@@ -1,0 +1,53 @@
+---
+id: 4205
+title: "CLB, ALB, and NLB in AWS: when to pick which?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# CLB, ALB, and NLB in AWS: when to pick which?
+
+## In short
+
+AWS Elastic Load Balancing offers CLB (legacy, L4/L7), ALB (L7 HTTP/HTTPS, path/host routing), and NLB (L4 TCP/UDP, ultra-low latency, static IP). New projects almost always use ALB or NLB; CLB is legacy only.
+
+## How to answer in an interview
+
+- ALB: microservices, host/path rules, OIDC, WebSocket, Lambda targets.
+- NLB: TCP passthrough, gaming, TLS on the instance, millions RPS, preserve client IP.
+- CLB: deprecated feel, no advanced routing; I migrate to ALB/NLB.
+- Honestly: ALB costs more on light traffic; for internal gRPC I sometimes use NLB plus TLS termination on a sidecar.
+
+## How it works
+
+ALB listener rule:
+
+```bash
+aws elbv2 create-load-balancer --name public-api --type application \
+  --subnets subnet-pub-a subnet-pub-b --security-groups sg-alb
+
+aws elbv2 create-rule --listener-arn arn:aws:elasticloadbalancing:... \
+  --priority 10 \
+  --conditions Field=path-pattern,Values='/api/v2/*' \
+  --actions Type=forward,TargetGroupArn=arn:aws:elasticloadbalancing:.../v2-tg
+```
+
+NLB for TCP:
+
+```bash
+aws elbv2 create-load-balancer --name game-tcp --type network \
+  --subnet-mappings SubnetId=subnet-pub-a,AllocationId=eipalloc-aaa
+```
+
+Health checks: ALB HTTP `/healthz`; NLB TCP port or HTTP/HTTPS target group. NLB cross-zone has a cost implication at high volume.
+
+## Pitfalls
+
+- **CLB for a new service.** No WAF integration like ALB.
+- **ALB idle timeout < long poll.** 60s default breaks SSE/WebSocket without tuning.
+- **NLB plus security group.** SG on NLB is relatively new; old templates omit SG.
+- **IP target type in EKS.** Pod IPs change; correct health check grace is required.
+- **Sticky sessions on NLB.** No cookie stickiness; client IP affinity only.

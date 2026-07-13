@@ -1,0 +1,54 @@
+---
+id: 2010
+title: "Какой сертификат шифрует HTTPS-трафик?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой сертификат шифрует HTTPS-трафик?
+
+## Суть
+
+HTTPS опирается на X.509 TLS-сертификат сервера: в нём публичный ключ и подпись CA, подтверждающая домен. Сам сертификат не шифрует bulk-трафик; он участвует в handshake, после чего стороны договариваются о симметричном session key для AES-GCM/ChaCha20.
+
+## Что ответить на собесе
+
+- Сертификат = identity + public key; шифрование данных идёт симметричным ключом сессии.
+- Типы: DV для публичных сайтов, EV реже, wildcard `*.example.com` удобен, но blast radius выше.
+- Java trust store содержит корневые CA; private key сервера никогда не уходит клиенту.
+- mTLS добавляет client certificate для взаимной аутентификации.
+- Честно: self-signed годится для dev, браузер без import CA не доверит.
+
+## Как это работает
+
+Клиент открывает `https://shop.example`. Сервер отдаёт цепочку leaf + intermediate:
+
+```
+Client -> ServerHello, supported ciphers
+Server -> Certificate (CN=shop.example, pubkey RSA/EC)
+Client -> проверка chain до trusted root в cacerts
+Client -> ClientKeyExchange (encrypted premaster / ECDHE share)
+Both   -> derive session keys, Finished
+```
+
+В Java проверка hostname при HTTPS URL:
+
+```java
+URL endpoint = new URL("https://shop.example/api/health");
+HttpsURLConnection conn = (HttpsURLConnection) endpoint.openConnection();
+conn.setSSLSocketFactory(sslContext.getSocketFactory());
+conn.connect();
+```
+
+Keystore сервера (` PKCS12` или PEM) хранит private key + leaf cert. Публичный ключ из сертификата используется только на этапе key agreement; дальше AES шифрует HTTP body. Let's Encrypt и корпоративные CA выдают один и тот же формат X.509.
+
+## Подводные камни
+
+- **Путаница cert vs cipher.** Слабый cert не компенсирует TLS 1.0 с RC4.
+- **Expired / wrong SAN.** `api.example` не покрывается cert на `www.example`.
+- **Private key в репозитории.** Утечка = полная impersonation.
+- **Incomplete chain.** Android старых версий не достроит intermediate.
+- **Termination на CDN без end-to-end.** TLS до edge, plain HTTP внутри VPC без mTLS.

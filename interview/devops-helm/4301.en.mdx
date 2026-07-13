@@ -1,0 +1,73 @@
+---
+id: 4301
+title: "What is the structure of a Helm chart?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is the structure of a Helm chart?
+
+## In short
+
+A standard chart has `Chart.yaml` (metadata), `values.yaml` (defaults), `templates/` (Go templates to manifests), optional `charts/` (vendored deps), `templates/NOTES.txt`, and `README.md`. Helm 3 adds `values.schema.json` for input validation. Templates prefixed with `_` are not rendered as standalone resources (`_helpers.tpl`).
+
+## How to answer in an interview
+
+- `Chart.yaml`: name, version, appVersion, dependencies block.
+- `values.yaml`: replicaCount, image, resources, ingress hosts.
+- `templates/deployment.yaml`, `service.yaml`, `ingress.yaml`, `hpa.yaml`.
+- `charts/postgresql-12.tgz` subchart after `helm dependency build`.
+- Honestly: `helm create` generates noisy defaults; I prune unused templates before prod.
+
+## How it works
+
+Typical tree:
+
+```bash
+checkout-api/
+├── Chart.yaml
+├── Chart.lock
+├── values.yaml
+├── values-prod.yaml
+├── charts/
+│   └── redis-18.5.2.tgz
+└── templates/
+    ├── NOTES.txt
+    ├── _helpers.tpl
+    ├── deployment.yaml
+    ├── service.yaml
+    ├── ingress.yaml
+    └── servicemonitor.yaml
+```
+
+Minimal `Chart.yaml` with a dependency:
+
+```yaml
+apiVersion: v2
+name: checkout-api
+version: 2.0.0
+appVersion: "4.0.0"
+dependencies:
+  - name: redis
+    version: 18.5.2
+    repository: oci://registry.internal/bitnami-charts
+```
+
+Structure checks before publish:
+
+```bash
+helm lint ./checkout-api
+helm dependency list ./checkout-api
+helm template smoke ./checkout-api -f values-prod.yaml | head -n 40
+```
+
+## Pitfalls
+
+- **Extra templates.** An `ingress.yaml` without a values toggle creates Ingress in clusters without a controller.
+- **Helpers not shared.** Duplicated label logic without `include` breaks selector consistency.
+- **NOTES.txt leaks secrets.** Post-install notes print generated passwords into CI logs; mask them.
+- **Missing schema.** Without `values.schema.json`, `--set` typos fail only at runtime.
+- **Test hooks in prod charts.** `templates/tests/test-connection.yaml` breaks in restrictive namespaces if forgotten.

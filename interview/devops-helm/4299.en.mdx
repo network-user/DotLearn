@@ -1,0 +1,71 @@
+---
+id: 4299
+title: "Chart.yaml appVersion vs version: what is the difference?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Chart.yaml appVersion vs version: what is the difference?
+
+## In short
+
+`version` in `Chart.yaml` is the chart's own semver (templates, value defaults, dependencies). `appVersion` is the application release label (often the default image tag) and need not track chart semver. You can bump the chart without changing the app and vice versa; teams confuse them in CI tagging and rollback.
+
+## How to answer in an interview
+
+- I change `version` on any template or default values change (packaging).
+- `appVersion` reflects the binary/image we ship (`2.4.1`).
+- In templates: `{{ .Chart.Version }}` vs `{{ .Chart.AppVersion }}` or `.Values.image.tag`.
+- `helm list` shows chart version; I read image tags from rendered manifests.
+- Honestly: I rely on explicit `image.tag` in values, not only the appVersion default.
+
+## How it works
+
+Sample `Chart.yaml`:
+
+```yaml
+apiVersion: v2
+name: checkout-api
+description: Checkout service chart
+type: application
+version: 1.8.2
+appVersion: "3.1.0"
+```
+
+Template uses both fields:
+
+```yaml
+labels:
+  chart.version: {{ .Chart.Version | quote }}
+  app.version: {{ .Chart.AppVersion | quote }}
+spec:
+  containers:
+    - image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+```
+
+Verify after render:
+
+```bash
+helm template checkout ./charts/checkout --show-only templates/deployment.yaml \
+  | grep -E 'image:|app.version|chart.version'
+```
+
+New image, unchanged chart:
+
+```bash
+helm upgrade checkout ./charts/checkout -n prod \
+  --reuse-values \
+  --set image.tag=3.2.0
+# Chart.yaml version stays 1.8.2; update appVersion in metadata in a separate commit if needed
+```
+
+## Pitfalls
+
+- **Unquoted appVersion.** YAML parses `2.1.0` as a float; always quote dotted semvers.
+- **Chart bump without changelog.** Even a template typo patch needs traceability for rollback.
+- **image.tag drift.** Values override appVersion silently; label-based "version" dashboards lie.
+- **appVersion as sole tag.** Defaulting to mutable tags breaks reproducible deploys.
+- **Dependency version mix.** Parent `version` does not sync subchart `appVersion`; verify each artifact.

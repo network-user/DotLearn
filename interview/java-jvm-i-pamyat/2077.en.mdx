@@ -1,0 +1,63 @@
+---
+id: 2077
+title: "How long objects live in the JVM"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How long objects live in the JVM
+
+## In short
+
+An object lives while reachable from GC roots (stacks, statics, JNI, monitors, JVM internals). After reachability is lost it becomes eligible for GC, but reclaim timing is nondeterministic. Generational hypothesis: most objects die young; survivors promote to Old and may live until process shutdown.
+
+## How to answer in an interview
+
+- Lifetime is defined by the reference graph, not variable scope in source code.
+- A local ref in an active frame keeps the object alive.
+- `null` assignment makes the object eligible, not "deleted immediately".
+- Long-lived singletons/caches live in Old gen; minor GC rarely touches them.
+- Honestly: object pools "for GC" often hurt generational behavior.
+
+## How it works
+
+```java
+public final class ShipmentTracker {
+
+    public static void main(String[] args) {
+        var label = buildLabel("BX-9001");
+        log(label);
+        label = null;
+    }
+
+    private static String buildLabel(String code) {
+        var prefix = "SHIP-";
+        return prefix + code;
+    }
+
+    private static void log(String text) {
+        System.out.println(text);
+    }
+}
+```
+
+While `buildLabel` runs, `prefix` String and builder chars are reachable from its stack frame. After return only the returned String remains, referenced from `label` in `main`. On `label = null` the String `"SHIP-BX-9001"` is unreachable unless interned elsewhere.
+
+Generational path:
+
+1. Allocate in Eden during `buildLabel`.
+2. Minor GC: if no external refs, collected in young gen.
+3. If ref survives N collections → promoted to Old until process exit or full GC frees the region.
+
+Finalization (`Cleaner`, `PhantomReference`) delays reclaim until the callback queue, but does not extend strong reachability.
+
+## Pitfalls
+
+- **Scope confusion.** Inner class holds implicit outer ref → outer lives longer than expected.
+- **String intern pool.** Unbounded `intern()` extends lifetime globally.
+- **ThreadLocal without remove.** Value lives while thread pool worker lives.
+- **Soft/Weak misuse.** Expecting prompt cleanup → memory pressure surprises.
+- **Assuming try-with-resources = immediate GC.** AutoCloseable frees native handle; Java object eligible only after unreferenced.

@@ -1,0 +1,52 @@
+---
+id: 3000
+title: "How does QA reconstruct a request chain from multi-service logs?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does QA reconstruct a request chain from multi-service logs?
+
+## In short
+
+Centralized logging (ELK, Loki, Splunk) collects stdout/file logs from all pods. Filter by trace/correlation id to get all lines for one user action through gateway → auth → order → payment. Without a single id manual grep by timestamp and userId is unreliable.
+
+## How to answer in an interview
+
+- Take id from response header or Jaeger UI.
+- Kibana query: `trace_id:"abc123" OR correlation_id:"abc123"`.
+- Sort by `@timestamp`, build timeline: received → validated → failed at payment.
+- Compare span duration to SLA; find first ERROR level.
+- Honestly: without staging mirroring prod logging QA practices on synthetic trace in docs.
+
+## How it works
+
+```gherkin
+Feature: Trace one checkout
+
+  Scenario: Gateway logs entry
+    Given trace_id T-991 in response
+    Then gateway log contains "Received POST /checkout" trace T-991
+
+  Scenario: Downstream order service
+    When filter logs trace T-991 service order
+    Then line "Inventory reserved" before payment call
+
+  Scenario: Root cause payment 502
+    When filter level ERROR trace T-991
+    Then payment log "upstream timeout" at 12:00:02
+    And order log "compensating rollback" after
+```
+
+Logstash/Fluent Bit ship labels `service`, `env`, `pod`; structured JSON fields `duration_ms`, `http.status`.
+
+## Pitfalls
+
+- **Logs not centralized.** SSH to 5 pods, miss one hop.
+- **Different field names per team.** `traceId` vs `request_id`.
+- **Sampling drops ERROR.** Rare bug invisible in prod traces.
+- **Timezone mix UTC/local.** Wrong sequence in timeline.
+- **Async gap.** Message queue delay looks like missing step.

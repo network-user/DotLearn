@@ -1,0 +1,62 @@
+---
+id: 1623
+title: "Alternatives to gRPC for microservice communication"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Alternatives to gRPC for microservice communication
+
+## In short
+
+Synchronous REST/GraphQL over HTTP fits request-response and external APIs. Async brokers (Kafka, RabbitMQ, NATS) decouple services in time and buffer spikes. WebSockets and MQTT cover push and IoT scenarios. The choice depends on latency, delivery semantics, and team maturity.
+
+## How to answer in an interview
+
+- REST + OpenAPI for simplicity and human-debuggable traffic.
+- Message queue for fire-and-forget and eventual consistency.
+- Kafka as an event log with replay and multiple consumer groups.
+- GraphQL gateway aggregates several backends without N+1 on the client.
+- Honestly: a hybrid is normal: sync API for queries, events for side effects.
+
+## How it works
+
+REST handler:
+
+```go
+func main() {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Queue publish (simplified):
+
+```go
+conn, _ := amqp.Dial(os.Getenv("AMQP_URL"))
+ch, _ := conn.Channel()
+q, _ := ch.QueueDeclare("order.created", true, false, false, false, nil)
+_ = ch.Publish("", q.Name, false, false, amqp.Publishing{
+	ContentType: "application/json",
+	Body:        []byte(`{"order_id":"ord-7"}`),
+})
+```
+
+A Kafka consumer reads a topic with offsets; service B processes the event regardless of A's availability at publish time (with at-least-once and an idempotent handler).
+
+## Pitfalls
+
+**Queue without DLQ and retry policy.** A poison message stops all processing.
+
+**REST chain of five hops.** Latency adds up; bulk or cache is needed.
+
+**Kafka as a database.** Topic retention does not replace a source-of-truth store.
+
+**WebSocket without heartbeat.** NAT and LB silently drop "eternal" connections.
+
+**Mix sync and async without correlation id.** Trace across the system is lost.

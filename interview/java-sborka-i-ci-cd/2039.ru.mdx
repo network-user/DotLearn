@@ -1,0 +1,78 @@
+---
+id: 2039
+title: "Gradle task: атом сборки и граф зависимостей"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Gradle task: атом сборки и граф зависимостей
+
+## Суть
+
+Task в Gradle это именованная единица работы с inputs/outputs и action. Gradle строит DAG задач: `dependsOn`, `mustRunAfter`, `finalizedBy`. В отличие от Maven phases, tasks можно объявлять и связывать свободно. Вызов `./gradlew test` выполняет `test` и все её зависимости; up-to-date проверка пропускает неизменённые задачи.
+
+## Что ответить на собесе
+
+- Стандартные Java tasks: `compileJava`, `test`, `jar`, `bootJar` (Spring).
+- Кастомный task через `tasks.register` (lazy) предпочтительнее `task` (eager).
+- `dependsOn` задаёт порядок; `onlyIf` и `enabled` для условного запуска.
+- Configuration cache требует сериализуемых inputs, иначе build падает на CI.
+- Честно: тяжёлая логика в configuration phase тормозит каждый `./gradlew tasks`.
+
+## Как это работает
+
+Три фазы Gradle run: initialization (settings), configuration (скрипты, граф), execution (только запрошенные tasks).
+
+Кастомная задача на Kotlin DSL:
+
+```kotlin
+tasks.register("generateOpenApi") {
+    group = "documentation"
+    description = "Renders OpenAPI spec from annotations"
+    dependsOn("compileJava")
+    doLast {
+        println("OpenAPI written to build/docs/openapi.yaml")
+    }
+}
+```
+
+Цепочка с явным порядком:
+
+```kotlin
+tasks.named("integrationTest") {
+    dependsOn("test")
+    mustRunAfter("dockerComposeUp")
+}
+```
+
+Groovy legacy эквивалент:
+
+```groovy
+tasks.register('lintSql') {
+    dependsOn compileJava
+    doLast {
+        println 'SQL migrations validated'
+    }
+}
+```
+
+Incremental build: если `@InputFiles` не менялись, Gradle помечает task UP-TO-DATE. Build cache может переиспользовать outputs с другого агента при совпадении fingerprint.
+
+Запуск:
+
+```bash
+./gradlew build -x test
+```
+
+`-x` исключает task из графа, но не отменяет dependsOn у других задач.
+
+## Подводные камни
+
+- **Configuration phase side effects.** IO в top-level скрипта замедляет любую команду.
+- **Circular dependsOn.** Gradle упадёт при построении графа.
+- **doFirst/doLast порядок.** Несколько блоков выполняются в порядке регистрации, легко запутать.
+- **Implicit dependency.** Изменили generated sources, но не объявили input: stale outputs.
+- **Parallel без thread safety.** Shared mutable state в task action даёт flaky CI.

@@ -1,0 +1,62 @@
+---
+id: 3440
+title: "Стрелочные и обычные функции в JS: ловушки для UI-тестов"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Стрелочные и обычные функции в JS: ловушки для UI-тестов
+
+## Суть
+
+Обычная function получает свой `this` в момент вызова и может быть конструктором. Arrow function не имеет собственного `this`, `arguments`, `prototype` и не вызывается через `new`. В Playwright/Cypress это влияет на callbacks, page.evaluate и обработчики в SPA.
+
+## Что ответить на собесе
+
+- Обычная функция: `this` зависит от call site (method call, bind, apply).
+- Arrow: lexical `this` из внешней области; удобна в `setTimeout` и array methods без `.bind`.
+- Arrow нельзя использовать как constructor; нет `arguments`, только rest `...args`.
+- В e2e часто вижу баг: arrow method в объекте теряет доступ к полям через `this`.
+- Честно добавляю: в modern TS/React hooks `this` реже критичен, но legacy jQuery/Backbone код в enterprise всё ещё встречается.
+
+## Как это работает
+
+При page.evaluate переданная функция сериализуется; замыкания не передаются. Arrow внутри evaluate наследует `this` из изолированного контекста браузера, что иногда неожиданно.
+
+```
+const widget = {
+  label: "cart",
+  renderClassic: function () { return this.label; },
+  renderArrow: () => this.label,
+};
+// renderClassic() -> "cart"
+// renderArrow() -> undefined (this из module/global)
+```
+
+В Python-обёртке Playwright проверяю поведение приложения, не переписывая JS:
+
+```python
+from playwright.sync_api import Page, expect
+
+
+def test_cart_header_shows_label(page: Page, base_url: str):
+    page.goto(f"{base_url}/cart")
+    expect(page.get_by_test_id("cart-header")).to_have_text("cart")
+```
+
+Если тестирую unit frontend в Jest, документирую ожидание `this` в bug report reproduction steps.
+
+## Подводные камни
+
+**Arrow как object method.** Silent undefined в production, flaky assert на текст.
+
+**bind в hot path.** Лишние функции ломают performance test baseline.
+
+**evaluate с arrow и window.** `this` не window; DOM access через параметры.
+
+**Constructor refactor на class fields.** Старые `function User()` тесты не покрывают.
+
+**Стрелка в Mocha hook с `this.timeout`.** Arrow теряет Mocha context.

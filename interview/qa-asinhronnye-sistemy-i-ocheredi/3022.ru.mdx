@@ -1,0 +1,55 @@
+---
+id: 3022
+title: "Что такое брокер сообщений и зачем он нужен при тестировании?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое брокер сообщений и зачем он нужен при тестировании?
+
+## Суть
+
+Брокер это посредник между producer и consumer: принимает, хранит, маршрутизирует и подтверждает сообщения. Он развязывает сервисы по времени и даёт буфер при пиках или падении consumer. QA тестирует не только API, но и поведение системы через брокер: доставка, retry, DLQ, persistence после рестарта.
+
+## Что ответить на собесе
+
+- Отправитель не знает адрес получателя; связь через exchange/topic и binding.
+- При недоступности consumer сообщение остаётся в очереди или partition.
+- Примеры: RabbitMQ, Kafka, SQS, NATS; выбор влияет на гарантии тестов.
+- Проверяю durable queue, ack mode, TTL, max retry.
+- Честно: брокер не исправляет баги идемпотентности; он только доставляет.
+
+## Как это работает
+
+```gherkin
+Feature: Message broker role
+
+  Scenario: Decouple order API from email service
+    Given OrderAPI publishes NewOrder to broker
+    When EmailService down 15 minutes
+    Then messages queue depth grows
+    And after EmailService up all emails sent once each
+
+  Scenario: Routing via exchange
+    Given fanout exchange order.events
+    When order 501 published
+    Then billing queue and analytics queue both receive copy
+
+  Scenario: Persistence after broker restart
+    Given durable queue flag true
+    When broker process restarted
+    Then unpublished messages still available to consumer
+```
+
+E-commerce пример: заказ → брокер → fulfillment, notifications, analytics параллельно. QA валидирует каждую подписанную очередь.
+
+## Подводные камни
+
+- **Тест только REST между сервисами.** Пропускаю async путь.
+- **Transient queue на staging.** После рестарта «пропали» сообщения, ложный баг.
+- **Нет мониторинга depth.** Переполнение незаметно до prod.
+- **Путаю broker с worker.** Очередь растёт из-за медленного consumer, не брокера.
+- **Игнор poison message policy.** Блокировка всей очереди.

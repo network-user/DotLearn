@@ -1,0 +1,64 @@
+---
+id: 4282
+title: "How do you read logs on Linux?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you read logs on Linux?
+
+## In short
+
+System and application events land in text files under `/var/log/` and in journald (systemd). Basic triage: `journalctl` for units, `tail`/`less` for files, `grep` for filtering. On modern distros many services log to the journal, but legacy daemons still write plain files.
+
+## How to answer in an interview
+
+- `journalctl -u nginx -f` to follow a specific service's recent events.
+- `tail -n 100 /var/log/syslog` plus `grep -i error` for a quick slice.
+- `less +G /var/log/auth.log` to open at the end without loading the whole file.
+- I know the layout: `auth.log`, `kern.log`, `apt/`, app dirs under `/var/log/<app>/`.
+- Honestly: SSH tail on hundreds of VMs does not scale; centralized logging is mandatory in prod.
+
+## How it works
+
+Follow a systemd unit with priority filter:
+
+```bash
+journalctl -u docker.service -p err..alert -f --no-pager
+```
+
+Find failed logins today:
+
+```bash
+sudo grep -h "Failed password" /var/log/auth.log \
+  | awk -v d="$(date +%b\ %e)" '$0 ~ d { print }'
+```
+
+Combine journal and grep for kernel oops:
+
+```bash
+journalctl -k --since "1 hour ago" | grep -E 'Oops|BUG|panic'
+```
+
+Large rotated log with zgrep:
+
+```bash
+zgrep -h "OutOfMemory" /var/log/syslog /var/log/syslog.*.gz | tail -n 20
+```
+
+Live watch multiple files:
+
+```bash
+sudo tail -F /var/log/nginx/access.log /var/log/nginx/error.log
+```
+
+## Pitfalls
+
+- **UTC vs local.** The journal stores UTC; correlate with app logs via timezone (`timedatectl`).
+- **logrotate truncate.** `tail -F` goes silent after rotate without `copytruncate`; restart tail or use a shipper with inode tracking.
+- **Disk full.** A full `/var` stops logging before you notice OOM; monitor `node_filesystem_avail_bytes`.
+- **Over-broad grep.** `grep error` catches noise in info lines; tighten regex and severity fields.
+- **PII in auth.log.** Pasting logs into tickets without redacting IP/username breaks policy; mask before export.

@@ -1,0 +1,63 @@
+---
+id: 1577
+title: "What layer creates a goroutine"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What layer creates a goroutine
+
+## In short
+
+A goroutine is a Go runtime entity (G struct plus a kilobyte-scale stack), not a dedicated OS thread. The runtime multiplexes many Gs onto a pool of Ms bound to Ps. `go fn()` allocates a G and enqueues it.
+
+## How to answer in an interview
+
+- A user-level green thread managed by the runtime, not 1:1 with pthreads.
+- The stack grows dynamically; it starts around 2 KB.
+- The G-M-P scheduler maps work onto hardware threads.
+- Honestly: OS threads still exist underneath, but one goroutine is not one thread.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func worker(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Printf("G %d on thread-ish stack\n", id)
+}
+
+func main() {
+	fmt.Println("GOMAXPROCS:", runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go worker(i, &wg)
+	}
+	wg.Wait()
+}
+```
+
+Each `go` creates a G in runtime-managed memory. An M runs a G until block or preemption. Creation is cheaper than forking a thread: no kernel syscall per G.
+
+## Pitfalls
+
+**Equating goroutine with thread.** Wrong mental model for interviews.
+
+**Unbounded spawn.** Memory for G stacks and scheduler overhead.
+
+**LockOSThread with mass `go`.** Shrinks the M pool.
+
+**Cgo callback thread.** Separate M, different stack rules.
+
+**Runtime stack limit.** Stack overflow panic on deep recursion without tail optimization.

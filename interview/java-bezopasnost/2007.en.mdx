@@ -1,0 +1,60 @@
+---
+id: 2007
+title: "What is SQL injection and how do you prevent it in Java?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is SQL injection and how do you prevent it in Java?
+
+## In short
+
+SQL injection happens when user input is concatenated into SQL and changes query logic. An attacker can bypass authentication or read and modify others' data. Defense: parameterized queries, ORM binding, minimal DB privileges.
+
+## How to answer in an interview
+
+- The vulnerability lives in the data access layer, not "a database bug."
+- In Java I use `PreparedStatement`, JPA `@Query` with `:param`, never string concat.
+- Input validation complements binding but does not replace it.
+- The app DB user has no `DROP`, `FILE`, or extra schema rights.
+- Honestly: second-order SQLi is possible if stored payload later enters dynamic SQL.
+
+## How it works
+
+Vulnerable code concatenates login:
+
+```java
+String sql = "SELECT id FROM accounts WHERE login='" + login + "' AND secret='" + secret + "'";
+Statement stmt = connection.createStatement();
+ResultSet rs = stmt.executeQuery(sql);
+```
+
+Input `' OR '1'='1` turns the predicate into a tautology. Safe version:
+
+```java
+String sql = "SELECT id FROM accounts WHERE login = ? AND secret_hash = ?";
+PreparedStatement ps = connection.prepareStatement(sql);
+ps.setString(1, login);
+ps.setString(2, hashSecret(secret));
+ResultSet rs = ps.executeQuery();
+```
+
+Parameters are sent separately from query text; the DB does not interpret them as SQL. In Spring Data:
+
+```java
+@Query("select u from AppUser u where u.email = :email")
+Optional<AppUser> findByEmail(@Param("email") String email);
+```
+
+Hibernate generates bind variables. For dynamic column names use a whitelist enum, not request-driven `orderBy` concat.
+
+## Pitfalls
+
+- **Escaping instead of binding.** `replace("'", "''")` breaks on encoding and dialect tricks.
+- **LIKE wildcard injection.** `%` and `_` in a parameter widen results; escape or constrain the pattern.
+- **Stored procedures with concat inside.** Java is clean, PL/SQL is not.
+- **ORM native query.** `createNativeQuery("... " + sort)` reintroduces SQLi.
+- **Overprivileged DB account.** Injection plus `FILE` privilege reads server files.

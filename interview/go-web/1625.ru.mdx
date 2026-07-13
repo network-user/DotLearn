@@ -1,0 +1,67 @@
+---
+id: 1625
+title: "HTTP-сервер в Go"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HTTP-сервер в Go
+
+## Суть
+
+`net/http` даёт `Server`, `ServeMux` и handler func `func(ResponseWriter, *Request)`. `ListenAndServe` слушает порт, принимает соединения, парсит HTTP и диспатчит по pattern. Для prod обычно явный `http.Server` с таймаутами и graceful shutdown.
+
+## Что ответить на собесе
+
+- Handler пишет ответ через `ResponseWriter`, читает запрос из `*http.Request`.
+- `HandleFunc` регистрирует route на `DefaultServeMux`; кастомный mux изолирует middleware.
+- `ListenAndServeTLS` включает HTTP/2 автоматически.
+- `http.Server{Addr, Handler, ReadTimeout, WriteTimeout, IdleTimeout}`.
+- Честно: `DefaultServeMux` глобальный; в сервисах предпочитаю свой router (chi, echo, std mux 1.22+).
+
+## Как это работает
+
+```go
+type app struct {
+	mux *http.ServeMux
+}
+
+func (a *app) routes() {
+	a.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+	a.mux.HandleFunc("POST /api/items", createItem)
+}
+
+func main() {
+	a := &app{mux: http.NewServeMux()}
+	a.routes()
+
+	srv := &http.Server{
+		Addr:         ":8080",
+		Handler:      a.mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
+}
+```
+
+Каждое входящее TCP соединение обрабатывается goroutine. `ServeHTTP` mux выбирает longest prefix match pattern. Middleware оборачивает `Handler` и вызывает `next.ServeHTTP(w, r)`.
+
+## Подводные камни
+
+**Нет таймаутов на `ListenAndServe`.** Slowloris и зависшие клиенты держат goroutine.
+
+**Писать в `ResponseWriter` до `WriteHeader`.** Статус 200 по умолчанию, заголовки не добавить позже.
+
+**Глобальный `DefaultServeMux` в библиотеках.** Конфликт route между пакетами.
+
+**Игнор `r.Context()` cancel.** Клиент ушёл, работа в handler продолжается.
+
+**Без graceful shutdown.** Deploy обрывает активные запросы на `SIGTERM`.

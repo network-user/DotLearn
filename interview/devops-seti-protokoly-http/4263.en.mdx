@@ -1,0 +1,54 @@
+---
+id: 4263
+title: "What authentication methods does SSH support?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What authentication methods does SSH support?
+
+## In short
+
+sshd can authenticate by password, public key, GSSAPI/Kerberos, host-based trust, keyboard-interactive (2FA via PAM), and SSH certificates signed by a CA. Production hardening: keys or certs, PasswordAuthentication no, PermitRootLogin prohibit-password or no.
+
+## How to answer in an interview
+
+- Pubkey: default for automation; ed25519 or rsa-sha2-512.
+- Certificate: `ssh-keygen -s CA -I user@corp id_ed25519-cert.pub`; centralized revoke via KRL.
+- PAM plus google-authenticator for MFA on keyboard-interactive.
+- Agent forwarding only deliberately; `-A` risks hop compromise.
+- Honestly: I keep password auth only as break-glass with rate limit and fail2ban.
+
+## How it works
+
+Harden sshd fragment:
+
+```bash
+grep -E '^(PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|PermitRootLogin)' /etc/ssh/sshd_config
+```
+
+Sign user cert with org CA:
+
+```bash
+ssh-keygen -s /etc/ssh/ca_user_key -I deploy-bot -n deploy,web \
+  -V +52w id_deploy.pub
+```
+
+Use agent for short session:
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+ssh -o AddKeysToAgent=yes deploy@target
+```
+
+## Pitfalls
+
+- **Agent forwarding to untrusted host.** Attacker extracts keys from agent socket.
+- **CA not in TrustedUserCAKeys.** Valid cert still rejected; debug with ssh -vvv.
+- **Wrong KRL path.** Revoked cert still works until sshd reload.
+- **PAM lockout.** Bruteforce triggers deny for legit admin; separate bastion rate limits.
+- **Mixed auth order.** Weak method tried first if config duplicated in Match blocks.

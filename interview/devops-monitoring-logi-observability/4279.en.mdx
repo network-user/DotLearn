@@ -1,0 +1,111 @@
+---
+id: 4279
+title: "How do you make Grafana highly available?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you make Grafana highly available?
+
+## In short
+
+Grafana is stateless at the UI layer but stores dashboards, users, and settings in an external database. HA means multiple replicas behind a load balancer, shared Postgres/MySQL, and health checks. Without a shared DB each replica is isolated and you lose unsynced edits when a pod dies.
+
+## How to answer in an interview
+
+- I run 2+ Grafana replicas in a k8s Deployment with `replicas >= 2`.
+- I put an Ingress or LB in front with passive/active health checks on `/api/health`.
+- I use an external HA database (Patroni Postgres, RDS Multi-AZ) instead of SQLite.
+- Session affinity is usually unnecessary; unified `GF_DATABASE_*` matters more.
+- Honestly: HA Grafana without HA datasources (Prometheus/ES) shows empty dashboards during backend outages; I harden both layers.
+
+## How it works
+
+Minimal k8s manifest with readiness and external DB:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.2.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_DATABASE_TYPE
+          value: postgres
+        - name: GF_DATABASE_HOST
+          value: patroni.observability.svc:5432
+        - name: GF_DATABASE_NAME
+          value: grafana
+        - name: GF_DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: grafana-db
+              key: user
+        - name: GF_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-db
+              key: password
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+EOF
+```
+
+Verify the LB only routes to healthy pods:
+
+```bash
+for pod in $(kubectl get pods -n observability -l app=grafana -o name); do
+  kubectl exec -n observability $pod -- wget -qO- http://127.0.0.1:3000/api/health
+done
+```
+
+<figure aria-label="Grafana HA · LB · 3 replicas · shared Postgres">
+<svg viewBox="0 0 480 120" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="10" y="40" width="90" height="40" rx="4"/>
+  <text x="55" y="65" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">LB</text>
+  <rect x="130" y="20" width="70" height="30" rx="3"/>
+  <rect x="130" y="55" width="70" height="30" rx="3"/>
+  <rect x="130" y="90" width="70" height="30" rx="3"/>
+  <text x="165" y="40" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">G1</text>
+  <text x="165" y="75" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">G2</text>
+  <text x="165" y="110" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">G3</text>
+  <rect x="250" y="40" width="110" height="40" rx="4"/>
+  <text x="305" y="65" text-anchor="middle" font-size="10" fill="currentColor" stroke="none">Postgres HA</text>
+  <path d="M100 60 H130 M200 35 H250 M200 70 H250 M200 105 H250"/>
+</svg>
+</figure>
+
+## Pitfalls
+
+- **SQLite in prod.** Default SQLite breaks multi-replica setups; migrate to Postgres before scaling out.
+- **Plugins and provisioning.** Different plugin versions across replicas skew the UI; pin image tags and use init containers.
+- **Alerting backend.** Unified alerting stores state in the DB; slow Postgres increases notification latency.
+- **Datasource secrets.** Every replica needs the same credentials; rotate via k8s Secret and reload.
+- **Single LB SPOF.** HA Grafana is pointless if one nginx spans a single AZ; duplicate the entry point.

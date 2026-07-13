@@ -1,0 +1,64 @@
+---
+id: 4577
+title: "Can a template member function be virtual?"
+category: cpp-shablony-metaprogramming
+categoryLabel: "Шаблоны / Metaprogramming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can a template member function be virtual?
+
+## In short
+
+A member function template with its own template parameters cannot be declared `virtual`: the vtable needs one fixed signature per slot, while a template spawns many overloads on substitution. A virtual member inside a class template is fine when the member itself is not a template.
+
+## How to answer in an interview
+
+- I clarify wording: we mean `template <typename U> virtual void foo(U)` in one class, not a member of a class template `Base<T>`.
+- I answer: you cannot make such a member virtual; the compiler rejects `virtual` and `template` on the same function.
+- I show the working shape: `template <typename T> struct Base { virtual void handle(const T&); }` with no extra template parameters on the member.
+- I explain polymorphism here is limited to one instantiation `Base<int>`, not all types at once.
+- I add honestly: people confuse "template class" and "template member"; on interviews I separate these cases explicitly.
+
+## How it works
+
+The compiler builds the vtable when the class is defined. A virtual slot points to one function with a concrete signature. A templated member with parameter `U` generates a separate function per `U`, so one polymorphic slot for the whole family is impossible. The standard therefore forbids `virtual template`.
+
+```cpp
+#include <iostream>
+
+template <typename Item>
+struct Handler {
+    virtual ~Handler() = default;
+    virtual void dispatch(const Item& value) {
+        std::cout << "base: " << value << '\n';
+    }
+};
+
+template <typename Item>
+struct LoudHandler : Handler<Item> {
+    void dispatch(const Item& value) override {
+        std::cout << "loud: " << value << "!\n";
+    }
+};
+
+int main() {
+    Handler<int>* ptr = new LoudHandler<int>();
+    ptr->dispatch(42);
+    delete ptr;
+}
+```
+
+`dispatch` is virtual, but `Item` is fixed by the class parameter, not by a separate member template. Polymorphic calls through `Handler<int>*` work among descendants of `Handler<int>`. If `dispatch` were itself a template over another type, the compiler could not pick one vtable pointer.
+
+For mixed types behind one runtime interface, use type erasure, `std::variant`, or separate hierarchies per instantiated class.
+
+## Pitfalls
+
+- **Textbook example confusion.** `virtual void process(T)` in `template <typename T> class Base` does not make the member a template.
+- **Macro workarounds.** Generating many virtual members does not give real template polymorphism.
+- **Pure virtual in template classes.** Even without a member template, `= 0` needs care around instantiation.
+- **Mixing instantiations.** `Handler<int>` and `Handler<double>` are not polymorphic with each other.
+- **Expecting CRTP.** Static polymorphism solves a different problem and does not replace a runtime vtable.

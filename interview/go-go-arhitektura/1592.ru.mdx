@@ -1,0 +1,63 @@
+---
+id: 1592
+title: "Работа с sharded database"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Работа с sharded database
+
+## Суть
+
+Sharding делит данные по ключу на независимые DB nodes. Application layer выбирает shard по hash/range/lookup table. Cross-shard queries дорогие; transactions обычно local per shard. Resharding и hot shards главные operational риски.
+
+## Что ответить на собесе
+
+- Выбираю sharding key с high cardinality и равномерным распределением.
+- Избегаю scatter-gather без необходимости.
+- Connection pool per shard, health checks, circuit breakers.
+- Честно: premature sharding хуже vertical scale + read replicas.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"hash/fnv"
+)
+
+type Router struct {
+	shards []string
+}
+
+func (r *Router) Pick(tenantID string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(tenantID))
+	idx := h.Sum32() % uint32(len(r.shards))
+	return r.shards[idx]
+}
+
+func main() {
+	r := Router{shards: []string{"db-a", "db-b", "db-c"}}
+	fmt.Println(r.Pick("acme-42"))
+}
+```
+
+Router возвращает DSN для shard. Repo принимает tenantID, never scans all shards for point lookup.
+
+## Подводные камни
+
+**Hot shard.** Celebrity tenant skews one node.
+
+**Cross-shard JOIN.** Push to app layer or denormalize.
+
+**Reshard migration.** Dual-write or read repair windows.
+
+**Global sequences.** Need snowflake/UUID, not auto-increment.
+
+**Forgot sticky routing in tests.** Integration tests hit wrong shard.

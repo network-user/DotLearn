@@ -1,0 +1,66 @@
+---
+id: 1622
+title: "Стандартные HTTP статус-коды"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Стандартные HTTP статус-коды
+
+## Суть
+
+Трёхзначный код в ответе сообщает класс результата: 1xx информация, 2xx успех, 3xx редирект, 4xx ошибка клиента, 5xx ошибка сервера. Клиент и прокси принимают решения по коду без разбора тела: кэшировать, повторить, следовать Location.
+
+## Что ответить на собесе
+
+- 200 OK, 201 Created, 204 No Content для успешных мутаций.
+- 301/308 permanent redirect, 302/307 temporary; разница в method rewrite.
+- 400 validation, 401 unauthenticated, 403 forbidden, 404 missing, 409 conflict, 422 semantic error.
+- 500 internal, 502 bad gateway, 503 unavailable, 504 gateway timeout.
+- Честно: 418 и шуточные коды в prod API только путают клиентов.
+
+## Как это работает
+
+```go
+func itemHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"id":1}`)
+	case http.MethodPost:
+		w.Header().Set("Location", "/items/1")
+		w.WriteHeader(http.StatusCreated)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func main() {
+	http.HandleFunc("/items", itemHandler)
+	http.HandleFunc("/items/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/items/999" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		itemHandler(w, r)
+	})
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+`http.Error` пишет тело и код одним вызовом. Middleware логирует status через wrapper `ResponseWriter` с перехватом `WriteHeader`. Клиент `resp.StatusCode` ветвит retry: 5xx и 429 с backoff, 4xx обычно не повторяют.
+
+## Подводные камни
+
+**Всегда 200 с ошибкой в JSON.** Ломает кэши, алерты и generic HTTP клиенты.
+
+**302 на POST меняет метод на GET.** Нужен 307/308 если метод должен сохраниться.
+
+**401 vs 403 путают.** 401 просит credentials, 403 credentials есть, но прав нет.
+
+**503 без Retry-After.** Клиенты долбят упавший сервис синхронно.
+
+**Write после WriteHeader.** В Go заголовки уже ушли, статус не изменить.

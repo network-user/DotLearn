@@ -1,0 +1,67 @@
+---
+id: 4666
+title: "Какая память выделяется при создании потока?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какая память выделяется при создании потока?
+
+## Суть
+
+Новый поток получает собственный стек и kernel/user structures (TCB, регистры). Heap и глобальные данные процесса он разделяет с остальными потоками; `thread_local` даёт отдельный экземпляр на поток.
+
+## Что ответить на собесе
+
+- Стек потока: локальные переменные, frames вызовов (типично 1–8 MiB, зависит от ОС и `pthread_attr`).
+- TCB/thread control block в ядре/RTL: id, state, saved registers, stack pointer.
+- Разделяемые: heap, static/globals, code segment процесса.
+- `thread_local` storage создаёт per-thread копию при первом обращении.
+- Честно: точный размер стека и лимиты platform-specific; в C++ `std::thread` не даёт portable API задать stack size без native extensions.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <thread>
+
+void probe() {
+    int on_stack = 42;
+    std::cout << "stack var at " << static_cast<void*>(&on_stack) << '\n';
+}
+
+int main() {
+    int main_stack = 7;
+    std::thread worker(probe);
+    worker.join();
+    std::cout << "main stack at " << static_cast<void*>(&main_stack) << '\n';
+}
+```
+
+Адрес `on_stack` лежит в другом диапазоне, чем `main_stack`: у потоков разные стеки.
+
+`thread_local`:
+
+```cpp
+thread_local int lane_id = -1;
+
+void tag_lane(int id) {
+    lane_id = id;
+    std::cout << "lane " << lane_id << '\n';
+}
+```
+
+Каждый поток видит свой `lane_id`; глобальная память процесса одна.
+
+При `std::thread` конструкторе runtime просит ОС создать поток: mapping стека, запись entry point, return address для `join`. После `join` ресурсы освобождаются; при `detach` стек живёт до завершения worker.
+
+## Подводные камни
+
+- **Stack overflow.** Глубокая рекурсия или большие stack arrays в worker легко переполняют стек.
+- **Stack size default.** Linux часто 8 MiB на поток; 10k threads это десятки GiB только на стеки.
+- **Heap не изолирован.** Утечка в одном потоке видна всем; нужны allocators и sync.
+- **TLS init order.** Static `thread_local` объекты имеют subtle init/fini порядок.
+- **False assumption about cache.** Разные стеки не означают автоматическую cache isolation для shared heap data.

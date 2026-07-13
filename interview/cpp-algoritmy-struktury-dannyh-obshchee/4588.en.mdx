@@ -1,0 +1,88 @@
+---
+id: 4588
+title: "What does reading from a hash table cost?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does reading from a hash table cost?
+
+## In short
+
+Reading a value by key follows the lookup path: hash, bucket, collision handling. In typical conditions that is O(1) on average. A degenerate table where every key shares one bucket forces up to n record checks.
+
+## How to answer in an interview
+
+- I separate read (`at`, `find`, `operator[]` after a check) from insert; asymptotics match lookup.
+- I stress `operator[]` creates an entry on miss (not a pure read).
+- I name `std::unordered_map::at` for throws instead of silent insert.
+- I mention cache-friendly open addressing vs pointer chasing in chaining.
+- I add honestly: for const access I prefer `find` plus a check, or I risk unwanted map mutation.
+
+## How it works
+
+`get` computes the index, then finds an exact key match. With chaining you walk the bucket list; on miss you throw or return optional.
+
+```cpp
+#include <iostream>
+#include <list>
+#include <optional>
+#include <string>
+#include <vector>
+
+class StringCounter {
+    std::vector<std::list<std::pair<std::string, int>>> buckets;
+
+    std::size_t slot_for(const std::string& label) const {
+        std::size_t mix = 0;
+        for (unsigned char ch : label) mix = mix * 131 + ch;
+        return mix % buckets.size();
+    }
+
+public:
+    explicit StringCounter(std::size_t bucket_count) : buckets(bucket_count) {}
+
+    void put(const std::string& label, int count) {
+        auto& chain = buckets[slot_for(label)];
+        for (auto& item : chain) {
+            if (item.first == label) {
+                item.second = count;
+                return;
+            }
+        }
+        chain.emplace_back(label, count);
+    }
+
+    std::optional<int> read(const std::string& label) const {
+        const auto& chain = buckets[slot_for(label)];
+        for (const auto& item : chain) {
+            if (item.first == label) return item.second;
+        }
+        return std::nullopt;
+    }
+};
+
+int main() {
+    StringCounter counter(13);
+    counter.put("apple", 4);
+    counter.put("banana", 7);
+
+    if (auto v = counter.read("apple")) {
+        std::cout << "apple: " << *v << '\n';
+    }
+    std::cout << (counter.read("pear") ? "found" : "missing") << '\n';
+}
+```
+
+Average cost is dominated by hash plus one compare. Worst case appears with crafted keys or `table_size = 1`, when every read scans the whole collection.
+
+## Pitfalls
+
+- **operator[] on const map.** Unavailable; use `at` or `find`.
+- **Double lookup.** `find` then `operator[]` hashes twice; keep the iterator.
+- **Reference to element.** After rehash, references in `unordered_map` stay valid, iterators do not.
+- **Read with side effects.** Non-const `operator[]` inserts default on miss.
+- **Noisy benchmarks.** Microbench without `reserve` mixes reads with post-insert rehash.

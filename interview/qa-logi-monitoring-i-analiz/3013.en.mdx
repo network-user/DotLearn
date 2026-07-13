@@ -1,0 +1,57 @@
+---
+id: 3013
+title: "How does QA tell a client error from a server error by status, logs, and timings?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does QA tell a client error from a server error by status, logs, and timings?
+
+## In short
+
+HTTP 4xx points to a bad request or client-side authorization; 5xx points to a backend failure. Logs and the DevTools waterfall show where time was spent: DNS, TLS, TTFB, or render. QA links the request id from Network to a server log line and records the layer where the defect reproduces.
+
+## How to answer in an interview
+
+- I check Network status first: 400/404/422 are usually client-side, 500/502/503 server-side.
+- I match `X-Request-Id` or a trace id between the browser and Kibana.
+- I read timings: long TTFB with 200 can be backend; 4xx in 20 ms with no server ERROR is often gateway validation.
+- In the bug report I state which layer proved root cause.
+- Honestly: proxies and CDNs can rewrite status codes; without prod logs I rely on staging with the same error mapping.
+
+## How it works
+
+```gherkin
+Feature: Client vs server triage
+
+  Scenario: 404 missing resource
+    Given GET /api/v2/orders/99999
+    When response status is 404 in 45 ms
+    And server log has no ERROR stack
+    Then classify as client or routing misconfiguration
+
+  Scenario: 500 payment failure
+    Given POST /checkout returns 500
+    When Kibana trace pay-42 shows NullPointerException
+    And TTFB 1200 ms before body
+    Then classify as server defect
+
+  Scenario: 400 validation
+    Given POST body missing required field email
+    When status 400 and response JSON field errors
+    And no matching ERROR in api log
+    Then classify as client payload issue
+```
+
+Waterfall view: waiting (TTFB) dominates for backend bottlenecks; stalled for proxy issues. 2xx with empty body plus a console error is often SPA, not API.
+
+## Pitfalls
+
+- **Blind trust in 4xx.** A gateway may return 404 when upstream is down.
+- **Network screenshot only.** Without a server log id you cannot settle a backend dispute.
+- **CDN cache.** Stale 200 hides a fresh 500 on origin.
+- **CORS.** The browser hides 5xx bodies; looks like a frontend bug.
+- **Mixed environments.** Test on staging UI, grep prod logs.

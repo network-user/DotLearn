@@ -1,0 +1,67 @@
+---
+id: 4292
+title: "Зачем нужен Prometheus Pushgateway?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужен Prometheus Pushgateway?
+
+## Суть
+
+Pushgateway это промежуточный HTTP endpoint для push-модели: краткоживущие batch/cron job'ы отправляют метрики POST'ом, Prometheus потом scrape'ит сам gateway как обычный target. Нужен когда у задачи нет стабильного listen port или lifetime короче scrape interval. Это не long-term storage и не замена pull для сервисов.
+
+## Что ответить на собесе
+
+- Cron job пушит gauge `job_last_success_unixtime` перед exit.
+- Prometheus scrape'ит `pushgateway:9091` job label `instance`/`job` различает batch'и.
+- Использую grouping labels (`job`, `instance`) чтобы не смешивать метрики разных run.
+- После успешного run обновляю метрику; stale left если job перестал слаться.
+- Честно: Pushgateway для service-level metrics опасен; официальная дока предупреждает про misuse для daemon uptime.
+
+## Как это работает
+
+Push из shell cron через text exposition:
+
+```bash
+JOB_NAME="nightly_backup"
+INSTANCE="db-cluster-a"
+PUSHGW="pushgateway.monitoring.svc:9091"
+
+cat <<EOF | curl --data-binary @- \
+  "http://${PUSHGW}/metrics/job/${JOB_NAME}/instance/${INSTANCE}"
+# TYPE backup_last_run gauge
+backup_last_run $(date +%s)
+# TYPE backup_bytes_total counter
+backup_bytes_total 4839201024
+EOF
+```
+
+Scrape config в Prometheus:
+
+```bash
+cat <<'EOF' >> /etc/prometheus/prometheus.yml
+scrape_configs:
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway.monitoring.svc:9091"]
+EOF
+```
+
+Удаление stale metrics после rename job:
+
+```bash
+curl -X DELETE "http://${PUSHGW}/metrics/job/${JOB_NAME}/instance/${INSTANCE}"
+```
+
+## Подводные камни
+
+- **Вечные series.** Pushgateway не TTL'ит метрики; failed job оставляет старый success timestamp.
+- **honor_labels false.** Prometheus перезаписывает `job`/`instance` и ломает grouping; для PG нужен `honor_labels: true`.
+- **Counter misuse.** Push counter между run'ами некорректен; только gauge или batch counter с care.
+- **SPOF без HA.** Один Pushgateway без backup теряет visibility batch'ей при outage.
+- **Cardinality от instance.** Уникальный instance per pod в cron даёт explosion; фиксирую короткий набор labels.

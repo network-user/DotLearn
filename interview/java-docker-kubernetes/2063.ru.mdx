@@ -1,0 +1,68 @@
+---
+id: 2063
+title: "Контейнер Docker против виртуальной машины"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Контейнер Docker против виртуальной машины
+
+## Суть
+
+Контейнер изолирует процессы на общем ядре хоста через namespaces и cgroups: один OS kernel, отдельные PID/network/mount view. VM эмулирует железо гипервизором и запускает полноценную гостевую ОС на каждый инстанс. Контейнер легче и стартует быстрее; VM даёт более жёсткую границу между разными ОС и kernel.
+
+## Что ответить на собесе
+
+- Docker container = процесс(ы) с изоляцией, не отдельная ОС.
+- VM включает guest kernel; можно Windows рядом с Linux на одном хосте.
+- Контейнеры делят kernel хоста: CVE в kernel затрагивает все контейнеры.
+- Плотность: на том же железе обычно больше контейнеров, чем VM.
+- Честно: для legacy с нестандартным kernel module или другой ОС VM всё ещё проще, чем контейнер.
+
+## Как это работает
+
+Запуск Java-сервиса в контейнере:
+
+```bash
+docker run -d --name pricing-api \
+  -p 8080:8080 \
+  -e JAVA_OPTS="-Xms256m -Xmx512m" \
+  pricing-api:3.0.1
+```
+
+Слои стека:
+
+```
+┌─────────────────────────────┐
+│  pricing-api (JVM process)  │  ← container
+├─────────────────────────────┤
+│  Docker engine / containerd │
+├─────────────────────────────┤
+│  Host Linux kernel          │
+└─────────────────────────────┘
+```
+
+VM стек для сравнения:
+
+```
+┌─────────────────────────────┐
+│  Guest OS + JVM             │
+├─────────────────────────────┤
+│  Hypervisor (KVM/ESXi)      │
+├─────────────────────────────┤
+│  Host hardware              │
+└─────────────────────────────┘
+```
+
+Boot VM минуты (init guest OS); container cold start секунды (только JVM + app). Memory overhead VM включает entire guest OS; container платит в основном heap и metaspace приложения.
+
+## Подводные камни
+
+- **«Контейнер = VM».** Ожидание полной аппаратной изоляции приводит к ошибкам compliance.
+- **Host kernel coupling.** Container на Windows/Linux/macOS ведёт себя по-разному (особенно filesystem).
+- **Privileged container.** `--privileged` почти снимает изоляцию; ближе к root на хосте.
+- **VM sprawl.** Полная ОС на каждый microservice раздувает RAM и patch surface.
+- **Wrong tool for multi-OS.** Контейнер Linux не запустит Windows .NET без специальных runtime.

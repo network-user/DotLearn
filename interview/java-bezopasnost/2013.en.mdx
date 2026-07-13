@@ -1,0 +1,59 @@
+---
+id: 2013
+title: "What does a Certificate Authority do in PKI?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does a Certificate Authority do in PKI?
+
+## In short
+
+A Certificate Authority (CA) signs X.509 certificates, binding a public key to a domain or organization identity. Browsers and the JVM trust preloaded root CAs; the chain from leaf to root proves the key belongs to the claimed owner.
+
+## How to answer in an interview
+
+- CA = trusted issuer in PKI; the CA private key signs intermediate/leaf certs.
+- DV verifies DNS control; OV/EV add organization data (EV is rare today).
+- Java `cacerts` holds roots; corporate CAs are imported for internal TLS.
+- Certificate Transparency logs record issued certs to detect mis-issuance.
+- Honestly: root CA compromise breaks trust for the whole branch; hence offline root + online intermediate.
+
+## How it works
+
+Certificate request flow:
+
+1. Admin generates a key pair and CSR with CN/SAN.
+2. CA verifies domain (HTTP-01, DNS-01 for ACME).
+3. CA signs the leaf with its intermediate key.
+4. Server sends clients leaf + intermediate chain; root is already in the trust store.
+
+Verifying a cert in Java:
+
+```java
+CertificateFactory factory = CertificateFactory.getInstance("X.509");
+X509Certificate leaf = (X509Certificate) factory.generateCertificate(
+    new FileInputStream("/etc/ssl/certs/shop.example.crt"));
+
+System.out.println("Subject: " + leaf.getSubjectX500Principal());
+System.out.println("Issuer: " + leaf.getIssuerX500Principal());
+leaf.checkValidity();
+
+TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+tmf.init((KeyStore) null);
+X509TrustManager trust = (X509TrustManager) tmf.getTrustManagers()[0];
+trust.checkServerTrusted(new X509Certificate[] { leaf }, "RSA");
+```
+
+`checkServerTrusted` builds a path to a root in `cacerts`. Let's Encrypt ISRG Root X1 is already there; corporate CAs are added via `keytool -importcert`. OCSP/CRL report revoked certs before expiry.
+
+## Pitfalls
+
+- **Private CA without distributing trust.** Clients fail with `PKIX path building failed`.
+- **Validity too long.** A one-year cert without auto-renew causes outage.
+- **Wildcard everywhere.** One compromised key covers hundreds of hosts.
+- **Ignoring revocation.** Skipping CRL check allows a stolen cert.
+- **Self-signed in prod without pinning.** Users learn to click "continue anyway."

@@ -1,0 +1,71 @@
+---
+id: 2961
+title: "DNS: how does a domain name become an IP address?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# DNS: how does a domain name become an IP address?
+
+## In short
+
+DNS (Domain Name System) maps human-readable host names to numeric IP addresses that routers use to deliver packets. Without resolution the browser does not know where to open a TCP connection. For QA, DNS failures look like "site unreachable" with a live origin, or the opposite: the UI loads while the API fails because of a different A record.
+
+## How to answer in an interview
+
+- DNS is a distributed directory: the client asks a resolver, which walks root → TLD → authoritative.
+- Answers are cached for TTL in the browser, OS, and ISP; stale cache explains "works for me, not for you".
+- Record types (A, AAAA, CNAME, MX) affect tests: a CNAME to a CDN changes IP without an app deploy.
+- Honestly: I only edit hosts or a stub resolver on a test stand; in prod I do not touch it without SRE approval.
+
+## How it works
+
+Typical path for `app.example.com`:
+
+```
+Browser → OS cache → ISP recursive resolver
+  → root (.)
+    → TLD (.com)
+      → NS example.com
+        → A 203.0.113.10
+```
+
+Gherkin for DNS smoke in regression:
+
+```gherkin
+Feature: Domain resolution before UI smoke
+
+  Background:
+    Given staging host "app.staging.example.com"
+
+  Scenario: A record resolves before opening login
+    When QA runs nslookup for the staging host
+    Then the answer contains at least one IPv4 address
+    And TTL is greater than 0
+
+  Scenario: After DNS change UI picks up new IP within TTL
+    Given authoritative A record changed to 198.51.100.5
+    And record TTL is 60 seconds
+    When QA waits 2 * TTL
+    And opens the staging host in incognito
+    Then TCP connect goes to 198.51.100.5
+
+  Scenario: NXDOMAIN blocks load with a clear error
+    Given domain "missing.staging.example.com" has no record
+    When the user opens the URL
+    Then the browser shows a DNS error
+    And the app does not fallback to a default API
+```
+
+In DevTools Network I check the first request already goes to an IP; in Charles I can spoof resolver answers for negative cases.
+
+## Pitfalls
+
+- **Split-horizon DNS.** Internal and external IPs differ; tests with and without VPN give different results.
+- **Short TTL + CDN.** Cache is still old, origin is already new; flaky smoke after release.
+- **CNAME chain.** Extra hop increases latency; timeouts on mobile networks.
+- **IPv6-only AAAA.** Client without v6 "cannot see" the site although A exists on another subdomain.
+- **Browser DoH/DoT.** System nslookup and Chrome resolve differently.

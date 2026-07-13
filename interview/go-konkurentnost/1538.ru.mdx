@@ -1,0 +1,71 @@
+---
+id: 1538
+title: "Откуда горутина берёт память под стек?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Откуда горутина берёт память под стек?
+
+## Суть
+
+При `go fn()` runtime создаёт G и выделяет начальный стек (порядка 2 KiB в современных версиях) из heap allocator'а. При нехватке места срабатывает stack growth: новый больший сегмент, копирование активных frame'ов, обновление указателей; при shrink освобождается лишнее.
+
+## Что ответить на собесе
+
+- Стек goroutine в heap-managed памяти, не фиксированный pthread stack на мегабайты.
+- Escape analysis может положить часть данных в heap даже внутри «stack frame» логики.
+- `debug.SetMaxStack` ограничивает рост; переполнение даёт stack overflow panic.
+- Честно: точный min stack size менялся (2K→4K в некоторых arch); порядок величины помнить важнее цифры.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+)
+
+func depth(n int) {
+	if n == 0 {
+		return
+	}
+	var pad [64]byte
+	_ = pad[n%64]
+	depth(n - 1)
+}
+
+func stackKB() int {
+	var buf [64]byte
+	return len(buf)/1024 + runtime.Stack(buf[:], false)
+}
+
+func main() {
+	before := stackKB()
+	go func() {
+		depth(32)
+		fmt.Println("nested done")
+	}()
+	runtime.Gosched()
+	fmt.Println("main stack hint kb:", before)
+}
+```
+
+Рекурсия `depth` увеличивает stack текущей G; runtime копирует stack при threshold. Локальные переменные живут на stack, пока compiler не эскейпит их в heap (например, возврат указателя на локаль).
+
+## Подводные камни
+
+**Большие stack arrays.** `var huge [N]byte` в горутине может раздуть stack или уехать в heap при большом N.
+
+**Утечка через global pointer на stack.** После stack copy старые указатели invalid; compiler вставляет stack barriers, но unsafe ломает инвариант.
+
+**Millions goroutines × 2 KiB.** Даже маленький стек даёт гигабайты суммарно; нужен pooling или worker limit.
+
+**Сравнение с arena/thread-local.** Go не даёт ручного stack sizing per goroutine в user code.
+
+**Profiling heap vs stack.** pprof heap показывает stack allocations косвенно; для deep stacks смотрят execution tracer и `runtime/debug`.

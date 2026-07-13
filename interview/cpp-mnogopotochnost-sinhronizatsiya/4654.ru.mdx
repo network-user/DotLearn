@@ -1,0 +1,53 @@
+---
+id: 4654
+title: "Плюсы и минусы std::async"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Плюсы и минусы std::async
+
+## Суть
+
+`std::async` запускает задачу и возвращает `std::future` для результата и исключений. Упрощает фоновые вычисления, но политика запуска (`async` vs `deferred`) и отсутствие пула потоков делают поведение зависимым от реализации.
+
+## Что ответить на собесе
+
+- Плюс: минимальный boilerplate, exception пробрасывается в `future::get`.
+- Плюс: основной поток делает другую работу до `get()`/`wait()`.
+- Минус: без `std::launch::async` выполнение может отложиться до `get()`.
+- Минус: частые вызовы создают много потоков; нет встроенного reuse.
+- Честно: для серии задач беру thread pool или `jthread` + очередь, не сотню `async`.
+
+## Как это работает
+
+```cpp
+#include <chrono>
+#include <future>
+#include <iostream>
+
+int heavy(int seed) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    return seed * seed;
+}
+
+int main() {
+    auto job = std::async(std::launch::async, heavy, 12);
+
+    std::cout << "main works\n";
+    std::cout << job.get() << '\n';
+}
+```
+
+`async` стартует `heavy` в фоне (с политикой `async`). Пока спит 20 ms, main печатает. `get()` блокирует до результата 144 и пробрасывает исключение из `heavy`, если было.
+
+## Подводные камни
+
+- **deferred по умолчанию.** В некоторых STL `policy` default может не создавать поток; явно указываю `launch::async`.
+- **lifetime захватов.** Лямбда с `[&]` на locals main UB после выхода из scope до `get`.
+- **Нельзя повторно get.** Второй `get()` на том же future бросает.
+- **shared_future для multicast.** Один future одноразовый; несколько потребителей нужен `shared_future`.
+- **Нет cancel.** Без cooperative cancel задача идёт до конца; `jthread` + stop_token лучше.

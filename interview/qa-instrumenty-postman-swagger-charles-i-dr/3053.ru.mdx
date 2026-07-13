@@ -1,0 +1,70 @@
+---
+id: 3053
+title: "Как через Charles понять: баг на клиенте, в сети или на сервере?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как через Charles понять: баг на клиенте, в сети или на сервере?
+
+## Суть
+
+Charles показывает полный путь HTTP(S): был ли запрос сформирован, ушёл ли на wire, пришёл ли ответ и с каким status/timing. Нет записи в Charles при воспроизведении → клиент или proxy bypass. Request есть, response нет или долго pending → сеть/TLS/DNS. Response 4xx/5xx с телом → сервер или контракт; 200 с wrong JSON → клиентский парсинг или backend data bug.
+
+## Что ответить на собесе
+
+- Сначала проверяю, что трафик вообще идёт через Charles (proxy, SSL, Allow device).
+- Нет HTTP line вообще: баг в client logic, offline cache, wrong base URL.
+- CONNECT без decrypt: SSL/host list; pending forever: timeout, firewall, captive portal.
+- Status 502/504: gateway/upstream; 400/422: validation; смотрю response body и correlation id.
+- Честно: Charles не видит gRPC/protobuf без доп. tooling; не всё сводится к HTTP.
+
+## Как это работает
+
+```gherkin
+Feature: Triage client vs network vs server with Charles
+
+  Scenario: Client never sends request
+    Given user taps Pay on checkout
+    When Charles session has no POST /api/charge
+    Then bug likely client validation or disabled button state
+    And QA checks local logs and feature flag
+
+  Scenario: Network timeout
+    Given Charles shows POST /api/charge in red pending 60s
+    When response eventually failed connection
+    Then triage VPN DNS or staging firewall not application 500
+
+  Scenario: Server returns business error
+    Given Charles shows POST /api/charge status 409
+    And body code INSUFFICIENT_STOCK
+    When UI shows generic error instead of stock message
+    Then client mapping bug not server outage
+```
+
+Decision tree (логическая форма):
+
+```
+Repro with Charles recording
+├─ No matching request
+│   └─ Client: URL builder, auth gate, crash before send
+├─ Request sent, no response / SSL error
+│   └─ Network: proxy, cert, DNS, offline
+└─ Response received
+    ├─ 5xx / gateway errors → server/infra
+    ├─ 4xx → contract/auth/payload (client or server rules)
+    └─ 200 but wrong data → compare with Postman same token
+```
+
+Сравни timing: **Duration** в Charles vs TTFB на Postman с тем же token. Duplicate request id в access log сервера подтверждает, что пакет дошёл.
+
+## Подводные камни
+
+- **Certificate pinning.** Пустая сессия трактую как client, а это security block.
+- **CDN cached 200.** Сервер не вызывался; проверь Age header и bypass cache.
+- **GraphQL single endpoint.** 200 с errors[] внутри body; status misleading.
+- **Retry storm.** Несколько одинаковых POST; смотришь не тот response.
+- **Charles Throttling включён.** Ложная «сеть»; disable перед triage.

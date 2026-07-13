@@ -1,0 +1,97 @@
+---
+id: 1461
+title: "Why is network I/O in Go \"non-blocking\" when syscalls are involved?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why is network I/O in Go "non-blocking" when syscalls are involved?
+
+## In short
+
+From the process perspective network operations do not freeze everything: the goroutine parks and the runtime uses the netpoller (epoll, kqueue, IOCP) to wait for descriptor readiness while other work continues. Syscalls remain, but blocking is confined to one `G`, not the whole application.
+
+## How to answer in an interview
+
+- I qualify the wording: "non-blocking" for the developer means thousands of connections multiplex without thousands of OS threads.
+- I explain the netpoller: sockets go non-blocking and a dedicated runtime goroutine handles readiness events.
+- I tie it to the scheduler: while one `G` waits on the network, the `M` runs other runnable goroutines.
+- I add honestly: at the kernel level individual syscalls can still block a thread; the model does not repeal I/O physics, it hides it from the rest of the code.
+
+## How it works
+
+The `net` package registers file descriptors with the internal poller when creating listeners or dials. `Read`/`Write` try the operation immediately; if data is not ready (`EAGAIN`), the goroutine detaches from `M` and waits on the poller queue. When epoll signals readiness, the runtime wakes the `G` and marks it runnable.
+
+One OS thread can serve many connections. A blocking syscall in the classic sense (thread asleep in the kernel on one fd) is what Go tries to avoid on the network path via non-blocking fds plus the poller.
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"sync"
+)
+
+func echoServer(addr string) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		panic(err)
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			_, _ = io.Copy(c, c)
+		}(conn)
+	}
+}
+
+func hammer(client *http.Client, url string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Println("fail:", err)
+		return
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
+func main() {
+	go echoServer(":19090")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
+	go http.ListenAndServe(":18080", mux)
+
+	var wg sync.WaitGroup
+	client := &http.Client{}
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go hammer(client, "http://127.0.0.1:18080/", &wg)
+	}
+	wg.Wait()
+}
+```
+
+Fifty parallel `Get` calls do not need fifty threads: most goroutines wait on the poller until a response is ready. Syscalls happen, but the thread does not sit idle on every wait.
+
+DNS, some file operations, and CGO may bypass the poller and temporarily block an `M`; for plain TCP/UDP the picture above holds.
+
+## Pitfalls
+
+- **Literal "syscalls never block".** In interviews it is safer to talk about the cooperative model and netpoller; otherwise disk I/O is an easy counterexample.
+- **Synchronous DNS.** `net.Dial` with the default resolver can block an `M` on lookup; production setups use a custom resolver or cache.
+- **Blocking Read outside net.** `os.File` and pipes do not always share the same poller path as sockets.
+- **GOMAXPROCS=1.** With a single `P` the win is less visible, though the poller still helps.
+- **Confusion with async/await.** Go has no future syntax; non-blocking behavior comes from goroutines plus the scheduler, not C#-style coroutine keywords.

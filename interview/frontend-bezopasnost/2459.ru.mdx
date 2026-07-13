@@ -1,0 +1,57 @@
+---
+id: 2459
+title: "Зачем фронтенду асимметричная криптография"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем фронтенду асимметричная криптография
+
+## Суть
+
+Асимметричная схема опирается на пару ключей: публичный можно раздавать, приватный хранится у владельца. Шифруют публичным, расшифровывают приватным; подпись делают наоборот. Это основа TLS, JWT-подписей и обмена секретами без предварительного общего пароля.
+
+## Что ответить на собесе
+
+- На фронте я не генерирую RSA в браузере для паролей; полагаюсь на HTTPS (TLS) и Web Crypto только где нужно локально.
+- Публичный ключ сервера проверяю через цепочку CA, не pin'ю вслепую без ротации.
+- Для JWT смотрю alg в header: отклоняю `none`, предпочитаю RS256/ES256 с проверкой на backend.
+- Честно: асимметрия медленнее симметричной; в TLS после handshake идёт симметричный session key.
+- Client-side шифрование файлов возможно через Web Crypto, но ключи всё равно нужно безопасно доставить.
+
+## Как это работает
+
+```ts
+import { webcrypto } from 'node:crypto';
+
+const subtle = webcrypto.subtle;
+
+async function demoRsaRoundTrip() {
+  const keyPair = await subtle.generateKey(
+    { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['encrypt', 'decrypt']
+  );
+
+  const plaintext = new TextEncoder().encode('payload for server');
+  const cipher = await subtle.encrypt({ name: 'RSA-OAEP' }, keyPair.publicKey, plaintext);
+  const decoded = await subtle.decrypt({ name: 'RSA-OAEP' }, keyPair.privateKey, cipher);
+
+  return new TextDecoder().decode(decoded);
+}
+```
+
+В HTTPS клиент получает сертификат с публичным ключом, проверяет подпись CA и устанавливает симметричный ключ для bulk-шифрования. На фронте мы редко держим приватный ключ: чаще работаем с bearer-токенами, подписанными сервером, или с API, где сервер валидирует подпись запроса.
+
+Цифровая подпись: сервер хеширует payload и шифрует хеш приватным ключом; клиент (или другой сервис) проверяет публичным. Это даёт non-repudiation и integrity без shared secret на клиенте.
+
+## Подводные камни
+
+- **Размер данных.** RSA напрямую шифрует только маленькие блоки; большие файлы режут на AES + RSA wrap.
+- **Хранение ключей в SPA.** Любой секрет в JS bundle или localStorage доступен XSS.
+- **Algorithm confusion.** Подмена alg в JWT (`HS256` с pub key как secret) ломает доверие.
+- **Certificate pinning.** Жёсткий pin без плана ротации ломает релизы при смене cert.
+- **Performance в main thread.** `generateKey`/`encrypt` блокируют UI; выношу в worker или на сервер.

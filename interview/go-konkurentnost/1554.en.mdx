@@ -1,0 +1,68 @@
+---
+id: 1554
+title: "Can an idle goroutine take work from another?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can an idle goroutine take work from another?
+
+## In short
+
+A G does not steal from a peer G directly: work stealing is done by P (logical processor), pulling G from another P's run queue. At app level an idle worker takes the next task from a shared channel, not from another goroutine's stack.
+
+## How to answer in an interview
+
+- Scheduler: P steals half of another P's runq, not goroutine-to-goroutine.
+- App pattern: worker pool plus jobs channel; idle worker gets the next job.
+- One goroutine does not preempt a CPU-bound neighbor without preemption/blocking.
+- Honestly: I clarify "idle goroutine" in interviews: scheduler level vs worker pool.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func poolWorker(id int, jobs <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for j := range jobs {
+		fmt.Printf("worker %d job %d\n", id, j)
+	}
+}
+
+func main() {
+	jobs := make(chan int, 8)
+	var wg sync.WaitGroup
+	for w := 0; w < 3; w++ {
+		wg.Add(1)
+		go poolWorker(w, jobs, &wg)
+	}
+	for j := 1; j <= 6; j++ {
+		jobs <- j
+	}
+	close(jobs)
+	wg.Wait()
+}
+```
+
+Three workers wait on the channel; whoever is idle first receives the next send. That is load balancing via channel, not runtime steal between G directly.
+
+## Pitfalls
+
+**Mixing P steal with chan.** Different layers; both are valid with clarification.
+
+**Local runq affinity.** G may stick to a P; steal balances load across P.
+
+**Unbalanced job size.** Channel fairness is by arrival, not duration; use a weighted pool.
+
+**No app-level steal.** One producer channel lets workers self-balance; runtime steal is invisible.
+
+**Steal with GOMAXPROCS=1.** Single P means no cross-P steal.

@@ -1,0 +1,82 @@
+---
+id: 3464
+title: "Can a primary key contain NULL"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can a primary key contain NULL
+
+## In short
+
+A primary key in a relational table must be NOT NULL and unique: every row needs an unambiguous identifier. NULL means "value unknown", so two rows with NULL in the PK would break uniqueness and make foreign key references undefined. DBMS enforce NOT NULL on PK columns at the constraint level.
+
+## How to answer in an interview
+
+- A PK is always NOT NULL; a nullable surrogate id may exist only before assignment, not in the final schema.
+- In integration tests I verify INSERT without id and expect a constraint violation or auto-increment.
+- Composite PK: every PK column is NOT NULL as well, otherwise you cannot build FKs.
+- For soft-delete you sometimes use a partial unique index, but the PK stays a stable value.
+- Honestly: temporarily nullable UUID v4 in migrations breaks joins in staging; I generate defaults up front.
+
+## How it works
+
+Table declaration:
+
+```
+CREATE TABLE test_runs (
+    run_id   BIGINT PRIMARY KEY,
+    suite    VARCHAR(80) NOT NULL,
+    started  TIMESTAMPTZ NOT NULL
+);
+```
+
+Attempting NULL:
+
+```
+INSERT INTO test_runs (run_id, suite, started)
+VALUES (NULL, 'checkout', NOW());
+-- ERROR: null value in column "run_id" violates not-null constraint
+```
+
+Foreign key link:
+
+```
+CREATE TABLE run_artifacts (
+    artifact_id BIGINT PRIMARY KEY,
+    run_id      BIGINT NOT NULL REFERENCES test_runs(run_id)
+);
+```
+
+Contract check in pytest with sqlite:
+
+```python
+import sqlite3
+
+import pytest
+
+
+def test_primary_key_rejects_null():
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE runs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO runs (id, name) VALUES (NULL, 'smoke')")
+    conn.close()
+```
+
+## Pitfalls
+
+**NULL in a composite PK.** Two rows (NULL, 'a') are distinct in SQL, but the PK loses meaning.
+
+**ORM hides NOT NULL.** A TypeScript entity with a nullable `@PrimaryColumn` lets the bug reach prod.
+
+**SERIAL without explicit PK.** Postgres creates a PK, but a manually nullable column is still forbidden.
+
+**Fixtures with undefined.** JS `undefined` in an ORM becomes column omit, not NULL PK.
+
+**ADD PK migration on legacy.** Existing NULL ids must be backfilled before enabling the constraint.

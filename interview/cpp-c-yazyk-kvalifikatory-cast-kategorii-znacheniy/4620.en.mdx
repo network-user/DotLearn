@@ -1,0 +1,86 @@
+---
+id: 4620
+title: "What is move semantics in C++?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is move semantics in C++?
+
+## In short
+
+Move semantics transfer resource ownership (heap, handles, fds) from source to destination via rvalue references, move constructors, and move assignment, avoiding deep copies. After a move the source stays valid but often empty.
+
+## How to answer in an interview
+
+- Rvalue ref `T&&`, `std::move`, mark move ctor/assign `noexcept` when possible.
+- Rule of five/zero: custom dtor/copy often implies move ops.
+- STL containers reallocate with moves if `noexcept` move exists.
+- Perfect forwarding with `T&&` + `std::forward` is related but not identical.
+- Honestly: trivial types move like copies; wins are on owning types.
+
+## How it works
+
+Move ctor steals the pointer; donor clears it. Move assign frees current resources then transfers.
+
+```cpp
+#include <iostream>
+#include <utility>
+
+class Blob {
+    int* cells;
+    std::size_t count;
+
+public:
+    explicit Blob(std::size_t n) : cells(new int[n]{}), count(n) {
+        std::cout << "alloc\n";
+    }
+
+    ~Blob() {
+        delete[] cells;
+        std::cout << "free\n";
+    }
+
+    Blob(Blob&& donor) noexcept : cells(donor.cells), count(donor.count) {
+        donor.cells = nullptr;
+        donor.count = 0;
+        std::cout << "move ctor\n";
+    }
+
+    Blob& operator=(Blob&& donor) noexcept {
+        if (this != &donor) {
+            delete[] cells;
+            cells = donor.cells;
+            count = donor.count;
+            donor.cells = nullptr;
+            donor.count = 0;
+            std::cout << "move assign\n";
+        }
+        return *this;
+    }
+
+    Blob(const Blob&) = delete;
+    Blob& operator=(const Blob&) = delete;
+};
+
+int main() {
+    Blob a(8);
+    Blob b = std::move(a);
+    Blob c(4);
+    c = std::move(b);
+    return 0;
+}
+```
+
+One heap block relocates without a second `new[]/memcpy/delete[]`.
+
+## Pitfalls
+
+- **Self move assignment.** Must be no-op or guarded (`this != &other`).
+- **Moved-from invariant.** Document what empty donors allow.
+- ** noexcept false.** `vector` growth may copy all elements.
+- **Implicit moves.** Compiler-generated defaults; custom dtor may suppress them.
+- **Use after move.** Logic bug, not a compile error.

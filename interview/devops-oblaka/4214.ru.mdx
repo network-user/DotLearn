@@ -1,0 +1,61 @@
+---
+id: 4214
+title: "Какие балансировщики нагрузки есть в AWS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие балансировщики нагрузки есть в AWS?
+
+## Суть
+
+В AWS три семейства ELB: ALB (L7, HTTP/HTTPS), NLB (L4, TCP/UDP, низкая задержка) и GWLB (L3, встраивание сетевых виртуальных устройств). Все управляемые, работают с target groups, health checks и multi-AZ. Выбор зависит от протокола и того, нужна ли маршрутизация по содержимому запроса.
+
+## Что ответить на собесе
+
+- ALB беру для веба и API: path/host/header routing, TLS termination, интеграция с WAF.
+- NLB для высокой пропускной способности TCP/UDP: статические IP, сохранение source IP, игры и стриминг.
+- GWLB для inline-инспекции трафика через партнёрские NGFW/IDS без смены архитектуры приложения.
+- Target group health checks и cross-zone balancing настраиваю под SLA сервиса.
+- Честно: ALB не заменит NLB для raw TCP с миллионами соединений; смешиваю типы в одной схеме.
+
+## Как это работает
+
+ALB принимает HTTP(S), сопоставляет listener rules с target groups (EC2, IP, Lambda, containers). NLB терминирует TCP/UDP на уровне соединения, отдаёт фиксированные Elastic IP. GWLB перенаправляет потоки на fleet виртуальных appliances через endpoint service.
+
+Минимальный ALB через CLI:
+
+```bash
+aws elbv2 create-target-group \
+  --name web-backends \
+  --protocol HTTP \
+  --port 8080 \
+  --vpc-id vpc-0a1b2c3d \
+  --health-check-path /healthz
+
+aws elbv2 create-load-balancer \
+  --name public-alb \
+  --type application \
+  --subnets subnet-aaa111 subnet-bbb222 \
+  --security-groups sg-frontend
+
+aws elbv2 create-listener \
+  --load-balancer-arn "$ALB_ARN" \
+  --protocol HTTPS \
+  --port 443 \
+  --certificates CertificateArn="$ACM_ARN" \
+  --default-actions Type=forward,TargetGroupArn="$TG_ARN"
+```
+
+Target group определяет куда форвардить трафик; listener связывает порт балансировщика с действием. Health check исключает нездоровые targets из ротации.
+
+## Подводные камни
+
+- **Idle timeout ALB.** Длинные WebSocket/SSE могут обрываться при дефолтных 60 с; поднимаю timeout или ставлю NLB.
+- **Cross-zone charges.** Между AZ трафик тарифицируется; для NLB иногда отключаю cross-zone, если targets локальны.
+- **TLS на NLB.** Терминация TLS на NLB ограничена; сложная L7-логика остаётся на ALB.
+- **GWLB asymmetry.** Неправильный return path ломает stateful inspection; проверяю route tables и endpoint subnets.
+- **Sticky sessions.** Cookie-based affinity мешает равномерному scale-out; включаю только когда приложение того требует.

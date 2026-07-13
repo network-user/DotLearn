@@ -1,0 +1,79 @@
+---
+id: 3363
+title: "POST, PUT, and PATCH: semantics for API tests"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# POST, PUT, and PATCH: semantics for API tests
+
+## In short
+
+POST creates a new resource and is not idempotent: a repeat may create a duplicate. PUT replaces the resource at the URI and is idempotent. PATCH applies partial updates; in practice teams aim for idempotency too, but semantics depend on the API.
+
+## How to answer in an interview
+
+- POST `/users` without id in the path: I expect 201 and Location; repeating the same body may create two resources.
+- PUT `/users/42` sends the full representation; a second identical request does not change the outcome.
+- PATCH `/users/42` sends only changed fields; I verify merge semantics and 409 on version conflict.
+- I test idempotency-key headers where POST must be safe on retry.
+- I add honestly: many APIs mix PUT and PATCH; I read the contract, not only the RFC.
+
+## How it works
+
+The client picks a method by intent. In pytest I parametrize scenarios and verify side effects via DB or a follow-up GET.
+
+```python
+import httpx
+import uuid
+
+BASE = "https://staging.example.com"
+
+
+def test_post_creates_new_user():
+    payload = {"name": "Ada", "email": f"ada-{uuid.uuid4()}@test.io"}
+    with httpx.Client(base_url=BASE, timeout=10.0) as client:
+        created = client.post("/api/users", json=payload)
+        assert created.status_code == 201
+        user_id = created.json()["id"]
+        again = client.post("/api/users", json=payload)
+    assert again.status_code == 201
+    assert again.json()["id"] != user_id
+
+
+def test_put_is_idempotent():
+    user_id = 42
+    body = {"name": "Grace", "email": "grace@test.io", "role": "admin"}
+    with httpx.Client(base_url=BASE, timeout=10.0) as client:
+        first = client.put(f"/api/users/{user_id}", json=body)
+        second = client.put(f"/api/users/{user_id}", json=body)
+    assert first.status_code in (200, 204)
+    assert second.status_code == first.status_code
+
+
+def test_patch_updates_single_field():
+    user_id = 42
+    with httpx.Client(base_url=BASE, timeout=10.0) as client:
+        patched = client.patch(f"/api/users/{user_id}", json={"name": "Grace H."})
+        fetched = client.get(f"/api/users/{user_id}")
+    assert patched.status_code == 200
+    assert fetched.json()["name"] == "Grace H."
+    assert fetched.json()["email"] == "grace@test.io"
+```
+
+Negatives: PATCH on missing id (404), PUT without required field (400), POST without Content-Type.
+
+## Pitfalls
+
+**POST instead of GET with a body.** Caches and proxies behave differently; tests miss real clients.
+
+**PUT without full body.** Server nulls missing fields; test passes, data is lost.
+
+**PATCH JSON Merge Patch vs JSON Patch.** Different Content-Type, different expectations.
+
+**POST idempotency without retry key.** Duplicate orders on middleware retry.
+
+**204 without body.** JSON assert fails on success.

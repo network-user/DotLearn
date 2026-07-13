@@ -1,0 +1,78 @@
+---
+id: 1458
+title: "Where does the OS thread return after a system call?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where does the OS thread return after a system call?
+
+## In short
+
+When a syscall finishes, the OS thread re-enters the Go scheduler. It picks which goroutine to resume: usually the one that started the call, but it may switch to another runnable task if needed.
+
+## How to answer in an interview
+
+- I walk through the chain: the goroutine enters the kernel, the `M` thread is released or detached, and after the kernel returns the runtime schedules work on that `M` again.
+- I stress that during a blocking syscall other goroutines on the same thread may run if the runtime rebound the `M` in time.
+- I clarify short vs long syscalls: for lengthy calls the runtime may spin up an extra thread so other goroutines do not stall.
+- I add honestly: exact details depend on Go version and OS; for an interview the G-M-P model and "the thread returns to the scheduler, not straight back into one goroutine" is enough.
+
+## How it works
+
+A goroutine is not an OS thread. The Go scheduler (G-M-P) multiplexes many `G`s onto a small set of `M`s, each tied to a system thread. `http.Get`, file reads, or `read` on a socket end in syscalls, and while the kernel waits on I/O that goroutine does not advance.
+
+During the syscall the runtime may release the `M`: the thread enters the kernel and the scheduler moves other goroutines onto free `M`s or starts a new thread via handoff when every `M` is stuck in blocking calls. After the kernel returns, the `M` re-enters the `schedule` loop: it looks for a runnable goroutine in the local `P` queue, the global queue, or steals from other `P`s.
+
+If the goroutine that began the syscall is already runnable, it often gets the CPU first. If it still waits for data, the scheduler takes any ready `G`. That way network latency overlaps without freezing the whole process.
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
+)
+
+func pullPage(client *http.Client, url string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Println("request failed:", url, err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("%s bytes=%d\n", url, len(body))
+}
+
+func main() {
+	var wg sync.WaitGroup
+	client := &http.Client{}
+	urls := []string{
+		"https://example.com",
+		"https://example.org",
+		"https://example.net",
+	}
+	for _, u := range urls {
+		wg.Add(1)
+		go pullPage(client, u, &wg)
+	}
+	wg.Wait()
+}
+```
+
+Each `client.Get` hits a network syscall. While one request waits, the runtime switches the `M` to other goroutines from the pool. After the syscall completes the thread does not stay bound to one `G` forever; it goes through the shared scheduling loop again.
+
+## Pitfalls
+
+- **Thread vs goroutine confusion.** Candidates often say "the thread returns to the goroutine"; it is more accurate to say the thread returns to the runtime, which picks the next `G`.
+- **Long syscalls.** Synchronous disk I/O or DNS outside the netpoller can hold an `M` for a long time and cut parallelism when `GOMAXPROCS` is small.
+- **Sleep as synchronization.** Tutorial `time.Sleep` hides work stealing; production code needs `WaitGroup`, context, or errgroup.
+- **Network poller.** For sockets Go prefers non-blocking fds and epoll/kqueue; the "release M" model complements rather than replaces the netpoller.
+- **Runtime versions.** Handoff and queue details changed across releases; I mention GODEBUG=schedtrace only if the interviewer asks for depth.

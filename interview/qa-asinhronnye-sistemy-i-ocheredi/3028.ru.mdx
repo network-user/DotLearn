@@ -1,0 +1,56 @@
+---
+id: 3028
+title: "Как в Kafka происходит доставка и чтение сообщений при тестировании?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как в Kafka происходит доставка и чтение сообщений при тестировании?
+
+## Суть
+
+Producer append в partition leader; реплики синхронизируют запись; ack level (`all`, `1`, `0`) задаёт гарантию. Consumer group читает с committed offset; порядок внутри partition сохраняется. QA моделирует сбой брокера, отставание consumer и проверяет, что после commit offset повторная обработка не дублирует эффект без необходимости.
+
+## Что ответить на собесе
+
+- `acks=all`: запись подтверждена всеми ISR репликами.
+- Consumer poll batch, обработка, commit offset sync или async.
+- `auto_offset_reset=earliest` на новом group читает с начала retention.
+- При rebalance partition переназначаются; возможна повторная доставка in-flight.
+- Честно: commit до завершения бизнес-транзакции даёт потерю или дубль.
+
+## Как это работает
+
+```gherkin
+Feature: Kafka delivery and read
+
+  Scenario: Producer ack all replicas
+    Given replication factor 3 min.insync.replicas 2
+    When broker B dies
+    And producer acks all
+    Then message still readable from surviving replicas
+
+  Scenario: Consumer offset commit
+    Given consumer group billing-workers
+    When process message offset 1042
+    And commit sync after DB insert
+    Then restart consumer resumes at 1043
+
+  Scenario: Rebalance duplicate window
+    Given consumer slow processing offset 500
+    When rebalance triggers
+    Then another consumer may reprocess 500 QA expects idempotent handler
+```
+
+Тестовый сценарий: publish `test-evt-1`, найти в `kafka-console-consumer`, сверить handler log и downstream row.
+
+## Подводные камни
+
+- **acks=0 в тесте, all в prod.** Ложное чувство надёжности.
+- **enable.auto.commit=true до handler.** Silent loss.
+- **Чтение без group id.** Каждый запуск читает всё заново.
+- **Игнор max.poll.interval.** Consumer исключён из group mid-batch.
+- **Нет проверки ISR.** Under-replicated partition при деградации кластера.

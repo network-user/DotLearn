@@ -1,0 +1,50 @@
+---
+id: 4190
+title: "Где Redis полезен в инфраструктуре?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Где Redis полезен в инфраструктуре?
+
+## Суть
+
+Redis это in-memory data store со структурами string, hash, list, set, sorted set и pub/sub. Даёт субмиллисекундный доступ, но объём ограничен RAM; persistence (RDB/AOF) и replication добавляют durability под нагрузкой.
+
+## Что ответить на собесе
+
+- Кэш с TTL снимает read load с PostgreSQL; cache-aside с инвалидацией при update.
+- Session store, rate limiting (INCR + EXPIRE), distributed lock (SET NX PX).
+- Streams и pub/sub для лёгкого event fan-out, но не замена Kafka для больших логов.
+- Честно: при eviction `allkeys-lru` cold keys пропадают без warning; критичные данные не держу только в Redis.
+
+## Как это работает
+
+Кэш профиля пользователя и счётчик API rate limit:
+
+```bash
+redis-cli -h cache.internal SETEX profile:user-42 3600 '{"name":"Ada","plan":"pro"}'
+redis-cli -h cache.internal GET profile:user-42
+
+redis-cli -h cache.internal INCR ratelimit:api:user-42
+redis-cli -h cache.internal EXPIRE ratelimit:api:user-42 60
+```
+
+Distributed lock для deploy hook:
+
+```bash
+redis-cli -h cache.internal SET deploy:lock:payments nx px 30000
+```
+
+Sentinel или Redis Cluster дают HA. AOF `everysec` балансирует durability и IO. `INFO memory` и `maxmemory-policy` контролируют OOM. В Kubernetes ставлю отдельный StatefulSet, не sidecar, чтобы память не делить с app.
+
+## Подводные камни
+
+- **Cache stampede.** Массовый miss бьёт в origin; нужен jitter TTL или singleflight.
+- **KEYS в проде.** Блокирует event loop; только SCAN с cursor.
+- **Большие values.** Сериализованные JSON >1 МБ фрагментируют память и лагут replication.
+- **Lock без token.** DEL чужого lock после slow GC; храню random value и проверяю в Lua.
+- **Cluster cross-slot multi-key.** MGET по разным hash slot падает; проектирую ключи с общим hashtag.

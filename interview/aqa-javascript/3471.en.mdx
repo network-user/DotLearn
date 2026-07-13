@@ -1,0 +1,83 @@
+---
+id: 3471
+title: "Unhandled promise rejection: causes and handling"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Unhandled promise rejection: causes and handling
+
+## In short
+
+An unhandled rejection happens when a Promise becomes rejected and no `catch` or second `then` handler runs before the microtask tick ends. In Node 15+ and modern browsers this often crashes the process or fails CI. In Jest you catch it with `process.on('unhandledRejection')` or fail fast via `--detectUnhandledRejections`.
+
+## How to answer in an interview
+
+- Every `return promise` in a test gets `await` or `.catch(fail)`.
+- In suite setup I attach a listener that fails the test on stray rejections.
+- For fire-and-forget background jobs in prod I add an explicit `.catch(log)`.
+- I use `unhandledrejection` on window for browser e2e smoke.
+- Honestly: an async test without await or return goes green falsely, then flakes nightly.
+
+## How it works
+
+Problem:
+
+```
+new Promise((_, reject) => reject(new Error("boom")));
+```
+
+Local catch:
+
+```
+runJob()
+  .catch((err) => reporter.fail(err.message));
+```
+
+Node guard in jest.setup:
+
+```
+process.on("unhandledRejection", (reason) => {
+  throw reason;
+});
+```
+
+Browser:
+
+```
+window.addEventListener("unhandledrejection", (event) => {
+  console.error(event.reason);
+});
+```
+
+Pytest asyncio guard:
+
+```python
+import asyncio
+
+import pytest
+
+
+async def flaky_task():
+    raise RuntimeError("boom")
+
+
+def test_catches_rejection():
+    with pytest.raises(RuntimeError):
+        asyncio.run(flaky_task())
+```
+
+## Pitfalls
+
+**Catch that only logs.** The Promise is handled but the test stays green.
+
+**Promise.all without catch.** One reject fails the aggregate; stack points at all, not the root.
+
+**setTimeout async IIFE.** Rejection sits outside the test async scope.
+
+**jest fake timers.** Rejection is deferred while the listener is already removed.
+
+**AggregateError in Promise.any.** Nested reason makes CI messages unclear.

@@ -1,0 +1,56 @@
+---
+id: 1606
+title: "Паттерны consistency в distributed systems"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Паттерны consistency в distributed systems
+
+## Суть
+
+Практические паттерны: quorum R/W, leader-based replication (strong via single writer), multi-version concurrency, CRDT for mergeable state, saga for cross-service atomicity illusion, outbox for reliable publish. Each trades latency, availability, dev complexity.
+
+## Что ответить на собесе
+
+- Leader + sync replica for strong OLTP.
+- Eventual with CRDT for counters/likes.
+- Outbox + CDC for at-least-once events without dual write bug.
+- Честно: no silver bullet; mix patterns in one system by bounded context.
+
+## Как это работает
+
+```go
+type Outbox struct {
+	ID    int64
+	Topic string
+	Payload []byte
+	Sent  bool
+}
+
+func (s *Service) CreateOrder(ctx context.Context, o Order) error {
+	return s.db.Tx(ctx, func(tx Tx) error {
+		if err := tx.InsertOrder(o); err != nil {
+			return err
+		}
+		return tx.InsertOutbox(Outbox{Topic: "order.created", Payload: o.Bytes()})
+	})
+}
+```
+
+Same transaction persists order and outbox row; relay worker publishes then marks Sent.
+
+## Подводные камни
+
+**Saga without idempotency.** Duplicate compensations.
+
+**CRDT where invariants need reject.** Use leader instead.
+
+**Quorum too small.** Lost writes on partition.
+
+**Outbox relay single threaded bottleneck.** Shard outbox.
+
+**Strong everywhere on read path.** Ignores replica value.

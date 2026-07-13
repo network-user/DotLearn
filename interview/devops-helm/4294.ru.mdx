@@ -1,0 +1,67 @@
+---
+id: 4294
+title: "Какой движок шаблонов в Helm?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой движок шаблонов в Helm?
+
+## Суть
+
+Helm рендерит Kubernetes YAML через Go `text/template` с расширениями Sprig и Helm-specific объектами `.Values`, `.Release`, `.Chart`, `.Capabilities`. Файлы в `templates/` это не валидный манифест до `helm template` или `install`: фигурные скобки подставляют values и генерируют итоговые ресурсы.
+
+## Что ответить на собесе
+
+- Синтаксис `{{ .Values.replicaCount }}`, функции `default`, ` nindent`, `include`.
+- `values.yaml` defaults, override через `-f` или `--set`.
+- `tpl` вложенный render для строк из values.
+- `_helpers.tpl` хранит именованные partials `define`/`include`.
+- Честно: логика в шаблонах быстро нечитаема; сложное выношу в notes или внешний генератор (Kustomize overlay).
+
+## Как это работает
+
+Фрагмент Deployment template:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "checkout.fullname" . }}
+  labels:
+    {{- include "checkout.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 2 }}
+  template:
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+```
+
+Рендер без установки в кластер:
+
+```bash
+helm template checkout ./charts/checkout \
+  -f values-prod.yaml \
+  --set image.tag=2.4.1 \
+  --namespace prod > /tmp/rendered.yaml
+```
+
+Проверка синтаксиса chart:
+
+```bash
+helm lint ./charts/checkout
+helm template checkout ./charts/checkout --debug 2>&1 | less
+```
+
+## Подводные камни
+
+- **YAML отступы.** `{{-` съедает newline и ломает indentation; тестирую `helm template` в CI.
+- **Type coercion.** `.Values.port` как string `"8080"` vs int 8080 ломает probes; задаю types в values schema (Helm 3).
+- **randAlpha в каждом upgrade.** Случайный suffix в имени меняет immutable fields; использую стабильные имена.
+- **Capabilities drift.** `.Capabilities.KubeVersion` в старом chart на новом кластере скрывает API version mismatch.
+- **Secret в template.** Base64 в manifest попадает в helm release Secret; prefer SealedSecrets/ESO.

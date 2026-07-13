@@ -1,0 +1,62 @@
+---
+id: 1616
+title: "Как происходит обмен сертификатами в HTTPS"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как происходит обмен сертификатами в HTTPS
+
+## Суть
+
+При TLS handshake сервер отправляет цепочку X.509 сертификатов: листовой с публичным ключом и промежуточные до доверенного корня. Клиент проверяет подпись, срок, отзыв и соответствие имени хоста, затем согласует симметричный сеансовый ключ. После Finished весь HTTP трафик шифруется этим ключом.
+
+## Что ответить на собесе
+
+- ClientHello с версией TLS и cipher suites, ServerHello + Certificate + ServerKeyExchange.
+- Клиент валидирует цепочку по trust store ОС или кастомному pool.
+- mTLS: сервер запрашивает клиентский сертификат через CertificateRequest.
+- В Go настраиваю `tls.Config` с `RootCAs`, `Certificates`, `MinVersion`.
+- Честно: termination на балансировщике скрывает детали handshake от приложения.
+
+## Как это работает
+
+```go
+pool, _ := x509.SystemCertPool()
+cfg := &tls.Config{
+	RootCAs:            pool,
+	MinVersion:         tls.VersionTLS12,
+	InsecureSkipVerify: false,
+}
+transport := &http.Transport{TLSClientConfig: cfg}
+client := &http.Client{Transport: transport}
+
+resp, err := client.Get("https://api.example.com/health")
+```
+
+Последовательность: DNS резолвит хост (виден наблюдателю), TCP connect, TLS ClientHello с SNI. Сервер отдаёт сертификат, клиент строит chain of trust. Обмен ключами (ECDHE) даёт общий secret, из него derive session keys. Application data: зашифрованные HTTP заголовки и тело.
+
+<figure aria-label="TLS handshake · сертификат · сеансовый ключ">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 48" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="12" width="72" height="24" rx="4"/><text x="40" y="28" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Client</text>
+  <rect x="244" y="12" width="72" height="24" rx="4"/><text x="280" y="28" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Server</text>
+  <path d="M76 20h168"/><path d="M244 32H76"/>
+  <text x="160" y="18" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Certificate chain</text>
+  <text x="160" y="38" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Session keys</text>
+</svg>
+</figure>
+
+## Подводные камни
+
+**Self-signed без pin в prod.** Любой MITM подставит свой cert, если `InsecureSkipVerify: true`.
+
+**Истёкший или не тот SAN.** Cert на `*.example.com` не покроет внутренний hostname.
+
+**Неполная цепочка на сервере.** Клиенты без промежуточного CA падают с unknown authority.
+
+**TLS 1.0/1.1 включены.** Уязвимости и отказ со стороны браузеров.
+
+**SNI виден снаружи.** Имя виртуального хоста утекает до шифрования application data.

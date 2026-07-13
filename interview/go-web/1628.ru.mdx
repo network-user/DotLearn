@@ -1,0 +1,59 @@
+---
+id: 1628
+title: "PUT и PATCH: в чём разница"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# PUT и PATCH: в чём разница
+
+## Суть
+
+PUT заменяет ресурс целиком: клиент шлёт полное представление, отсутствующие поля обнуляются или удаляются по правилам API. PATCH меняет только переданные поля; остальное остаётся. PUT идемпотентен, PATCH в общем случае может давать разный результат при повторе из-за merge semantics.
+
+## Что ответить на собесе
+
+- PUT `/users/42` с полным JSON профиля.
+- PATCH `/users/42` с `{"email":"new@mail.com"}`.
+- RFC 7396 JSON Merge Patch vs JSON Patch (RFC 6902) как форматы.
+- В Go разные handler по `r.Method`.
+- Честно: многие API называют partial update PUT из лени; важна документированная семантика.
+
+## Как это работает
+
+```go
+func userHandler(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/users/")
+	switch r.Method {
+	case http.MethodPut:
+		var body User
+		json.NewDecoder(r.Body).Decode(&body)
+		replaceUser(id, body)
+		w.WriteHeader(http.StatusOK)
+	case http.MethodPatch:
+		var patch map[string]any
+		json.NewDecoder(r.Body).Decode(&patch)
+		applyPatch(id, patch)
+		w.WriteHeader(http.StatusOK)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+```
+
+PUT после двух одинаковых запросов даёт тот же ресурс. PATCH с `{"tags":["go"]}` может append или replace tags в зависимости от реализации; это нужно фиксировать в OpenAPI.
+
+## Подводные камни
+
+**PATCH как alias PUT с одним полем.** Клиенты перетрут данные при расширении модели.
+
+**Null в merge patch удаляет ключ.** Клиенты не ожидают удаления при `{"nickname":null}`.
+
+**PUT без If-Match ETag.** Lost update при конкурентных правках.
+
+**Идемпотентный retry POST вместо PUT.** Дубликаты ресурсов.
+
+**Нет валидации partial state.** PATCH оставляет модель в невалидном промежуточном виде.

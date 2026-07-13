@@ -1,0 +1,54 @@
+---
+id: 4268
+title: "Какое шифрование лежит в основе HTTPS?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какое шифрование лежит в основе HTTPS?
+
+## Суть
+
+HTTPS это HTTP поверх TLS. Handshake использует асимметричную криптографию (ECDHE + сертификат RSA или ECDSA) для согласования session keys, дальше симметричные AEAD cipher (AES-GCM, ChaCha20-Poly1305) шифруют record layer. Forward secrecy достигается ephemeral DH.
+
+## Что ответить на собесе
+
+- TLS 1.2/1.3; 1.3 сокращает handshake, убирает слабые cipher.
+- Cert chain: leaf → intermediate → root in trust store.
+- SNI required for shared IP vhost; cert must match hostname.
+- HSTS, OCSP stapling, cert rotation via ACME (Let's Encrypt).
+- Честно: «асимметричное для данных» неверно; bulk data always symmetric after handshake.
+
+## Как это работает
+
+Inspect live cipher:
+
+```bash
+echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null \
+  | openssl x509 -noout -subject -dates
+
+curl -vI https://example.com 2>&1 | grep -E 'SSL connection|subject:|issuer:'
+```
+
+Test TLS 1.3 only:
+
+```bash
+openssl s_client -connect example.com:443 -tls1_3 -servername example.com </dev/null
+```
+
+Cert renewal (certbot sketch):
+
+```bash
+sudo certbot certonly --nginx -d app.example.com --non-interactive --agree-tos -m ops@example.com
+```
+
+## Подводные камни
+
+- **Expired cert midnight UTC.** Monitoring must check notAfter daily.
+- **Mixed content.** HTTPS page loads HTTP asset; browser blocks or warns.
+- **Weak cipher left enabled.** Old client support keeps RSA key exchange without FS.
+- **Private key on load balancer only.** Backend HTTP plain inside VPC; trust boundary document.
+- **Cert wrong SAN.** Valid cert for `*.example.com` fails on `api.staging.example.com`.

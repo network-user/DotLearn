@@ -1,0 +1,61 @@
+---
+id: 4188
+title: "What does a Kafka Connect connector do?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does a Kafka Connect connector do?
+
+## In short
+
+A Kafka Connect connector is a ready-made plugin in the Kafka Connect framework that moves data between Kafka and an external system without custom ETL code. A source connector writes to a topic; a sink connector reads from a topic and lands data in a target.
+
+## How to answer in an interview
+
+- I separate source (DB, S3, CDC) and sink (warehouse, search, cache).
+- Connectors run in a distributed Connect cluster with fault tolerance and a REST API.
+- Config is JSON: `connector.class`, tasks, transforms, error handling.
+- Honestly: not every source is covered out of the box; a custom connector or Kafka Streams remains an option for edge cases.
+
+## How it works
+
+A Connect worker runs connector tasks. A Debezium MySQL source reads the binlog and publishes row changes to a topic:
+
+```bash
+curl -s -X POST http://connect.internal:8083/connectors \
+  -H 'Content-Type: application/json' -d '{
+  "name": "inventory-mysql-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "database.hostname": "mysql.internal",
+    "database.port": "3306",
+    "database.user": "replicator",
+    "database.password": "secret",
+    "database.server.id": "184054",
+    "database.server.name": "inventory",
+    "table.include.list": "shop.orders",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka.internal:9092",
+    "schema.history.internal.kafka.topic": "schema.inventory"
+  }
+}'
+```
+
+Status check:
+
+```bash
+curl -s http://connect.internal:8083/connectors/inventory-mysql-cdc/status | jq .
+```
+
+A JDBC sink writes from the topic to PostgreSQL. Transforms (ExtractField, RegexRouter) reshape the payload before write. Connector offsets live in the internal `_connect-offsets` topic, so restart resumes where it stopped.
+
+## Pitfalls
+
+- **Single Message Transforms break the schema.** An incompatible transform yields poison messages and a stalled task.
+- **Schema evolution without Registry.** Debezium changes Avro/JSON schema; downstream without compatibility fails.
+- **Overloaded tasks.** One connector class on a heavy table without `tasks.max` does not scale.
+- **At-least-once duplicates.** A sink without an idempotent key or upsert multiplies rows after retry.
+- **Secrets in plain config.** Passwords in the REST body end up in logs; I use externalized config or a vault.

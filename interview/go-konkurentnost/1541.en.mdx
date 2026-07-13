@@ -1,0 +1,86 @@
+---
+id: 1541
+title: "Why does RWMutex split read and write locks?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does RWMutex split read and write locks?
+
+## In short
+
+`RLock` allows parallel readers while no writer holds the lock; `Lock` is exclusive and blocks everyone. That cuts contention when reads dominate and data stays unchanged for the read critical section.
+
+## How to answer in an interview
+
+- Read-heavy cache/config/map snapshots often beat plain Mutex with RWMutex.
+- Writer starvation is possible under a steady stream of readers; sometimes Mutex is simpler and faster.
+- You cannot upgrade RLock to Lock in one goroutine (deadlock risk).
+- Honestly: benchmarks decide; sync.Map or immutable snapshots sometimes beat RWMutex.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Metrics struct {
+	mu    sync.RWMutex
+	hits  int
+	miss  int
+}
+
+func (m *Metrics) RecordHit() {
+	m.mu.Lock()
+	m.hits++
+	m.mu.Unlock()
+}
+
+func (m *Metrics) Snapshot() (hits, miss int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.hits, m.miss
+}
+
+func main() {
+	var m Metrics
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.RecordHit()
+		}()
+	}
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, _ := m.Snapshot()
+			fmt.Println("hits:", h)
+		}()
+	}
+	wg.Wait()
+}
+```
+
+Many `Snapshot` calls run in parallel under RLock; `RecordHit` takes an exclusive Lock briefly.
+
+## Pitfalls
+
+**Write-heavy workload.** RWMutex costs more than Mutex due to reader counting and writer waiting.
+
+**RLock while mutating.** Holding RLock and mutating through a pointer races; read sections must be truly read-only.
+
+**Recursive RLock.** A second RLock from the same G deadlocks in the standard implementation.
+
+**Copy after RUnlock.** Return a copy of struct/slice under lock, not a pointer to shared mutable state without protection.
+
+**Prefer immutability.** Replace-on-write maps remove RWMutex from the hot path.

@@ -1,0 +1,71 @@
+---
+id: 4645
+title: "Как потоки передают друг другу данные?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как потоки передают друг другу данные?
+
+## Суть
+
+В одном процессе потоки делят память, поэтому обмен идёт через общие переменные, контейнеры и очереди под синхронизацией: mutex, condition_variable, atomic, future/promise. Задача — обеспечить happens-before и отсутствие data race.
+
+## Что ответить на собесе
+
+- Простые флаги и счётчики: `std::atomic` с нужным memory order.
+- Сложные структуры: mutex + condition_variable или thread-safe очередь.
+- `std::promise` / `std::future` для одноразовой передачи результата вычисления.
+- `std::async` или пул worker + `std::queue` для потока задач.
+- Честно: «передал указатель» без синхронизации публикации не гарантирует, что другой поток увидит инициализированные поля.
+
+## Как это работает
+
+Producer/consumer на mutex и condition_variable:
+
+```cpp
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+#include <thread>
+
+std::mutex mtx;
+std::condition_variable dataReady;
+std::queue<int> inbox;
+bool stop = false;
+
+void producer() {
+    for (int v = 0; v < 5; ++v) {
+        std::lock_guard lock(mtx);
+        inbox.push(v);
+        dataReady.notify_one();
+    }
+    std::lock_guard lock(mtx);
+    stop = true;
+    dataReady.notify_one();
+}
+
+void consumer() {
+    while (true) {
+        std::unique_lock lock(mtx);
+        dataReady.wait(lock, [] { return !inbox.empty() || stop; });
+        if (inbox.empty() && stop) break;
+        int v = inbox.front();
+        inbox.pop();
+        lock.unlock();
+    }
+}
+```
+
+Producer кладёт значения в `inbox` под mutex и будит consumer. Consumer ждёт предикат «очередь не пуста или стоп», забирает элемент и обрабатывает вне lock.
+
+## Подводные камни
+
+- **Гонка на проверке размера.** `empty()` без mutex рядом с `pop()` даёт UB.
+- **notify до публикации.** Сигнал до записи в очередь теряется без предиката.
+- **Копирование больших объектов.** Держать mutex на сериализацию дорого; move + ограниченная очередь лучше.
+- **future только один раз.** `promise::set_value` второй раз бросает exception.
+- **false sharing.** Разные atomics на одной cache line тормозят обмен метриками.

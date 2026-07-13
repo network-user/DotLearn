@@ -1,0 +1,56 @@
+---
+id: 1457
+title: "TCP vs UDP: which transport do teams pick in production?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# TCP vs UDP: which transport do teams pick in production?
+
+## In short
+
+TCP and UDP live at the transport layer and solve different delivery problems. TCP builds a reliable session with acknowledgments and ordered packets; UDP sends datagrams without guarantees but with lower latency. For QA, network defect symptoms and test strategy depend on which protocol the feature uses.
+
+## How to answer in an interview
+
+- I split protocols by delivery contract: TCP when integrity and order matter (HTTP, APIs, file downloads), UDP for streams where speed wins and loss is acceptable (VoIP, games, DNS).
+- In testing I look beyond "a response arrived" at degraded behavior: retries and buffering for TCP, drops and jitter for UDP.
+- In Charles or DevTools Network I verify the app uses the expected transport and port, not some accidental stack.
+- I am honest that UDP is not "faster than TCP everywhere"; latency wins only where the app can live without OS-level guarantees.
+
+## How it works
+
+Before data exchange, TCP completes a three-way handshake (SYN, SYN-ACK, ACK). Each segment is numbered. The receiver acknowledges receipt; the sender retransmits losses; flow control and congestion control adapt speed to the link. That is why web, mail, and most REST APIs ride TCP: losing a byte is unacceptable.
+
+UDP wraps payload in a datagram with port headers and sends it without a session. No ACK, no built-in ordering: the application decides whether to tolerate loss or reassemble fragments. DNS queries, RTP in video calls, or game ticks often use UDP because redelivering an old frame is pointless.
+
+From manual QA, Gherkin scenarios tied to observable client behavior work well:
+
+```gherkin
+Feature: Client behavior on an unstable network
+
+  Scenario: REST request over TCP survives a brief disconnect
+    Given Charles throttling "High latency" is enabled
+    When the user sends POST /orders
+    Then the order is created exactly once
+    And client logs show retries until success
+
+  Scenario: UDP stream tolerates dropped frames without freezing the UI
+    Given 5% UDP packet loss is simulated
+    When the user watches a live broadcast
+    Then playback continues without a full stop
+    And brief picture artifacts are acceptable
+```
+
+For API regression, curl or Postman is enough: HTTPS already implies TCP. UDP services (QUIC over UDP, game servers) need specialized clients or packet-filtering proxies. In a risk matrix I note: for TCP I test timeouts and retry idempotency; for UDP I test quality degradation, not all-or-nothing behavior.
+
+## Pitfalls
+
+- **Layer confusion.** TCP/UDP are transport; HTTP, gRPC, and WebSocket sit above. Interview answers often confuse "REST over UDP" with the real stack: typical REST still runs on TCP (or QUIC, which is a separate story).
+- **TCP retries hide bugs.** The client "eventually got 200" while the user waited 30 seconds because of aggressive retries against a 500 server. Track latency metrics, not just status codes.
+- **UDP without app logic breaks UX.** Without buffering or FEC, one lost packet can mean an audio gap or desynced game state.
+- **Firewall and NAT.** Corporate proxies often block UDP; TCP 443 passes almost everywhere. "Works in office, fails for customer" often comes down to transport.
+- **Load tests compare apples to oranges.** Running HTTP and game UDP through one tool without delivery semantics yields false conclusions about "protocol performance."

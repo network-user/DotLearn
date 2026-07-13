@@ -1,0 +1,55 @@
+---
+id: 3016
+title: "What async processing risks matter for manual QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What async processing risks matter for manual QA?
+
+## In short
+
+Async work separates task submission from its outcome: the UI may show success while a queue still processes the message. Risks include data races, duplicates, order loss, silent timeouts, and hard-to-reproduce intermittent bugs. QA validates final system state after a delay, not only the instant API response.
+
+## How to answer in an interview
+
+- Race condition: two parallel requests change the same balance or stock level.
+- Retries without idempotency cause double charge or duplicate emails.
+- Out-of-order events break workflows where step B depends on step A.
+- Consumer lag grows under load and breaks SLA.
+- Honestly: without eventual consistency checks, an immediate pass does not prove correctness a minute later.
+
+## How it works
+
+```gherkin
+Feature: Async processing risks
+
+  Scenario: Double spend without idempotency
+    Given wallet balance 1000
+    When two parallel withdraw 600 requests enqueue
+    And consumer processes both without lock
+    Then final balance may be 400 instead of expected rejection
+
+  Scenario: UI success before worker failure
+    Given POST /orders returns 202 Accepted
+    When poll order status for 60 seconds
+    Then status becomes FAILED and inventory restored
+
+  Scenario: Message order violation
+    Given events CREATE then ACTIVATE sent to same partition key
+    When network reorders delivery
+    Then consumer rejects ACTIVATE before CREATE exists
+```
+
+Test plans must cover `queue depth`, `consumer lag`, and DLQ size. QA records producer, broker, and consumer timestamps in one ticket.
+
+## Pitfalls
+
+- **Sync response only.** Late worker failure is missed.
+- **Single run without load.** Races stay hidden.
+- **No eventual consistency wait.** False pass on UI.
+- **DLQ ignored.** Lost messages sit off the happy path.
+- **Shared test account.** Parallel tests create fake races.

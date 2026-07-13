@@ -1,0 +1,90 @@
+---
+id: 3465
+title: "Object.create и оператор new: когда что выбирать"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Object.create и оператор new: когда что выбирать
+
+## Суть
+
+`Object.create(proto)` создаёт пустой объект с заданным прототипом и не вызывает конструктор. Оператор `new Constructor()` создаёт объект, связывает его с `Constructor.prototype`, выполняет тело функции и возвращает экземпляр (или явный return объекта). Первый путь нужен для чистого наследования без инициализации, второй для классов и фабрик с side effect при создании.
+
+## Что ответить на собесе
+
+- Page Object через `Object.create(basePO)` переиспользую методы базы без повторного конструктора.
+- `new` беру для DOM fixture wrapper, где конструктор вешает listeners.
+- Для тестового double без лишней логики создаю объект с `Object.create(null)` и чистым словарём.
+- Проверяю цепочку `Object.getPrototypeOf(instance) === Expected.prototype`.
+- Честно: `Object.create` не вызывает `constructor`, если нужен invariant, только `new` или `Reflect.construct`.
+
+## Как это работает
+
+Прототип без конструктора:
+
+```
+const baseReporter = {
+  header() {
+    return "Report";
+  },
+};
+
+const junitReporter = Object.create(baseReporter);
+junitReporter.format = () => `${this.header()}: XML`;
+```
+
+Через конструктор:
+
+```
+function HtmlReporter(theme) {
+  this.theme = theme;
+  this.header = () => `Report (${this.theme})`;
+}
+
+const dark = new HtmlReporter("dark");
+```
+
+Сравнение в pytest (модель поведения):
+
+```python
+class BasePage:
+    def url(self) -> str:
+        return "/login"
+
+
+def make_page_without_init(proto: type) -> object:
+    return type("Anonymous", (proto,), {})()
+
+
+def make_page_with_init(cls: type, theme: str):
+    return cls(theme)
+
+
+class LoginPage(BasePage):
+    def __init__(self, theme: str):
+        self.theme = theme
+
+
+def test_create_vs_new_semantics():
+    bare = make_page_without_init(BasePage)
+    assert bare.url() == "/login"
+    assert not hasattr(bare, "theme")
+    full = make_page_with_init(LoginPage, "dark")
+    assert full.theme == "dark"
+```
+
+## Подводные камни
+
+**Object.create(null) и JSON.** Нет `toString`, сериализация ломается.
+
+**new без new.** Обычный вызов `Animal()` теряет `this`, тест на `instanceof` упадёт.
+
+**Return примитива из конструктора.** `new` игнорирует return number/string.
+
+**Object.create второй аргумент.** Property descriptors забывают, writable/enumerable по умолчанию false.
+
+**Мок prototype chain.** Jest `mockImplementation` на prototype не копируется при `Object.create`.

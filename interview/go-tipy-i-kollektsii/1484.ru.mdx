@@ -1,0 +1,71 @@
+---
+id: 1484
+title: "Плюсы и минусы in-memory map?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Плюсы и минусы in-memory map?
+
+## Суть
+
+Map в RAM даёт O(1) lookup и простой API, но ограничена объёмом памяти процесса и не переживает рестарт. В многогорутинном коде нужна явная синхронизация.
+
+## Что ответить на собесе
+
+- Плюсы: скорость, удобный синтаксис, гибкие типы ключа/значения.
+- Минусы: cap по RAM, нет durability, рост map может триггерить GC и rehash.
+- Для shared state называю `sync.RWMutex` + map или `sync.Map` под read-heavy паттерн.
+- Честно добавляю: для больших или долговечных данных беру Redis/DB, map оставляю для кэша и локальных индексов.
+
+## Как это работает
+
+In-memory map живёт в heap процесса. Каждый insert может расширить bucket array. При shutdown данные теряются, если не сбросить на диск отдельно.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Registry struct {
+	mu    sync.RWMutex
+	users map[string]string
+}
+
+func (r *Registry) Set(id, name string) {
+	r.mu.Lock()
+	r.users[id] = name
+	r.mu.Unlock()
+}
+
+func (r *Registry) Get(id string) (string, bool) {
+	r.mu.RLock()
+	name, ok := r.users[id]
+	r.mu.RUnlock()
+	return name, ok
+}
+
+func main() {
+	reg := &Registry{users: make(map[string]string)}
+	reg.Set("u1", "Mila")
+	if name, ok := reg.Get("u1"); ok {
+		fmt.Println(name)
+	}
+}
+```
+
+Обёртка с mutex сериализует writers и позволяет параллельные readers через `RLock`.
+
+## Подводные камни
+
+- **Unbounded growth.** Кэш без eviction заполнит RAM; нужен TTL или LRU поверх map.
+- **Pointer values.** Хранение больших struct по value в map копирует данные; иногда лучше `map[K]*V`.
+- **Iteration under lock.** Долгий `range` под write lock блокирует всех writers.
+- **sync.Map misuse.** Он не универсальная замена map; выигрывает при stable keys и редких writes.
+- **Serialization cost.** Snapshot map в файл на миллионах ключей может быть дороже remote KV.

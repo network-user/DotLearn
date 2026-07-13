@@ -1,0 +1,90 @@
+---
+id: 2038
+title: "Разрешение конфликтов зависимостей в Maven"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Разрешение конфликтов зависимостей в Maven
+
+## Суть
+
+Конфликт возникает, когда два пути в dependency tree тянут разные версии одного артефакта. Maven 3 применяет **nearest definition** (ближайшая к root декларация побеждает), а при равной дистанции берёт **самую новую** версию. Это не гарантирует совместимость: победившая версия может сломать транзитивного потребителя.
+
+## Что ответить на собесе
+
+- Сначала смотрю `mvn dependency:tree -Dverbose` и ищу `omitted for conflict`.
+- Явно фиксирую версию в `<dependencyManagement>` или прямой dependency на root.
+- Для жёсткого отсечения использую `<exclusions>` на конкретном transitive пути.
+- В крупных проектах подключаю `maven-enforcer-plugin` с `dependencyConvergence`.
+- Честно: «взять самую новую» без smoke-тестов опасно при major bump транзитива.
+
+## Как это работает
+
+Два модуля тянут разные версии `commons-io`:
+
+```xml
+<dependencies>
+  <dependency>
+    <groupId>com.acme</groupId>
+    <artifactId>reporting-sdk</artifactId>
+    <version>4.0</version>
+  </dependency>
+  <dependency>
+    <groupId>com.acme</groupId>
+    <artifactId>legacy-parser</artifactId>
+    <version>1.2</version>
+  </dependency>
+</dependencies>
+```
+
+`reporting-sdk` → `commons-io:2.15`, `legacy-parser` → `commons-io:2.11`. Если обе на глубине 1, Maven выберет 2.15 как более новую.
+
+Принудительная версия через BOM:
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+      <version>2.16.1</version>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+Исключение конфликтующей ветки:
+
+```xml
+<dependency>
+  <groupId>com.acme</groupId>
+  <artifactId>legacy-parser</artifactId>
+  <version>1.2</version>
+  <exclusions>
+    <exclusion>
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+    </exclusion>
+  </exclusions>
+</dependency>
+```
+
+Диагностика:
+
+```bash
+mvn dependency:tree -Dincludes=commons-io:commons-io
+```
+
+В CI полезен enforcer rule `requireUpperBoundDeps`, который падает, если resolved версия ниже, чем кто-то запросил.
+
+## Подводные камни
+
+- **nearest ≠ правильная.** Прямая зависимость на старую версию перебивает свежий транзитив.
+- **exclusion слишком широкий.** Отрезали jar, который нужен другому модулю.
+- **duplicate classes.** Две версии одного пакета в runtime дают `LinkageError`.
+- **BOM не импортирован.** `dependencyManagement` в child без parent не действует.
+- **Gradle vs Maven drift.** В multi-build репо правила mediation разные, баги воспроизводятся только в одном инструменте.

@@ -1,0 +1,76 @@
+---
+id: 2371
+title: "ArrayList vs LinkedList in Java: what an AQA engineer should know"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# ArrayList vs LinkedList in Java: what an AQA engineer should know
+
+## In short
+
+ArrayList in Java stores elements in a dynamic array and gives O(1) indexed access but costly middle inserts. LinkedList is built from doubly linked nodes: fast local insert/remove but O(n) random access. For automation this affects test data builder choices and understanding performance regressions in Java services.
+
+## How to answer in an interview
+
+- I compare memory layout: contiguous array vs nodes with prev/next pointers.
+- I name complexities: indexed get O(1) vs O(n); middle insert O(n) vs O(1) with a known iterator.
+- I explain LinkedList also implements Deque but rarely beats ArrayDeque in practice.
+- I tie it to tests: large fixture collections, parametrization, API responses serialized as lists.
+- I add honestly: most Java code is fine with ArrayList; LinkedList is niche or memory overhead and cache misses grow.
+
+## How it works
+
+ArrayList on overflow allocates a larger array (often ~1.5x) and copies elements. Iterator and for-each traverse sequentially and are CPU-cache friendly. LinkedList get(n) walks from head or tail; remove via ListIterator avoids shifting the whole tail of an array.
+
+From an AQA Python angle, analogues help run a micro-benchmark in pytest and show the gap at large N:
+
+```python
+from collections import deque
+import time
+
+
+def bench(name: str, setup, op, repeats: int = 1000):
+    start = time.perf_counter()
+    for _ in range(repeats):
+        op(setup())
+    elapsed = time.perf_counter() - start
+    return name, elapsed
+
+
+def random_access_list(size: int):
+    data = list(range(size))
+    return sum(data[i] for i in range(0, size, 7))
+
+
+def random_access_deque(size: int):
+    data = deque(range(size))
+    return sum(data[i] for i in range(0, size, 7))
+
+
+if __name__ == "__main__":
+    n = 50_000
+    for label, fn in [
+        ("list random access", lambda: random_access_list(n)),
+        ("deque random access", lambda: random_access_deque(n)),
+    ]:
+        _, sec = bench(label, lambda: None, lambda _: fn(), repeats=3)
+        print(f"{label}: {sec:.4f}s")
+```
+
+In a Java stack, UI/API tests more often care about element order and equals/hashCode than collection micro-optimization. Performance tests pin SLA on an endpoint returning a List from the ORM.
+
+## Pitfalls
+
+**LinkedList for random access in a hot path.** Code looks like a List but degrades on large data.
+
+**Concurrent modification.** ArrayList iterator throws CME when the list changes in a loop; tests can hide prod bugs.
+
+**equals on sublists.** SubList is tied to the parent; mutation breaks other asserts in non-obvious ways.
+
+**JSON serialization.** Order is preserved but extra DTO fields cause false-positive snapshot diffs.
+
+**Choosing by name.** "We need linked" without an access pattern is often wrong.

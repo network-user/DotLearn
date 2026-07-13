@@ -1,0 +1,70 @@
+---
+id: 2972
+title: "Expired access token: what does QA verify in the client?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Expired access token: what does QA verify in the client?
+
+## In short
+
+The access token is short-lived; after `exp` the resource server rejects requests (usually 401 with `invalid_token`). The client should refresh via refresh token, redirect to login, or show clear UX. QA simulates expiry by shifting clocks, short TTL on staging, and manual JWT payload edits.
+
+## How to answer in an interview
+
+- First request with expired access returns 401; the client must not spam the API with parallel retries without single-flight refresh.
+- With a valid refresh the user stays in session without re-entering password.
+- Without refresh or with revoked refresh I expect logout and storage cleared.
+- Honestly: on e2e I shift system clock only on an isolated VM; on the host it breaks other tests.
+
+## How it works
+
+Happy path sequence:
+
+```
+GET /api/data → 401 TOKEN_EXPIRED
+POST /oauth/token grant=refresh_token → 200 new access
+GET /api/data (retry) → 200
+```
+
+Gherkin:
+
+```gherkin
+Feature: Behavior when access token expires
+
+  Scenario: Silent refresh extends session
+    Given access TTL 60s and valid refresh
+    When QA waits 70s
+    And the user clicks "Refresh list"
+    Then the first GET returns 401
+    And the client POST refresh once
+    And retry GET returns 200
+    And the user stays on the same page
+
+  Scenario: Parallel requests do not duplicate refresh
+    Given access expired
+    When the UI loads dashboard with 5 API calls
+    Then refresh endpoint is called exactly once
+    And all 5 requests eventually 200 or controlled error
+
+  Scenario: Revoked refresh goes to login
+    Given refresh on blacklist
+    When access expires and client tries refresh
+    Then POST refresh 401
+    And local storage is cleared
+    And redirect to /login with message session_expired
+```
+
+I decode JWT on jwt.io only for test tokens; secrets do not go into reports.
+
+## Pitfalls
+
+- **Clock skew.** Server says expired, client does not yet; flaky 401.
+- **Refresh rotation without storage update.** Second refresh fails, user logged out.
+- **401 on business error.** Client redirects to login wrongly.
+- **WebSocket with stale token.** HTTP refresh OK, WS silent.
+- **Background tab.** Timer throttle, token expired without refresh until focus.

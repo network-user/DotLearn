@@ -1,0 +1,70 @@
+---
+id: 2081
+title: "JVM stack: структура и настройка -Xss"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# JVM stack: структура и настройка -Xss
+
+## Суть
+
+Каждый Java thread получает private stack из contiguous frames. Frame содержит local variable array, operand stack для bytecode ops, pointer to constant pool, return address. Push on invoke, pop on return (LIFO). Stack overflow → `StackOverflowError`; size задаётся `-Xss` per thread и резервируется из native memory, не heap.
+
+## Что ответить на собесе
+
+- Locals hold primitives and object references; objects themselves on heap.
+- Operand stack: intermediate int/float/ref values for bytecode instructions.
+- Deep recursion или huge local arrays in one frame eat stack.
+- Default `-Xss` platform dependent (often 512k..1M on 64-bit).
+- Честно: увеличение `-Xss` × 10k threads может убить native memory раньше heap.
+
+## Как это работает
+
+```java
+public final class StackDepth {
+
+    public static void main(String[] args) {
+        System.out.println(descend(0));
+    }
+
+    private static int descend(int depth) {
+        if (depth >= 50_000) {
+            return depth;
+        }
+        return descend(depth + 1);
+    }
+}
+```
+
+Каждый `descend` call:
+
+```
+Frame descend(depth=3)
+  locals: [ depth=3 ]
+  operand stack: (empty)
+  return to: descend(2)
+```
+
+При ~50k frames default stack → `StackOverflowError`.
+
+Tune:
+
+```bash
+java -Xss2m StackDepth
+```
+
+2MB × thread count must fit native budget. Virtual threads (Java 21+) mount many carriers on small stack with continuation unmount on blocking, changing cost model.
+
+Frame size depends on method: `long`/`double` take two local slots; debug symbols don't affect runtime stack.
+
+## Подводные камни
+
+- **Huge local array.** `byte[1_000_000]` in method one frame blow stack instantly.
+- **Native stack separate.** JNI native code uses OS stack beyond Java `-Xss`.
+- **Thread pool × large -Xss.** 500 threads @ 4MB = 2GB native invisible in heap charts.
+- **Recursive regex/backtracking.** Algorithm stack depth not always obvious in source.
+- **Virtual thread pinning.** Blocked synchronized/native on carrier holds stack longer.

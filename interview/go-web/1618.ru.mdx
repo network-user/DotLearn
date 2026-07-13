@@ -1,0 +1,61 @@
+---
+id: 1618
+title: "Обратная совместимость в gRPC и protobuf"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Обратная совместимость в gRPC и protobuf
+
+## Суть
+
+Protobuf спроектирован для эволюции схемы: поля идентифицируются номером, а не именем в wire format. Старый код игнорирует неизвестные поля; новые optional/repeated поля можно добавлять без перекомпиляции клиентов. Новые RPC методы в сервисе тоже не ломают старых потребителей, пока они их не вызывают.
+
+## Что ответить на собесе
+
+- Добавляю поля с новыми номерами, никогда не переиспользую номер.
+- Удаление: `reserved` для номеров и имён, либо `deprecated = true`.
+- Менять тип поля нельзя; вместо этого новое поле `email_v2`.
+- Версионирую пакет `api.v2` при несовместимых сдвигах.
+- Честно: required в proto2 и смена семантики без bump версии всё равно ломают контракт.
+
+## Как это работает
+
+```protobuf
+syntax = "proto3";
+
+package catalog.v1;
+
+message Product {
+  int64 id = 1;
+  string title = 2;
+  string sku = 3;
+  string description = 4;
+  reserved 5;
+  reserved "legacy_code";
+}
+
+service CatalogService {
+  rpc GetProduct(GetProductRequest) returns (Product);
+  rpc ListProducts(ListProductsRequest) returns (stream Product);
+}
+```
+
+Старый клиент v1 получает `description` и пропускает неизвестные wire поля. Новый сервер отвечает старому клиенту без `description`: поле просто отсутствует в декодированной структуре (zero value). Добавление `ListProducts` не затрагивает клиентов, которые зовут только `GetProduct`.
+
+В CI проверяю breaking changes через `buf breaking` или аналог против git baseline.
+
+## Подводные камни
+
+**Reuse field number.** Тихая порча данных: старый клиент прочитает bytes как другой тип.
+
+**Удаление поля без reserved.** Новое поле с тем же номером даст silent corruption.
+
+**Изменение `oneof` или `map` semantics.** Часто breaking, нужен новый message type.
+
+**JSON over gRPC gateway.** Proto совместимость не спасает HTTP JSON клиентов от лишних/отсутствующих ключей.
+
+**Одновременный deploy всех сервисов.** В реальности rolling update требует строгой дисциплины additive-only.

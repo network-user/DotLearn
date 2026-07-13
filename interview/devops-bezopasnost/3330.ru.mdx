@@ -1,0 +1,59 @@
+---
+id: 3330
+title: "Что делает SSL/TLS на транспортном уровне?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает SSL/TLS на транспортном уровне?
+
+## Суть
+
+SSL (устаревшее имя) и современный TLS шифруют трафик между клиентом и сервером, проверяют подлинность сервера через X.509 сертификат и обеспечивают целостность записей. Handshake согласует версию протокола, cipher suite и симметричный session key для bulk-шифрования.
+
+## Что ответить на собесе
+
+- Разделяю цели: confidentiality, integrity, server authentication (mutual TLS добавляет client auth).
+- Объясняю, что TLS сегодня это TLS 1.2/1.3; SSLv3 и ниже отключены.
+- Упоминаю цепочку доверия: leaf cert, intermediate, root CA в trust store клиента.
+- Честно добавляю: TLS не заменяет auth приложения и не шифрует данные at rest; это только канал in transit.
+
+## Как это работает
+
+Клиент инициирует ClientHello с SNI (имя хоста). Сервер отвечает ServerHello, сертификатом и (в 1.2) обменом ключами. После проверки CN/SAN и срока действия генерируется общий symmetric key; дальше HTTP или другой протокол идёт внутри зашифрованных record.
+
+Минимальная проверка сертификата с openssl:
+
+```bash
+openssl s_client -connect api.example.com:443 -servername api.example.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+Фрагмент nginx для TLS 1.2+ с сильными шифрами:
+
+```bash
+cat >> /etc/nginx/conf.d/tls-api.conf <<'EOF'
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+}
+EOF
+nginx -t && systemctl reload nginx
+```
+
+`fullchain.pem` содержит leaf + intermediate для корректной валидации на клиенте. Автообновление через certbot/cron с reload без downtime.
+
+## Подводные камни
+
+- **Expired cert без мониторинга.** Браузеры и SDK падают одновременно; нужен alert за 30/7 дней.
+- **Неполная цепочка.** Без intermediate Android/Java клиенты часто падают, desktop может «простить».
+- **Weak ciphers и TLS 1.0.** PCI и современные сканеры блокируют legacy; тестирую ssllabs или testssl.sh.
+- **SNI mismatch.** Cert на `*.example.com` не покроет другой hostname в том же IP.
+- **Termination только на edge.** HTTP между ingress и pod без mTLS остаётся plaintext внутри кластера.

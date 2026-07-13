@@ -1,0 +1,65 @@
+---
+id: 2075
+title: "When GC cleans the heap"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When GC cleans the heap
+
+## In short
+
+GC runs when the allocator cannot place an object in the target generation or GC heuristics (G1 IHOP, allocation rate) deem collection worthwhile. It is not a deterministic timer: unreachable objects become eligible as soon as references drop, but physical reclaim happens on the next suitable pause or concurrent cycle. `System.gc()` is only a hint.
+
+## How to answer in an interview
+
+- Allocation failure in Eden triggers minor GC.
+- Promotion failure or old gen fill → major/mixed GC.
+- G1 concurrent marking starts before the heap is full (IHOP threshold).
+- STW pause length depends on collector (ZGC ms vs Parallel seconds).
+- Honestly: `System.gc()` in libraries can cause prod pause spikes; `-XX:+DisableExplicitGC` is sometimes justified.
+
+## How it works
+
+```java
+public final class GcTriggerDemo {
+
+    public static void main(String[] args) {
+        var cache = new ArrayList<byte[]>(10_000);
+        for (int i = 0; i < 10_000; i++) {
+            cache.add(new byte[32_768]);
+            if (i % 500 == 0) {
+                cache.subList(0, 250).clear();
+            }
+        }
+        cache = null;
+    }
+}
+```
+
+Timeline (G1, simplified):
+
+1. Many `byte[]` fill Eden → **young GC** evacuates survivors.
+2. Long-lived arrays promote to Old → mixed GC reclaims some regions.
+3. After `cache = null` the graph is unreachable, but memory frees only on the next GC touching those regions.
+
+JFR event `jdk.GarbageCollection` shows cause: `G1 Evacuation Pause`, `G1 Humongous Allocation`, `Metadata GC Threshold`.
+
+Explicit:
+
+```java
+System.gc();
+```
+
+The JVM may ignore or run a concurrent cycle; no timing contract. `finalize()` (deprecated) does not trigger GC and does not guarantee prompt cleanup.
+
+## Pitfalls
+
+- **Assuming immediate free after null.** RSS may not drop: OS does not reclaim pages instantly.
+- **Full GC on every System.gc().** Some collectors treat the hint as Full GC → multi-second pause.
+- **Humongous objects in G1.** >50% region size bypasses Eden, pressures Old directly.
+- **GC logs misread.** "GC pause 200ms" without allocation rate context is meaningless.
+- **Off-heap leak ignored.** Direct memory full while heap chart looks free.

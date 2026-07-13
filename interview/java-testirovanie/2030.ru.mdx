@@ -1,0 +1,66 @@
+---
+id: 2030
+title: "Что считается unit в unit-тестировании?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что считается unit в unit-тестировании?
+
+## Суть
+
+Unit это минимальный фрагмент поведения, который можно проверить изолированно: метод доменного сервиса, pure function, value object invariant. Граница unit выбирает команда; в Java чаще class или package, не весь Spring context.
+
+## Что ответить на собесе
+
+- Unit = SUT + подменённые ports; без реальной БД и HTTP.
+- Один failing test указывает на один класс/метод.
+- Не путаю unit с «любой быстрый test»: `@SpringBootTest` уже integration.
+- Sociable unit допускает real value objects, mocked только IO.
+- Честно: god-class на 2000 строк не unit; сначала декомпозиция.
+
+## Как это работает
+
+SUT `TransferPolicy`:
+
+```java
+class TransferPolicy {
+    private final LimitRepository limits;
+
+    TransferPolicy(LimitRepository limits) {
+        this.limits = limits;
+    }
+
+    void validate(Money amount, AccountId from) {
+        if (amount.signum() <= 0) throw new InvalidAmountException();
+        if (amount.compareTo(limits.dailyCap(from)) > 0) throw new LimitExceededException();
+    }
+}
+```
+
+Unit test:
+
+```java
+@Test
+void blocksAmountAboveDailyCap() {
+    LimitRepository limits = mock(LimitRepository.class);
+    when(limits.dailyCap(id("a1"))).thenReturn(Money.of("1000", "USD"));
+    TransferPolicy policy = new TransferPolicy(limits);
+
+    assertThrows(LimitExceededException.class,
+        () -> policy.validate(Money.of("1001", "USD"), id("a1")));
+}
+```
+
+Collaborators за boundary mock/fake; алгоритм cap проверяется напрямую. Если тест тянет `@DataJpaTest`, это уже другой unit boundary.
+
+## Подводные камни
+
+- **Unit test entire microservice.** 40s runtime, flaky network.
+- **Testing private methods.** Хрупкая связь с implementation.
+- **No clear SUT.** Assert scattered across helpers.
+- **Shared static mutable state.** Order-dependent failures.
+- **Unit without isolation proves little.** Green while SQL mapping broken.

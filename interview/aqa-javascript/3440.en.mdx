@@ -1,0 +1,62 @@
+---
+id: 3440
+title: "Arrow vs regular functions in JS: pitfalls for UI tests"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Arrow vs regular functions in JS: pitfalls for UI tests
+
+## In short
+
+A regular function gets its own `this` at call time and can be a constructor. An arrow function has no own `this`, `arguments`, or `prototype`, and cannot be used with `new`. In Playwright/Cypress this affects callbacks, page.evaluate, and handlers in SPAs.
+
+## How to answer in an interview
+
+- Regular function: `this` depends on call site (method call, bind, apply).
+- Arrow: lexical `this` from the enclosing scope; handy in `setTimeout` and array methods without `.bind`.
+- Arrow cannot be a constructor; no `arguments`, only rest `...args`.
+- In e2e I often see a bug: arrow method on an object loses field access via `this`.
+- I add honestly: in modern TS/React hooks `this` matters less, but legacy jQuery/Backbone code still shows up in enterprise.
+
+## How it works
+
+In page.evaluate the function is serialized; closures do not travel. An arrow inside evaluate inherits `this` from the browser's isolated context, which can surprise you.
+
+```
+const widget = {
+  label: "cart",
+  renderClassic: function () { return this.label; },
+  renderArrow: () => this.label,
+};
+// renderClassic() -> "cart"
+// renderArrow() -> undefined (this from module/global)
+```
+
+In a Playwright Python wrapper I verify app behavior without rewriting JS:
+
+```python
+from playwright.sync_api import Page, expect
+
+
+def test_cart_header_shows_label(page: Page, base_url: str):
+    page.goto(f"{base_url}/cart")
+    expect(page.get_by_test_id("cart-header")).to_have_text("cart")
+```
+
+If I test frontend units in Jest, I document expected `this` in bug reproduction steps.
+
+## Pitfalls
+
+**Arrow as object method.** Silent undefined in production, flaky text assert.
+
+**bind on a hot path.** Extra functions break performance test baseline.
+
+**evaluate with arrow and window.** `this` is not window; pass DOM via arguments.
+
+**Constructor refactor to class fields.** Old `function User()` tests miss coverage.
+
+**Arrow in Mocha hook with `this.timeout`.** Arrow loses Mocha context.

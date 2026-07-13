@@ -1,0 +1,67 @@
+---
+id: 1587
+title: "Circuit Breaker pattern"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Circuit Breaker pattern
+
+## Суть
+
+Circuit Breaker защищает caller от каскадных retry на failing dependency. Состояния Closed (normal), Open (fail fast), Half-Open (probe). Threshold errors → Open; timeout → trial calls; success streak → Closed.
+
+## Что ответить на собесе
+
+- Fail fast в Open экономит threads и latency budget.
+- Half-Open ограничивает probe traffic.
+- Комбинирую с timeout, retry только idempotent ops.
+- Честно: breaker не заменяет fix upstream; metrics обязательны.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/sony/gobreaker"
+)
+
+func main() {
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:    "payments",
+		Timeout: 5 * time.Second,
+		ReadyToTrip: func(c gobreaker.Counts) bool {
+			return c.ConsecutiveFailures >= 3
+		},
+	})
+
+	for i := 0; i < 6; i++ {
+		_, err := cb.Execute(func() (any, error) {
+			return nil, errors.New("upstream down")
+		})
+		fmt.Println(i, err, cb.State())
+	}
+}
+```
+
+После серии failures State Open, Execute returns immediately без call. После Timeout пробует Half-Open.
+
+## Подводные камни
+
+**Breaker на non-idempotent POST.** Half-open probe duplicates side effects.
+
+**Shared breaker per process only.** Per-tenant isolation may need separate CB.
+
+**Too aggressive ReadyToTrip.** Flaps on blips.
+
+**No fallback path.** Open still user-visible errors.
+
+**Ignore context cancellation inside Execute.** Probe ignores parent ctx if wrapped wrong.

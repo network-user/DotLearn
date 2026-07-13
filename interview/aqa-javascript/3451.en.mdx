@@ -1,0 +1,71 @@
+---
+id: 3451
+title: "Primitives vs references: what breaks equality in tests"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Primitives vs references: what breaks equality in tests
+
+## In short
+
+Primitives (`undefined`, `null`, `boolean`, `number`, `string`, `bigint`, `symbol`) are immutable and copy by value. Reference types (objects, arrays, functions) store a pointer: assignment copies the reference. In snapshots and deep equal you must know whether a test mutates shared fixture data.
+
+## How to answer in an interview
+
+- `let a = 5; let b = a; b = 10` does not change `a`.
+- `const cfg = defaults; cfg.timeout = 1` mutates `defaults` too unless cloned.
+- For isolation I use structuredClone/spread at the top level; deep clone for nested data.
+- `Object.is` distinguishes `+0` and `-0`; `===` does not.
+- Honestly: a shallow copy of an array of objects still shares nested references between tests.
+
+## How it works
+
+Primitive:
+
+```
+let retries = 2;
+let copy = retries;
+copy = 5;
+```
+
+Reference:
+
+```
+const base = { headers: { auth: "token" } };
+const local = base;
+local.headers.auth = "expired";
+```
+
+Deep copy before mutate in a hook:
+
+```python
+import copy
+
+
+def isolated_fixture(shared: dict) -> dict:
+    return copy.deepcopy(shared)
+
+
+def test_mutation_does_not_leak(shared_defaults):
+    local = isolated_fixture(shared_defaults)
+    local["headers"]["auth"] = "expired"
+    assert shared_defaults["headers"]["auth"] != "expired"
+```
+
+In JS tests: `expect(result).not.toBe(fixture)` for objects, `toEqual` for structure.
+
+## Pitfalls
+
+**Frozen object is not deep.** `Object.freeze` is not recursive; nested fields still mutate.
+
+**Comparing functions.** Two lambdas with the same body are not reference-equal.
+
+**Wrapped primitive.** `new String("a")` is an object wrapper, not a primitive.
+
+**Array of one object.** Two tests push into the same element.
+
+**JSON clone loses types.** Date, Map, and `undefined` drop on round-trip.

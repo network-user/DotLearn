@@ -1,0 +1,67 @@
+---
+id: 1551
+title: "Как 4 goroutines распределятся по 4 ядрам?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как 4 goroutines распределятся по 4 ядрам?
+
+## Суть
+
+При GOMAXPROCS=4 и четырёх CPU-bound goroutines runtime может выполнять их параллельно на разных P, каждый привязан к M на своём ядре. Гарантии «1:1 goroutine:core» нет: scheduler мигрирует G, work stealing и blocking меняют mapping в любой момент.
+
+## Что ответить на собесе
+
+- GOMAXPROCS caps параллельное CPU execution, не число goroutines.
+- Четыре tight loops могут занять четыре ядра одновременно, если нет блокировок.
+- I/O-bound goroutines чаще idle; ядра простаивают или заняты другими G.
+- Честно: для proof смотрю `GODEBUG=schedtrace=1000` или execution tracer, не assumptions.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func burn(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	sum := 0
+	for i := 0; i < 50_000_000; i++ {
+		sum += i
+	}
+	fmt.Println(id, sum > 0)
+}
+
+func main() {
+	runtime.GOMAXPROCS(4)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go burn(i, &wg)
+	}
+	wg.Wait()
+}
+```
+
+Четыре burn goroutines конкурируют за четыре P. OS scheduler ставит M на available cores; Go не pin'ит G к core без `runtime.LockOSThread` hacks.
+
+## Подводные камни
+
+**GOMAXPROCS default в container.** Может быть 48 logical CPUs при quota 2 cores; нужен automaxprocs или ручная настройка.
+
+**Assumption 1:1 mapping.** На собесе звучит naive; упоминаю migration.
+
+**Single P bottleneck.** GOMAXPROCS=1 → все 4 G time-slice на одном core.
+
+**Hyperthreading.** 4 cores ≠ 4 physical; NumCPU может быть 8.
+
+**LockOSThread for isolation.** Редкий HPC case; ломает M:N если злоупотреблять.

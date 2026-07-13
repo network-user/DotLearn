@@ -1,0 +1,64 @@
+---
+id: 2086
+title: "Поколения heap и promotion объектов"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Поколения heap и promotion объектов
+
+## Суть
+
+Generational heap делит object memory на Young (Eden + два Survivor) и Old (Tenured или G1 regions). Новые объекты аллоцируются в Eden; minor GC копирует survivors в S0/S1 с increment age; при достижении threshold (`-XX:MaxTenuringThreshold`) объект promote в Old. Metaspace отдельно хранит class metadata, не object heap.
+
+## Что ответить на собесе
+
+- Weak generational hypothesis: большинство объектов умирает быстро.
+- Minor GC: STW или mostly STW evacuate Eden + one survivor.
+- Survivor spaces swap роли From/To каждый cycle.
+- Promotion failure → premature Full GC pressure.
+- Честно: G1 uses regions, not classic fixed Eden, но логика young/old та же.
+
+## Как это работает
+
+```java
+public final class PromotionDemo {
+
+    public static void main(String[] args) {
+        var longLived = new byte[512 * 1024];
+        for (int i = 0; i < 20_000; i++) {
+            var temp = new byte[1024];
+            if (i % 5000 == 0) {
+                longLived = longLived;
+            }
+        }
+    }
+}
+```
+
+Lifecycle:
+
+1. `temp` arrays allocate in Eden; die young → collected in minor GC cheaply.
+2. `longLived` survives repeated minor GCs; age counter increments each copy in survivor.
+3. Age ≥ threshold → moved to Old gen; minor GC no longer touches it often.
+4. Old fill triggers major/mixed collection.
+
+Classic layout:
+
+```
+Young:  [ Eden | Survivor0 | Survivor1 ]
+Old:    [ Tenured objects................ ]
+```
+
+G1 equivalent: Eden regions + survivor regions + old regions; `-XX:G1NewSizePercent` influences young footprint.
+
+## Подводные камни
+
+- **Huge arrays.** Direct to Old/humongous region, bypassing generational benefit.
+- **MaxTenuringThreshold=15 default.** Premature promotion if survivor too small.
+- **Survivor overflow.** Objects promoted early → Old pressure spike.
+- **Confusing PermGen answer.** Metaspace not part of object heap generations.
+- **Tuning only -Xmx.** Without GC logs cannot see promotion rate problems.

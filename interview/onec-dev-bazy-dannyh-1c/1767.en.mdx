@@ -1,0 +1,56 @@
+---
+id: 1767
+title: "How 1C RLS affects the optimizer index choice"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How 1C RLS affects the optimizer index choice
+
+## In short
+
+Row-level access restrictions add hidden predicates for organization, department, or other slices to every query. If the index does not cover those fields together with the user filter, the plan falls back to a full scan even with a correct date index.
+
+## How to answer in an interview
+
+- I explain 1C RLS as extra conditions in the query text the platform injects from roles and data access settings.
+- In an interview I say the index must account for restriction fields: often `Организация`, `Склад`, `Подразделение`.
+- I stress the difference between platform RLS and manual `ГДЕ` in the query: the optimizer sees both but the developer controls only the explicit part.
+- I honestly note that enabling RLS on a register without an index on the restriction dimension slows every report for the branch manager role.
+- I check the plan as a user with narrow access, not only with full rights.
+
+## How it works
+
+When a user with limited access opens a report, the platform appends conditions to the DCS or application query. SQL gains, for example, a filter on allowed organizations.
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Продажи.Номенклатура,
+|    СУММА(Продажи.Сумма) КАК Сумма
+|ИЗ
+|    РегистрНакопления.Выручка.Обороты(&Начало, &Конец, , ) КАК Продажи
+|ГДЕ
+|    Продажи.Организация В (&ДоступныеОрганизации)
+|СГРУППИРОВАТЬ ПО
+|    Продажи.Номенклатура";
+Запрос.УстановитьПараметр("ДоступныеОрганизации", МассивРазрешенныхОрганизаций());
+```
+
+If the index is only on `(Период, Номенклатура)` but RLS requires `Организация`, the optimizer may scan movements. A composite index `(Организация, Период, Номенклатура)` or organization in virtual table parameters aligns the plan.
+
+Complex RLS with subqueries to access settings tables sometimes blocks seek: the optimizer estimates cardinality pessimistically. Materializing allowed references in a temp table with an index and JOIN stabilizes the plan.
+
+Full admin rights hide the problem: the plan without RLS uses the index while the same report runs for minutes for a manager.
+
+## Pitfalls
+
+- **Testing only as admin.** Indexes work in the Designer and fail for real roles.
+- **Index without the restriction field.** Date is indexed, organization is not, RLS breaks the plan.
+- **IN with thousands of references.** A huge `В (&Массив)` list gives unstable plans; prefer a temp table with an index.
+- **Mixing RLS and privileged mode.** Restrictions are lifted in privileged code; plan cache effects are rare but access logic differs.
+- **Expecting seek on a computed access field.** A condition through a platform function does not always map to an indexed column.

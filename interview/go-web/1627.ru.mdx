@@ -1,0 +1,61 @@
+---
+id: 1627
+title: "Структура Go, близкая к JSON"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Структура Go, близкая к JSON
+
+## Суть
+
+Для динамического JSON без фиксированной схемы используют `map[string]interface{}` или `map[string]any`. Для известной формы лучше typed `struct` с тегами `json`. Вложенные объекты в map дают ещё один `map[string]any`, массивы приходят как `[]interface{}`.
+
+## Что ответить на собесе
+
+- `json.Unmarshal` в `map[string]any` когда ключи заранее неизвестны.
+- Type assertion `v.(string)` или `json.Number` для чисел без float потери.
+- `json.RawMessage` откладывает парсинг вложенного куска.
+- `struct` + теги для стабильного API контракта.
+- Честно: `map[string]any` теряет типы и ловит runtime panic; в prod предпочитаю struct или `json.Decoder` в конкретный тип.
+
+## Как это работает
+
+```go
+raw := []byte(`{"name":"Ира","scores":[91,88],"meta":{"role":"admin"}}`)
+
+var loose map[string]any
+if err := json.Unmarshal(raw, &loose); err != nil {
+	log.Fatal(err)
+}
+
+name := loose["name"].(string)
+scores := loose["scores"].([]any)
+meta := loose["meta"].(map[string]any)
+
+type Profile struct {
+	Name   string         `json:"name"`
+	Scores []int          `json:"scores"`
+	Meta   map[string]any `json:"meta"`
+}
+
+var typed Profile
+json.Unmarshal(raw, &typed)
+```
+
+`encoding/json` по умолчанию unmarshals числа в `float64` внутри `interface{}`. Для int64 из динамики использую `json.Decoder` с `UseNumber()` и `json.Number.Int64()`.
+
+## Подводные камни
+
+**Прямой assert без проверки `ok`.** Panic на неожиданном типе из внешнего API.
+
+**Float для больших int64 ID.** Потеря точности в `interface{}` пути.
+
+**Nil vs missing key.** В map отсутствие ключа и `null` различаю через comma-ok.
+
+**Вложенный `[]map[string]any` без схемы.** Код обхода разрастается; лучше struct.
+
+**Marshal map с несортируемым обходом.** Тесты flaky, если сравнивают строку JSON.

@@ -1,0 +1,61 @@
+---
+id: 1636
+title: "panic в Go: когда уместна"
+category: go-go-yazyk-obschee
+categoryLabel: "Go: язык (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# panic в Go: когда уместна
+
+## Суть
+
+`panic` останавливает нормальный поток, выполняет defer в обратном порядке и крашит goroutine, если никто не `recover`. В application code ошибки возвращают через `error`; panic для программных багов, нарушенных инвариантов и init-time misconfiguration.
+
+## Что ответить на собесе
+
+- Библиотека: почти всегда `error`, не panic на плохой input.
+- `init()` при невозможности старта (невалидный config template).
+- `recover` только на границе goroutine (HTTP middleware, worker loop).
+- `log.Fatal` по сути os.Exit, не замена recover.
+- Честно: panic в HTTP handler без recover уронит весь процесс при одном запросе.
+
+## Как это работает
+
+```go
+func mustLoad(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		panic(fmt.Sprintf("required asset %s: %v", path, err))
+	}
+	return data
+}
+
+func withRecover(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("panic: %v", rec)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+Без recover стек unwind до корня программы. В тестах `assert.Panics` или ожидаемый panic для проверки инварианта.
+
+## Подводные камни
+
+**panic для валидации user input.** DoS одним запросом через recover boundary.
+
+**recover в середине call stack и продолжение.** Состояние пакета может быть corrupt.
+
+**defer + panic + return error mix.** Трудно рассуждать о потоке.
+
+**os.Exit в defer не выполнится при panic без recover.** Ресурсы зависят от defer в той же goroutine.
+
+**Использовать panic для flow control.** Антипаттерн, ломает API consumers.

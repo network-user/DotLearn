@@ -1,0 +1,61 @@
+---
+id: 1593
+title: "Стратегии миграции монолита"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Стратегии миграции монолита
+
+## Суть
+
+Миграция монолита в сервисы идёт incremental: Strangler Fig (proxy новый path), modular monolith first, API Gateway routing, event-driven extraction. Цель: continuous delivery без big-bang rewrite. Data ownership переходит вместе с bounded context.
+
+## Что ответить на собесе
+
+- Strangler: nginx/gateway режет traffic на новый сервис по route.
+- Вырезаю vertical slice с минимальными cross-module deps.
+- Dual-write или CDC пока data split не stable.
+- Честно: microservices не always win; иногда modular monolith enough.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+)
+
+func main() {
+	legacy, _ := url.Parse("http://127.0.0.1:8081")
+	newSvc, _ := url.Parse("http://127.0.0.1:8082")
+	legacyProxy := httputil.NewSingleHostReverseProxy(legacy)
+	newProxy := httputil.NewSingleHostReverseProxy(newSvc)
+
+	http.HandleFunc("/billing/", func(w http.ResponseWriter, r *http.Request) {
+		newProxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/", legacyProxy.ServeHTTP)
+	_ = http.ListenAndServe(":8080", nil)
+}
+```
+
+Gateway отправляет `/billing/` на новый сервис, остальное на monolith. Постепенно routes migrate.
+
+## Подводные камни
+
+**Distributed monolith.** Services deploy together anyway.
+
+**Shared DB anti-pattern persists.** Extract schema late, pain grows.
+
+**No contract tests at boundary.** Gateway hides breaking changes.
+
+**Event schema without versioning.** Consumers break on deploy order.
+
+**Big bang cutover.** Rollback plan missing.

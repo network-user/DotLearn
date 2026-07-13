@@ -1,0 +1,62 @@
+---
+id: 1623
+title: "Альтернативы gRPC для связи микросервисов"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Альтернативы gRPC для связи микросервисов
+
+## Суть
+
+Синхронный REST/GraphQL поверх HTTP подходит для запрос-ответ и внешних API. Асинхронные брокеры (Kafka, RabbitMQ, NATS) развязывают сервисы по времени и дают буфер при пиках. WebSockets и MQTT закрывают push и IoT сценарии. Выбор зависит от latency, семантики доставки и зрелости команды.
+
+## Что ответить на собесе
+
+- REST + OpenAPI для простоты и human-debuggable трафика.
+- Message queue для fire-and-forget и eventual consistency.
+- Kafka как event log с replay и несколькими consumer groups.
+- GraphQL gateway агрегирует несколько backend без N+1 на клиенте.
+- Честно: гибрид нормален: sync API для query, events для side effects.
+
+## Как это работает
+
+REST handler:
+
+```go
+func main() {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Публикация в очередь (упрощённо):
+
+```go
+conn, _ := amqp.Dial(os.Getenv("AMQP_URL"))
+ch, _ := conn.Channel()
+q, _ := ch.QueueDeclare("order.created", true, false, false, false, nil)
+_ = ch.Publish("", q.Name, false, false, amqp.Publishing{
+	ContentType: "application/json",
+	Body:        []byte(`{"order_id":"ord-7"}`),
+})
+```
+
+Kafka consumer читает topic с offset; сервис B обрабатывает событие независимо от доступности A в момент публикации (при at-least-once и идемпотентном handler).
+
+## Подводные камни
+
+**Очередь без DLQ и retry policy.** Poison message стопорит всю обработку.
+
+**REST chain из пяти hop.** Latency суммируется, нужен bulk или кэш.
+
+**Kafka как база данных.** Topic retention не заменяет source of truth store.
+
+**WebSocket без heartbeat.** NAT и LB рвут «вечные» соединения молча.
+
+**Смешать sync и async без correlation id.** Трейс через систему теряется.

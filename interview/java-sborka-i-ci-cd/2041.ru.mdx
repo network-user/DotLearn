@@ -1,0 +1,75 @@
+---
+id: 2041
+title: "Этапы CI/CD: от commit до production"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Этапы CI/CD: от commit до production
+
+## Суть
+
+CI/CD разбивает доставку ПО на автоматизированные стадии: интеграция (сборка + тесты на каждый commit), доставка (деплой артефакта), эксплуатация (мониторинг, rollback). Для Java-команды это обычно Git → CI build → container image → staging → canary/production → observability feedback loop.
+
+## Что ответить на собесе
+
+- **CI:** compile, unit, integration, static analysis, security scan dependencies.
+- **CD:** promote immutable artifact (jar/image digest), не пересобирать на prod.
+- **Release:** feature flags, DB migration job, smoke tests после deploy.
+- **Operate:** metrics (latency, error rate), logs, tracing, alerting on SLO burn.
+- Честно: CD без automated rollback и миграций в отдельном job рискован для stateful сервисов.
+
+## Как это работает
+
+<figure aria-label="CI/CD flow">
+<svg viewBox="0 0 520 48" width="520" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="12" width="56" height="24" rx="4"/><text x="32" y="28" text-anchor="middle" fill="currentColor" font-size="9">Commit</text>
+  <line x1="60" y1="24" x2="76" y2="24"/><polygon points="76,24 72,21 72,27" fill="currentColor"/>
+  <rect x="78" y="12" width="56" height="24" rx="4"/><text x="106" y="28" text-anchor="middle" fill="currentColor" font-size="9">Build</text>
+  <line x1="134" y1="24" x2="150" y2="24"/><polygon points="150,24 146,21 146,27" fill="currentColor"/>
+  <rect x="152" y="12" width="48" height="24" rx="4"/><text x="176" y="28" text-anchor="middle" fill="currentColor" font-size="9">Test</text>
+  <line x1="200" y1="24" x2="216" y2="24"/><polygon points="216,24 212,21 212,27" fill="currentColor"/>
+  <rect x="218" y="12" width="56" height="24" rx="4"/><text x="246" y="28" text-anchor="middle" fill="currentColor" font-size="9">Artifact</text>
+  <line x1="274" y1="24" x2="290" y2="24"/><polygon points="290,24 286,21 286,27" fill="currentColor"/>
+  <rect x="292" y="12" width="56" height="24" rx="4"/><text x="320" y="28" text-anchor="middle" fill="currentColor" font-size="9">Staging</text>
+  <line x1="348" y1="24" x2="364" y2="24"/><polygon points="364,24 360,21 360,27" fill="currentColor"/>
+  <rect x="366" y="12" width="48" height="24" rx="4"/><text x="390" y="28" text-anchor="middle" fill="currentColor" font-size="9">Prod</text>
+  <line x1="414" y1="24" x2="430" y2="24"/><polygon points="430,24 426,21 426,27" fill="currentColor"/>
+  <rect x="432" y="12" width="56" height="24" rx="4"/><text x="460" y="28" text-anchor="middle" fill="currentColor" font-size="9">Monitor</text>
+</svg>
+</figure>
+
+Практический пример Java микросервиса:
+
+1. **Build:** `./gradlew bootJar`, тег `git sha`.
+2. **Test:** JUnit + Testcontainers Kafka, contract tests с Pact.
+3. **Integration (VCS):** merge в `main` после green PR checks.
+4. **Deploy:** Helm upgrade с image `payments@sha256:abc...`, readiness probe `/actuator/health`.
+5. **Monitor:** Prometheus scrape + Grafana dashboard, alert на 5xx > 1%.
+
+Smoke test после deploy:
+
+```java
+@Test
+void healthEndpointReturnsUp() {
+    var response = RestClient.create(stagingBaseUrl)
+        .get()
+        .uri("/actuator/health")
+        .retrieve()
+        .body(String.class);
+    assertThat(response).contains("UP");
+}
+```
+
+Git merge не равен deploy: trunk-based команды деплоят несколько раз в день с одним и тем же pipeline template, меняется только target environment и approval gate.
+
+## Подводные камни
+
+- **Rebuild на prod.** Дрейф зависимостей: вчерашний main ≠ сегодняшний snapshot.
+- **Миграции в app startup.** Flyway на всех pod одновременно гоняет гонки.
+- **Staging без parity.** Другой Kafka версии скрывает баг до prod.
+- **Monitor без deployment marker.** Невозможно связать spike ошибок с release.
+- **Manual gate без SLA.** Очередь на approve тормозит hotfix.

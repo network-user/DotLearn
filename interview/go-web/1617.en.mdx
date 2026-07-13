@@ -1,0 +1,59 @@
+---
+id: 1617
+title: "How HTTPS works"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How HTTPS works
+
+## In short
+
+HTTPS is HTTP over TLS: first a cryptographic handshake and certificate verification, then symmetric encryption of all application traffic. It guarantees confidentiality, integrity, and server authentication; with mTLS, client authentication too.
+
+## How to answer in an interview
+
+- TLS 1.2+ handshake: cipher suite, cert validation, session key derivation.
+- After the handshake, HTTP methods and headers travel inside encrypted TLS records.
+- HSTS, secure cookies, HTTP→HTTPS redirect at the edge.
+- In Go: `ListenAndServeTLS` or reverse proxy termination.
+- Honestly: HTTPS does not hide IP and SNI; full metadata privacy needs extra measures.
+
+## How it works
+
+```go
+mux := http.NewServeMux()
+mux.HandleFunc("/api/profile", func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+})
+
+log.Fatal(http.ListenAndServeTLS(":443", "fullchain.pem", "privkey.pem", mux))
+```
+
+Simplified handshake dialogue:
+
+```
+Client → ServerHello, supported ciphers
+Server → cert, chosen cipher
+Client → CA check, key share
+Both → Finished, session keys ready
+Then → encrypted GET /api/profile
+```
+
+The browser or `http.Client` validates the chain to a trusted root. The server proves possession of the cert private key. Then AES-GCM or ChaCha20-Poly1305 encrypt each TLS record with a unique nonce.
+
+## Pitfalls
+
+**Mixed content.** An HTTPS page loads `http://` scripts: the browser blocks or weakens protection.
+
+**Weak cipher suites in config.** Leftover RC4 or export-grade ciphers fail real audits.
+
+**Expired cert without monitoring.** Silent expiry causes a midnight outage.
+
+**TLS termination without HSTS.** Downgrade attack on the user's first visit.
+
+**Logging request bodies on the proxy.** Decrypted traffic on the load balancer needs access policy.

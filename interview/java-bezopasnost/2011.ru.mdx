@@ -1,0 +1,62 @@
+---
+id: 2011
+title: "Где и как хранить private key TLS-сервера?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Где и как хранить private key TLS-сервера?
+
+## Суть
+
+Private key TLS-сервера остаётся только на стороне, которая терминирует HTTPS. Его используют для расшифровки key exchange и подписи (в mTLS). Утечка ключа равна возможности выдать себя за сервер; хранение и права доступа критичны.
+
+## Что ответить на собесе
+
+- Файл `.key` или PKCS#12 с паролем, права `600`, owner `root` или dedicated service user.
+- В контейнерах предпочитаю secrets manager / mounted volume, не образ.
+- Passphrase на keystore обязателен; автозагрузка через systemd credentials или vault agent.
+- Ротация: новый key + cert, overlap period, revoke старый при компрометации.
+- Честно: HSM/KMS дороже файла, но для payment-grade infra оправдано.
+
+## Как это работает
+
+Типичный bare-metal layout:
+
+```
+/etc/ssl/private/shop.example.key   # PEM private key
+/etc/ssl/certs/shop.example.crt   # leaf certificate
+/etc/ssl/certs/chain.pem          # intermediate bundle
+```
+
+Права:
+
+```bash
+chown root:ssl-cert /etc/ssl/private/shop.example.key
+chmod 640 /etc/ssl/private/shop.example.key
+```
+
+Nginx/Caddy читают ключ процессом с минимальными capabilities. В Java Spring Boot:
+
+```java
+@Bean
+SSLBundle sslBundle(SslBundleRegistry registry) throws Exception {
+    return registry.register("app",
+        SslBundle.of(SslStoreBundle.of(
+            new FileSystemResource("/etc/ssl/certs/shop.p12"),
+            keystorePassword.toCharArray())));
+}
+```
+
+PKCS#12 объединяет key + cert; пароль keystore хранится в env, не в git. Публичный ключ из cert уходит клиентам; private key никогда не покидает trust boundary сервера. При деплое в Kubernetes secret монтируют read-only в `/tls`, init container проверяет expiry.
+
+## Подводные камни
+
+- **Ключ в Docker layer.** `docker history` и registry scan найдут секрет.
+- **World-readable permissions.** `chmod 644` на `.key` = game over.
+- **Shared key на все среды.** Prod key в staging утекает через менее защищённый доступ.
+- **Backup без шифрования.** Tape/S3 copy key в открытом виде.
+- **Forgotten old keys.** После ротации старый key остаётся в `/tmp` или CI artifact.

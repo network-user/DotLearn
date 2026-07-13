@@ -1,0 +1,66 @@
+---
+id: 3327
+title: "SOAP APIs: testing legacy web services"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# SOAP APIs: testing legacy web services
+
+## In short
+
+SOAP carries XML messages under a strict WSDL contract, usually over HTTP. In enterprise and banking it still sits next to REST. AQA checks the envelope, fault codes, WS-Security, and XSD compliance from WSDL.
+
+## How to answer in an interview
+
+- I describe structure: Envelope, Header (WS-Security, routing), Body with operation, optional Fault.
+- I explain WSDL + XSD as the source of truth for client generation (zeep in Python).
+- I cover negatives: invalid XML, wrong namespace, SOAP Fault vs HTTP 500.
+- I compare to REST: more ceremony but strict schema and built-in reliability standards.
+- I add honestly: for greenfield I pick REST/gRPC; I test SOAP where legacy integration and WSDL maintenance budget exist.
+
+## How it works
+
+The client loads WSDL; zeep builds types and bindings. The request is wrapped in a SOAP envelope; the server validates against XSD and returns a response or Fault with code/subcode. In pytest I mock via responses or WireMock with canned XML.
+
+```python
+from zeep import Client
+from zeep.exceptions import Fault
+import pytest
+
+WSDL = "https://staging.example.com/stock?wsdl"
+
+
+@pytest.fixture(scope="module")
+def stock_client():
+    return Client(WSDL)
+
+
+def test_get_price_returns_float(stock_client):
+    price = stock_client.service.GetPrice(Ticker="IBM")
+    assert isinstance(price, float)
+    assert price > 0
+
+
+def test_unknown_ticker_raises_fault(stock_client):
+    with pytest.raises(Fault) as exc:
+        stock_client.service.GetPrice(Ticker="UNKNOWN")
+    assert "Client" in exc.value.message or exc.value.code
+```
+
+I also validate raw XML through lxml against XSD when zeep hides serialization details.
+
+## Pitfalls
+
+**WSDL over HTTP without TLS.** Staging credentials leak into proxy logs.
+
+**Document/literal vs rpc style mismatch.** Wrong binding looks like a broken service.
+
+**Clock skew in WS-Security Timestamp.** Flaky only on slow CI.
+
+**Huge WSDL imports.** Client init times out; cache WSDL locally.
+
+**String compare on XML.** Attribute order and whitespace break asserts; use canonical compare.

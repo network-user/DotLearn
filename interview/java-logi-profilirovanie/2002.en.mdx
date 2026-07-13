@@ -1,0 +1,66 @@
+---
+id: 2002
+title: "What is MDC in SLF4J and why use it?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is MDC in SLF4J and why use it?
+
+## In short
+
+MDC (Mapped Diagnostic Context) is a thread-local key-value map that SLF4J merges into every log line through the pattern (`%X{traceId}`). It ties logs for one request in a servlet/worker thread without passing an id into every `log.info`. Clearing MDC in `finally` is mandatory with thread pools.
+
+## How to answer in an interview
+
+- Implemented via ThreadLocal; in reactive stacks you need Reactor Context / OTel baggage.
+- Typical keys: traceId, userId, orderId, tenantId.
+- Logback setup: `%X{traceId} %msg%n`.
+- Filter integration: extract header → MDC.put → chain → MDC.clear.
+- I add honestly: MDC does not propagate to child threads automatically; you need a TaskDecorator or wrapped executor.
+
+## How it works
+
+```java
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+
+final class RequestLoggingFilter implements Filter {
+    private static final Logger log = LoggerFactory.getLogger(RequestLoggingFilter.class);
+
+    @Override
+    public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+            throws IOException, ServletException {
+        HttpServletRequest http = (HttpServletRequest) req;
+        String traceId = headerOrNew(http, "traceparent");
+        MDC.put("traceId", traceId);
+        MDC.put("path", http.getRequestURI());
+        try {
+            log.info("request accepted");
+            chain.doFilter(req, res);
+            log.info("request completed");
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    private static String headerOrNew(HttpServletRequest http, String name) {
+        String value = http.getHeader(name);
+        return value != null ? value : UUID.randomUUID().toString();
+    }
+}
+```
+
+Any code below on the stack calls `log.info("...")` without traceId in arguments, and the appender adds `%X{traceId}` from MDC. After the response, `MDC.clear()` frees the thread for the next request in the Tomcat pool. Without clear, the next HTTP request inherits a foreign traceId.
+
+## Pitfalls
+
+- **MDC.clear not called.** Cross-request contamination in the thread pool.
+- **Async without propagation.** `@Async` loses MDC on the worker thread.
+- **Reactive WebFlux.** ThreadLocal MDC does not follow the event loop without a hook.
+- **Too many keys.** The pattern bloats every log line.
+- **PII in MDC.** User email in every log event without masking.

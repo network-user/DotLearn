@@ -1,0 +1,75 @@
+---
+id: 2061
+title: "Как Docker помогает AQA воспроизводить окружение"
+category: aqa-docker-i-konteynery
+categoryLabel: "Docker и контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как Docker помогает AQA воспроизводить окружение
+
+## Суть
+
+Docker упаковывает приложение с зависимостями в образ и запускает изолированный контейнер на общем ядре хоста. Для автоматизации это способ поднять одинаковый стенд локально, в CI и на review-окружении без «работает только у меня».
+
+## Что ответить на собесе
+
+- Описываю архитектуру: CLI отправляет команды демону `dockerd`, который управляет образами, контейнерами, сетями и томами.
+- Объясняю цепочку: Dockerfile → `docker build` → image → `docker run` → container с изоляцией процессов и файловой системы через namespaces/cgroups.
+- Рассказываю про применение в тестах: testcontainers, docker-compose для SUT и зависимостей (БД, брокер, mock-сервис).
+- Упоминаю порт mapping, volumes для данных, healthcheck и wait-стратегии перед прогоном pytest.
+- Честно добавляю: контейнер не заменяет полноценную VM там, где нужен другой kernel или GPU; на Windows/macOS есть overhead виртуализации.
+
+## Как это работает
+
+Образ — неизменяемый слоёный снимок файловой системы. Контейнер — writable-слой поверх образа плюс сеть и mount'ы. При `docker run` демон создаёт изолированный процесс, пробрасывает порты и переменные окружения. Сборка идёт по инструкциям Dockerfile: базовый образ, COPY/ADD, RUN, EXPOSE, CMD/ENTRYPOINT.
+
+Для AQA типичный сценарий: в репозитории лежит Dockerfile приложения и compose-файл с postgres + redis. В pytest-fixture поднимаю compose, жду readiness по HTTP/TCP, гоняю API-тесты, в teardown останавливаю и удаляю контейнеры.
+
+```python
+import subprocess
+import time
+import urllib.request
+
+COMPOSE_FILE = "docker-compose.test.yml"
+BASE_URL = "http://127.0.0.1:8080/health"
+
+
+def compose_up():
+    subprocess.run(
+        ["docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "--build"],
+        check=True,
+    )
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(BASE_URL, timeout=2) as resp:
+                if resp.status == 200:
+                    return
+        except OSError:
+            time.sleep(2)
+    raise RuntimeError("service did not become healthy in time")
+
+
+def compose_down():
+    subprocess.run(
+        ["docker", "compose", "-f", COMPOSE_FILE, "down", "-v"],
+        check=False,
+    )
+```
+
+В CI тот же compose даёт детерминированный прогон: версия образа зафиксирована тегом или digest, переменные окружения задаются явно, артеfact-логи собираются через `docker logs`.
+
+## Подводные камни
+
+**Flaky readiness.** Тест стартует до готовности БД; нужны healthcheck, retry с backoff или библиотека wait-for-it/testcontainers.
+
+**Кэш слоёв и «latest».** Нестабильные теги и агрессивный cache invalidation маскируют регрессии; в CI лучше pin по digest.
+
+**Состояние между прогонами.** Забытый `-v` оставляет данные в volume и ломает изоляцию следующего job.
+
+**Сеть и порты.** Конфликты портов на shared runner; используй динамический mapping или internal network без publish.
+
+**Права и root в контейнере.** Тесты с записью в volume могут падать из-за UID mismatch между образом и хостом.

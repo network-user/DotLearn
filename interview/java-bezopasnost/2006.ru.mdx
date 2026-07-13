@@ -1,0 +1,67 @@
+---
+id: 2006
+title: "Access token и refresh token: в чём разница?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Access token и refresh token: в чём разница?
+
+## Суть
+
+Access token предъявляют resource server при каждом API-вызове; срок жизни короткий. Refresh token обновляет access без повторного логина и хранится с более строгой защитой, потому что компрометация даёт длительный доступ.
+
+## Что ответить на собесе
+
+- Access: Bearer в `Authorization`, TTL минуты, scope и claims внутри.
+- Refresh: только на token endpoint, rotation при каждом обновлении.
+- При 401 с `invalid_token` сначала пробую refresh, потом редирект на login.
+- Refresh не отправляю на сторонние API, только на свой auth backend.
+- Честно: без rotation и revoke-list украденный refresh живёт до TTL.
+
+## Как это работает
+
+Клиент держит access в памяти, refresh в HttpOnly Secure cookie или server-side session. Запрос к API:
+
+```java
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.shop.local/v1/cart"))
+    .header("Authorization", "Bearer " + accessToken)
+    .GET()
+    .build();
+
+HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+if (response.statusCode() == 401) {
+    accessToken = renewAccessToken(refreshToken);
+}
+```
+
+Обновление access:
+
+```java
+private String renewAccessToken(String refreshToken) throws IOException {
+    String body = "grant_type=refresh_token&refresh_token=" + URLEncoder.encode(refreshToken, UTF_8);
+    HttpRequest tokenRequest = HttpRequest.newBuilder()
+        .uri(URI.create("https://auth.shop.local/oauth/token"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .POST(BodyPublishers.ofString(body))
+        .build();
+    HttpResponse<String> tokenResponse = httpClient.send(tokenRequest, BodyHandlers.ofString());
+    TokenPayload payload = mapper.readValue(tokenResponse.body(), TokenPayload.class);
+    persistRotatedRefresh(payload.refreshToken());
+    return payload.accessToken();
+}
+```
+
+Resource server валидирует только access (подпись, `exp`, audience). Refresh принимает authorization server и может инвалидировать семейство токенов при reuse detection.
+
+## Подводные камни
+
+- **Refresh в мобильном plaintext storage.** Root/backup утянет ключ.
+- **Бесконечный refresh без rotation.** Украли один раз, доступ навсегда.
+- **Access в URL query.** Попадает в логи и Referer.
+- **Один refresh на все устройства.** Нет per-device revoke.
+- **Игнор clock skew.** `exp` проверяют без leeway, ложные 401 в распределённой среде.

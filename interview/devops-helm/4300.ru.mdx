@@ -1,0 +1,59 @@
+---
+id: 4300
+title: "Где и как хранить Helm-шаблоны?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Где и как хранить Helm-шаблоны?
+
+## Суть
+
+Charts живут в Git как source of truth: mono-repo `charts/<app>/` или отдельный repo per service. CI гоняет `helm lint`, `helm template`, optional `kubeconform`, публикует `.tgz` или OCI artifact. Runtime cluster хранит только release metadata (Secrets), не редактируемые копии templates.
+
+## Что ответить на собесе
+
+- Git + PR review на каждое изменение `templates/` и `values.yaml`.
+- Semver bump `Chart.yaml` version при каждом релизе chart.
+- `Chart.lock` коммитим для воспроизводимых subchart versions.
+- Registry: Harbor/ECR OCI для бинарного chart artifact; Git для исходников.
+- Честно: хранить только `.tgz` без исходных templates блокирует diff и code review.
+
+## Как это работает
+
+Mono-repo layout:
+
+```bash
+mkdir -p charts/checkout-api/templates
+tree charts/checkout-api -L 2
+```
+
+CI pipeline фрагмент:
+
+```bash
+helm lint charts/checkout-api
+helm template test charts/checkout-api -f charts/checkout-api/values-ci.yaml \
+  | kubeconform -strict -summary -
+helm package charts/checkout-api -d dist/
+helm push dist/checkout-api-*.tgz oci://registry.internal/platform-charts
+```
+
+Версионирование релиза:
+
+```bash
+# bump Chart.yaml version: 2.3.0 -> 2.3.1
+git add charts/checkout-api/Chart.yaml charts/checkout-api/templates/
+git commit -m "chart(checkout): add topologySpreadConstraints"
+git tag chart/checkout-api/2.3.1
+```
+
+## Подводные камни
+
+- **Secrets в Git.** Plaintext `values-prod.yaml` с паролями; use SOPS/ExternalSecrets и git-crypt.
+- **Unpinned dependencies.** `charts/*.tgz` vendor без lock меняет CI output от дня к дню.
+- **Branch deploy drift.** `helm install` с локальной ветки без tag не воспроизводится; only tagged chart versions в prod.
+- **Huge binary in repo.** Запакованные deps бloat git; prefer `helm dependency build` в CI.
+- **Template fork без upstream.** Copy-paste chart из bitnami без merge path; security patches теряются.

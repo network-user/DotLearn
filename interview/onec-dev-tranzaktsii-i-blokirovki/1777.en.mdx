@@ -1,0 +1,64 @@
+---
+id: 1777
+title: "How to detect and diagnose lock conflicts"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to detect and diagnose lock conflicts
+
+## In short
+
+A lock conflict happens when a session waits for a resource held by another session or hits a deadlock. Symptoms: wait timeout, posting error, "object is locked". Diagnosis uses the lock monitor, technology log, and DBMS views.
+
+## How to answer in an interview
+
+- I distinguish lock wait, mutual blocking (deadlock), and version conflict on write.
+- In an interview I name the lock monitor in the cluster console and `EXCP` events in the tech log with lock text.
+- I stress you need the pair "who blocks / who waits" and the object (register, document, session).
+- I honestly say killing the blocking session removes the symptom but the problem repeats without stack analysis.
+- For MS SQL I check `blocked process report`, for PostgreSQL `pg_blocking_pids`.
+
+## How it works
+
+One user posts a sales document while another reposts a document for the same warehouse. The first holds an exclusive lock on the register slice; the second waits or gets a timeout error.
+
+```bsl
+Блокировка = Новый БлокировкаДанных;
+Элемент = Блокировка.Добавить("РегистрНакопления.ТоварыНаСкладах");
+Элемент.Режим = РежимБлокировкиДанных.Исключительный;
+Элемент.УстановитьЗначение("Склад", СкладОтгрузки);
+Попытка
+    Блокировка.Заблокировать();
+Исключение
+    ЗаписьЖурналаРегистрации("Блокировка", УровеньЖурналаРегистрации.Предупреждение,,
+        "Не удалось получить блокировку склада " + СкладОтгрузки);
+    ВызватьИсключение;
+КонецПопытки;
+```
+
+Enable `DBMSLock`, `TTIMEOUT`, `EXCP` events with wait duration in the tech log. The monitor shows lock trees by rphost session numbers.
+
+On PostgreSQL:
+
+```sql
+SELECT blocked.pid AS blocked_pid,
+       blocking.pid AS blocking_pid,
+       blocked.query AS blocked_query
+FROM pg_stat_activity blocked
+JOIN pg_stat_activity blocking ON blocking.pid = ANY(pg_blocking_pids(blocked.pid))
+WHERE cardinality(pg_blocking_pids(blocked.pid)) > 0;
+```
+
+After finding the culprit, inspect the call stack in the debugger or `CALL`/`Context` in the tech log. Typical causes: long transaction, different register lock order, bulk posting without batching.
+
+## Pitfalls
+
+- **Confusing deadlock with simple wait.** Deadlock is resolved by the DBMS rolling back one transaction.
+- **Diagnosing only at error time.** The lock is already gone; capture the trail in the tech log upfront.
+- **Ignoring background scheduled jobs.** A job blocks, not an interactive user.
+- **Killing a session without coordination.** Rolls back someone else's unfinished work.
+- **Fixing with timeout only.** The error just arrives sooner.

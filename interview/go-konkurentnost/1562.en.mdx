@@ -1,0 +1,65 @@
+---
+id: 1562
+title: "Does Mutex block a goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Does Mutex block a goroutine?
+
+## In short
+
+`Lock()` blocks the calling G if the mutex is held until `Unlock`. The fast path returns immediately via atomic CAS when there is no contention. `TryLock` does not block and returns false.
+
+## How to answer in an interview
+
+- Blocking is at goroutine level, not necessarily the OS thread.
+- Hold time should be minimal; I/O under lock is taboo.
+- defer Unlock after Lock is the standard pattern.
+- Honestly: RLock also blocks writers and sometimes other readers when a writer waits.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			fmt.Println("critical")
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if mu.TryLock() {
+		mu.Unlock()
+	}
+}
+```
+
+Concurrent Lock: one G inside, others parked on the mutex wait list until Unlock wakes one.
+
+## Pitfalls
+
+**Lock in defer wrong order.** defer is LIFO; nested lock ordering matters.
+
+**Forget Unlock on panic.** defer Unlock helps; without it you leak the lock.
+
+**Long critical section.** Tail latency for all waiters grows.
+
+**Mutex vs RWMutex confusion.** Different types, different rules.
+
+**Copy Mutex.** Broken lock after copy; use pointer receiver struct.

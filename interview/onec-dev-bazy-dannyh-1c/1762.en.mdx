@@ -1,0 +1,55 @@
+---
+id: 1762
+title: "Where temp tables physically live in file vs client-server 1C"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where temp tables physically live in file vs client-server 1C
+
+## In short
+
+Query temp tables from `ПОМЕСТИТЬ` are created where the SQL batch runs. In client-server mode that is tempdb (or equivalent) on the DBMS server; in file mode intermediate data is handled by the local database engine on the machine running the 1C process.
+
+## How to answer in an interview
+
+- I separate architectures: client-server means temp tables on the SQL server, file infobase means a local data directory without a separate tempdb cluster.
+- In an interview I stress that a heavy report with temp tables in client-server loads tempdb and server disk, not client RAM.
+- I clarify that the thin client still sends the query to the 1C server and SQL runs next to the DBMS.
+- I am honest that temp-table scale in file mode is limited by one host and `.1CD` file locking.
+- For distributed branches file mode with large temp tables almost always loses to client-server.
+
+## How it works
+
+A batch with `ПОМЕСТИТЬ ВТДанные` compiles to SQL the DBMS runs in its temporary space. In MS SQL that is `tempdb`; 1C abstracts names but the resources are the same.
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Обороты.Номенклатура,
+|    СУММА(Обороты.Количество) КАК Количество
+|ПОМЕСТИТЬ ВТОбороты
+|ИЗ
+|    РегистрНакопления.ТоварыНаСкладах.Обороты(&Начало, &Конец) КАК Обороты
+|СГРУППИРОВАТЬ ПО
+|    Обороты.Номенклатура";
+Результат = Запрос.Выполнить();
+```
+
+In client-server the 1C server opens a SQL connection, tempdb grows for the query session, then is freed. Several users with heavy reports share one tempdb, visible to the admin through IO wait counters.
+
+In file mode there is no dedicated SQL server: the engine is embedded in the 1C process and temporary structures are created inside the local data file or helper files beside it. The performance ceiling is the workstation or terminal server disk and CPU.
+
+Do not confuse temp table placement with an in-memory value table: `ТаблицаЗначений` does not go through `ПОМЕСТИТЬ` and lives in 1C process RAM until unloaded.
+
+## Pitfalls
+
+- **Expecting temp tables on the client.** Even the thick client does not store `ПОМЕСТИТЬ` locally when connected to a server database.
+- **Filling tempdb.** A series of unfiltered reports can exhaust tempdb disk and stop the whole SQL cluster.
+- **File base on a network drive.** Temp tables and the main base on slow SMB multiply latency.
+- **Mixing temp table managers.** Reuse between batches needs one `МенеджерВременныхТаблиц` on the query server.
+- **Monitoring only 1C CPU.** The bottleneck may be tempdb while rphost looks idle.

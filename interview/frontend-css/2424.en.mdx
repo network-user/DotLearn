@@ -1,0 +1,82 @@
+---
+id: 2424
+title: "Optimizing reflow: layout thrashing and compositor-friendly props"
+category: frontend-css
+categoryLabel: "CSS"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Optimizing reflow: layout thrashing and compositor-friendly props
+
+## In short
+
+Reflow (layout) recomputes geometry; repaint draws pixels. Alternating layout reads (`offsetWidth`, `getBoundingClientRect`) and style writes causes layout thrashing. For motion, prefer `transform` and `opacity`, which usually run on the compositor.
+
+## How to answer in an interview
+
+- Batch DOM changes: `DocumentFragment`, single append, off-DOM scratch container.
+- Do not read geometry between style writes in a loop; measure first, then apply.
+- Animate `transform`/`opacity`, not `top`/`width`.
+- `content-visibility: auto` and `contain` shrink the recalc region.
+- I honestly add that `will-change` should be short-lived; permanent will-change wastes GPU memory.
+
+## How it works
+
+Bad pattern (thrashing):
+
+```ts
+for (const row of rows) {
+  const h = row.offsetHeight;
+  row.style.height = `${h + 8}px`;
+}
+```
+
+Each iteration: read → forced layout → write.
+
+Better:
+
+```ts
+const heights = rows.map((row) => row.offsetHeight);
+rows.forEach((row, i) => {
+  row.style.height = `${heights[i] + 8}px`;
+});
+```
+
+rAF animation:
+
+```ts
+let tick = 0;
+function frame() {
+  tick += 1;
+  panel.style.transform = `translate3d(${tick}px, 0, 0)`;
+  if (tick < 300) requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+```
+
+`translate3d` promotes a layer; changing `left` every frame would hit layout.
+
+CSS containment:
+
+```css
+.feed-item {
+  contain: layout style paint;
+  content-visibility: auto;
+}
+```
+
+The browser can skip layout for off-screen cards in long lists.
+
+## Pitfalls
+
+**getComputedStyle in hot paths.** Triggers full style recalc per call.
+
+**Tables and flex under bulk updates.** Column width changes reflow large subtrees.
+
+**ResizeObserver writing sizes back to DOM.** Feedback loops; debounce or batch in rAF.
+
+**contain: paint vs dropdowns.** Menus clip inside the containing box.
+
+**Virtual lists without stable keys.** Full remounts trigger mega-reflow.

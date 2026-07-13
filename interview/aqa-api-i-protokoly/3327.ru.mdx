@@ -1,0 +1,66 @@
+---
+id: 3327
+title: "SOAP API: как тестировать legacy веб-сервисы"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# SOAP API: как тестировать legacy веб-сервисы
+
+## Суть
+
+SOAP передаёт XML-сообщения по строгому контракту WSDL, чаще поверх HTTP. В enterprise и банках он до сих пор встречается рядом с REST. AQA проверяет envelope, fault codes, WS-Security и соответствие XSD из WSDL.
+
+## Что ответить на собесе
+
+- Описываю структуру: Envelope, Header (WS-Security, routing), Body с operation, optional Fault.
+- Объясняю WSDL + XSD как источник truth для генерации клиента (zeep в Python).
+- Рассказываю про негативы: невалидный XML, wrong namespace, SOAP Fault vs HTTP 500.
+- Сравниваю с REST: больше ceremony, зато строгая схема и встроенные стандарты надёжности.
+- Честно добавляю: для greenfield выбираю REST/gRPC; SOAP тестирую там, где интеграция legacy и бюджет на поддержку WSDL.
+
+## Как это работает
+
+Клиент загружает WSDL, zeep генерирует типы и binding. Запрос упаковывается в SOAP envelope; сервер валидирует по XSD и возвращает response или Fault с code/subcode. В pytest поднимаю mock через responses или WireMock с canned XML.
+
+```python
+from zeep import Client
+from zeep.exceptions import Fault
+import pytest
+
+WSDL = "https://staging.example.com/stock?wsdl"
+
+
+@pytest.fixture(scope="module")
+def stock_client():
+    return Client(WSDL)
+
+
+def test_get_price_returns_float(stock_client):
+    price = stock_client.service.GetPrice(Ticker="IBM")
+    assert isinstance(price, float)
+    assert price > 0
+
+
+def test_unknown_ticker_raises_fault(stock_client):
+    with pytest.raises(Fault) as exc:
+        stock_client.service.GetPrice(Ticker="UNKNOWN")
+    assert "Client" in exc.value.message or exc.value.code
+```
+
+Дополнительно валидирую raw XML через lxml против XSD, если zeep скрывает детали сериализации.
+
+## Подводные камни
+
+**WSDL по HTTP без TLS.** Staging credentials утекают в proxy logs.
+
+**Различие document/literal и rpc style.** Неверный binding даёт ложные «сервис сломан».
+
+**Clock skew в WS-Security Timestamp.** Flaky только на медленном CI.
+
+**Huge WSDL imports.** Client init timeout; нужен local cache wsdl.
+
+**Сравнение XML строкой.** Порядок атрибутов и whitespace ломают assert; использовать canonical compare.

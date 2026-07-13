@@ -1,0 +1,78 @@
+---
+id: 1597
+title: "Алгоритмы sharding"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Алгоритмы sharding
+
+## Суть
+
+Основные схемы: range (по диапазону ключей), hash modulo (равномерно, боль rehash при N change), consistent hashing (минимальный remapping при add/remove node), lookup table (explicit routing). Выбор зависит от access patterns и ops tolerance к resharding.
+
+## Что ответить на собесе
+
+- Hash для point lookups равномерно.
+- Range для time-series и range scans.
+- Consistent hash для caches и elastic clusters.
+- Честно: virtual nodes и bounded loads нужны в production ring.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"hash/fnv"
+	"sort"
+)
+
+type Ring struct {
+	slots []uint32
+}
+
+func (r *Ring) Add(nodeID string) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(nodeID))
+	r.slots = append(r.slots, h.Sum32())
+	sort.Slice(r.slots, func(i, j int) bool { return r.slots[i] < r.slots[j] })
+}
+
+func (r *Ring) Locate(key string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	k := h.Sum32()
+	for _, slot := range r.slots {
+		if k <= slot {
+			return slot
+		}
+	}
+	return r.slots[0]
+}
+
+func main() {
+	var ring Ring
+	ring.Add("shard-1")
+	ring.Add("shard-2")
+	fmt.Println(ring.Locate("user-991"))
+}
+```
+
+Ключ ищет первый slot ≥ hash на кольце. Добавление shard затрагивает только соседний сегмент.
+
+## Подводные камни
+
+**Modulo rehash storm.** Full migration when shard count changes.
+
+**Range hot tail.** Latest dates overload one shard.
+
+**Consistent hash skew.** Too few virtual nodes.
+
+**Lookup table ops burden.** Manual updates error-prone.
+
+**Cross-shard aggregate queries.** Not solved by algorithm alone.

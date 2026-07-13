@@ -1,0 +1,104 @@
+---
+id: 1463
+title: "Как TCP подтверждает, что сегмент дошёл?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как TCP подтверждает, что сегмент дошёл?
+
+## Суть
+
+TCP нумерует байты и требует ACK: получатель сообщает номер следующего ожидаемого байта. Отправитель при отсутствии ACK в пределах RTO повторяет сегмент, пока подтверждение не придёт или соединение не оборвётся.
+
+## Что ответить на собесе
+
+- Описываю cumulative ACK: одно подтверждение закрывает все байты до указанного sequence number.
+- Упоминаю selective ACK (SACK) в современных стеках для точечного ретранслирования, не только go-back-n.
+- Связываю с Go: `net.Conn` скрывает детали, но `SetNoDelay`, таймауты и размер буфера влияют на задержку ACK.
+- Честно добавляю: delayed ACK на стороне получателя может задержать квитанцию до 40–200 мс, это нормальное поведение, а не «потеря пакета».
+
+## Как это работает
+
+Каждый TCP-сегмент несёт sequence number первого байта payload. Получатель отвечает ACK с номером следующего ожидаемого байта. Отправитель ведёт окно неподтверждённых данных: пока граница ACK не сдвинулась, байты считаются «в полёте».
+
+Если таймер RTO истекает раньше ACK, стек ретранслирует самый ранний неподтверждённый сегмент. Повторные попытки идут с растущей задержкой; параллельно работает congestion control, уменьшающий скорость при признаках потерь.
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"time"
+)
+
+func traceRead(conn net.Conn) {
+	buf := make([]byte, 512)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("peer closed, all bytes ACKed at TCP layer")
+				return
+			}
+			fmt.Println("read error:", err)
+			return
+		}
+		fmt.Printf("app received %d bytes (kernel already ACKed at transport)\n", n)
+	}
+}
+
+func main() {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, _ := ln.Accept()
+		defer c.Close()
+		traceRead(c)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	chunks := [][]byte{[]byte("segment-1\n"), []byte("segment-2\n")}
+	for _, part := range chunks {
+		if _, err := conn.Write(part); err != nil {
+			panic(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+}
+```
+
+Приложение видит только успешный `Read`/`Write`; ACK и ретраи происходят в ядре. `Write` возвращает управление, когда данные приняты в send buffer ОС, а не когда удалённая сторона подтвердила доставку end-to-end (если не используется особая семантика).
+
+Схема обмена:
+
+```
+Sender:   SEQ=100,len=50  ->  SEQ=150,len=30  ->
+Receiver:            <- ACK=150        <- ACK=180
+```
+
+Потеря второго сегмента оставляет ACK=150; отправитель по таймауту шлёт копию SEQ=150.
+
+## Подводные камни
+
+- **Путаница application и transport ACK.** HTTP 200 не равно TCP ACK на каждый сегмент; уровни разные.
+- **Малые записи и delayed ACK.** Частые мелкие `Write` без буферизации дают лишние round-trip; помогает `bufio` или `TCP_NODELAY` по ситуации.
+- **Half-close.** FIN обменивается отдельно от ACK данных; `CloseWrite` и полное `Close` ведут себя по-разному.
+- **Потеря ACK, не данных.** Дубликат ACK (fast retransmit) ускоряет восстановление; кандидаты иногда описывают только таймерный ретрай.
+- **TLS записи.** Шифрованный record больше TCP-сегмента; видимая задержка ACK может расти из-за фрагментации на несколько сегментов.

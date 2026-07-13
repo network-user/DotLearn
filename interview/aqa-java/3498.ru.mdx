@@ -1,0 +1,65 @@
+---
+id: 3498
+title: "Роль JVM в Java автотестах"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Роль JVM в Java автотестах
+
+## Суть
+
+JVM исполняет байткод `.class`, абстрагируя ОС и CPU. Она управляет heap, GC, загрузкой классов, JIT-оптимизацией и sandbox безопасности. Для AQA это среда запуска JUnit/TestNG, Selenium bindings и CI агентов: один и тот же jar на Linux runner и локальной Windows машине.
+
+## Что ответить на собесе
+
+- `javac` компилирует в bytecode, `java`/Surefire запускает на установленной JVM.
+- Выбираю LTS JDK (17/21) в CI matrix, фиксирую `JAVA_HOME`.
+- JVM flags: `-Xmx`, GC logs для диагностики OOM в parallel suite.
+- HotSpot JIT прогревает код, первый прогон теста может быть медленнее.
+- Честно: JVM не гарантирует identical timing, flaky по timeout возможен без явных waits.
+
+## Как это работает
+
+Цепочка запуска теста:
+
+```
+mvn test
+  → Surefire fork JVM
+  → load JUnit launcher
+  → execute @Test bytecode
+  → GC reclaims page objects graph
+```
+
+Команды:
+
+```
+javac CheckoutTest.java
+java -jar junit-platform-console-standalone.jar execute -cp target/test-classes
+```
+
+Python mirror meta-runner:
+
+```python
+def run_bytecode_suite(classpath: list[str], main: str) -> int:
+    return 0 if classpath and main else 1
+
+
+def test_jvm_launch_contract():
+    assert run_bytecode_suite(["target/test-classes"], "JUnitStarter") == 0
+```
+
+## Подводные камни
+
+**Разные JDK vendor.** Temurin vs Corretto: редкие crypto/provider отличия.
+
+**Metaspace leak.** Dynamic classload в test containers без unload.
+
+**Fork count.** Surefire `forkCount` × heap = суммарная RAM CI.
+
+**Locale/timezone.** JVM default zone влияет на date assert без явной ZoneId.
+
+**Headless UI.** AWT/Selenium требуют DISPLAY или headless flag на агенте.

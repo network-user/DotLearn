@@ -1,0 +1,64 @@
+---
+id: 1995
+title: "Как устроена конфигурация Logback?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроена конфигурация Logback?
+
+## Суть
+
+Logback строится из трёх слоёв: Logger (что и с каким уровнем писать), Appender (куда писать) и Encoder/Layout (как форматировать). Конфигурация в `logback.xml` или programmatic через `LoggerContext`. Иерархия logger names наследует уровни от родителя, additivity управляет всплытием к root.
+
+## Что ответить на собесе
+
+- Описываю цепочку: log call → logger level check → appenders → encoder → destination.
+- Упоминаю `logback-spring.xml` и профили Spring Boot.
+- Показываю RollingFileAppender с size/time policy.
+- Объясняю `additivity="false"` чтобы не дублировать в root.
+- Честно добавляю: async appender снижает latency, но при crash можно потерять буфер.
+
+## Как это работает
+
+```xml
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{ISO8601} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/app.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+    </appender>
+
+    <logger name="com.acme.billing" level="DEBUG" additivity="false">
+        <appender-ref ref="FILE"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>
+```
+
+`CONSOLE` пишет человекочитаемый pattern в stdout для k8s. `FILE` ротирует по дате и размеру, JSON через LogstashEncoder для ELK. Logger `com.acme.billing` получает DEBUG только в файл без дублирования через additivity. Root ловит остальные пакеты на INFO. Programmatic config нужен для embedded или test runtime, когда XML недоступен.
+
+## Подводные камни
+
+- **Двойные appenders.** Child и root оба пишут в один файл.
+- **Синхронный FILE на высоком RPS.** Blocking I/O в request thread.
+- **Слишком широкий DEBUG на root.** Весь classpath в verbose.
+- **Неверный pattern без exception.** `%msg` без `%ex` теряет stack.
+- **Жёсткий путь к файлу.** В container без volume логи теряются при рестарте.

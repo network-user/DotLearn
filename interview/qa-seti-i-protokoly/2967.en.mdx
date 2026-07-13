@@ -1,0 +1,64 @@
+---
+id: 2967
+title: "Proxy anonymity levels: what matters when intercepting traffic?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Proxy anonymity levels: what matters when intercepting traffic?
+
+## In short
+
+Proxies are classified by which headers and IP the origin sees: transparent passes the client IP (often Via/X-Forwarded-For), anonymous replaces IP but leaves proxy traces, elite/high-anonymous tries to look like a direct client. For QA, Charles/Burp is a forward proxy; header behavior affects rate limit, geo, and audit logs.
+
+## How to answer in an interview
+
+- Transparent on a corporate network: the server sees the employee's real IP; QA checks X-Forwarded-For in logs.
+- Anonymous: proxy IP in access.log, Proxy-Connection or Via reveals the intermediary.
+- Elite: good for geo-block checks "as a user from a region", but TLS MITM needs your own CA.
+- Honestly: without agreed MITM I do not break certificate pinning in the mobile app.
+
+## How it works
+
+What the backend sees:
+
+| Level | IP in log | Proxy signal |
+|-------|-----------|--------------|
+| Transparent | client | X-Forwarded-For |
+| Anonymous | proxy | Via, Proxy-* |
+| Elite | proxy | minimal headers |
+
+Gherkin with Charles map local:
+
+```gherkin
+Feature: App behavior through forward proxy
+
+  Scenario: API logs real IP behind corporate transparent proxy
+    Given proxy adds X-Forwarded-For 198.51.100.9
+    When the user POST /login
+    Then audit log user_ip equals 198.51.100.9
+
+  Scenario: Rate limit by proxy IP with anonymous
+    Given limit 10 req/min per IP
+    And ten QA machines behind one anonymous proxy
+    When each sends 5 requests
+    Then after 10 total requests status is 429
+
+  Scenario: Geo rule with elite proxy from allowed region
+    Given elite proxy egress in EU
+    When GET /content/eu-only
+    Then status is 200
+```
+
+Postman proxy settings mirror the mobile client path; I compare headers in DevTools and on the server.
+
+## Pitfalls
+
+- **Confusing reverse and forward proxy.** CDN edge is not the same as Charles.
+- **Double X-Forwarded-For.** Parser picks left or right IP inconsistently.
+- **HTTPS CONNECT tunnel.** Without MITM you only see SNI, not body.
+- **SOCKS5 vs HTTP proxy.** Client "does not support" without separate config.
+- **Elite behind NAT.** All testers share one IP, false 429s.

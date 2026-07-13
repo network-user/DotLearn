@@ -1,0 +1,63 @@
+---
+id: 2015
+title: "What is JWT and where is it used in Java?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is JWT and where is it used in Java?
+
+## In short
+
+JWT (JSON Web Token) is a compact string format: header.payload.signature in Base64URL. The signature (HMAC or RSA/ECDSA) guarantees integrity; payload carries claims (`sub`, `exp`, roles). The resource server verifies the signature without hitting the DB on every request.
+
+## How to answer in an interview
+
+- Three dot-separated parts; payload is not encrypted, only signed.
+- Algorithms: HS256 for shared secret, RS256/ES256 with JWKS for distributed services.
+- Mandatory checks: signature, `exp`, `iss`, `aud`, clock skew leeway.
+- Stateless sessions suit microservices; revoke is harder, needs blocklist or short TTL.
+- Honestly: JWT as session storage bloats cookies and carries stale roles until exp.
+
+## How it works
+
+Generation on auth service (jjwt / Nimbus):
+
+```java
+Instant now = Instant.now();
+String jwt = Jwts.builder()
+    .issuer("https://auth.example.com")
+    .subject("user-42")
+    .claim("roles", List.of("VIEWER", "EDITOR"))
+    .issuedAt(Date.from(now))
+    .expiration(Date.from(now.plusSeconds(900)))
+    .signWith(signingKey, Jwts.SIG.HS256)
+    .compact();
+```
+
+Validation on API:
+
+```java
+Jws<Claims> parsed = Jwts.parser()
+    .requireIssuer("https://auth.example.com")
+    .requireAudience("billing-api")
+    .clockSkewSeconds(30)
+    .verifyWith(signingKey)
+    .build()
+    .parseSignedClaims(rawToken);
+
+String userId = parsed.getPayload().getSubject();
+```
+
+Header sets alg; verifier rejects `none` and unexpected algs (alg confusion attack). For RS256 the public key comes from the IdP JWKS endpoint, rotated without redeploying every service.
+
+## Pitfalls
+
+- **Sensitive data in payload.** PII is readable to anyone who intercepts the token.
+- **HS256 secret in git.** Shared symmetric key compromises all services.
+- **No `aud` check.** Mobile client token accepted by admin API.
+- **Long exp without refresh rotation.** Stolen JWT lives for hours.
+- **Algorithm confusion.** Accept RS256 token verified as HMAC with public key as secret.

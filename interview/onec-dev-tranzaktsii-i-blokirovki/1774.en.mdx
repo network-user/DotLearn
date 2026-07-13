@@ -1,0 +1,59 @@
+---
+id: 1774
+title: "How 1C managed locks differ from DBMS locks"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How 1C managed locks differ from DBMS locks
+
+## In short
+
+1C applies managed application locks by namespace and metadata fields, while the DBMS locks rows and pages in physical tables. Both layers work at once: the platform handles business conflicts, SQL provides transaction isolation.
+
+## How to answer in an interview
+
+- I separate managed locks (`БлокировкаДанных`) from implicit write locks on `Записать()` and posting.
+- In an interview I say a 1C lock understands a register, dimensions, and a document, while SQL sees `_AccumReg*` and `_Document*`.
+- I mention modes: shared, exclusive, plus automatic locks on write.
+- I honestly note you cannot disable SQL locks, but you can narrow the application set with a precise filter in `Заблокировать()`.
+- For diagnosis I check the 1C monitor and DMVs/`pg_locks` in parallel.
+
+## How it works
+
+Before changing balances the developer explicitly locks a register slice. The platform registers the lock in its own table and may translate it to SQL.
+
+```bsl
+Блокировка = Новый БлокировкаДанных;
+ЭлементБлокировки = Блокировка.Добавить("РегистрНакопления.ТоварыНаСкладах");
+ЭлементБлокировки.Режим = РежимБлокировкиДанных.Исключительный;
+ЭлементБлокировки.УстановитьЗначение("Склад", СкладОтгрузки);
+ЭлементБлокировки.УстановитьЗначение("Номенклатура", Номенклатура);
+Блокировка.Заблокировать();
+```
+
+On MS SQL the same operation may look like row locks on the accumulation movement table key:
+
+```sql
+BEGIN TRANSACTION;
+SELECT _Period, _Fld123RRef
+FROM dbo._AccumReg456
+WITH (UPDLOCK, ROWLOCK)
+WHERE _Fld100RRef = @WarehouseRef;
+COMMIT TRANSACTION;
+```
+
+PostgreSQL uses `FOR UPDATE` on selected rows. Isolation level (`READ COMMITTED`, `REPEATABLE READ`) defines when SQL blocks reads and writes. 1C adds semantics like "lock balance by warehouse and item" even when several physical tables are involved.
+
+On document posting the platform sets locks on the recorder and affected dimensions. Manual locking is needed when two independent algorithms change the same slice without a shared document.
+
+## Pitfalls
+
+- **Too broad a filter in Заблокировать().** The whole register is locked instead of one warehouse.
+- **Ignoring the application layer.** Only SQL is checked and the 1C managed lock is missed.
+- **Shared where exclusive is needed.** Two sessions write off the same balance at once.
+- **Lock without a transaction.** Release depends on call context and may not arrive in time.
+- **File mode.** Mechanisms differ from client-server DBMS; experience does not transfer one to one.

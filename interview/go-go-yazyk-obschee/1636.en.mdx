@@ -1,0 +1,61 @@
+---
+id: 1636
+title: "panic in Go: when it is appropriate"
+category: go-go-yazyk-obschee
+categoryLabel: "Go: язык (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# panic in Go: when it is appropriate
+
+## In short
+
+`panic` stops normal control flow, runs defer in reverse order, and crashes the goroutine if nothing `recover`s. In application code errors are returned via `error`; panic is for programmer bugs, broken invariants, and init-time misconfiguration.
+
+## How to answer in an interview
+
+- Library: almost always `error`, not panic on bad input.
+- `init()` when startup is impossible (invalid config template).
+- `recover` only at a goroutine boundary (HTTP middleware, worker loop).
+- `log.Fatal` is effectively os.Exit, not a recover replacement.
+- Honestly: panic in an HTTP handler without recover can take down the whole process on one request.
+
+## How it works
+
+```go
+func mustLoad(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		panic(fmt.Sprintf("required asset %s: %v", path, err))
+	}
+	return data
+}
+
+func withRecover(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("panic: %v", rec)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+Without recover the stack unwinds to the program root. In tests use `assert.Panics` or expected panic to check an invariant.
+
+## Pitfalls
+
+**panic for user input validation.** DoS with one request at the recover boundary.
+
+**recover in the middle of the call stack and continue.** Package state may be corrupt.
+
+**defer + panic + return error mix.** Hard to reason about control flow.
+
+**os.Exit in defer will not run on panic without recover.** Resources depend on defer in the same goroutine.
+
+**Use panic for flow control.** Anti-pattern; breaks API consumers.

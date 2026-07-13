@@ -1,0 +1,67 @@
+---
+id: 4292
+title: "Why do you need Prometheus Pushgateway?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why do you need Prometheus Pushgateway?
+
+## In short
+
+Pushgateway is an intermediate HTTP endpoint for the push model: short-lived batch/cron jobs POST metrics, then Prometheus scrapes the gateway like any other target. Use it when a task has no stable listen port or lives shorter than the scrape interval. It is not long-term storage and not a pull replacement for daemons.
+
+## How to answer in an interview
+
+- A cron job pushes gauge `job_last_success_unixtime` before exit.
+- Prometheus scrapes `pushgateway:9091`; `job`/`instance` labels separate batches.
+- I use grouping labels (`job`, `instance`) so runs do not mix metrics.
+- I update metrics after success; stale values remain if the job stops pushing.
+- Honestly: Pushgateway for service-level metrics is risky; upstream docs warn against daemon uptime misuse.
+
+## How it works
+
+Push from a shell cron via text exposition:
+
+```bash
+JOB_NAME="nightly_backup"
+INSTANCE="db-cluster-a"
+PUSHGW="pushgateway.monitoring.svc:9091"
+
+cat <<EOF | curl --data-binary @- \
+  "http://${PUSHGW}/metrics/job/${JOB_NAME}/instance/${INSTANCE}"
+# TYPE backup_last_run gauge
+backup_last_run $(date +%s)
+# TYPE backup_bytes_total counter
+backup_bytes_total 4839201024
+EOF
+```
+
+Prometheus scrape config:
+
+```bash
+cat <<'EOF' >> /etc/prometheus/prometheus.yml
+scrape_configs:
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway.monitoring.svc:9091"]
+EOF
+```
+
+Delete stale metrics after a job rename:
+
+```bash
+curl -X DELETE "http://${PUSHGW}/metrics/job/${JOB_NAME}/instance/${INSTANCE}"
+```
+
+## Pitfalls
+
+- **Immortal series.** Pushgateway does not TTL metrics; a failed job leaves an old success timestamp.
+- **honor_labels false.** Prometheus overwrites `job`/`instance` and breaks grouping; PG needs `honor_labels: true`.
+- **Counter misuse.** Pushing counters between runs is wrong; use gauges or carefully designed batch counters.
+- **SPOF without HA.** One Pushgateway loses batch visibility on outage.
+- **Instance cardinality.** Unique instance per cron run explodes series; keep a small label set.

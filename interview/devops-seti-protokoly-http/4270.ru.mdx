@@ -1,0 +1,53 @@
+---
+id: 4270
+title: "Использует ли DNS протокол TCP?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Использует ли DNS протокол TCP?
+
+## Суть
+
+DNS по умолчанию query/response на UDP port 53. TCP на том же порту включается для ответов больше legacy 512 bytes (truncation TC bit), DNSSEC heavy payloads и zone transfer AXFR/IXFR между primary и secondary. Resolver retry with TCP after UDP truncation.
+
+## Что ответить на собесе
+
+- `dig +tcp` forces TCP query for test.
+- AXFR always TCP; restrict `allow-transfer` ACL on authoritative server.
+- Firewall must allow TCP/53 outbound from resolvers, not only UDP.
+- EDNS0 поднимает UDP payload size; TCP реже, но всё ещё обязателен.
+- Честно: блокировка TCP/53 ломает large DNSSEC chains silently after UDP truncate.
+
+## Как это работает
+
+Test UDP vs TCP:
+
+```bash
+dig @8.8.8.8 example.com A
+dig +tcp @8.8.8.8 example.com A
+dig +dnssec DNSKEY . | grep -E 'flags:|ANSWER:'
+```
+
+BIND allow-transfer snippet:
+
+```bash
+grep -E 'allow-transfer|also-notify' /etc/bind/named.conf.local
+```
+
+Watch traffic:
+
+```bash
+sudo tcpdump -i any port 53 -nn -c 10
+```
+
+## Подводные камни
+
+- **Corporate firewall UDP-only 53.** Large responses fail; apps timeout randomly.
+- **Open AXFR to world.** Zone enumeration leak internal hostnames.
+- **TCP connection exhaustion.** DNS amplification defense misconfig drops legit TCP.
+- **Ignore TC bit.** Stub resolver loops on truncated answer without TCP fallback.
+- **DoH/DoT different path.** Application DNS over HTTPS bypasses classic 53/tcp rules.

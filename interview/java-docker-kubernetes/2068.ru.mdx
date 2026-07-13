@@ -1,0 +1,83 @@
+---
+id: 2068
+title: "Ключевые объекты Kubernetes для Java-сервисов"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Ключевые объекты Kubernetes для Java-сервисов
+
+## Суть
+
+Kubernetes моделирует кластер декларативными ресурсами: Pod (контейнеры), Node (worker), Namespace (изоляция), Deployment (reconcile replicas), Service (stable network), ConfigMap/Secret (конфиг), PV/PVC (storage), Ingress (HTTP edge). Контроллеры постоянно приводят фактическое состояние к spec; Java microservice обычно = Deployment + Service + ConfigMap + Ingress.
+
+## Что ответить на собесе
+
+- Pod минимальная единица; в prod редко создаём вручную, только через controllers.
+- Deployment владеет ReplicaSet и rolling updates.
+- Service даёт DNS `my-svc.namespace.svc.cluster.local` внутри кластера.
+- ConfigMap для `application.yaml`; Secret для DB password (base64 at rest, не encryption by default).
+- Честно: знать 15 CRD наизусть менее важно, чем понимать reconcile loop и readiness/liveness probes.
+
+## Как это работает
+
+Типичный stack:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-config
+data:
+  application.yml: |
+    server:
+      port: 8080
+    spring:
+      datasource:
+        url: jdbc:postgresql://postgres:5432/ledger
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ledger-api
+  template:
+    metadata:
+      labels:
+        app: ledger-api
+    spec:
+      containers:
+      - name: api
+        image: ledger-api:1.8.0
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        envFrom:
+        - secretRef:
+            name: ledger-db-credentials
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+      volumes:
+      - name: config
+        configMap:
+          name: ledger-config
+```
+
+Связи: Deployment → Pod → container(JVM); Service selector → Pod labels; Ingress → Service; PVC → PV для stateful компонентов (Postgres StatefulSet).
+
+## Подводные камни
+
+- **Bare Pod.** Restart policy Never не пересоздаст Pod после node drain.
+- **ConfigMap hot reload.** Spring не перечитывает mount без restart или refresh actuator.
+- **Secret в env.** Значения видны в `kubectl describe pod` и process listing.
+- **ClusterIP-only Service.** Нельзя curl из браузера без Ingress/Port-forward.
+- **Orphan ReplicaSet.** Старые RS после failed rollout копят Pod templates и путают audit.

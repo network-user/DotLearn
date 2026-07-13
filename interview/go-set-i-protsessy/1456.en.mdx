@@ -1,0 +1,65 @@
+---
+id: 1456
+title: "How does a program enter the kernel through a system call?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a program enter the kernel through a system call?
+
+## In short
+
+A system call (syscall) moves execution from user mode into privileged kernel code when a process needs files, the network, memory, or devices. The kernel performs the operation and returns control with a result code.
+
+## How to answer in an interview
+
+- I describe a syscall as a controlled gateway to OS resources: the app does not touch hardware directly; it asks the kernel to do it.
+- I name common examples: `read`/`write`, `open`, socket operations, `mmap`, process control.
+- I note that entering kernel mode costs more than a normal function call, so I try to minimize syscalls on hot paths.
+- I add honestly: in Go most I/O is wrapped by the runtime and stdlib, so I rarely write `syscall` by hand in interviews, but the mode-switch model matters for blocking and the scheduler.
+
+## How it works
+
+User code runs in a restricted address space. When only the kernel can perform an operation, the process places the syscall number and arguments in registers (or via a table on some architectures) and executes a trap instruction. The CPU switches context, the kernel validates parameters, runs the request, and returns an errno or descriptor.
+
+In Go the direct `syscall` package is low level; for files and networking we normally use `os` and `net`, which still end up in syscalls. Example of reading through a file descriptor:
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+	"syscall"
+)
+
+func main() {
+	handle, err := os.Open("notes.txt")
+	if err != nil {
+		fmt.Println("open failed:", err)
+		return
+	}
+	defer handle.Close()
+
+	buf := make([]byte, 64)
+	n, err := syscall.Read(int(handle.Fd()), buf)
+	if err != nil {
+		fmt.Println("read failed:", err)
+		return
+	}
+	fmt.Printf("bytes=%d payload=%q\n", n, buf[:n])
+}
+```
+
+Here `handle.Fd()` yields an integer descriptor and `syscall.Read` enters the kernel. Errors arrive as Go errors, but the semantics match POSIX `read(2)`.
+
+## Pitfalls
+
+- **Reusing a buffer.** After a partial read you must advance the slice; otherwise you overwrite received bytes or read less than expected.
+- **Blocking syscalls.** A long `read` on a socket blocks an OS thread; in Go the runtime may detach an `M` from the goroutine, but scheduler load remains.
+- **Legacy API.** The stdlib `syscall` package is frozen; new code often uses `golang.org/x/sys/unix` or higher-level wrappers.
+- **Descriptor safety.** Passing an arbitrary int as an fd without ownership checks is risky in library code.
+- **errno semantics.** Not every error is fatal: `EINTR` after a signal sometimes requires retrying the call instead of failing immediately.

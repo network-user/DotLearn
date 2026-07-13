@@ -1,0 +1,57 @@
+---
+id: 2459
+title: "Why asymmetric cryptography matters on the frontend"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why asymmetric cryptography matters on the frontend
+
+## In short
+
+Asymmetric schemes use a key pair: the public key can be shared, the private key stays with the owner. Encrypt with public, decrypt with private; sign the other way around. This underpins TLS, signed JWTs, and secret exchange without a pre-shared password.
+
+## How to answer in an interview
+
+- On the frontend I do not RSA-encrypt passwords in the browser; I rely on HTTPS (TLS) and Web Crypto only when needed locally.
+- I validate the server public key through the CA chain, not blind pinning without rotation.
+- For JWT I inspect alg in the header: reject `none`, prefer RS256/ES256 with backend verification.
+- Honestly: asymmetric crypto is slower than symmetric; TLS switches to a symmetric session key after the handshake.
+- Client-side file encryption is possible via Web Crypto, but keys still must be delivered safely.
+
+## How it works
+
+```ts
+import { webcrypto } from 'node:crypto';
+
+const subtle = webcrypto.subtle;
+
+async function demoRsaRoundTrip() {
+  const keyPair = await subtle.generateKey(
+    { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['encrypt', 'decrypt']
+  );
+
+  const plaintext = new TextEncoder().encode('payload for server');
+  const cipher = await subtle.encrypt({ name: 'RSA-OAEP' }, keyPair.publicKey, plaintext);
+  const decoded = await subtle.decrypt({ name: 'RSA-OAEP' }, keyPair.privateKey, cipher);
+
+  return new TextDecoder().decode(decoded);
+}
+```
+
+In HTTPS the client receives a certificate with the public key, validates the CA signature, and negotiates a symmetric key for bulk encryption. Frontends rarely hold a private key: we usually work with bearer tokens signed by the server or APIs where the server validates request signatures.
+
+Digital signing: the server hashes the payload and encrypts the hash with the private key; the client (or another service) verifies with the public key. That gives integrity and non-repudiation without a shared secret on the client.
+
+## Pitfalls
+
+- **Payload size.** RSA encrypts small blocks only; large files use AES with an RSA wrap.
+- **Secrets in SPAs.** Any secret in a JS bundle or localStorage is XSS-exposed.
+- **Algorithm confusion.** JWT alg swap (`HS256` with pub key as secret) breaks trust.
+- **Certificate pinning.** Hard pins without rotation break releases when certs change.
+- **Main-thread cost.** `generateKey`/`encrypt` block UI; offload to a worker or the server.

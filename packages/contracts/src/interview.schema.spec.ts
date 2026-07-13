@@ -22,6 +22,26 @@ describe('InterviewQuestionMeta schema', () => {
     }
   });
 
+  it('parses a question with an optional direction', () => {
+    const result = InterviewQuestionMeta.safeParse({
+      ...validQuestion,
+      direction: 'go',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.direction).toBe('go');
+    }
+  });
+
+  it('rejects an invalid direction', () => {
+    expect(
+      InterviewQuestionMeta.safeParse({
+        ...validQuestion,
+        direction: 'rust',
+      }).success,
+    ).toBe(false);
+  });
+
   it('parses a question with relatedTopics including an optional conceptId', () => {
     const result = InterviewQuestionMeta.safeParse({
       ...validQuestion,
@@ -31,6 +51,23 @@ describe('InterviewQuestionMeta schema', () => {
     if (result.success) {
       expect(result.data.relatedTopics).toHaveLength(2);
     }
+  });
+
+  it('parses a question with direction field', () => {
+    const result = InterviewQuestionMeta.safeParse({
+      ...validQuestion,
+      direction: 'python',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid direction', () => {
+    expect(
+      InterviewQuestionMeta.safeParse({
+        ...validQuestion,
+        direction: 'rust',
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects a relatedTopics entry whose slug is not a slug', () => {

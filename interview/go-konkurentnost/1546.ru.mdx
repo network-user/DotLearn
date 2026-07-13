@@ -1,0 +1,63 @@
+---
+id: 1546
+title: "Как поднять 100 тысяч goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как поднять 100 тысяч goroutines?
+
+## Суть
+
+Цикл с `go fn()` и `sync.WaitGroup` (или errgroup) создаёт 100k G; каждая должна вызвать Done. Для I/O-bound задач это нормально; для CPU-bound нужен worker pool или semaphore, иначе scheduler и память страдают.
+
+## Что ответить на собесе
+
+- Capture loop variable: `go func(i int){ ... }(i)`.
+- wg.Add либо до spawn, либо один раз Add(N) до цикла.
+- Избегаю fmt.Println в каждой из 100k (I/O bottleneck).
+- Честно: 100k idle goroutines ok; 100k tight CPU loops нет без throttling.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+func main() {
+	const total = 100_000
+	var wg sync.WaitGroup
+	var done atomic.Uint64
+	wg.Add(total)
+	for i := 0; i < total; i++ {
+		go func(id int) {
+			defer wg.Done()
+			done.Add(1)
+		}(i)
+	}
+	wg.Wait()
+	fmt.Println("spawned:", done.Load())
+}
+```
+
+WaitGroup ждёт все Done. В реальном сервисе goroutine per request масштабируется до сотен тысяч при блокировке на network; compute pool ограничиваю sem chan struct{}.
+
+## Подводные камни
+
+**OOM от stack × N.** 100k × few KB plus heap captures может убить процесс.
+
+**Runtime scheduler thrash.** Все runnable одновременно → long tail latency.
+
+**Forgot Done on panic.** Использую defer wg.Done() внутри goroutine.
+
+**Loop variable capture bug.** Без параметра i все goroutines видят последний i.
+
+**Unbounded spawn under load.** Rate limit или worker queue вместо raw 100k/sec spawn.

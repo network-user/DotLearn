@@ -1,0 +1,82 @@
+---
+id: 1545
+title: "Как писать в map из goroutines без Mutex?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как писать в map из goroutines без Mutex?
+
+## Суть
+
+Стандартный map не thread-safe; без Mutex нужен single-writer: все mutating операции в одной goroutine, остальные шлют updates через chan. Альтернативы: `sync.Map`, sharded maps, или atomic swap immutable map.
+
+## Что ответить на собесе
+
+- «Без Mutex» на собесе обычно означает actor model через channel, не magic concurrent map.
+- Один goroutine владеет map; close chan после producers завершились.
+- Для read-heavy `sync.Map` или copy-on-write snapshot.
+- Честно: channel serializes writes; это Mutex другой формы с overhead messaging.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type patch struct {
+	key string
+	add int
+}
+
+func main() {
+	store := make(map[string]int)
+	updates := make(chan patch, 32)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for p := range updates {
+			store[p.key] += p.add
+		}
+	}()
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			updates <- patch{key: "hits", add: 1}
+		}()
+	}
+	wg.Wait()
+	close(updates)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range updates {
+		}
+	}()
+	wg.Wait()
+	fmt.Println(store["hits"])
+}
+```
+
+Writer goroutine единственная трогает map; producers только send patch. После Wait закрываю chan, drain завершает writer.
+
+## Подводные камни
+
+**Concurrent read без sync.** Readers во время writer без RWMutex или snapshot дают fatal concurrent map read.
+
+**Close до Wait producers.** Panic on send to closed chan.
+
+**Forgot drain writer.** Map может быть ok, но goroutine leak.
+
+**sync.Map для всего.** Плох на dense write или typed keys; benchmark first.
+
+**Sharding без hash balance.** Fixed shard по key hash всё ещё нужен per-shard mutex или single writer per shard.

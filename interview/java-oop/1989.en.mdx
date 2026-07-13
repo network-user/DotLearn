@@ -1,0 +1,68 @@
+---
+id: 1989
+title: "Why do you need notifyAll() in Java?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why do you need notifyAll() in Java?
+
+## In short
+
+`notifyAll()` wakes every thread waiting on this object's monitor after `wait()`. You call it from a synchronized context when shared state changes and every waiter must re-check its condition in a loop. Unlike `notify()`, it does not leave the other waiters asleep.
+
+## How to answer in an interview
+
+- I connect wait/notify to the object's intrinsic lock: `wait` releases the lock, `notify` re-acquires it before waking threads.
+- I stress `while`, not `if`, around `wait`: spurious wakeups and races.
+- I explain when `notifyAll` beats `notify`: multiple waiters with different conditions or a consumer pool.
+- I mention this is a low-level API; in new code I prefer `java.util.concurrent`.
+- I add honestly: `notifyAll` is more expensive than `notify` because of thundering herd; the choice depends on the queue model.
+
+## How it works
+
+A classic bounded buffer with wait/notify:
+
+```java
+final class SlotBuffer {
+    private final Object[] slots = new Object[4];
+    private int head;
+    private int tail;
+    private int count;
+
+    synchronized void offer(Object item) throws InterruptedException {
+        while (count == slots.length) {
+            wait();
+        }
+        slots[tail] = item;
+        tail = (tail + 1) % slots.length;
+        count++;
+        notifyAll();
+    }
+
+    synchronized Object poll() throws InterruptedException {
+        while (count == 0) {
+            wait();
+        }
+        Object item = slots[head];
+        slots[head] = null;
+        head = (head + 1) % slots.length;
+        count--;
+        notifyAll();
+        return item;
+    }
+}
+```
+
+The producer waits while the buffer is full; the consumer waits while it is empty. After `count` changes, `notifyAll()` wakes both producers and consumers: each waiter re-checks the `while` and either proceeds or sleeps again. `notify()` would wake one random thread and can starve the rest when conditions differ.
+
+## Pitfalls
+
+- **`if` instead of `while`.** One spurious wakeup breaks the buffer invariant.
+- **`notify` without holding the lock.** Calling it outside `synchronized` throws `IllegalMonitorStateException`.
+- **Missing notify after a state change.** Waiters sleep forever.
+- **`notifyAll` in a tight loop.** Unnecessary wakeups of every thread under load.
+- **Mixed monitors.** `wait` on `this`, `notify` on another object.

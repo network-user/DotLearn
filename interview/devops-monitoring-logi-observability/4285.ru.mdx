@@ -1,0 +1,73 @@
+---
+id: 4285
+title: "Какие типы метрик есть в Prometheus?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие типы метрик есть в Prometheus?
+
+## Суть
+
+Prometheus exposition format определяет четыре типа: Counter (монотонный счётчик), Gauge (значение вверх/вниз), Histogram (распределение с buckets + `_sum`/`_count`), Summary (квантили на client side). Тип влияет на корректные PromQL функции: `rate()` для Counter, `histogram_quantile()` для Histogram buckets.
+
+## Что ответить на собесе
+
+- Counter: `http_requests_total`, всегда растёт, смотрю `rate()` или `increase()`.
+- Gauge: `memory_used_bytes`, `queue_depth`, можно `avg_over_time` без rate.
+- Histogram: latency buckets `http_request_duration_seconds_bucket`, считаю p95 через `histogram_quantile`.
+- Summary: готовые quantile series, но агрегация между репликами ограничена; чаще предпочитаю Histogram.
+- Честно: неправильный тип (Gauge вместо Counter для total requests) ломает SLO dashboards.
+
+## Как это работает
+
+Пример exposition с разными типами (как отдаёт `/metrics`):
+
+```bash
+cat <<'EOF'
+# HELP checkout_orders_total Completed orders
+# TYPE checkout_orders_total counter
+checkout_orders_total{status="ok"} 1542
+
+# HELP checkout_queue_depth Pending jobs
+# TYPE checkout_queue_depth gauge
+checkout_queue_depth 17
+
+# HELP checkout_latency_seconds Request latency
+# TYPE checkout_latency_seconds histogram
+checkout_latency_seconds_bucket{le="0.05"} 900
+checkout_latency_seconds_bucket{le="0.1"} 1200
+checkout_latency_seconds_bucket{le="+Inf"} 1300
+checkout_latency_seconds_sum 85.3
+checkout_latency_seconds_count 1300
+EOF
+```
+
+PromQL для error rate и p95:
+
+```bash
+# error rate (counter)
+curl -G 'http://prometheus:9090/api/v1/query' \
+  --data-urlencode 'query=rate(http_requests_total{status=~"5.."}[5m])'
+
+# p95 latency (histogram)
+curl -G 'http://prometheus:9090/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.95, sum(rate(checkout_latency_seconds_bucket[5m])) by (le))'
+```
+
+Проверка TYPE в scrape target:
+
+```bash
+curl -s http://app:8080/metrics | grep -E '^# TYPE'
+```
+
+## Подводные камни
+
+- **rate на Gauge.** Даёт бессмысленные пики при рестарте или ручном dec; rate только на Counter/Histogram count.
+- **Слишком много buckets.** Десятки latency buckets на высокой cardinality умножают series count.
+- **Summary агрегация.** Квантили Summary нельзя математически сложить между pod'ами; только Histogram + recording rule.
+- **Counter reset.** Pod restart даёт drop counter; `rate()` учитывает reset, raw `increase` без range может врать.
+- **`_total` без counter type.** Hand-rolled metrics без `# TYPE counter` ломают auto-detection в некоторых exporters.

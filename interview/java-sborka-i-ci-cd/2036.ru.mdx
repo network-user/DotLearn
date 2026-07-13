@@ -1,0 +1,66 @@
+---
+id: 2036
+title: "Dependency и plugin в Maven: разные роли"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Dependency и plugin в Maven: разные роли
+
+## Суть
+
+Dependency попадает на classpath приложения (compile/runtime/test) и поставляется из репозитория. Plugin расширяет сам Maven: выполняет goals на фазах lifecycle (компиляция, тесты, shade, docker). Зависимости описывают **что нужно коду**, плагины описывают **как собирать проект**.
+
+## Что ответить на собесе
+
+- Dependencies в `<dependencies>`, plugins в `<build><plugins>`.
+- Jackson на classpath, `maven-compiler-plugin` на этапе compile.
+- Плагин тоже тянет свои transitive dependencies, но они не видны application коду.
+- Версии плагинов фиксирую в parent POM или `pluginManagement`, не полагаюсь на дефолты из super-POM.
+- Честно: путаница возникает, когда бизнес-библиотеку ошибочно объявляют plugin или наоборот.
+
+## Как это работает
+
+Runtime dependency для REST сериализации:
+
+```xml
+<dependency>
+  <groupId>com.fasterxml.jackson.core</groupId>
+  <artifactId>jackson-databind</artifactId>
+  <version>2.17.1</version>
+</dependency>
+```
+
+Код импортирует `ObjectMapper` напрямую; артефакт попадёт в fat jar или WAR `WEB-INF/lib`.
+
+Плагин компиляции с Java 21:
+
+```xml
+<build>
+  <plugins>
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId>
+      <artifactId>maven-compiler-plugin</artifactId>
+      <version>3.13.0</version>
+      <configuration>
+        <release>21</release>
+      </configuration>
+    </plugin>
+  </plugins>
+</build>
+```
+
+При `mvn compile` Maven загружает plugin jar в build classpath, вызывает goal `compile`, но `maven-compiler-plugin` не становится зависимостью приложения.
+
+Gradle аналогия: `implementation` vs `plugins { id(...) }`. В Maven plugin может иметь `<dependencies>` внутри себя (например, SpotBugs с конкретной версией analyzer), это не то же самое, что project dependency.
+
+## Подводные камни
+
+- **Plugin без версии.** Super-POM задаёт дефолт, но он отстаёт от актуального JDK.
+- **Dependency в plugin section.** Сборка падает с ClassNotFound в goal, а не в приложении.
+- **Provided dependency vs plugin.** Servlet API `provided` для кода; `maven-war-plugin` для упаковки.
+- **Transitive leakage.** Неправильный scope dependency раздувает production jar.
+- **Дублирование версий.** Одна библиотека в dependencies и как dependency плагина (enforcer duplicate rule).

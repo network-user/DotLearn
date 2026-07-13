@@ -1,0 +1,60 @@
+---
+id: 4617
+title: "Зачем нужны лямбды, если есть обычные функции?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужны лямбды, если есть обычные функции?
+
+## Суть
+
+Лямбда это локальный functor: логика рядом с вызовом, без отдельного имени в namespace, с захватом окружения. Обычная free function не видит локальные переменные; для STL-колбэков без лямбды пришлось бы плодить globals или state structs.
+
+## Что ответить на собесе
+
+- Локальность: comparator/predicate прямо в `std::sort`, `std::find_if`.
+- Захват `[threshold]`, `[&ctx]` без boilerplate struct с operator().
+- Generic lambda (`auto` параметры) с C++14 сокращает шаблонный код.
+- Обычная функция всё ещё лучше для reuse across TUs и публичного API.
+- Честно: «нельзя обойтись» формально неверно; лямбда это ergonomics, не capability, которой нет у функций + struct.
+
+## Как это работает
+
+Компилятор генерирует уникальный closure type; его можно передать в шаблон STL как любой callable.
+
+```cpp
+#include <algorithm>
+#include <iostream>
+#include <vector>
+
+int main() {
+    std::vector<int> scores{11, 4, 9, 15, 7};
+    int pass_mark = 10;
+
+    std::sort(scores.begin(), scores.end(), [pass_mark](int lhs, int rhs) {
+        const bool lhs_pass = lhs >= pass_mark;
+        const bool rhs_pass = rhs >= pass_mark;
+        if (lhs_pass != rhs_pass) return lhs_pass > rhs_pass;
+        return lhs > rhs;
+    });
+
+    for (int s : scores) {
+        std::cout << s << ' ';
+    }
+    return 0;
+}
+```
+
+`pass_mark` захвачен by value; comparator видит порог без global или friend struct. Тот же эффект дал бы `struct Sorter { int pass_mark; bool operator()(int,int) const; };`, но шумнее.
+
+## Подводные камни
+
+- **Лямбда с state в async.** Capture by reference + post to thread = dangling.
+- **Раздувание в hot path.** Большие тела лучше в named function для тестов и reuse.
+- **Не convertible to function pointer без capture.** `[](int x){}` да; `[n](int x){}` нет.
+- **Recursive lambda.** Нужен `std::function` или Y-combinator trick; именованная функция проще.
+- **Overfitting локальностью.** Дублирование одинаковых лямбд вместо shared helper.

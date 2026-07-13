@@ -1,0 +1,48 @@
+---
+id: 4192
+title: "Как устроен consumer в Kafka?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроен consumer в Kafka?
+
+## Суть
+
+Consumer читает записи из topic через pull API, входит в consumer group и получает назначенные partitions. Offset фиксируется в `__consumer_offsets` после обработки; rebalance перераспределяет partitions при scale up/down.
+
+## Что ответить на собесе
+
+- `group.id` определяет совместное потребление: одна partition на consumer в группе.
+- `enable.auto.commit=false` + ручной commit после успешной обработки даёт at-least-once.
+- `max.poll.interval.ms` и `session.timeout.ms` защищают от зависшего consumer.
+- Честно: exactly-once end-to-end требует idempotent producer + transactional consume-process-produce; простой consumer чаще at-least-once с дедупом.
+
+## Как это работает
+
+Console consumer для отладки:
+
+```bash
+kafka-console-consumer.sh --bootstrap-server kafka.internal:9092 \
+  --topic payments --group debug-readers --from-beginning --max-messages 5
+```
+
+Проверка lag группы:
+
+```bash
+kafka-consumer-groups.sh --bootstrap-server kafka.internal:9092 \
+  --describe --group billing-workers
+```
+
+Типичный цикл приложения: `poll()` → обработка batch → `commitSync()` или async commit. При добавлении pod Kubernetes coordinator (старое имя group coordinator) запускает rebalance; `CooperativeStickyAssignor` снижает stop-the-world. Paused partitions позволяют backpressure без потери membership.
+
+## Подводные камни
+
+- **Commit до обработки.** Auto-commit теряет сообщения при crash после poll.
+- **Долгая обработка одного batch.** Превышение `max.poll.interval` выкидывает consumer из группы.
+- **Rebalance storm.** Частый scale HPA без static membership гоняет offsets туда-сюда.
+- **Чтение без key ordering.** Несколько partitions ломают порядок событий одной сущности.
+- **Duplicate после rebalance.** At-least-once без идемпотентного handler даёт double charge.

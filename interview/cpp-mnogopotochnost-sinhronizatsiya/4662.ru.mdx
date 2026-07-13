@@ -1,0 +1,78 @@
+---
+id: 4662
+title: "Как выглядит классический deadlock на двух mutex?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как выглядит классический deadlock на двух mutex?
+
+## Суть
+
+Deadlock возникает, когда потоки захватывают несколько mutex в разном порядке и каждый ждёт ресурс, удерживаемый другим. Выполнение замирает навсегда, пока процесс не перезапустят.
+
+## Что ответить на собесе
+
+- Минимальный учебный кейс: два потока, два mutex, противоположный порядок `lock`.
+- Условия Коффмана: mutual exclusion, hold-and-wait, no preemption, circular wait.
+- Профилактика: global lock ordering, `std::lock`/`std::scoped_lock`, timeout через `try_lock`.
+- На собесе часто просят набросать код на доске и объяснить, где замыкается цикл ожидания.
+- Честно: deadlock может проявляться редко и только под нагрузкой; воспроизведение требует искусственной задержки между захватами.
+
+## Как это работает
+
+```cpp
+#include <chrono>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex left_gate;
+std::mutex right_gate;
+
+void route_a() {
+    std::lock_guard<std::mutex> hold_left(left_gate);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::lock_guard<std::mutex> hold_right(right_gate);
+    std::cout << "route A finished\n";
+}
+
+void route_b() {
+    std::lock_guard<std::mutex> hold_right(right_gate);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::lock_guard<std::mutex> hold_left(left_gate);
+    std::cout << "route B finished\n";
+}
+
+int main() {
+    std::thread t1(route_a);
+    std::thread t2(route_b);
+    t1.join();
+    t2.join();
+}
+```
+
+`route_a` берёт `left_gate`, затем ждёт `right_gate`. `route_b` делает наоборот. Если оба успели захватить «свой» первый mutex до второго, получаем цикл: A ждёт B, B ждёт A.
+
+Исправление через единый порядок:
+
+```cpp
+void safe_route(std::mutex& first, std::mutex& second) {
+    std::lock(first, second);
+    std::lock_guard<std::mutex> g1(first, std::adopt_lock);
+    std::lock_guard<std::mutex> g2(second, std::adopt_lock);
+}
+```
+
+Или C++17: `std::scoped_lock guard(left_gate, right_gate);` в обеих функциях.
+
+## Подводные камни
+
+- **Скрытый порядок.** Deadlock может быть через три mutex и три потока, не только парой.
+- **Lock внутри callback.** Колбэки, дергающие чужие объекты, легко нарушают согласованный порядок.
+- **RAII scope.** Держать первый mutex долго увеличивает окно для deadlock.
+- **try_lock без backoff.** Бесконечный spin с `try_lock` превращается в livelock.
+- **Инструменты.** ThreadSanitizer и deadlock detectors в debugger помогают поймать то, что code review пропустил.

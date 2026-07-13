@@ -1,0 +1,66 @@
+---
+id: 2957
+title: "VPN: как QA воспроизводит split tunnel и geo-блок?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# VPN: как QA воспроизводит split tunnel и geo-блок?
+
+## Суть
+
+VPN строит зашифрованный туннель между клиентом и VPN-шлюзом: трафик выходит в интернет с IP шлюза, а не устройства. Корпоративный VPN часто full tunnel (весь трафик) или split tunnel (только корп. подсети). QA проверяет доступ к internal staging, geo-ограничения контента и что приложение не ломается при смене exit IP.
+
+## Что ответить на собесе
+
+- Шифрование защищает канал до VPN-сервера; дальше трафик идёт как от exit node (важно для compliance).
+- Скрытие IP меняет geo, fraud rules, CDN edge; тестирую login из «неожиданной» страны.
+- Split tunnel: corp API через VPN, YouTube напрямую; баг «API timeout только в офисе» часто из маршрута.
+- Честно: consumer VPN не заменяет тест corp SSO; нужен тот же клиент, что у пользователей (AnyConnect, WireGuard profile).
+
+## Как это работает
+
+Схема full tunnel:
+
+```
+[Laptop] --encrypted--> [VPN Gateway EU] --plain--> [api.internal.corp]
+         exit IP = gateway, не home ISP
+```
+
+Gherkin сценарии:
+
+```gherkin
+Feature: VPN и доступ к стендам
+
+  Scenario: Internal staging доступен только через VPN
+    Given VPN disconnected
+    When QA открывает "https://staging.internal.corp/"
+    Then соединение не устанавливается или DNS NXDOMAIN
+    When QA подключает corp VPN
+    Then staging открывается с кодом 200
+
+  Scenario: Geo policy блокирует login вне разрешённого региона
+    Given exit VPN IP в стране вне whitelist
+    When пользователь логинится
+    Then API возвращает 403 с кодом geo_denied
+    And показывается понятное сообщение без утечки stack trace
+
+  Scenario: Split tunnel не отправляет public SaaS через corp
+    Given split tunnel включён
+    When QA открывает public CDN asset
+    Then маршрут не проходит через corp VPN gateway
+    And latency не выше baseline без VPN
+```
+
+Проверяю DNS leak: internal hostname резолвится только с corp DNS suffix при активном VPN.
+
+## Подводные камни
+
+- **Тест без VPN profile пользователя.** WireGuard у QA, IPSec у клиента; разные маршруты.
+- **MTU/MSS на VPN.** Большие POST проходят локально, падают через tunnel.
+- **Kill switch выключен.** Утечка IP при reconnect; fraud тест некорректен.
+- **Двойной VPN + corp.** Непредсказуемый exit; flaky geo тесты.
+- **Считать VPN «полной анонимностью».** Server-side session и cookies всё равно идентифицируют user.

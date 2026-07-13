@@ -1,0 +1,59 @@
+---
+id: 4231
+title: "Как проверить маршрутизацию Nginx в upstream?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как проверить маршрутизацию Nginx в upstream?
+
+## Суть
+
+Верификация в три шага: effective config (`nginx -T`), synthetic request (`curl` с нужным Host/path), корреляция в логах (`access.log` upstream addr, `error.log` connect/upstream errors). Для canary смотрю split по map/split_clients или weight. В проде добавляю заголовок `X-Upstream-Name` с backend для быстрой диагностики.
+
+## Что ответить на собесе
+
+- `nginx -T` показывает merged upstream и какой server block матчится.
+- `curl -v -H 'Host: api.example.com' http://127.0.0.1/path` сравниваю body/headers с прямым hit на backend.
+- В log format добавляю `$upstream_addr $upstream_status $upstream_response_time`.
+- `stub_status` или nginx-prometheus-exporter для active conn per upstream.
+- Честно: без маркера на backend нельзя доказать какой node ответил; временно включаю `add_header X-Served-By $upstream_addr`.
+
+## Как это работает
+
+Кастомный log format:
+
+```nginx
+log_format upstream_trace '$remote_addr "$request" '
+                          'upstream=$upstream_addr status=$upstream_status '
+                          'rt=$request_time urt=$upstream_response_time';
+
+access_log /var/log/nginx/access.log upstream_trace;
+```
+
+Проверка:
+
+```bash
+sudo nginx -t && sudo nginx -s reload
+
+curl -sD - -o /dev/null -H 'Host: shop.example.com' http://127.0.0.1/checkout
+
+sudo tail -3 /var/log/nginx/access.log
+```
+
+Если upstream недоступен, в error.log:
+
+```bash
+sudo grep -E 'connect\(\)|upstream timed out' /var/log/nginx/error.log | tail -5
+```
+
+## Подводные камни
+
+- **Кэш скрывает upstream.** `proxy_cache` отдаёт HIT без backend; для теста обхожу cache или `curl -H 'Cache-Control: no-cache'`.
+- **Разный Host на backend.** Backend vhost не совпадает с proxy Host; получаю 404 при «рабочем» nginx.
+- **TLS к upstream.** `proxy_pass https://` требует `proxy_ssl_server_name on` и trust chain.
+- **map/split_clients sticky.** Один curl не покажет canary; гоняю sample с разными cookie/IP.
+- **include overwrite.** Деплой положил новый site-enabled, но старый default_server перехватывает Host.

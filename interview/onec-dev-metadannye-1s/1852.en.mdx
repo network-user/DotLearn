@@ -1,0 +1,62 @@
+---
+id: 1852
+title: "Catalog attribute uniqueness: index and code check"
+category: onec-dev-metadannye-1s
+categoryLabel: "Метаданные 1С"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Catalog attribute uniqueness: index and code check
+
+## In short
+
+The platform lets you mark an attribute as unique: the DBMS creates a unique index and rejects duplicates on write. Composite or contextual uniqueness (by company or owner) is implemented with a query in `ПередЗаписью` or a separate mapping register.
+
+## How to answer in an interview
+
+- I start with the Uniqueness flag on the attribute when the rule is simple.
+- For field pairs (tax ID plus branch code) I use a programmatic check; a single-field index is not enough.
+- In `ПередЗаписью` I exclude the current reference from the selection, otherwise editing is blocked.
+- I account for deletion marks: they are often included or excluded explicitly in the query.
+- I am honest: under concurrent sessions only a DBMS index gives a hard guarantee; code alone without an index can miss a duplicate.
+
+## How it works
+
+In the configurator I enable Uniqueness on the catalog attribute and update the database structure. The platform creates an index; a second item with the same value rolls back the transaction with a uniqueness error.
+
+A complex rule is checked before write:
+
+```bsl
+Процедура ПередЗаписью(Отказ)
+    Запрос = Новый Запрос;
+    Запрос.Текст =
+        "ВЫБРАТЬ ПЕРВЫЕ 1
+        |    Номенклатура.Ссылка
+        |ИЗ
+        |    Справочник.Номенклатура КАК Номенклатура
+        |ГДЕ
+        |    Номенклатура.Артикул = &Артикул
+        |    И Номенклатура.Ссылка <> &ТекущаяСсылка
+        |    И НЕ Номенклатура.ПометкаУдаления";
+
+    Запрос.УстановитьПараметр("Артикул", Артикул);
+    Запрос.УстановитьПараметр("ТекущаяСсылка", Ссылка);
+
+    Если НЕ Запрос.Выполнить().Пустой() Тогда
+        Отказ = Истина;
+        Сообщить("Артикул уже занят другим элементом.");
+    КонецЕсли;
+КонецПроцедуры
+```
+
+For a soft client-side check I can call the same logic from `ПередЗаписьюНаСервере`, but the final decision stays on the server.
+
+## Pitfalls
+
+**Uniqueness only in code.** Two parallel sessions can write a duplicate without an index.
+**Missing current reference.** Editing an existing item is wrongly treated as a duplicate.
+**Empty values.** Several items with an empty SKU may pass unless emptiness is forbidden separately.
+**Deletion mark.** A duplicate "in the trash" may be allowed by business rules, but the index still blocks it.
+**Composite key.** The uniqueness flag on one attribute does not replace a multi-field check.

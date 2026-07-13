@@ -1,0 +1,66 @@
+---
+id: 4578
+title: "What is SFINAE and why does it matter in templates?"
+category: cpp-shablony-metaprogramming
+categoryLabel: "Шаблоны / Metaprogramming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is SFINAE and why does it matter in templates?
+
+## In short
+
+SFINAE (Substitution Failure Is Not An Error) means that if substituting template arguments makes a signature or return type ill-formed, that candidate is dropped instead of failing the build. It underpins conditional overloads and compile-time branching before `constexpr if` and concepts.
+
+## How to answer in an interview
+
+- I spell it out: a failed substitution in a template is not an error when the candidate is rejected during overload resolution.
+- I show the classic `decltype` plus ellipsis fallback to test whether a type exposes a member.
+- I mention `std::enable_if`, `void_t`, and the modern C++20 concepts replacement.
+- I explain the boundary: SFINAE applies in the immediate context of the signature, not inside the function body.
+- I add honestly: in new code I prefer concepts, but SFINAE still appears in legacy and the standard library.
+
+## How it works
+
+On a template call the compiler tries each candidate and substitutes actual types. If substitution makes the signature invalid (for example `decltype(x.missing())` does not exist), that template is removed from consideration. Another overload remains, or you get "no matching function".
+
+```cpp
+#include <iostream>
+
+template <typename T>
+auto invoke_hook(T& obj) -> decltype(obj.on_event(), void()) {
+    obj.on_event();
+}
+
+template <typename T>
+void invoke_hook(...) {
+    std::cout << "no on_event hook\n";
+}
+
+struct WithHook {
+    void on_event() { std::cout << "event fired\n"; }
+};
+
+struct Plain {};
+
+int main() {
+    WithHook wired;
+    Plain bare;
+    invoke_hook(wired);
+    invoke_hook(bare);
+}
+```
+
+The first overload participates only when `T` has a callable `on_event()`. For `Plain`, substitution inside `decltype` fails, the candidate is removed by SFINAE, and the variadic stub wins. Since C++11 the same idea appears in trait classes via `std::void_t<decltype(std::declval<T>().on_event())>`.
+
+A type error in the function body is not SFINAE: compilation stops. Checks belong in the return type, default arguments, or `enable_if_t` on template parameters.
+
+## Pitfalls
+
+- **Error in the body, not the signature.** SFINAE does not help if invalid code lives inside `{ }`.
+- **Ambiguous overloads.** Two candidates may both match and produce a hard error.
+- **Readability.** Long `enable_if` chains become opaque quickly.
+- **C++20 concepts.** `requires` states the same constraints more clearly; SFINAE remains needed to read older code.
+- **Dependent names.** In templates, `typename` and substitution context affect whether a candidate is discarded.

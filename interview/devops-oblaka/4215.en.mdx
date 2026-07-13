@@ -1,0 +1,66 @@
+---
+id: 4215
+title: "What caching options does AWS provide?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What caching options does AWS provide?
+
+## In short
+
+AWS covers caching at three layers: ElastiCache (in-memory Redis/Memcached near the app), CloudFront (edge CDN for static assets and APIs), and DAX (DynamoDB acceleration). Built-ins include API Gateway caching and S3 transfer acceleration. I pick the layer by data type and acceptable staleness.
+
+## How to answer in an interview
+
+- ElastiCache Redis for sessions, rate limits, pub/sub; Memcached for simple key-value without persistence.
+- CloudFront in front of S3/ALB/API Gateway cuts latency and offloads the origin.
+- I add DAX only for read-heavy DynamoDB with tolerable eventual consistency on the cache.
+- I design TTL and invalidation up front; otherwise users see stale data.
+- Honestly: a CDN will not cache personalized content without careful cache keys and vary headers.
+
+## How it works
+
+ElastiCache runs in a subnet group inside the VPC; the app talks to the cluster endpoint. Redis supports replication groups, snapshots, and cluster mode; Memcached scales out horizontally without rich data structures.
+
+Smoke test via Redis CLI from a bastion:
+
+```bash
+redis-cli -h prod-cache.abc123.ng.0001.euc1.cache.amazonaws.com -p 6379 \
+  SET session:u42 "$(date -Iseconds)" EX 3600
+
+redis-cli -h prod-cache.abc123.ng.0001.euc1.cache.amazonaws.com GET session:u42
+```
+
+CloudFront fetches from the origin on a cache miss, stores at a PoP, and serves until TTL expires. Invalidation or versioned keys clears stale content.
+
+CloudFormation snippet for a distribution:
+
+```yaml
+Resources:
+  StaticCdn:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - Id: S3Origin
+            DomainName: assets-prod.s3.eu-central-1.amazonaws.com
+            S3OriginConfig:
+              OriginAccessIdentity: origin-access-identity/cloudfront/E1234
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        Enabled: true
+```
+
+## Pitfalls
+
+- **Cache stampede.** Mass misses hammer the database; use probabilistic early expiration or request coalescing.
+- **Redis memory pressure.** Without maxmemory-policy, evictions are unpredictable; watch evictions and hit ratio.
+- **CloudFront auth.** Private S3 needs OAC/OAI; otherwise the origin returns 403 or leaks data.
+- **DAX consistency.** Writes to DynamoDB are not instantly visible through DAX; critical read-after-write bypasses DAX.
+- **TTL too long.** Long API TTL breaks rollouts; pair a short default TTL with selective invalidation.

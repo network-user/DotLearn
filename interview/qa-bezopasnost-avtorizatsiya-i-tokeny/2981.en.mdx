@@ -1,0 +1,59 @@
+---
+id: 2981
+title: "Roles and permissions: how does QA validate RBAC in practice?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Roles and permissions: how does QA validate RBAC in practice?
+
+## In short
+
+A role bundles permissions; a permission describes a concrete action on a resource. The user gets a role, and on every request the system checks required permissions. For QA this is a matrix of role × endpoint/button × expected HTTP status.
+
+## How to answer in an interview
+
+- I separate authentication (who you are) from authorization (what you may do).
+- I build a matrix: admin, editor, viewer and CRUD per entity.
+- I verify both UI (button hidden) and API directly: hidden UI does not mean a protected backend.
+- Honestly: RBAC without an audit log does not prove who changed permissions; compliance needs logs.
+
+## How it works
+
+Typical CMS: role `admin` has `users:write`, `posts:delete`; `editor` only `posts:write`; `viewer` only `posts:read`. Assigning a role pulls the whole bundle, not permissions one by one.
+
+Gherkin:
+
+```gherkin
+Feature: RBAC in CMS
+
+  Background:
+    Given user alice with role editor
+    And user bob with role viewer
+
+  Scenario: Editor creates a post
+    When alice sends POST /api/posts with valid body
+    Then response status is 201
+
+  Scenario: Viewer cannot delete someone else's post
+    When bob sends DELETE /api/posts/42
+    Then response status is 403
+    And body contains code INSUFFICIENT_PERMISSIONS
+
+  Scenario: Hidden button does not replace API check
+    When bob calls DELETE /api/posts/42 via curl with his token
+    Then response is 403 even if Delete button is not visible in UI
+```
+
+On each action middleware reads JWT/session, extracts role claims or DB lookup, compares with policy. Negative tests: horizontal escalation (user A edits user B's object) and vertical (viewer hits admin route).
+
+## Pitfalls
+
+- **Role explosion.** Hundreds of custom roles without inheritance become unmanageable.
+- **Default allow.** A new endpoint was left open and every role gets access.
+- **UI-only checks.** Direct POST to the API bypasses a disabled button.
+- **Stale permissions.** Role cache in Redis is not invalidated after revoke.
+- **Group confusion.** AD group mapping breaks when the LDAP group is renamed.

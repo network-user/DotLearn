@@ -1,0 +1,51 @@
+---
+id: 1993
+title: "Из чего состоит структурированное log-событие?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Из чего состоит структурированное log-событие?
+
+## Суть
+
+Log event это одна запись о факте в runtime: когда произошло, насколько это важно, кто сгенерировал, что случилось и какой контекст помогает коррелировать. Структурированный формат (JSON, key-value) позволяет фильтровать в ELK, Loki, Splunk и строить алерты без regex по свободному тексту.
+
+## Что ответить на собесе
+
+- Перечисляю поля: timestamp, level, logger/source, message, MDC/trace metadata.
+- Упоминаю correlation id, request id, user id, span id для distributed tracing.
+- Объясняю уровни SLF4J: TRACE/DEBUG/INFO/WARN/ERROR.
+- Показываю, что message лучше параметризовать, а детали класть в structured fields.
+- Честно добавляю: PII и секреты в metadata недопустимы; маскирование на уровне appender/layout.
+
+## Как это работает
+
+Типичный JSON event из Java-сервиса (SLF4J + structured encoder):
+
+```json
+{
+  "timestamp": "2026-07-13T11:22:01.453Z",
+  "level": "ERROR",
+  "logger": "com.acme.billing.PaymentGateway",
+  "message": "payment capture failed",
+  "traceId": "7f3c2a1b9e004d12",
+  "spanId": "a91f0042bc11",
+  "orderId": "ord-88421",
+  "errorCode": "CARD_DECLINED",
+  "durationMs": 842
+}
+```
+
+`timestamp` упорядочивает события и стыкуется с метриками. `level` управляет шумом в prod (часто INFO+). `logger` указывает класс или модуль источника. `message` короткий human-readable факт; `orderId`, `errorCode`, `durationMs` дают машиночитаемый контекст для поиска и дашбордов. `traceId`/`spanId` связывают лог с цепочкой микросервисов. В Java MDC (`Mapped Diagnostic Context`) прокидывает такие ключи через thread-bound map на время запроса.
+
+## Подводные камни
+
+- **Неструктурированный текст.** `log.info("user " + id + " paid " + sum)` ломает парсинг.
+- **Отсутствие timezone.** Локальное время без offset искажает порядок в multi-region.
+- **Смешение уровней.** ERROR на ожидаемом бизнес-отказе засоряет on-call.
+- **Гигантские stack trace в каждом INFO.** Раздувает индекс и стоимость хранения.
+- **Утечка секретов в metadata.** Токены, PAN, пароли в полях JSON.

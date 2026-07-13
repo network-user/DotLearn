@@ -1,0 +1,57 @@
+---
+id: 1530
+title: "Когда runtime переключает goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда runtime переключает goroutine?
+
+## Суть
+
+Переключение происходит при блокировке G на channel, mutex, network, syscall, `time.Sleep`, или при preemption (async preemption в современных Go на длинных CPU циклах). Планировщик не делает OS-level switch на каждую goroutine; он мультиплексирует G на M.
+
+## Что ответить на собесе
+
+- Кооперативные точки: send/receive, select, lock, park в runtime.
+- Sysmon будит P и может прервать долго крутящуюся G.
+- `runtime.Gosched()` явно уступает квант на том же P.
+- Честно оговариваю: без блокировок и без preemption CPU-bound loop монополизирует P.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	go func() {
+		for i := 0; i < 3; i++ {
+			fmt.Println("bg", i)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	for i := 0; i < 3; i++ {
+		fmt.Println("main", i)
+		time.Sleep(30 * time.Millisecond)
+	}
+}
+```
+
+`sleep` ставит G в wait queue таймера; M выполняет другую G. После истечения таймера G возвращается в run queue P.
+
+## Подводные камни
+
+- **Busy spin.** Нет yield, другие G на том же P голодают.
+- **GOMAXPROCS=1.** Параллелизм только через точки блокировки.
+- **Cgo syscall.** Может вывести M из пула, runtime создаёт новый thread.
+- **Lock OS thread.** `runtime.LockOSThread` ломает обычную модель планирования.
+- **False sharing scheduler cost.** Слишком мелкая гранулярность goroutine повышает overhead переключений.

@@ -1,0 +1,65 @@
+---
+id: 2952
+title: "Network diagnostics: ping, traceroute, dig, and curl in the QA toolkit"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Network diagnostics: ping, traceroute, dig, and curl in the QA toolkit
+
+## In short
+
+Network utilities cover different layers: ping (ICMP) checks reachability and RTT, traceroute shows hops and delays, dig/nslookup resolves DNS, curl validates the HTTP/HTTPS contract. QA chains them in minimal triage before UI: DNS first, then TCP/HTTP, then routing.
+
+## How to answer in an interview
+
+- ping: quick "host alive"; may be blocked by firewall while HTTPS works.
+- traceroute/tracert: where latency grows; * on a hop is not always a bug (ICMP rate limit).
+- dig +trace or nslookup: A/AAAA/CNAME, TTL, authoritative NS; catches stale DNS after deploy.
+- curl -I/-v: status, headers, TLS, redirects; main API smoke without a browser.
+- Honestly: successful ping does not prove the app on 443 works; I always finish with curl to the real URL.
+
+## How it works
+
+Typical order when "site won't open":
+
+```
+dig +short api.example.com A
+curl -sS -o /dev/null -w "%{http_code} %{time_connect}\n" https://api.example.com/health
+traceroute api.example.com
+ping -c 4 api.example.com
+```
+
+Gherkin stand smoke checklist:
+
+```gherkin
+Feature: Stand network diagnostics
+
+  Scenario: DNS resolves production host
+    When QA runs dig A for "app.example.com"
+    Then a non-empty IP address is returned
+    And TTL is greater than 0
+
+  Scenario: HTTP health is reachable
+    When QA runs curl HEAD "https://app.example.com/health"
+    Then HTTP status is 200
+    And connect time is under 2 seconds
+
+  Scenario: Route without abnormal delay on last hops
+    When QA runs traceroute to the IP from DNS
+    Then the last hop responds
+    And total RTT is within stand SLA
+```
+
+In CI automation curl replaces manual ping; dig helps on blue/green DNS cutover.
+
+## Pitfalls
+
+- **ping OK, curl fail.** ICMP blocked but 443 open (or the reverse).
+- **DNS cache on the QA laptop.** dig @8.8.8.8 vs system resolver differ.
+- **curl without -L.** 301 to https not followed, false "down".
+- **traceroute from VPN.** Path differs from end-user ISP.
+- **Ignoring IPv6.** Broken AAAA, browser tries v6 first and times out.

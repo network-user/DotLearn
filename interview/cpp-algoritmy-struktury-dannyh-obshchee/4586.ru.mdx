@@ -1,0 +1,85 @@
+---
+id: 4586
+title: "Какова сложность вставки в хеш-таблицу?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какова сложность вставки в хеш-таблицу?
+
+## Суть
+
+В среднем вставка в хеш-таблицу с умеренной загрузкой и хорошим хешем стоит O(1) амортизированно: один расчёт хеша, доступ к корзине, короткая цепочка. В худшем случае, когда почти все ключи попадают в одну корзину или таблица не рехешится, стоимость растёт до O(n).
+
+## Что ответить на собесе
+
+- Разделяю средний, амортизированный и худший случаи; на собесе обычно ждут формулировку «O(1) average, O(n) worst».
+- Объясняю вклад rehash: редкие O(n) перестройки размазываются по множеству вставок (амортизация).
+- Сравниваю chaining и open addressing: при коллизиях либо сканируем цепочку, либо ищем свободную ячейку пробами.
+- Упоминаю `std::unordered_map::emplace` и скрытую стоимость аллокации узла.
+- Честно добавляю: без регулирования load factor «средний O(1)» на бумаге не спасает продакшен latency.
+
+## Как это работает
+
+Алгоритм вставки: вычислить хеш, получить индекс корзины, вставить элемент или пройти цепочку / пробирование. Если load factor выше порога, таблица увеличивается и все элементы переносятся (rehash), что делает отдельную вставку дорогой, но редкой.
+
+```cpp
+#include <iostream>
+#include <list>
+#include <vector>
+
+class IntSet {
+    std::vector<std::list<int>> buckets;
+    std::size_t count = 0;
+
+    std::size_t slot(int value) const {
+        return static_cast<std::size_t>(value) % buckets.size();
+    }
+
+public:
+    explicit IntSet(std::size_t bucket_count) : buckets(bucket_count) {}
+
+    void insert(int value) {
+        auto& chain = buckets[slot(value)];
+        for (int existing : chain) {
+            if (existing == value) return;
+        }
+        chain.push_back(value);
+        ++count;
+    }
+
+    bool contains(int value) const {
+        for (int existing : buckets[slot(value)]) {
+            if (existing == value) return true;
+        }
+        return false;
+    }
+
+    void dump() const {
+        for (std::size_t i = 0; i < buckets.size(); ++i) {
+            std::cout << i << ':';
+            for (int v : buckets[i]) std::cout << ' ' << v;
+            std::cout << '\n';
+        }
+    }
+};
+
+int main() {
+    IntSet set(7);
+    for (int v : {15, 22, 8, 35, 15}) set.insert(v);
+    set.dump();
+}
+```
+
+В примере повторная вставка 15 обнаруживается линейным проходом по короткой цепочке. При плохом распределении ключей одна корзина превращается в список длины n, и каждая вставка становится O(n). Рехеш с ростом числа корзин возвращает амортизированную константу при равномерном hash.
+
+## Подводные камни
+
+- **Заявление только O(1).** Без оговорки про worst case ответ выглядит неполным.
+- **Игнор rehash.** Пакетная вставка без `reserve` даёт серию дорогих перестроек.
+- **Аллокации узлов.** В `unordered_map` стоимость `new` узла может доминировать над самим хешем для мелких значений.
+- **Open addressing clustering.** Primary/secondary clustering ухудшает вставку даже при умеренном load.
+- **Адаптивные атаки.** Подобранные ключи целенаправленно создают худший случай; нужны защищённые хеши или random seed.

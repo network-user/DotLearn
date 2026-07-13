@@ -1,0 +1,51 @@
+---
+id: 4208
+title: "Семейства EC2 C, M и T: как выбрать?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Семейства EC2 C, M и T: как выбрать?
+
+## Суть
+
+C (compute optimized) максимум vCPU на доллар для CPU-bound. M (general purpose) баланс CPU/RAM/сеть для типичных workload. T (burstable) baseline CPU + credits для низкой средней нагрузки с редкими пиками.
+
+## Что ответить на собесе
+
+- C7i/c6i: batch, transcode, scientific, high RPS без huge RAM.
+- M7i/m6i: app servers, mid-size DB, Kubernetes nodes default.
+- T3/T4g: dev/stage, bastion, monitoring sidecars; слежу за CPUCreditBalance.
+- Честно: T без unlimited mode throttle жёстко; prod API на T3 без мониторинга credits рискован.
+
+## Как это работает
+
+Проверка credits на T3:
+
+```bash
+aws cloudwatch get-metric-statistics --namespace AWS/EC2 \
+  --metric-name CPUCreditBalance --dimensions Name=InstanceId,Value=i-0abc \
+  --start-time 2026-07-13T00:00:00Z --end-time 2026-07-13T12:00:00Z \
+  --period 3600 --statistics Average
+```
+
+Resize family через stop/modify:
+
+```bash
+aws ec2 stop-instances --instance-ids i-0abc
+aws ec2 modify-instance-attribute --instance-id i-0abc --instance-type m7i.large
+aws ec2 start-instances --instance-ids i-0abc
+```
+
+Graviton (g suffix) дешевле при arm-compatible образах. Right-sizing: Compute Optimizer или собственные метрики CPU/RAM p95.
+
+## Подводные камни
+
+- **T instance unlimited off.** Baseline 20% CPU и throttle.
+- **C без enough RAM.** OOM killer при том же vCPU count что у M.
+- **M oversized.** Плата за idle RAM в 24/7 fleet.
+- **Burstable для sustained load.** Credits не восстанавливаются быстрее потребления.
+- **Неправильный EBS throughput.** CPU не bottleneck, а gp2 IOPS cap.

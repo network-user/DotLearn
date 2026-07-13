@@ -1,0 +1,82 @@
+---
+id: 2050
+title: "Всегда ли выполняется блок finally?"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Всегда ли выполняется блок finally?
+
+## Суть
+
+`finally` выполняется в подавляющем большинстве случаев после `try`/`catch`, включая исключения и `return` из try. Исключения: `System.exit()`, аварийное завершение JVM (`OutOfMemoryError`, SIGKILL), бесконечный hang в try без выхода, `Thread.stop()` (deprecated). В нормальном server code finally надёжен для cleanup; для shutdown hooks есть отдельный механизм.
+
+## Что ответить на собесе
+
+- finally гарантирован при штатном завершении try/catch блока в живом потоке.
+- `System.exit` в try завершает JVM: finally на этом пути не выполнится.
+- Fatal Error может убить JVM до finally.
+- SIGKILL / power loss: finally не выполнится, нужны idempotent operations.
+- try-with-resources полагается на тот же finally semantics.
+- Честно: полагаться на finally для distributed lock release без TTL опасно при kill -9.
+
+## Как это работает
+
+Нормальный случай:
+
+```java
+String readFirstLine(Path path) throws IOException {
+    try (var lines = Files.lines(path)) {
+        return lines.findFirst().orElse("");
+    } finally {
+        System.out.println("done reading");
+    }
+}
+```
+
+`done reading` печатается и при IOException.
+
+`System.exit` обходит finally:
+
+```java
+try {
+    System.exit(0);
+} finally {
+    System.out.println("never printed");
+}
+```
+
+JVM завершается, строка не выводится.
+
+Поток прерван во время try:
+
+```java
+try {
+    Thread.sleep(Long.MAX_VALUE);
+} catch (InterruptedException ex) {
+    Thread.currentThread().interrupt();
+} finally {
+    releaseLock();
+}
+```
+
+При корректном interrupt finally выполнится после catch. При `Thread.stop()` (deprecated) состояние непредсказуемо.
+
+Для graceful shutdown сервисов:
+
+```java
+Runtime.getRuntime().addShutdownHook(new Thread(() -> flushBuffers()));
+```
+
+Shutdown hook дополняет, но не заменяет finally внутри метода.
+
+## Подводные камни
+
+- **System.exit в библиотеке.** Ломает caller finally expectations.
+- **Бесконечный цикл в try.** finally недостижим, пока поток жив.
+- **Process kill -9.** Нет cleanup: файлы, temp locks остаются.
+- **return в try + throw в finally.** Подавленное исключение, сложная отладка.
+- **Считать finally транзакцией.** DB commit в finally при rollback в catch даёт inconsistency.

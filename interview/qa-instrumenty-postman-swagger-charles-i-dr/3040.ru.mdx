@@ -1,0 +1,85 @@
+---
+id: 3040
+title: "Postman и Swagger: в чём разница и когда что использовать?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Postman и Swagger: в чём разница и когда что использовать?
+
+## Суть
+
+Postman это клиент для отправки HTTP-запросов, организации коллекций, скриптов и прогонов в CI. Swagger (экосистема OpenAPI) описывает контракт API: схемы, эндпоинты, примеры и интерактивную документацию. QA тестирует поведение в Postman; Swagger даёт «источник правды» по полям, кодам ответа и авторизации.
+
+## Что ответить на собесе
+
+- Postman: ручные и полуавтоматические проверки, цепочки запросов, pre/post-request scripts, Newman в pipeline.
+- Swagger UI: быстро понять контракт без чтения кода; Try it out для smoke на dev.
+- OpenAPI yaml/json импортирую в Postman, чтобы коллекция не расходилась со спекой.
+- Различие ролей: Swagger документирует и генерирует stubs; Postman исполняет и ассертит.
+- Честно: Swagger UI не заменяет негативные кейсы и нагрузку; для edge cases нужны отдельные коллекции и данные.
+
+## Как это работает
+
+```gherkin
+Feature: Postman vs Swagger in QA workflow
+
+  Scenario: Contract-first smoke from OpenAPI
+    Given openapi.yaml imported into Postman workspace
+    When QA sends GET /v2/orders/{id} with valid bearer token
+    Then response status 200 and body matches schema Order
+    And Swagger UI shows same path definition for developers
+
+  Scenario: Negative test not covered by docs
+    Given Swagger documents 400 for invalid sku
+    When Postman sends POST /cart with sku length 0
+    Then API returns 422 with field errors array
+    And QA files spec drift ticket if code differs from yaml
+
+  Scenario: Collection run in CI
+    Given Newman job with environment staging.json
+    When nightly pipeline executes cart_regression collection
+    Then JUnit report published and Slack notified on failure
+```
+
+Фрагмент OpenAPI (переименованные сущности):
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Inventory API
+  version: 2.4.0
+paths:
+  /warehouses/{whId}/stock:
+    get:
+      summary: Fetch stock snapshot
+      parameters:
+        - name: whId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Stock rows
+```
+
+Postman-эквивалент запроса (логическая форма):
+
+```
+GET {{baseUrl}}/warehouses/{{warehouseUuid}}/stock
+Authorization: Bearer {{accessToken}}
+Tests: pm.response.to.have.status(200)
+```
+
+## Подводные камни
+
+- **Устаревшая спека.** Postman коллекция зелёная, prod падает: сверяй версию OpenAPI с deployment tag.
+- **Try it out на prod.** Случайная запись через Swagger UI на боевом URL; только read-only staging.
+- **Секреты в shared collection.** Токены в переменных без secret scope утекают при export.
+- **Импорт без cleanup.** Автоимпорт создаёт дубликаты папок; договоритесь о naming convention.
+- **Только happy path в Swagger examples.** QA дополняет негативные и auth failure сценарии в Postman.

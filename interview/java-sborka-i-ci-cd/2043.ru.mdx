@@ -1,0 +1,76 @@
+---
+id: 2043
+title: "Maven scope: управление classpath и упаковкой"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Maven scope: управление classpath и упаковкой
+
+## Суть
+
+Scope в Maven это контракт: когда dependency попадает на compile classpath, test classpath, runtime и в финальный WAR/JAR. Неправильный scope даёт `ClassNotFoundException` в prod или лишние мегабайты в артефакте. `dependencyManagement` с `import` scope импортирует BOM без добавления jar.
+
+## Что ответить на собесе
+
+- Дефолт `compile` если scope не указан.
+- `provided` для API контейнера (Jakarta Servlet в WAR на Tomcat).
+- `runtime` когда интерфейс в compile, реализация только при запуске (JDBC).
+- `test` строго для JUnit/Mockito, не протекает в production jar.
+- Честно: `system` scope с `<systemPath>` ломает переносимость, использую только как временный костыль.
+
+## Как это работает
+
+Multi-module проект: shared API и web module:
+
+```xml
+<!-- parent dependencyManagement -->
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>3.26.0</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+Web module:
+
+```xml
+<dependencies>
+  <dependency>
+    <groupId>jakarta.servlet</groupId>
+    <artifactId>jakarta.servlet-api</artifactId>
+    <scope>provided</scope>
+  </dependency>
+  <dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+  </dependency>
+</dependencies>
+```
+
+При `mvn package` WAR plugin кладёт `postgresql` в `WEB-INF/lib`, но не `jakarta.servlet-api` (ожидается от Tomcat).
+
+Проверка фактического classpath:
+
+```bash
+mvn dependency:build-classpath -Dmdep.outputFile=cp.txt
+```
+
+Transitive scope наследуется с оговорками: dependency с `compile` scope тянет свои транзитивы обычно как `compile`, если не переопределено. `optional=true` на dependency обрезает propagation соседним модулям.
+
+## Подводные камни
+
+- **Scope в dependencyManagement не наследуется как версия.** Child должен повторить scope или он снова compile.
+- **test в library module.** Потребитель не получит test-scoped transitive (ожидаемо), но может забыть добавить JUnit сам.
+- **WAR overlay.** Provided dependency случайно попадает в overlay merge.
+- **Spring Boot repackage.** Fat jar включает provided если starter тянет неправильно.
+- **import BOM без type pom.** Maven 4 строже валидирует, сборка падает на CI.

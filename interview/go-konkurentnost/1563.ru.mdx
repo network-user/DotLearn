@@ -1,0 +1,89 @@
+---
+id: 1563
+title: "Context при нескольких DB-транзакциях в методе"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Context при нескольких DB-транзакциях в методе
+
+## Суть
+
+Один parent ctx с timeout/cancel передаю в каждую `BeginTx(ctx)` и `ExecContext(ctx)`. Отмена parent отменяет in-flight queries; для atomicity across DBs нужен saga/outbox, не один ctx. Внутри одного сервиса часто одна tx или nested tx по driver support.
+
+## Что ответить на собесе
+
+- `context.WithTimeout` на весь use-case; defer cancel всегда.
+- Каждая tx: BeginTx(ctx), rollback on err, commit on success.
+- ctx cancel mid-tx → rollback и return ctx.Err().
+- Честно: две последовательные tx не atomic together; partial commit возможен без 2PC.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+type Tx interface {
+	Exec(ctx context.Context, q string) error
+	Commit() error
+	Rollback() error
+}
+
+type DB interface {
+	BeginTx(ctx context.Context) (Tx, error)
+}
+
+func runSteps(ctx context.Context, db DB) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	tx1, err := db.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	if err := tx1.Exec(ctx, "step1"); err != nil {
+		tx1.Rollback()
+		return err
+	}
+	if err := tx1.Commit(); err != nil {
+		return err
+	}
+
+	tx2, err := db.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx2.Rollback()
+	if err := tx2.Exec(ctx, "step2"); err != nil {
+		return err
+	}
+	return tx2.Commit()
+}
+
+func main() {
+	fmt.Println(runSteps != nil)
+}
+```
+
+Общий deadline покрывает обе tx; вторая не стартует если ctx уже expired после первой.
+
+## Подводные камни
+
+**Commit tx1 then ctx cancel before tx2.** Partial state; нужен compensating action.
+
+**Reuse cancelled ctx.** BeginTx fails immediately; создаю child ctx only when extending deadline intentionally.
+
+**Context in transaction object stale.** Always pass current ctx to ExecContext.
+
+**Long tx holding ctx.** Timeout rollback в production load.
+
+**WithValue для tx handle.** Anti-pattern; tx в scope, не в ctx.

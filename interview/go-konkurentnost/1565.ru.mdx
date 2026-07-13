@@ -1,0 +1,71 @@
+---
+id: 1565
+title: "Зачем создавать дочерние context?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем создавать дочерние context?
+
+## Суть
+
+Child ctx наследует cancel/deadline/value chain от parent, но может добавить свой timeout, cancel func или value. Cancel parent отменяет всех descendants. Это дерево lifecycle для request → subtasks без global state.
+
+## Что ответить на собесе
+
+- WithCancel: manual shutdown subtree.
+- WithTimeout/WithDeadline: sub-operation budget inside request.
+- WithValue: request-scoped metadata (trace id), sparingly.
+- Честно: не храню optional params в ctx; только cancel/deadline + few well-known keys.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func handle(ctx context.Context) {
+	subCtx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
+	defer cancel()
+	if err := subWork(subCtx); err != nil {
+		fmt.Println("sub:", err)
+	}
+}
+
+func subWork(ctx context.Context) error {
+	select {
+	case <-time.After(900 * time.Millisecond):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func main() {
+	root, stop := context.WithCancel(context.Background())
+	defer stop()
+	handle(root)
+}
+```
+
+subCtx inherits stop from root but also expires at 400ms. Root cancel still cancels sub even before timeout.
+
+## Подводные камни
+
+**Orphan child without defer cancel.** Timer leak like WithTimeout rule.
+
+**WithValue abuse.** Untyped keys, mutable values, dependency hiding.
+
+**Detach ctx from parent.** context.WithoutCancel (Go 1.21+) rare; know semantics.
+
+**Pass Background mid-chain.** Loses cancel propagation.
+
+**Deep tree cancel storm.** Many children: ensure idempotent cleanup.

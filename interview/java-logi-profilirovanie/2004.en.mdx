@@ -1,0 +1,59 @@
+---
+id: 2004
+title: "Why profile Java applications?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why profile Java applications?
+
+## In short
+
+Profiling measures runtime behavior: where CPU, memory, and I/O are spent. The goal is not metrics for their own sake but finding bottlenecks and proving that optimizations work with data, not gut feel.
+
+## How to answer in an interview
+
+- Profiling answers "where it burns," not "why it's slow overall."
+- I reproduce load first, then capture CPU/allocation traces and compare before and after a fix.
+- In prod I prefer sampling (JFR, async-profiler); heavier attach is fine in dev.
+- APM latency metrics complement flame graphs; they do not replace them.
+- Honestly: without representative load, the profile shows cold code, not a prod bottleneck.
+
+## How it works
+
+A profiler inserts probes or periodically captures stack samples. The output reveals hot methods, allocation sites, and lock contention. A simple Java micro-benchmark gives a rough estimate but does not replace tooling:
+
+```java
+public final class ThroughputProbe {
+    public static void main(String[] args) {
+        long started = System.nanoTime();
+        long checksum = 0L;
+        for (int i = 0; i < 1_000_000; i++) {
+            checksum += aggregate(i);
+        }
+        long elapsedNs = System.nanoTime() - started;
+        System.out.printf("checksum=%d elapsed=%d ns%n", checksum, elapsedNs);
+    }
+
+    private static int aggregate(int seed) {
+        int acc = 0;
+        for (int j = 0; j < 500; j++) {
+            acc += seed ^ j;
+        }
+        return acc;
+    }
+}
+```
+
+`System.nanoTime()` works for relative measurements on one JVM. For a real service I attach VisualVM or JFR: the CPU view may show 60% of time in `String.format`, allocation view exposes extra `byte[]` from serialization. After switching to `StringBuilder` and a buffer pool I retake the snapshot and compare numbers.
+
+## Pitfalls
+
+- **Observer effect.** High-overhead agents distort the profile; use low-overhead sampling in prod.
+- **Unrepresentative load.** Profiling an idle service will not find peak regressions.
+- **Optimization without a baseline.** Without before/after you may "improve" the wrong spot.
+- **Trusting a single metric.** High CPU in a method may be lock wait, not computation.
+- **Profiling instead of fixing the algorithm.** Sometimes the issue is an O(n²) query, not a micro-optimized loop.

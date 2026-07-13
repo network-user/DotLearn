@@ -1,0 +1,69 @@
+---
+id: 3049
+title: "Where are logs physically stored that Kibana displays?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where are logs physically stored that Kibana displays?
+
+## In short
+
+Kibana does not store events itself: it reads Elasticsearch indices (or data streams). JSON documents sit on ES data-node disks in shards; ingestion runs through Beats, Logstash, or OpenTelemetry Collector. Kibana only queries ES via API and renders Discover/dashboards.
+
+## How to answer in an interview
+
+- Index or data stream `logs-app-2025.07.13` with mapping fields `@timestamp`, `level`, `message`.
+- Primary shard plus replica on data nodes; cluster may be managed (Elastic Cloud) or on-prem.
+- ILM: hot → warm → delete after N days; QA knows retention before investigating old incidents.
+- Logstash pipeline parses grok/json and bulk-writes to ES; Kibana binds an index pattern.
+- Honestly: if a log never reached the ingest pipeline, it is not in Kibana even if a file exists on the pod disk.
+
+## How it works
+
+```gherkin
+Feature: Log storage behind Kibana
+
+  Scenario: Trace single checkout error
+    Given Filebeat ships container stdout to Elasticsearch
+    And index template logs-shop with trace.id keyword field
+    When payment service logs ERROR with trace.id "ff09-ac"
+    Then document stored in data stream logs-shop-default
+    And Kibana Discover finds same trace.id within 30 seconds
+
+  Scenario: Index rollover by date
+    Given daily index logs-nginx-2025.07.13 reaches 50GB
+    When ILM rollovers to logs-nginx-2025.07.14
+    Then QA updates index pattern or uses logs-nginx-* alias
+
+  Scenario: Missing logs after deploy
+    Given new pod label not in Filebeat autodiscover rule
+    When tester searches service.name checkout-v3
+    Then zero hits until DevOps adds autodiscover template
+```
+
+Sample index document (renamed fields):
+
+```json
+{
+  "@timestamp": "2025-07-13T09:15:44.112Z",
+  "log.level": "WARN",
+  "service.name": "inventory-worker",
+  "event.action": "stock_adjust",
+  "message": "sku 8821 below threshold",
+  "host.name": "k8s-node-04"
+}
+```
+
+Elastic Stack chain: source → shipper (Filebeat) → optional Logstash filter → Elasticsearch bulk index → Kibana visualization. Shards spread across data nodes; replicas give fault tolerance when a node fails.
+
+## Pitfalls
+
+- **Confusing Kibana with storage.** CSV export from Kibana is not an archive; source remains ES snapshots.
+- **Index pattern without rollover.** New day invisible until index added manually.
+- **Full text without keyword subfield.** Filter on user id is slow or fuzzy.
+- **Hot tier full.** Ingest drops or throttles; QA sees gaps in timeline.
+- **Ingest vs UI timezone.** Events shift by an hour; correlation with Charles HAR breaks.

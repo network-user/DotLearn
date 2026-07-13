@@ -1,0 +1,75 @@
+---
+id: 2061
+title: "How Docker helps an AQA engineer reproduce environments"
+category: aqa-docker-i-konteynery
+categoryLabel: "Docker и контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How Docker helps an AQA engineer reproduce environments
+
+## In short
+
+Docker packages an application with its dependencies into an image and runs an isolated container on the host kernel. For automation it is a way to bring up the same stack locally, in CI, and on review environments without "works on my machine".
+
+## How to answer in an interview
+
+- I describe the architecture: the CLI sends commands to the `dockerd` daemon, which manages images, containers, networks, and volumes.
+- I explain the chain: Dockerfile → `docker build` → image → `docker run` → container with process and filesystem isolation via namespaces/cgroups.
+- I talk about testing use: testcontainers, docker-compose for the SUT and dependencies (DB, broker, mock service).
+- I mention port mapping, data volumes, healthcheck, and wait strategies before running pytest.
+- I add honestly: a container does not replace a full VM where you need a different kernel or GPU; on Windows/macOS there is virtualization overhead.
+
+## How it works
+
+An image is an immutable layered filesystem snapshot. A container is a writable layer on top of the image plus network and mounts. On `docker run` the daemon creates an isolated process, maps ports, and injects environment variables. Build follows Dockerfile instructions: base image, COPY/ADD, RUN, EXPOSE, CMD/ENTRYPOINT.
+
+A typical AQA flow: the repo holds the app Dockerfile and a compose file with postgres + redis. A pytest fixture brings compose up, waits for readiness over HTTP/TCP, runs API tests, then stops and removes containers in teardown.
+
+```python
+import subprocess
+import time
+import urllib.request
+
+COMPOSE_FILE = "docker-compose.test.yml"
+BASE_URL = "http://127.0.0.1:8080/health"
+
+
+def compose_up():
+    subprocess.run(
+        ["docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "--build"],
+        check=True,
+    )
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(BASE_URL, timeout=2) as resp:
+                if resp.status == 200:
+                    return
+        except OSError:
+            time.sleep(2)
+    raise RuntimeError("service did not become healthy in time")
+
+
+def compose_down():
+    subprocess.run(
+        ["docker", "compose", "-f", COMPOSE_FILE, "down", "-v"],
+        check=False,
+    )
+```
+
+In CI the same compose yields a deterministic run: image version is pinned by tag or digest, env vars are explicit, and logs are collected via `docker logs`.
+
+## Pitfalls
+
+**Flaky readiness.** Tests start before the DB is ready; you need healthcheck, retry with backoff, or a wait-for-it/testcontainers library.
+
+**Layer cache and `latest`.** Floating tags and aggressive cache invalidation hide regressions; pin by digest in CI.
+
+**State between runs.** Forgetting `-v` leaves data in a volume and breaks isolation for the next job.
+
+**Network and ports.** Port clashes on shared runners; use dynamic mapping or an internal network without publish.
+
+**Permissions and root in the container.** Tests writing to a volume may fail due to UID mismatch between image and host.

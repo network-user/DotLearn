@@ -1,0 +1,57 @@
+---
+id: 2463
+title: "JWT-авторизация с точки зрения фронтенда"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# JWT-авторизация с точки зрения фронтенда
+
+## Суть
+
+JWT это подписанная строка из header, payload и signature (Base64URL). После логина клиент получает access token и шлёт его в `Authorization: Bearer`. Сервер проверяет подпись и claims (`exp`, `aud`, `iss`) без server-side session store, но отзыв токена требует отдельной стратегии.
+
+## Что ответить на собесе
+
+- Храню access token в memory или короткоживущем storage; refresh только httpOnly cookie.
+- Перед запросом проверяю `exp` локально, но доверяю только server validation.
+- Не кладу PII и роли «навсегда» в payload: JWT base64, не шифрование.
+- Честно: stateless JWT не отозвать мгновенно без blacklist/TTL; для logout нужен server-side denylist или короткий TTL.
+- На фронте парсю payload только для UI; security decisions только на backend.
+
+## Как это работает
+
+Структура: `header.payload.signature`. Header задаёт alg (`HS256`, `RS256`). Payload содержит claims: `sub`, `exp`, custom scopes.
+
+```ts
+type JwtParts = { header: Record<string, unknown>; payload: Record<string, unknown> };
+
+function parseJwt(token: string): JwtParts {
+  const [headerB64, payloadB64] = token.split('.');
+  const decode = (part: string) => JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+  return { header: decode(headerB64), payload: decode(payloadB64) };
+}
+
+async function apiGet(path: string, accessToken: string) {
+  const res = await fetch(path, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 401) throw new Error('token expired');
+  return res.json();
+}
+```
+
+Flow: login POST → tokens → attach Bearer на API calls → 401 triggers refresh endpoint → retry once. Refresh rotation: сервер выдаёт новый refresh и инвалидирует старый.
+
+Подпись на сервере: HMAC с secret или RSA private key. Клиент signature не проверяет (нет secret), только декодирует для отображения имени/roles в UI.
+
+## Подводные камни
+
+- **localStorage + XSS.** Любой script читает JWT; prefer httpOnly refresh + memory access.
+- **Clock skew.** `exp` проверка на клиенте должна иметь буфер ±60s.
+- **Alg none / key confusion.** Backend must enforce allowed algs.
+- **Large cookies.** JWT > 4KB не влезает в cookie header; chunking ломает proxies.
+- **Tab sync.** Несколько вкладок refresh'ат одновременно; нужен mutex или shared worker.

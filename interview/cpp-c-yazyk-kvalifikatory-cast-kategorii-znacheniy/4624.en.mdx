@@ -1,0 +1,72 @@
+---
+id: 4624
+title: "When does vector move elements on reallocation?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When does vector move elements on reallocation?
+
+## In short
+
+When capacity grows, `std::vector` relocates elements with moves if `T`'s move constructor is `noexcept` (otherwise it may copy to preserve the strong exception guarantee). Without move operations only copy remains.
+
+## How to answer in an interview
+
+- Move ctor/assign required; otherwise copy only.
+- `noexcept` on move ops is critical for `vector<T>` reallocation.
+- `reserve` upfront reduces reallocation count.
+- Move-only types (`unique_ptr`) require move; copy is impossible.
+- Honestly: even with moves, reallocation is O(n); profile `push_back` frequency.
+
+## How it works
+
+`emplace_back` overflow → new buffer → `std::uninitialized_move` or copy → destroy old elements.
+
+```cpp
+#include <iostream>
+#include <vector>
+
+struct Payload {
+    int* heap;
+
+    explicit Payload(int v) : heap(new int(v)) {
+        std::cout << "build " << v << '\n';
+    }
+
+    Payload(Payload&& other) noexcept : heap(other.heap) {
+        other.heap = nullptr;
+        std::cout << "move\n";
+    }
+
+    ~Payload() {
+        delete heap;
+        std::cout << "destroy\n";
+    }
+
+    Payload(const Payload&) = delete;
+    Payload& operator=(const Payload&) = delete;
+};
+
+int main() {
+    std::vector<Payload> bag;
+    bag.reserve(2);
+    bag.emplace_back(1);
+    bag.emplace_back(2);
+    bag.emplace_back(3);
+    return 0;
+}
+```
+
+The third element triggers reallocation; the first two move thanks to the `noexcept` move ctor.
+
+## Pitfalls
+
+- **Move without noexcept.** Vector copies all elements on growth.
+- **Self-referential elements.** Rare, but pointers into the vector invalidate on realloc.
+- **Iterator invalidation.** Any realloc invalidates iterators/pointers/references.
+- **Small vector optimization.** Not for general `vector<T>`; only string-like types.
+- **PMR vector.** Allocator propagation changes when move/copy happens.

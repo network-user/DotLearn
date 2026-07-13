@@ -1,0 +1,67 @@
+---
+id: 2078
+title: "Как GC определяет живые объекты"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как GC определяет живые объекты
+
+## Суть
+
+GC строит reachability от GC roots: thread stacks, static fields, JNI globals, synchronized monitors, JVM internal tables. Объект жив, если существует path references от root. Mark phase помечает reachable; sweep/evacuate освобождает unmarked. Алгоритм не считает reference counting; циклы без external roots собираются.
+
+## Что ответить на собесе
+
+- Roots: stack locals, statics, active threads, JNI handles.
+- Mark-and-sweep / tri-color marking для concurrent collectors.
+- Generational: minor GC roots include remembered set (Old→Young refs).
+- Finalizer/Cleaner не спасают объект от collection, только отложенный callback.
+- Честно: «no references in my code» недостаточно; framework caches могут держать root path.
+
+## Как это работает
+
+```java
+public final class ReachabilityDemo {
+
+    private static final List<Object> PINNED = new ArrayList<>();
+
+    public static void main(String[] args) {
+        var nodeA = new Node("A");
+        var nodeB = new Node("B");
+        nodeA.next = nodeB;
+        nodeB.next = nodeA;
+        PINNED.add(nodeA);
+        nodeA = null;
+        nodeB = null;
+    }
+
+    static class Node {
+        String id;
+        Node next;
+        Node(String id) { this.id = id; }
+    }
+}
+```
+
+После `nodeA = null; nodeB = null` цикл A↔B остаётся reachable через `PINNED → nodeA → nodeB → nodeA`. Без PINNED оба были бы garbage despite cycle.
+
+G1 young GC sketch:
+
+1. Stop-the-world short pause (or snapshot-at-beginning concurrent).
+2. Scan roots + remembered set cards in Old pointing to Young.
+3. Trace references, mark live objects in Eden/Survivor.
+4. Evacuate survivors to new region or promote.
+
+Concurrent collectors (G1, ZGC) использую tri-color: white/grey/black; mutator работает с barriers.
+
+## Подводные камни
+
+- **Accidental root via static.** Test utility static list pins prod objects in IT tests leaked to prod pattern.
+- **Classloader root.** Loaded class static holds entire app graph.
+- **Misunderstanding finalize.** Object unreachable → collected; finalize queue separate weak story (deprecated).
+- **JNI global ref forgotten.** Native code pins Java object until Release.
+- **Relying on identityHashCode zero.** Not a GC marker; object may move under compacting GC.

@@ -1,0 +1,56 @@
+---
+id: 4260
+title: "Чем прозрачный proxy отличается от явного?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем прозрачный proxy отличается от явного?
+
+## Суть
+
+Transparent proxy перехватывает traffic на сетевом уровне (WCCP, iptables REDIRECT, policy routing) без настройки клиента. Explicit (forward) proxy требует `HTTP_PROXY` или browser proxy settings. Reverse proxy стоит перед origin и клиент обращается к нему как к серверу.
+
+## Что ответить на собесе
+
+- Transparent: client думает, что идёт напрямую; использую для ISP cache, corporate egress filter.
+- Explicit: client знает proxy host:port; auth и PAC file возможны.
+- Reverse: nginx, HAProxy перед app; TLS termination, load balance.
+- SSL bump на transparent MITM требует corporate CA trust.
+- Честно: transparent proxy и modern HTTPS with pinning конфликтуют; чаще explicit или DNS filtering.
+
+## Как это работает
+
+Explicit Squid client env:
+
+```bash
+export HTTP_PROXY=http://proxy.corp.local:3128
+export HTTPS_PROXY=http://proxy.corp.local:3128
+export NO_PROXY=localhost,127.0.0.1,.internal
+
+curl -I https://registry.example.com/v2/
+```
+
+Transparent redirect (concept):
+
+```bash
+sudo iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 \
+  -j REDIRECT --to-port 3128
+```
+
+Reverse proxy health:
+
+```bash
+curl -H 'Host: app.example.com' http://127.0.0.1:8080/health
+```
+
+## Подводные камни
+
+- **HTTPS through transparent.** CONNECT or MITM; без CA deploy apps break.
+- **X-Forwarded-For trust.** Reverse proxy must strip client spoofed headers at edge.
+- **PAC misconfiguration.** Browser bypasses proxy for malware C2 domain.
+- **Double proxy timeout.** Chain increases latency multiplicatively.
+- **Cache poison on shared proxy.** Multi-tenant cache key must include Host/Vary.

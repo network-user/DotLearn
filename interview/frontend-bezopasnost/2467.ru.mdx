@@ -1,0 +1,57 @@
+---
+id: 2467
+title: "Можно ли хранить refresh token в localStorage"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Можно ли хранить refresh token в localStorage
+
+## Суть
+
+Технически можно, но для refresh это плохая практика: любой XSS читает localStorage синхронно. Рекомендуемый паттерн: refresh в httpOnly Secure cookie, access в памяти или sessionStorage с коротким TTL.
+
+## Что ответить на собесе
+
+- localStorage доступен любому script на странице; refresh там = полный account takeover при XSS.
+- Ставлю refresh httpOnly + Secure + SameSite=Strict/Lax, path ограничен `/auth/refresh`.
+- Access держу in-memory; после reload silent refresh через cookie.
+- Честно: httpOnly не защищает от CSRF на refresh endpoint; нужен SameSite + POST + optional CSRF token.
+- sessionStorage чуть лучше по lifetime, но XSS проблему не решает.
+
+## Как это работает
+
+```ts
+type SessionStore = {
+  accessToken: string | null;
+};
+
+export const session: SessionStore = { accessToken: null };
+
+export async function bootstrapSession() {
+  const res = await fetch('/auth/refresh', { method: 'POST', credentials: 'include' });
+  if (!res.ok) return;
+  const { accessToken } = (await res.json()) as { accessToken: string };
+  session.accessToken = accessToken;
+}
+
+export function setRefreshCookieOnServer(response: Response) {
+  response.headers.append(
+    'Set-Cookie',
+    'refresh=...; HttpOnly; Secure; SameSite=Strict; Path=/auth/refresh; Max-Age=604800'
+  );
+}
+```
+
+localStorage удобен для демо и mobile hybrid apps с native secure storage, но в browser SPA это сознательное снижение security bar. Если product требует SPA без cookies (third-party iframe), рассматриваю BFF pattern: refresh только на same-site backend, frontend получает access через session.
+
+## Подводные камни
+
+- **XSS = game over.** Даже CSP может пропустить compromised npm package.
+- **Subdomain takeover.** Cookie Domain=.example.com шире чем нужно.
+- **Refresh CSRF.** GET refresh endpoint + cookie = классическая ошибка.
+- **Shared devices.** localStorage переживает logout UI если забыли clear.
+- **Safari ITP.** Cross-site cookie context режет third-party auth flows.

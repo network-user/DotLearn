@@ -1,0 +1,60 @@
+---
+id: 1576
+title: "When a goroutine yields the CPU"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When a goroutine yields the CPU
+
+## In short
+
+A goroutine is taken off its P voluntarily or forcibly on syscalls, channel/mutex blocks, GC safepoints, `runtime.Gosched()`, or exit. Scheduling is cooperative: a pure CPU loop can monopolize a thread for a while (~10 ms); Go 1.14+ async preemption mitigates this.
+
+## How to answer in an interview
+
+- Blocking ops (I/O, channels, sync) let other Gs run on the M.
+- `Gosched()` is an explicit yield without sleeping.
+- A finished G frees its slot on P.
+- Honestly: a tight loop without syscalls could run long on older Go; modern Go preempts via signals.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	var mu sync.Mutex
+	mu.Lock()
+	go func() {
+		mu.Lock()
+		fmt.Println("second acquired")
+		mu.Unlock()
+	}()
+	runtime.Gosched()
+	mu.Unlock()
+}
+```
+
+The first G holds the mutex; the second parks on Lock. Unlock plus the scheduler hands P to the waiter. `Gosched()` nudges a switch without a blocking primitive.
+
+## Pitfalls
+
+**CPU-bound work ignoring preemption.** Long compute without checkpoints.
+
+**User-space spin locks.** No yield, burns CPU.
+
+**Gosched is not fairness.** Only a hint.
+
+**Cgo blocks an OS thread.** Fewer Ms for Go Gs.
+
+**Assuming every Sleep yields like Gosched.** Sleep parks on a timer; different mechanism.

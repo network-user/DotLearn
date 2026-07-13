@@ -1,0 +1,66 @@
+---
+id: 1553
+title: "Куда попадает goroutine после syscall?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Куда попадает goroutine после syscall?
+
+## Суть
+
+Blocking syscall переводит G в waiting; M может отсоединиться от P и выполнять другую G, а P поднимет новый M или украдёт work. После return из syscall G снова runnable и попадает в local/global run queue, откуда P её подберёт.
+
+## Что ответить на собесе
+
+- Net I/O часто через netpoller без полного thread block; classic blocking read/write отпускает P.
+- Async syscalls (epoll/kqueue) будят G через netpoller, не через busy M.
+- Долгий syscall увеличивает число OS threads (M) в runtime.
+- Честно: file I/O path менялся; идея «G waiting, M free for others» стабильна.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+func fetch(url string) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Println("err:", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	fmt.Println(len(body))
+}
+
+func main() {
+	go fetch("https://example.com")
+	time.Sleep(2 * time.Second)
+}
+```
+
+HTTP wait блокирует G; runtime регистрирует fd в poller. Пока G ждёт, M обслуживает другие runnable G на том же или другом P.
+
+## Подводные камни
+
+**Cgo syscall.** Может держать M без освобождения P по тем же правилам что pure Go.
+
+**Busy retry syscall loop.** Spin on EAGAIN без netpoller жжёт CPU.
+
+**Thread explosion.** Много одновременных blocking syscalls → рост M count.
+
+**Assumption instant resume.** G после syscall снова в queue, не сразу on CPU.
+
+**File vs network path.** Disk I/O может block thread иначе чем netpoller path; профилирую отдельно.

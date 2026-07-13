@@ -1,0 +1,53 @@
+---
+id: 1620
+title: "Что шифруется в HTTPS-запросе"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что шифруется в HTTPS-запросе
+
+## Суть
+
+После TLS handshake шифруется весь прикладной HTTP: стартовая строка, заголовки и тело запроса/ответа. До TLS остаются открытыми IP, порт и имя хоста в DNS/SNI, нужные для маршрутизации. Путь и query внутри TLS record недоступны пассивному sniffing на линии.
+
+## Что ответить на собесе
+
+- TLS защищает application data, не метаданные сетевого уровня.
+- SNI передаёт hostname в ClientHello до шифрования (ESNI/ECH частично mitigates).
+- Cookie, Authorization, JSON body всё внутри encrypted records.
+- Корпоративный proxy с MITM cert видит расшифрованный HTTP.
+- Честно: DNS запрос к resolver тоже может утекать, HTTPS его не прикрывает.
+
+## Как это работает
+
+```
+[Открыто]  DNS: api.shop.example → 203.0.113.10
+[Открыто]  TCP → :443, TLS ClientHello + SNI=api.shop.example
+[Шифр]     GET /v1/orders?limit=10 HTTP/2
+[Шифр]     Authorization: Bearer eyJ...
+[Шифр]     {"filter":"pending"}
+```
+
+```go
+req, _ := http.NewRequest(http.MethodGet, "https://api.shop.example/v1/orders?limit=10", nil)
+req.Header.Set("Authorization", "Bearer "+token)
+resp, err := http.DefaultClient.Do(req)
+```
+
+Наблюдатель на маршрутизаторе видит объём и timing encrypted пакетов, но не path и не заголовки. CDN и WAF на edge терминируют TLS и снова видят plaintext внутри периметра.
+
+## Подводные камни
+
+**Думать, что URL полностью секретен снаружи.** SNI и DNS leakage остаются.
+
+**Логи на reverse proxy.** Path и query попадают в access log после decrypt.
+
+**Referer на сторонний HTTP.** Утечка path через заголовок на незащищённый сайт.
+
+**Корпоративный SSL inspection.** Пользователь доверяет корневому CA компании.
+
+**Метаданные трафика.** Размер и частота запросов всё ещё анализируемы без расшифровки.

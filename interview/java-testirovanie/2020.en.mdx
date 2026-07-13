@@ -1,0 +1,69 @@
+---
+id: 2020
+title: "When is it appropriate to use mocks?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When is it appropriate to use mocks?
+
+## In short
+
+Mocks help when a unit test must isolate a class from slow or nondeterministic dependencies (DB, HTTP, message broker) and still verify collaboration. They do not replace integration tests: mocking a neighbor plus real wiring catches a different class of bugs.
+
+## How to answer in an interview
+
+- Mock external ports: repository, payment gateway, clock.
+- Stub happy path and verify side effects (email sent, metric incremented).
+- Do not mock the class under test or trivial getters.
+- For Spring use `@MockBean` in slice tests, `@Mock` + `@InjectMocks` in pure unit tests.
+- Honestly: if a neighbor's contract changes often, contract tests beat brittle verify calls.
+
+## How it works
+
+```java
+class BillingServiceTest {
+    @Mock PaymentGateway gateway;
+    @InjectMocks BillingService billing;
+
+    @BeforeEach
+    void setup() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void chargesCustomerOnRenewal() {
+        Subscription sub = Subscription.active("cust-9", Money.of("9.99", "USD"));
+        when(gateway.charge(eq("cust-9"), any())).thenReturn(ChargeResult.ok("ch_1"));
+
+        billing.renew(sub);
+
+        assertEquals(RenewalStatus.PAID, sub.status());
+        verify(gateway).charge("cust-9", sub.price());
+        verifyNoMoreInteractions(gateway);
+    }
+
+    @Test
+    void marksPastDueWhenGatewayFails() {
+        when(gateway.charge(any(), any())).thenReturn(ChargeResult.declined());
+        Subscription sub = Subscription.active("cust-9", Money.of("9.99", "USD"));
+
+        billing.renew(sub);
+
+        assertEquals(RenewalStatus.PAST_DUE, sub.status());
+    }
+}
+```
+
+`when` configures gateway behavior without real Stripe. `verify` confirms the service did not skip charge. For clock dependency inject `Clock.fixed(...)` instead of a mock when you only need time control.
+
+## Pitfalls
+
+- **Mock entire Spring context.** Test misses `@Autowired` wiring errors.
+- **verify without need.** Implementation-detail tests break on private helper rename.
+- **Lenient stubs hide unused setup.** Dead `when()` masks wrong scenario.
+- **Mock static everywhere.** Mockito 3+ static mocks complicate parallel Surefire.
+- **Integration scenario via mocks.** Five mocks model reality, not the system.

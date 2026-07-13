@@ -1,0 +1,78 @@
+---
+id: 4608
+title: "Что делает std::move с объектом?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает std::move с объектом?
+
+## Суть
+
+`std::move` не перемещает данные сам по себе: он приводит выражение к rvalue и тем самым выбирает move-конструктор или move-присваивание вместо копирования. Исходный объект после корректного move обязан остаться в валидном, но часто «опустошённом» состоянии.
+
+## Что ответить на собесе
+
+- Говорю прямо: `std::move` это cast к `T&&`, не magic relocate.
+- Move выгоден для типов с heap-буфером (`std::string`, `std::vector`, custom RAII).
+- После move исходник можно только уничтожить или присвоить заново, не читать «как раньше».
+- В return-by-value компилятор и так может применить RVO/NRVO; `std::move` там часто лишний.
+- Честно: без noexcept move-конструктора `std::vector` при росте может копировать, а не move.
+
+## Как это работает
+
+Перегрузки принимают lvalue и rvalue; для lvalue `std::move(x)` даёт `static_cast<T&&>(x)`, и overload resolution выбирает `T(T&&)` или `operator=(T&&)`. Ресурсы (указатель, длина) переносятся, старый объект обнуляется.
+
+```cpp
+#include <cstring>
+#include <iostream>
+#include <utility>
+
+class TextBuffer {
+public:
+    TextBuffer() : storage(nullptr), len(0) {}
+
+    explicit TextBuffer(const char* src) {
+        len = std::strlen(src);
+        storage = new char[len + 1];
+        std::strcpy(storage, src);
+    }
+
+    TextBuffer(TextBuffer&& donor) noexcept : storage(donor.storage), len(donor.len) {
+        donor.storage = nullptr;
+        donor.len = 0;
+    }
+
+    ~TextBuffer() { delete[] storage; }
+
+    void dump() const {
+        std::cout << (storage ? storage : "<empty>") << '\n';
+    }
+
+private:
+    char* storage;
+    std::size_t len;
+};
+
+int main() {
+    TextBuffer original("Hello, World!");
+    TextBuffer taken = std::move(original);
+
+    original.dump();
+    taken.dump();
+    return 0;
+}
+```
+
+`original` после move валиден, но буфер у `taken`. Деструктор `original` безопасно удаляет `nullptr`.
+
+## Подводные камни
+
+- **Чтение после move.** Поведение «опустошённого» объекта не стандартизовано для всех типов; полагаться на содержимое нельзя.
+- **const T&&.** `std::move` на const не даёт настоящий move, только copy.
+- **Отсутствие move ops.** Тип без move fallback на copy; `std::move` не ускорит.
+- **Исключения и strong guarantee.** Move без `noexcept` ломает оптимизации контейнеров.
+- **Двойной move.** Второй move забирает уже пустой ресурс; ошибки накапливаются тихо.

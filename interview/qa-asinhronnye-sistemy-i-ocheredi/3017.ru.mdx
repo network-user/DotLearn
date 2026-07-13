@@ -1,0 +1,55 @@
+---
+id: 3017
+title: "Как QA проверяет дублирование сообщений в очереди?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как QA проверяет дублирование сообщений в очереди?
+
+## Суть
+
+Дубликат это повторная доставка того же бизнес-события с тем же или эквивалентным payload. Проверка строится на уникальном message id, idempotency key и наблюдении побочных эффектов: двойной заказ, два SMS, двойное списание. QA сравнивает счётчики в broker, логи consumer и итоговое состояние БД.
+
+## Что ответить на собесе
+
+- Отправляю одно событие дважды с одинаковым `messageId` и смотрю, сколько раз сработал handler.
+- Сверяю offset/partition в Kafka UI или Management UI RabbitMQ.
+- Проверяю hash тела и business key: дубликат по содержимому без нового id тоже риск.
+- После forced retry (обрыв сети, restart consumer) считаю записи в целевой таблице.
+- Честно: at-least-once доставка норма; баг в том, что consumer не идемпотентен, а не сам факт повтора.
+
+## Как это работает
+
+```gherkin
+Feature: Duplicate message detection
+
+  Scenario: Same messageId redelivered
+    Given producer publishes event id evt-550 body order 9001
+    When broker redelivers evt-550 after consumer crash
+    And consumer dedup store contains evt-550
+    Then order 9001 exists exactly once in database
+
+  Scenario: Duplicate without idempotency key
+    Given two messages different ids same payload order 9001
+    When both consumed
+    Then QA expects either one order or documented duplicate policy
+
+  Scenario: Monitor queue metrics
+    Given publish rate 100 msg per sec
+    When consumer lag stable but DB insert rate 200 per sec
+    Then investigate duplicate processing
+```
+
+Тестовый чеклист: таблица `processed_events`, Redis SET, или уникальный индекс на `external_id`. Логи consumer с `skipped duplicate` подтверждают защиту.
+
+## Подводные камни
+
+- **Сравнение только заголовков.** Тело изменилось, дубликат не замечен.
+- **Окно дедупа слишком короткое.** Повтор через час проходит.
+- **Разные consumer group.** Каждая группа обработает снова, это не баг доставки.
+- **Тест на пустой БД.** Уникальный индекс не срабатывает визуально.
+- **Игнор outbox.** Дубликат виден только в downstream, не в очереди.

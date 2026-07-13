@@ -1,0 +1,88 @@
+---
+id: 4664
+title: "What happens if two threads write shared memory without sync?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What happens if two threads write shared memory without sync?
+
+## In short
+
+Concurrent access to one variable without synchronization is a data race and undefined behavior in C++. The outcome depends on instruction ordering and may differ from expectations even on one machine.
+
+## How to answer in an interview
+
+- That is a data race when at least one thread writes and there is no synchronization.
+- `++counter` is not atomic: read-modify-write in several steps.
+- Fixes: `std::mutex`, `std::atomic`, immutable shared data.
+- ThreadSanitizer (`-fsanitize=thread`) catches these in dev builds.
+- Honestly: it may appear to work thousands of times, but that is not a guarantee; compiler optimizations make chaos worse.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <thread>
+
+int tally = 0;
+
+void bump() {
+    for (int i = 0; i < 1000; ++i) {
+        ++tally;
+    }
+}
+
+int main() {
+    std::thread a(bump);
+    std::thread b(bump);
+    a.join();
+    b.join();
+    std::cout << "tally=" << tally << '\n';
+}
+```
+
+You expect 2000 but often get less: both threads read the same value, increment locally, and overwrite.
+
+Mutex version:
+
+```cpp
+#include <mutex>
+
+std::mutex gate;
+int tally = 0;
+
+void bump_safe() {
+    for (int i = 0; i < 1000; ++i) {
+        std::lock_guard<std::mutex> hold(gate);
+        ++tally;
+    }
+}
+```
+
+For a simple counter, atomic is better:
+
+```cpp
+#include <atomic>
+
+std::atomic<int> tally{0};
+
+void bump_atomic() {
+    for (int i = 0; i < 1000; ++i) {
+        tally.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+```
+
+Reads are race-free only if all writers use atomic or a mutex. Do not mix atomic and plain access to the same location.
+
+## Pitfalls
+
+- **False sharing.** Two atomics adjacent in memory may fight over a cache line without a logical race.
+- **Visibility.** Without happens-before another thread may not see a write without atomic/mutex.
+- **Const data races.** Reading while another thread writes without sync is UB if the writer is not atomic.
+- **Optimistic lock-free.** Complex structures need deliberate memory orders, not default atomics.
+- **Sanitizer off in prod.** TSan is not in release; review and load tests still matter.

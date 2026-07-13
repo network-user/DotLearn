@@ -1,0 +1,66 @@
+---
+id: 2762
+title: "HTTP/1.0 vs HTTP/2: what changes when you test page load?"
+category: qa-http-rest-soap-websocket-i-api
+categoryLabel: "HTTP, REST, SOAP, WebSocket и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTP/1.0 vs HTTP/2: what changes when you test page load?
+
+## In short
+
+HTTP/1.0 historically opened a separate TCP connection per request (Connection: close), causing head-of-line blocking on pages with many assets. HTTP/2 multiplexes streams over one connection, compresses headers with HPACK, and supports priorities. For QA that affects the DevTools waterfall, TTFB/LCP, and behavior under throttling.
+
+## How to answer in an interview
+
+- HTTP/1.1 added keep-alive and pipelining, but browsers effectively capped parallelism at ~6 connections per host; HTTP/2 lifts that with one channel.
+- HTTP/2 is binary: Network shows protocol h2; frames are not human-readable text like HTTP/1.1.
+- I verify CDN and reverse proxy actually serve h2 (or h3), not just marketing copy on the landing page.
+- Honestly: HTTP/2 does not fix a slow backend; it helps deliver many small files, but a heavy API response still hurts UX.
+
+## How it works
+
+**HTTP/1.0 style** (new connection per resource):
+
+```
+GET /index.html HTTP/1.0
+Connection: close
+
+GET /styles/app.css HTTP/1.0
+Connection: close
+
+GET /scripts/bundle.js HTTP/1.0
+Connection: close
+```
+
+**HTTP/2:** one TLS/TCP, parallel streams for `/index.html`, `/styles/app.css`, `/scripts/bundle.js`; headers deduplicated via HPACK.
+
+Gherkin for front-end performance regression:
+
+```gherkin
+Feature: HTTP protocol and asset loading
+
+  Scenario: Home is served over HTTP/2
+    When the browser opens "https://app.example.com/"
+    Then the main document loads with protocol HTTP/2
+    And static assets from the same host use HTTP/2 or HTTP/3
+
+  Scenario: No redundant new TCP per tiny file
+    Given keep-alive or HTTP/2 is enabled
+    When the page requests 20 resources from one origin
+    Then the count of new TCP handshakes is not 20
+    And the waterfall does not show serial blocking on all 20 files due to a single connection limit
+```
+
+In Charles I compare Connect vs Waiting before/after enabling h2 on staging. For API smoke, `curl --http2 -I` and ALPN checks are enough.
+
+## Pitfalls
+
+- **h2 only between CDN and client, HTTP/1.1 inside.** Waterfall looks fast while origin is still the bottleneck.
+- **Many tiny files without bundling.** h2 helps but frame overhead remains; metrics do not improve linearly.
+- **TLS required for h2 in browsers.** http:// URLs will not multiplex in Chrome.
+- **Server push (legacy pattern).** Wasted traffic if the asset is cached; QA catches double downloads.
+- **Local compare without HTTPS.** Dev server on HTTP/1.1, prod on h2; false LCP regressions.

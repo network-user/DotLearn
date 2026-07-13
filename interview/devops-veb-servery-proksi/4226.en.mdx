@@ -1,0 +1,51 @@
+---
+id: 4226
+title: "How do you verify Nginx listens on a port?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you verify Nginx listens on a port?
+
+## In short
+
+Check the socket layer (`ss -tlnp sport = :443`), then an HTTP response (`curl -vk https://127.0.0.1:8443/`), and compare with `nginx -T | grep listen`. If another process owns the port, `ss` shows a different name. After `reload`, always run `nginx -t` or the old master keeps prior listeners.
+
+## How to answer in an interview
+
+- I prefer `ss -tlnp | grep ':80 '` over netstat: faster and shows pid/process name.
+- `curl -sI http://127.0.0.1:PORT` confirms an HTTP server actually answers.
+- `nginx -T` dumps effective config with all includes.
+- For TLS I use `openssl s_client -connect host:443 -servername app.example.com`.
+- Honestly: firewall (ufw/nftables) or security groups may block externally while local listen works.
+
+## How it works
+
+The master process binds listen directives from all server blocks. Port conflicts surface as `bind() failed` in error.log.
+
+```bash
+PORT=8443
+sudo ss -tlnp | grep ":${PORT} "
+
+curl -sI "http://127.0.0.1:${PORT}/" | head -5
+
+sudo nginx -T 2>/dev/null | grep -E "listen.*${PORT}"
+```
+
+If nothing listens:
+
+```bash
+sudo tail -30 /var/log/nginx/error.log
+sudo systemctl restart nginx
+```
+
+## Pitfalls
+
+- **Localhost-only listen.** `listen 127.0.0.1:8080` is unreachable remotely; by design.
+- **SO_REUSEPORT / workers.** Multiple `ss` rows per port can be normal.
+- **Stale bind after failed reload.** Master survives with old config; check `systemctl status` and error.log.
+- **Port in Docker/K8s.** Published container port mapping matters, not host nginx directly.
+- **IPv6 only.** `listen [::]:80` without IPv4 blocks clients on A records.

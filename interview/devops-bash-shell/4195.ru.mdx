@@ -1,0 +1,64 @@
+---
+id: 4195
+title: "Как обрабатывать ошибки в bash-скрипте?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как обрабатывать ошибки в bash-скрипте?
+
+## Суть
+
+Надёжный скрипт комбинирует `set -euo pipefail`, явную проверку `$?` там, где ошибка допустима, и `trap` на ERR/EXIT для cleanup. Логирование stderr дополняет, но не заменяет контроль exit status.
+
+## Что ответить на собесе
+
+- `set -e` останавливает скрипт на ненулевом статусе команды.
+- `set -u` ловит опечатки в переменных до продакшн-инцидента.
+- `trap 'handler' ERR` с `echo "$LINENO"` ускоряет RCA в CI/CD.
+- Честно: `set -e` игнорируется внутри `if cmd`, `while` и некоторых subshell; критичные места проверяю явно.
+
+## Как это работает
+
+Шаблон deploy-скрипта:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_err() { echo "[$(date -Iseconds)] $*" >> /var/log/deploy.err; }
+
+cleanup() {
+  [[ -n "${TMP_WORKDIR:-}" && -d "$TMP_WORKDIR" ]] && rm -rf "$TMP_WORKDIR"
+}
+trap cleanup EXIT
+trap 'log_err "failed at line $LINENO"; exit 1' ERR
+
+TMP_WORKDIR=$(mktemp -d)
+cp manifests/*.yaml "$TMP_WORKDIR/"
+kubectl apply -f "$TMP_WORKDIR/"
+```
+
+Команда, где ошибка ожидаема:
+
+```bash
+if grep -q 'image:' "$TMP_WORKDIR/deployment.yaml"; then
+  echo "image pin present"
+else
+  echo "missing image pin" >&2
+  exit 1
+fi
+```
+
+В pipeline `set -o pipefail` пробрасывает код любой стадии, не только `tail`.
+
+## Подводные камни
+
+- **`set -e` и `&&` в одной строке.** Ложное чувство безопасности при подстановке команд.
+- **Trap EXIT на успехе.** Cleanup удаляет артефакты, нужные для post-mortem.
+- **ERR без `set -E`.** В функции trap может не сработать без `set -E` / `shopt -s extdebug`.
+- **Игнор `|| true`.** Маскирует реальные сбои без метрик.
+- **Subshell `( set -e; cmd )`.** Ошибка не роняет родительский скрипт.

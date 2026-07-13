@@ -1,0 +1,52 @@
+---
+id: 4201
+title: "Зачем в начале скрипта ставить set -e?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в начале скрипта ставить set -e?
+
+## Суть
+
+`set -e` (errexit) завершает скрипт при ненулевом exit code любой команды в subshell-контексте, где errexit активен. Цель: не продолжать deploy после скрытого сбоя и не каскадировать повреждённое состояние.
+
+## Что ответить на собесе
+
+- Ставлю вместе с `set -u` и `pipefail` в CI/CD и install scripts.
+- Pipeline без `pipefail` + `set -e` всё ещё может проглотить ошибку в середине pipe.
+- Ожидаемые ошибки оборачиваю в `if cmd; then` или `cmd || true` осознанно.
+- Честно: `set -e` не волшебная кнопка; в функциях и subshell поведение отличается, критичные шаги дублирую проверкой `$?`.
+
+## Как это работает
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "start release"
+tar -xzf artifact.tgz -C /opt/app
+systemctl restart app.service
+echo "release done"
+```
+
+Если `tar` падает, `systemctl restart` не выполнится. В GitLab CI ненулевой exit скрипта красит job. Для optional step:
+
+```bash
+if systemctl is-active --quiet legacy-agent; then
+  systemctl stop legacy-agent
+fi
+```
+
+`set -o errexit` можно временно отключить `set +e` вокруг experimental блока, затем вернуть `set -e`.
+
+## Подводные камни
+
+- **Команда в if не триггерит errexit.** Ложный негатив: думаю, что защищён, но ошибка в другом месте.
+- **`set -e` и `$(cmd)`.** Подстановка может не остановить скрипт в старых bash без `shopt -s inherit_errexit`.
+- **Pipeline только с `set -e`.** Ошибка `grep` в `cmd | grep x` игнорируется без pipefail.
+- **`|| true` повсюду.** Скрипт всегда зелёный в CI.
+- **Обработчик без EXIT trap.** Частичный deploy оставляет систему в inconsistent state без rollback.

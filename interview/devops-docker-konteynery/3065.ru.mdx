@@ -1,0 +1,48 @@
+---
+id: 3065
+title: "Чем Docker-образ отличается от контейнера?"
+category: devops-docker-konteynery
+categoryLabel: "Docker / Контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем Docker-образ отличается от контейнера?
+
+## Суть
+
+Образ (image) это read-only шаблон файловой системы и метаданных запуска. Контейнер это исполняемый экземпляр образа с изолированным namespace, собственным writable слоем и процессом. Один образ порождает много контейнеров; контейнер можно остановить и удалить, образ остаётся в registry.
+
+## Что ответить на собесе
+
+- Сравниваю образ с классом или ISO, контейнер с запущенным процессом на его основе.
+- Уточняю, что контейнер добавляет copy-on-write слой для записи; сам образ не меняется при runtime.
+- Показываю жизненный цикл: build/push image, pull на хосте, `docker run` создаёт container id.
+- Честно добавляю: «пересобрать контейнер» на собесе часто значит пересоздать из нового тега образа, а не патчить running instance.
+
+## Как это работает
+
+Сборка через Dockerfile или `docker commit` создаёт image с цепочкой слоёв (layers), адресуемых digest. При `docker run` runtime (containerd/runc) монтирует слои overlayfs, создаёт cgroups/namespaces и стартует `CMD`/`ENTRYPOINT`.
+
+```bash
+docker build -t payments-api:2.1.0 .
+docker images payments-api
+docker run -d --name pay-api-01 -p 8080:8080 payments-api:2.1.0
+docker ps --filter name=pay-api-01
+docker inspect pay-api-01 --format '{{.Image}}'
+docker stop pay-api-01 && docker rm pay-api-01
+docker rmi payments-api:2.1.0
+```
+
+Первые команды работают с образом: build фиксирует слои, `images` показывает tag и size. `run` создаёт контейнер: отдельный ID, свой thin writable layer для логов и temp-файлов. `inspect` связывает container с image sha256. Удаление контейнера не трогает образ; `rmi` удаляет image, если на него нет ссылок.
+
+В Kubernetes та же модель: Pod spec ссылается на image pull policy; каждый restart может поднять новый container instance из того же tag (риск drift, если tag mutable).
+
+## Подводные камни
+
+- **Правки внутри running container.** Изменения в writable слое теряются после удаления; нужен новый image tag.
+- **latest в проде.** Один tag, разный digest на нодах даёт «работает у меня» при rolling update.
+- **Dangling images.** Частые rebuild без GC забивают disk на daemon.
+- **Путаница image id и container id.** В логах и алертах важно различать, что именно redeploy'ят.
+- **Stateful данные в контейнере.** Без volume/bind mount данные исчезают с container; образ для этого не предназначен.

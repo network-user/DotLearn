@@ -1,0 +1,63 @@
+---
+id: 2215
+title: "Kafka partitions: what should a tester verify in a distributed topic?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Kafka partitions: what should a tester verify in a distributed topic?
+
+## In short
+
+A partition is an ordered log of records inside a topic: each record has a monotonic offset. Topics are split into partitions to spread data across brokers and enable parallel reads. Ordering is guaranteed only within one partition; the message key decides which partition receives the record.
+
+## How to answer in an interview
+
+- Partition count sets the upper bound for consumer group parallelism: more partitions, more consumers can run at once.
+- With a key, all events for one entity (userId, orderId) land in one partition and keep order; without a key distribution is round-robin and order across that user's messages is not guaranteed.
+- Partition replicas (leader/follower) affect fault tolerance: when a broker fails the leader is re-elected; QA watches downtime and loss of in-sync replicas.
+- Honestly: you can increase partitions later, you cannot shrink them without migration; it is an architecture choice, not a test-time tweak.
+
+## How it works
+
+Topic `checkout-events` with three partitions on a two-broker cluster:
+
+```
+Topic checkout-events
+  partition 0 (leader broker-1, replicas 1,2)
+  partition 1 (leader broker-2, replicas 2,1)
+  partition 2 (leader broker-1, replicas 1,2)
+```
+
+A producer with key `order-9001` always lands in the same partition (hash on key). Consumers in group `billing` read offsets independently per partition.
+
+Gherkin for order and routing checks:
+
+```gherkin
+Feature: Partitions and message key
+
+  Scenario: Events with the same key keep order
+    Given topic "checkout-events" with 3 partitions
+    When the producer sends three records with key "order-9001" values "created", "paid", "shipped"
+    Then the consumer reads values in order "created", "paid", "shipped"
+    And all three records share one partition id
+
+  Scenario: Records without a key spread across partitions
+    Given topic "checkout-events" with 3 partitions
+    When the producer sends 30 records without a key
+    Then messages are spread across at least two partitions
+    And total offset lag for the group does not grow forever
+```
+
+For load tests I record: partition count, replication factor, min.insync.replicas, and behavior with acks=all when ISR shrinks.
+
+## Pitfalls
+
+- **Expecting global order in the topic.** Order across partitions is undefined; "payment before create" bugs happen without a key.
+- **Too few partitions in production.** Lag grows and scaling consumers horizontally does not help.
+- **Hot partition.** One hot key saturates a single partition; average topic lag looks fine.
+- **Testing on a single partition locally.** On a cluster rebalance and leader election change timings.
+- **Retention vs test data.** Old offsets vanish after retention; "read from the beginning" regression needs a dedicated topic or offset reset.

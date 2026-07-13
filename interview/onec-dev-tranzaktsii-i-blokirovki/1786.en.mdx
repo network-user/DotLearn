@@ -1,0 +1,64 @@
+---
+id: 1786
+title: "Why bulk posting fails with a lock error"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why bulk posting fails with a lock error
+
+## In short
+
+Bulk processing concentrates posting on the same registers and holds locks longer than interactive work. Lock errors come from contention with users, parallel scheduled jobs, one long transaction for the whole set, or different resource acquisition order.
+
+## How to answer in an interview
+
+- I tie bulk posting to overlap on warehouses, counterparties, and accumulation registers.
+- In an interview I name typical causes: one batch in one transaction, overnight job + daytime users, deadlock.
+- I stress tools: lock monitor, tech log, document sorting, batch splitting.
+- I honestly say raising timeout without changing the algorithm only delays the error.
+- I recommend background jobs in a low-load window and consistent register lock order.
+
+## How it works
+
+A job reposts thousands of sales documents in one session. If all documents run in one transaction, locks on `_AccumReg*` live until the loop ends.
+
+```bsl
+Процедура ПерепровестиСписок(МассивСсылок) Экспорт
+    МассивСсылок = СортироватьПоСкладуИДате(МассивСсылок);
+    РазмерПакета = 25;
+    Индекс = 0;
+    Пока Индекс < МассивСсылок.Количество() Цикл
+        НачатьТранзакцию();
+        Попытка
+            Лимит = Мин(Индекс + РазмерПакета, МассивСсылок.Количество()) - 1;
+            Для Поз = Индекс По Лимит Цикл
+                ДокОбъект = МассивСсылок[Поз].ПолучитьОбъект();
+                ДокОбъект.Записать(РежимЗаписиДокумента.Проведение);
+            КонецЦикла;
+            ЗафиксироватьТранзакцию();
+        Исключение
+            ОтменитьТранзакцию();
+            ЗаписьЖурналаРегистрации("МассовоеПроведение", УровеньЖурналаРегистрации.Ошибка,,
+                "Сбой на пакете с индекса " + Индекс);
+            ВызватьИсключение;
+        КонецПопытки;
+        Индекс = Лимит + 1;
+    КонецЦикла;
+КонецПроцедуры
+```
+
+A parallel job on the same registers creates deadlock: session A holds goods, waits on settlements; session B the reverse. Sorting documents and the same `БлокировкаДанных` order reduce risk.
+
+Backdated reposting pulls totals recalculation and widens locks by period. An interactive user on the same warehouse gets a timeout.
+
+## Pitfalls
+
+- **Two bulk jobs without coordination.** Contention invisible in the user UI.
+- **Batch of 500+ in one transaction.** Commit is fast, locks are long.
+- **Ignoring register totals.** Error arrives at aggregate stage, not movements.
+- **Posting during business hours "for speed".** Cure worse than disease.
+- **Retry without pause after deadlock.** Load on the lock manager grows.

@@ -1,0 +1,56 @@
+---
+id: 4275
+title: "What is the PROXY protocol for?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is the PROXY protocol for?
+
+## In short
+
+PROXY protocol (v1 text or v2 binary) prepends the client original IP/port to the TCP stream between L4 load balancer and backend. Without it, backend sees only LB IP in logs, rate limits, and ACL. HAProxy uses `send-proxy`, nginx `proxy_protocol`, AWS NLB target groups support variants.
+
+## How to answer in an interview
+
+- v1 human-readable `PROXY TCP4 1.2.3.4 10.0.0.5 12345 443\r\n`.
+- v2 binary header is efficient, supports IPv6 and LOCAL command.
+- Backend must explicitly `listen ... proxy_protocol`; otherwise header hits HTTP parser as garbage.
+- `$proxy_protocol_addr` in nginx for real_ip and logs.
+- Honestly: alternative is HTTP X-Forwarded-For at L7; PROXY for raw TCP/TLS pass-through.
+
+## How it works
+
+HAProxy backend:
+
+```bash
+cat <<'EOF'
+backend app_nodes
+  server web1 10.0.1.10:443 send-proxy-v2 check
+EOF
+```
+
+Nginx accept:
+
+```bash
+cat <<'EOF'
+server {
+  listen 443 ssl proxy_protocol;
+  set_real_ip_from 10.0.0.0/8;
+  real_ip_header proxy_protocol;
+}
+EOF
+```
+
+Verify client IP in log after deploy.
+
+## Pitfalls
+
+- **Forgot proxy_protocol on listen.** Garbled TLS handshake, mysterious failures.
+- **Trust all real_ip ranges.** Spoofed PROXY header if attacker reaches backend directly.
+- **Mixed v1/v2.** HAProxy send-proxy-v2 to server expecting v1 breaks parsing.
+- **Health check without PROXY.** Check OK, real traffic fails if check path differs.
+- **Double PROXY header.** Chained LB misconfig; backend sees nested garbage.

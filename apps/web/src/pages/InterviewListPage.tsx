@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import type { InterviewCategory, InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
+import type { InterviewCategory, InterviewDirection, InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle2, GraduationCap, Search, Shuffle, Wand2 } from 'lucide-react';
@@ -15,12 +15,20 @@ import { categoryOfSlug } from '@/lib/catalog-categories';
 import { useForcedContentLanguage } from '@/lib/forced-language';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
+  filterByDirection,
   getInterviewCategories,
   getInterviewIndex,
   getInterviewStages,
   localizedInterviewTitle,
   topicSlugsForCategory,
 } from '@/lib/interview';
+import {
+  directionLabel,
+  getInterviewDirections,
+  isInterviewDirection,
+  readStoredInterviewDirection,
+  writeStoredInterviewDirection,
+} from '@/lib/interview-directions';
 import { countReadConcepts, useReadConceptsByTopic } from '@/lib/mastery';
 import { isPersonalized, usePersonalization } from '@/lib/personalization';
 import { openPersonalizeWizard } from '@/lib/personalize-wizard';
@@ -121,6 +129,10 @@ export const InterviewListPage = () => {
   const status: StatusFilter = search.status ?? 'all';
   const sort: SortKey = search.sort ?? 'default';
   const forMe = search.forMe === true;
+  const activeDirection: InterviewDirection =
+    search.direction && search.direction !== 'all' && isInterviewDirection(search.direction)
+      ? search.direction
+      : (readStoredInterviewDirection() ?? 'python');
   const profile = usePersonalization();
   const profileReady = isPersonalized(profile);
 
@@ -148,6 +160,23 @@ export const InterviewListPage = () => {
     setQueryInput(query);
   }, [query]);
 
+  useEffect(() => {
+    if (search.direction !== activeDirection) {
+      patch({ direction: activeDirection }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setDirection = (value: InterviewDirection): void => {
+    writeStoredInterviewDirection(value);
+    const categories = getInterviewCategories(value);
+    const topicValid = category === 'all' || categories.some((item) => item.slug === category);
+    patch({
+      direction: value,
+      topic: topicValid ? search.topic : undefined,
+    });
+  };
+
   const setCategory = (value: string): void =>
     patch({ topic: value === 'all' ? undefined : value });
   const setStage = (value: string): void => patch({ stage: value === 'all' ? undefined : value });
@@ -167,11 +196,21 @@ export const InterviewListPage = () => {
   const titleOf = (question: InterviewQuestionMeta): string =>
     localizedInterviewTitle(question, locale);
 
+  const directionIndex = useMemo(
+    () => filterByDirection(getInterviewIndex(), activeDirection),
+    [activeDirection],
+  );
+  const directionCategories = useMemo(
+    () => getInterviewCategories(activeDirection),
+    [activeDirection],
+  );
+  const directionStages = useMemo(() => getInterviewStages(activeDirection), [activeDirection]);
+
   const visible = useMemo(() => {
     const title = (question: InterviewQuestionMeta): string =>
       localizedInterviewTitle(question, locale);
     const needle = normalize(query);
-    const filtered = getInterviewIndex().filter((question) => {
+    const filtered = directionIndex.filter((question) => {
       if (category !== 'all' && question.category !== category) return false;
       if (stage !== 'all' && question.stage !== stage) return false;
       if (status === 'studied' && !studiedIds.has(question.id)) return false;
@@ -202,16 +241,19 @@ export const InterviewListPage = () => {
       sorted.sort((a, b) => a.id - b.id);
     }
     return sorted;
-  }, [query, category, stage, status, sort, studiedIds, locale, forMe, profile]);
+  }, [query, category, stage, status, sort, studiedIds, locale, forMe, profile, directionIndex]);
 
-  const studiedCount = studiedIds.size;
+  const studiedCount = useMemo(
+    () => directionIndex.filter((question) => studiedIds.has(question.id)).length,
+    [directionIndex, studiedIds],
+  );
 
   const manifests = useVisibleManifests();
   const readByTopic = useReadConceptsByTopic();
 
   const readiness = useMemo<CategoryReadiness[]>(() => {
     const manifestBySlug = new Map(manifests.map((manifest) => [manifest.slug, manifest]));
-    return getInterviewCategories().map((info) => {
+    return directionCategories.map((info) => {
       let read = 0;
       let total = 0;
       for (const slug of topicSlugsForCategory(info.slug)) {
@@ -225,10 +267,10 @@ export const InterviewListPage = () => {
         total === 0 ? 'none' : ratio >= 0.66 ? 'high' : ratio >= 0.33 ? 'mid' : 'low';
       return { slug: info.slug, label: info.label, read, total, ratio, band };
     });
-  }, [manifests, readByTopic]);
+  }, [manifests, readByTopic, directionCategories]);
 
   const goRandom = (): void => {
-    const pool = visible.length > 0 ? visible : getInterviewIndex();
+    const pool = visible.length > 0 ? visible : directionIndex;
     const pick = pool[Math.floor(Math.random() * pool.length)];
     if (pick) {
       void navigate({ to: questionBase, params: { id: String(pick.id) } });
@@ -251,9 +293,9 @@ export const InterviewListPage = () => {
         </h1>
         <p className="mt-3 max-w-prose text-fg-muted leading-relaxed">{t('subtitle')}</p>
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 eyebrow text-fg-subtle">
-          <span>{t('totalQuestions', { count: getInterviewIndex().length })}</span>
+          <span>{t('totalQuestions', { count: directionIndex.length })}</span>
           <span aria-hidden>·</span>
-          <span>{t('categoriesCount', { count: getInterviewCategories().length })}</span>
+          <span>{t('categoriesCount', { count: directionCategories.length })}</span>
           {studiedCount > 0 && (
             <>
               <span aria-hidden>·</span>
@@ -275,6 +317,7 @@ export const InterviewListPage = () => {
           </button>
           <Link
             to="/interview/exam"
+            search={{ direction: activeDirection }}
             className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/[0.06] px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium text-accent transition-colors hover:bg-accent/10 w-full sm:w-auto justify-center"
           >
             <GraduationCap size={15} />
@@ -282,6 +325,28 @@ export const InterviewListPage = () => {
           </Link>
         </div>
       </header>
+
+      <Surface variant="chrome" className="p-3 sm:p-4">
+        <div className="eyebrow text-fg-subtle mb-2">{t('filterDirection')}</div>
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 snap-x snap-mandatory">
+          {getInterviewDirections().map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => setDirection(entry.id)}
+              aria-pressed={activeDirection === entry.id}
+              className={cx(
+                'shrink-0 snap-start rounded-full border px-4 min-h-[var(--tap)] sm:min-h-0 sm:py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50',
+                activeDirection === entry.id
+                  ? 'border-accent/70 bg-accent/[0.16] text-accent'
+                  : 'border-border-base text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+              )}
+            >
+              {directionLabel(entry.id, locale)}
+            </button>
+          ))}
+        </div>
+      </Surface>
 
       <ReadinessPanel readiness={readiness} onPick={setCategory} />
 
@@ -326,7 +391,7 @@ export const InterviewListPage = () => {
                 className="form-input"
               >
                 <option value="all">{t('allTopics')}</option>
-                {getInterviewCategories().map((item) => (
+                {directionCategories.map((item) => (
                   <option key={item.slug} value={item.slug}>
                     {item.label} ({item.count})
                   </option>
@@ -340,7 +405,7 @@ export const InterviewListPage = () => {
                 className="form-input"
               >
                 <option value="all">{t('allStages')}</option>
-                {getInterviewStages().map((item) => (
+                {directionStages.map((item) => (
                   <option key={item.slug} value={item.slug}>
                     {item.label} ({item.count})
                   </option>

@@ -1,0 +1,54 @@
+---
+id: 1595
+title: "Database replication"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Database replication
+
+## Суть
+
+Replication копирует WAL/binlog с primary на replicas. Sync ждёт quorum перед ack write; async быстрее, но lag и stale reads. Semi-sync баланс. Read scaling через replicas; failover promotes standby to primary.
+
+## Что ответить на собесе
+
+- Primary handles writes, replicas serve read-heavy paths.
+- Replication lag мониторю; UI показывает eventual consistency где нужно.
+- Failover: automated vs manual, split-brain protection.
+- Честно: «strong consistency + geo replicas» дорого; выбираю модель под SLA.
+
+## Как это работает
+
+```
+Primary --WAL stream--> Replica A
+       \--WAL stream--> Replica B
+```
+
+App code:
+
+```go
+func (p *Pool) QueryRead(ctx context.Context, sql string) (*sql.Rows, error) {
+	if p.lagTooHigh() {
+		return p.primary.QueryContext(ctx, sql)
+	}
+	return p.replica.QueryContext(ctx, sql)
+}
+```
+
+При lag выше порога читаю primary, иначе replica offload.
+
+## Подводные камни
+
+**Read your writes on replica.** User sees stale data after POST.
+
+**Async failover data loss window.** RPO > 0.
+
+**Multi-primary without CRDT.** Write conflicts.
+
+**Replica for backup only, no lag alert.** Silent drift.
+
+**Connection string always primary.** Replication unused.

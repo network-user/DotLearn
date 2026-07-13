@@ -1,0 +1,75 @@
+---
+id: 1633
+title: "How HTTP determines body length"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How HTTP determines body length
+
+## In short
+
+When length is known upfront, set `Content-Length` in bytes. When the body is streamed or size is unknown, use `Transfer-Encoding: chunked` without Content-Length. GET and HEAD usually have no body. HTTP/2 has built-in framing, but length semantics remain at the API level.
+
+## How to answer in an interview
+
+- Content-Length is required for HTTP/1.1 if not chunked.
+- Chunked: hex chunk size, data, CRLF; terminator `0\r\n\r\n`.
+- `Content-Length: 0` for empty POST is sometimes needed explicitly.
+- `http.ResponseWriter` with unknown length enables chunked automatically.
+- Honestly: Content-Length mismatch with actual body is a classic desync vulnerability.
+
+## How it works
+
+Fixed length:
+
+```http
+POST /login HTTP/1.1
+Host: auth.example
+Content-Type: application/json
+Content-Length: 45
+
+{"user":"dev","password":"***"}
+```
+
+Chunked response:
+
+```http
+HTTP/1.1 200 OK
+Transfer-Encoding: chunked
+Content-Type: text/plain
+
+5
+Hello
+0
+
+```
+
+```go
+func streamLogs(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	for _, line := range tailLogs() {
+		fmt.Fprintln(w, line)
+		if ok {
+			flusher.Flush()
+		}
+	}
+}
+```
+
+`net/http` on `Write` without `Content-Length` adds chunked on HTTP/1.1. On HTTP/2, DATA frames carry length in the frame header.
+
+## Pitfalls
+
+**Two Content-Length headers.** Unpredictable behavior, request smuggling risk.
+
+**Content-Length and chunked together.** RFC violation; proxies may break the body.
+
+**Streaming without flush.** Client sees the response only when the buffer fills.
+
+**Close connection as length (HTTP/1.0 style).** Breaks keep-alive.
+
+**Proxy buffers chunked until end.** Live stream loses its purpose.

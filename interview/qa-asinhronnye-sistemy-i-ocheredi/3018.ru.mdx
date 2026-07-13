@@ -1,0 +1,56 @@
+---
+id: 3018
+title: "Что делать QA, если сообщение обработалось дважды?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делать QA, если сообщение обработалось дважды?
+
+## Суть
+
+Двойная обработка это дефект идемпотентности consumer или отсутствия дедупликации при at-least-once доставке. QA воспроизводит redelivery, фиксирует дубль в данных и классифицирует: ожидаемое поведение брокера или баг приложения. Ожидаемое исправление: idempotency key, уникальный индекс, transactional outbox, ack только после commit.
+
+## Что ответить на собесе
+
+- Воспроизвожу: kill consumer mid-process, повторная публикация, сетевой таймаут producer.
+- Собираю доказательства: два одинаковых side effect, логи с одним messageId, метрики DLQ.
+- Оформляю баг с business impact: двойной платёж, два shipment label.
+- Проверяю fix: повторный прогон даёт ровно один результат.
+- Честно: если продукт не обещал exactly-once, требование к consumer идемпотентности обязательно.
+
+## Как это работает
+
+```gherkin
+Feature: Double processing response
+
+  Scenario: Reproduce redelivery
+    Given consumer processes payment msg pm-77
+    When consumer crashes before ack
+    And broker redelivers pm-77
+    Then QA records two ledger entries unless idempotency guard exists
+
+  Scenario: Verify fix with idempotency store
+    Given table processed_messages primary key message_id
+    When pm-77 delivered twice
+    Then second attempt logs skipped duplicate
+    And single charge on account
+
+  Scenario: Regression test in release checklist
+    Given staging chaos restart consumer pod
+    When publish 50 unique payment events
+    Then reconciliation report shows zero duplicates
+```
+
+До фикса QA может рекомендовать manual reconciliation job и алерт на аномальный рост транзакций. После фикса добавляю негативный кейс в smoke набора async-сервисов.
+
+## Подводные камни
+
+- **Считаю багом сам retry брокера.** Путаю инфраструктуру и приложение.
+- **Нет финансовой сверки.** Дубль виден только в логах.
+- **Тест без crash.** Redelivery не наступает.
+- **Ручной ack до commit.** Гарантированный повтор.
+- **Разные окружения.** Staging без durable queue, prod с redelivery.

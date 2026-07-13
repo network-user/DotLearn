@@ -1,0 +1,68 @@
+---
+id: 4640
+title: "What is std::condition_variable for?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is std::condition_variable for?
+
+## In short
+
+`std::condition_variable` puts a thread to sleep until a condition on shared data becomes true, then wakes it via `notify_one` or `notify_all`. It pairs with a mutex: no busy-wait, lower CPU use, and correct publication of state.
+
+## How to answer in an interview
+
+- I use it for producer/consumer, task queues, "data ready" / "buffer free" coordination.
+- I always wait with a predicate: `wait(lock, pred)` guards against spurious wakeups and lost wakeups with sloppy notify.
+- I change shared state under the mutex, then notify outside a long critical section or right after unlock.
+- For many waiters on one event I often use `notify_all`; for a single slot, `notify_one`.
+- Honestly: without a paired mutex and invariant, a condition variable is pointless; it does not replace a mutex.
+
+## How it works
+
+```cpp
+#include <condition_variable>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex mtx;
+std::condition_variable ready;
+bool payloadDone = false;
+
+void consumer() {
+    std::unique_lock lock(mtx);
+    ready.wait(lock, [] { return payloadDone; });
+    std::cout << "consume\n";
+}
+
+void producer() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    {
+        std::lock_guard lock(mtx);
+        payloadDone = true;
+    }
+    ready.notify_one();
+}
+
+int main() {
+    std::thread c(consumer);
+    std::thread p(producer);
+    c.join();
+    p.join();
+}
+```
+
+`consumer` locks `mtx` and sleeps in `wait`, temporarily releasing the mutex. `producer` sets `payloadDone` under the same mutex and signals. The predicate `return payloadDone` handles spurious wakeups.
+
+## Pitfalls
+
+- **notify without lock.** Allowed after updating the flag, but state must be published before notify (happens-before).
+- **Lost wakeup.** `notify` before `wait` without a predicate loses the signal; a predicate or counting semaphore fixes it.
+- **notify_all storm.** Every thread wakes and fights for the mutex again; sometimes required, sometimes wasteful.
+- **unique_lock required.** `wait` needs `unique_lock`, not `lock_guard`.
+- **Missing shutdown.** Without a stop flag the consumer hangs forever; production code needs join and a termination signal.

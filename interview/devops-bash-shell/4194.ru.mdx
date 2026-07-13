@@ -1,0 +1,60 @@
+---
+id: 4194
+title: "Как писать ошибки bash в лог?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как писать ошибки bash в лог?
+
+## Суть
+
+В bash stderr это fd 2; перенаправление `2>` или `2>>` пишет ошибки в файл, не смешивая с stdout. Для одновременного вывода на экран и в файл использую `tee` через process substitution.
+
+## Что ответить на собесе
+
+- `command 2>>/var/log/deploy.err` дописывает ошибки в конец файла.
+- `command &>>/var/log/deploy.log` объединяет stdout и stderr (bash 4+).
+- В скриптах добавляю timestamp через `ts` или `logger` для syslog.
+- Честно: перенаправление stderr не ловит exit code; проверяю `$?` или `set -o pipefail` отдельно.
+
+## Как это работает
+
+Deploy hook с раздельными логами:
+
+```bash
+#!/usr/bin/env bash
+LOG_DIR=/var/log/app-deploy
+mkdir -p "$LOG_DIR"
+
+run_step() {
+  "$@" >>"$LOG_DIR/stdout.log" 2>>"$LOG_DIR/stderr.log"
+}
+
+run_step kubectl apply -f manifests/
+```
+
+Одновременный экран и файл:
+
+```bash
+kubectl rollout status deploy/api 2> >(tee -a "$LOG_DIR/stderr.log" >&2)
+```
+
+Системный журнал:
+
+```bash
+logger -t deploy-hook -p user.err "Rollout failed for deploy/api"
+```
+
+Ротацию делаю logrotate по `size` или `daily`, не полагаюсь на бесконечный append.
+
+## Подводные камни
+
+- **Перезапись `2>`.** Одиночная стрелка стирает предыдущий лог при каждом запуске.
+- **Pipe без pipefail.** Ошибка в середине pipeline теряется, если смотрю только последний `$?`.
+- **Closed fd в cron.** Пустой MAILTO и отсутствие tty: stderr уходит в void без явного файла.
+- **Буферизация tee.** При crash последние строки могут не попасть на диск без `stdbuf -oL`.
+- **Права на log dir.** Скрипт от root пишет root-only файл; сервис не читает без ACL.

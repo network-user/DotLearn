@@ -1,0 +1,76 @@
+---
+id: 2043
+title: "Maven scope: classpath and packaging control"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Maven scope: classpath and packaging control
+
+## In short
+
+Scope in Maven is a contract: when a dependency lands on compile classpath, test classpath, runtime, and the final WAR/JAR. Wrong scope causes `ClassNotFoundException` in prod or extra megabytes in the artifact. `dependencyManagement` with `import` scope pulls a BOM without adding a jar.
+
+## How to answer in an interview
+
+- Default is `compile` when scope is omitted.
+- `provided` for container APIs (Jakarta Servlet in a WAR on Tomcat).
+- `runtime` when the interface is compile-time but implementation is launch-time only (JDBC).
+- `test` strictly for JUnit/Mockito; it must not leak into the production jar.
+- Honestly: `system` scope with `<systemPath>` breaks portability; I use it only as a temporary workaround.
+
+## How it works
+
+Multi-module project: shared API and web module:
+
+```xml
+<!-- parent dependencyManagement -->
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>3.26.0</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+Web module:
+
+```xml
+<dependencies>
+  <dependency>
+    <groupId>jakarta.servlet</groupId>
+    <artifactId>jakarta.servlet-api</artifactId>
+    <scope>provided</scope>
+  </dependency>
+  <dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <scope>runtime</scope>
+  </dependency>
+</dependencies>
+```
+
+On `mvn package` the WAR plugin puts `postgresql` in `WEB-INF/lib` but not `jakarta.servlet-api` (expected from Tomcat).
+
+Check the effective classpath:
+
+```bash
+mvn dependency:build-classpath -Dmdep.outputFile=cp.txt
+```
+
+Transitive scope inherits with caveats: a `compile` dependency usually pulls its transitives as `compile` unless overridden. `optional=true` on a dependency trims propagation to sibling modules.
+
+## Pitfalls
+
+- **Scope in dependencyManagement does not inherit like version.** Child must repeat scope or it becomes compile again.
+- **test in a library module.** Consumers do not get test-scoped transitives (expected) but may forget to add JUnit.
+- **WAR overlay.** Provided dependency accidentally lands in overlay merge.
+- **Spring Boot repackage.** Fat jar includes provided libs if a starter wires them wrong.
+- **import BOM without type pom.** Maven 4 validates stricter; build fails on CI.

@@ -1,0 +1,68 @@
+---
+id: 1561
+title: "Are Go channels thread-safe?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Are Go channels thread-safe?
+
+## In short
+
+Yes: send/recv are synchronized by the runtime; many goroutines can use one channel without an external mutex. It is copy-by-value handoff, not a shared mutable buffer between goroutines (except internal hchan).
+
+## How to answer in an interview
+
+- "Do not communicate by sharing memory"; channels establish happens-before.
+- Close is not safe with concurrent send; one closer, no send after close.
+- nil chan disabled in select; lone op blocks forever.
+- Honestly: thread-safe transport, but logic around shared state still needs sync.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	out := make(chan int, 4)
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(v int) {
+			defer wg.Done()
+			out <- v
+		}(i)
+	}
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	sum := 0
+	for v := range out {
+		sum += v
+	}
+	fmt.Println(sum)
+}
+```
+
+Three senders write a buffered channel without data race; the runtime serializes internal buffer updates.
+
+## Pitfalls
+
+**Close + send race.** Panic or lost values; protocol "only sender closes".
+
+**Pointer through channel.** Safe to pass pointer, but mutable object is shared after send.
+
+**Len/Cap not a sync contract.** Do not use len(ch) for synchronization logic.
+
+**Select pseudo-random.** No fairness guarantee among writers.
+
+**Unbuffered deadlock.** Missing receiver blocks sender forever.

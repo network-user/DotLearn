@@ -1,0 +1,92 @@
+---
+id: 4585
+title: "What hash table size reduces collisions?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What hash table size reduces collisions?
+
+## In short
+
+Collisions depend on the balance between bucket capacity and expected element count (load factor), not size alone. A practical target is roughly 0.5–0.75 load before rehash; in `std::unordered_map` you tune the threshold with `max_load_factor()` and set a floor on buckets early via `reserve(n)`.
+
+## How to answer in an interview
+
+- I define load factor as `size / bucket_count` and tie it to chain length.
+- I say prime bucket counts help toy hashes like `key % m`, but for `std::unordered_map` hash quality and rehash policy matter more.
+- I mention dynamic growth: past the threshold the table expands and redistributes entries.
+- I give a rule: when I expect N inserts, call `reserve(N)` or add a 20–30% margin.
+- I add honestly: oversized `bucket_count` wastes memory with little gain if the hash mixes keys poorly.
+
+## How it works
+
+At low load, few keys land in the same bucket and operations stay near O(1). As elements grow relative to buckets, chains lengthen and equality checks inside a bucket cost more.
+
+```cpp
+#include <iostream>
+#include <list>
+#include <vector>
+
+class ChainMap {
+    std::vector<std::list<std::pair<int, int>>> buckets;
+    float max_load = 0.75f;
+    std::size_t item_count = 0;
+
+    std::size_t index_for(int key) const {
+        return static_cast<std::size_t>(key) % buckets.size();
+    }
+
+    void grow_if_needed() {
+        if (item_count + 1 <= buckets.size() * max_load) return;
+        auto old = std::move(buckets);
+        buckets.assign(old.size() * 2 + 1, {});
+        item_count = 0;
+        for (auto& chain : old) {
+            for (auto& entry : chain) {
+                insert(entry.first, entry.second);
+            }
+        }
+    }
+
+public:
+    explicit ChainMap(std::size_t initial_buckets) : buckets(initial_buckets) {}
+
+    void insert(int key, int value) {
+        grow_if_needed();
+        buckets[index_for(key)].emplace_back(key, value);
+        ++item_count;
+    }
+
+    int* find(int key) {
+        for (auto& [k, v] : buckets[index_for(key)]) {
+            if (k == key) return &v;
+        }
+        return nullptr;
+    }
+
+    float load() const {
+        return buckets.empty() ? 0.f
+            : static_cast<float>(item_count) / static_cast<float>(buckets.size());
+    }
+};
+
+int main() {
+    ChainMap map(7);
+    for (int k : {10, 17, 24, 31, 38}) map.insert(k, k * 10);
+    std::cout << "load factor: " << map.load() << '\n';
+}
+```
+
+The teaching table starts at size 7 and doubles buckets past 0.75 load. A standard container does the same internally; callers express intent with `reserve` and `max_load_factor` instead of hand-picking primes.
+
+## Pitfalls
+
+- **Magic primes.** Alone they do not fix correlated keys and weak `% m` hashes.
+- **Missing reserve.** Bulk insert without `reserve` triggers repeated rehash and time spikes.
+- **High max_load_factor.** Memory savings turn into long chains.
+- **Wrong N estimate.** `reserve` sets a bucket floor, not a cap on `size`; growth still rehashes later.
+- **Fixed-size table.** Without growth, any good hash eventually degrades toward O(n).

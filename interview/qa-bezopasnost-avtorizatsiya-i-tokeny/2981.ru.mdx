@@ -1,0 +1,59 @@
+---
+id: 2981
+title: "Роли и права: как QA проверяет RBAC на практике?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Роли и права: как QA проверяет RBAC на практике?
+
+## Суть
+
+Роль группирует набор разрешений, а право описывает конкретное действие над ресурсом. Пользователь получает роль, система при каждом запросе сверяет его права с требуемым permission. Для QA это матрица «роль × endpoint/кнопка × ожидаемый HTTP-код».
+
+## Что ответить на собесе
+
+- Разделяю authentication (кто ты) и authorization (что тебе можно).
+- Строю матрицу: admin, editor, viewer и CRUD по сущностям.
+- Проверяю и UI (кнопка скрыта), и API напрямую: скрытый UI не равно защищённый backend.
+- Честно: RBAC без audit log не доказывает, кто менял права; для compliance нужны журналы.
+
+## Как это работает
+
+Типичная CMS: роль `admin` имеет `users:write`, `posts:delete`; `editor` только `posts:write`; `viewer` только `posts:read`. Назначение роли пользователю не копирует права по одному, а подтягивает весь bundle.
+
+Gherkin:
+
+```gherkin
+Feature: RBAC в CMS
+
+  Background:
+    Given пользователь alice с ролью editor
+    And пользователь bob с ролью viewer
+
+  Scenario: Editor создаёт пост
+    When alice отправляет POST /api/posts с валидным телом
+    Then ответ имеет статус 201
+
+  Scenario: Viewer не удаляет чужой пост
+    When bob отправляет DELETE /api/posts/42
+    Then ответ имеет статус 403
+    And тело содержит код INSUFFICIENT_PERMISSIONS
+
+  Scenario: Скрытая кнопка не заменяет проверку API
+    When bob вызывает DELETE /api/posts/42 через curl с его токеном
+    Then ответ 403 даже если кнопка Delete не видна в UI
+```
+
+При каждом action middleware читает JWT/session, извлекает role claims или lookup в БД, сравнивает с policy. Negative tests: horizontal escalation (user A редактирует объект user B) и vertical (viewer вызывает admin route).
+
+## Подводные камни
+
+- **Role explosion.** Сотни кастомных ролей без inheritance становятся неуправляемыми.
+- **Default allow.** Новый endpoint забыли закрыть, все роли получают доступ.
+- **UI-only checks.** Прямой POST в API обходит «серую» кнопку.
+- **Stale permissions.** Кэш ролей в Redis не инвалидируется после revoke.
+- **Confusion с groups.** AD group mapping ломается при rename группы в LDAP.

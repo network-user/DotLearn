@@ -1,0 +1,63 @@
+---
+id: 4230
+title: "How do you configure load balancing in Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you configure load balancing in Nginx?
+
+## In short
+
+Nginx balancing uses an `upstream` block listing backends and `proxy_pass http://upstream_name` in location. Algorithms: round-robin (default), `least_conn`, `ip_hash`, `hash $request_uri consistent`. Extras include `weight`, `backup`, `down`, passive health via `max_fails`/`fail_timeout`, and active checks via nginx plus or an external controller.
+
+## How to answer in an interview
+
+- `upstream` lives in http context; the name matches proxy_pass without a URI path.
+- `least_conn` for long-lived APIs; `ip_hash` for legacy sessions without a centralized store.
+- `keepalive` connections to upstream cut TCP handshake overhead.
+- `backup` servers take traffic only when the primary pool is dead.
+- Honestly: nginx passive health is slower than active probes; for strict SLAs I add health endpoints and external LB checks.
+
+## How it works
+
+```nginx
+upstream api_nodes {
+    least_conn;
+    keepalive 32;
+
+    server 10.0.3.4:8080 weight=3 max_fails=2 fail_timeout=10s;
+    server 10.0.3.5:8080 weight=1 max_fails=2 fail_timeout=10s;
+    server 10.0.3.6:8080 backup;
+}
+
+server {
+    listen 80;
+    server_name api.internal;
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_pass http://api_nodes;
+    }
+}
+```
+
+Check distribution when backends echo hostname:
+
+```bash
+for i in $(seq 1 6); do
+  curl -s -H 'Host: api.internal' http://127.0.0.1/ | head -1
+done
+```
+
+## Pitfalls
+
+- **URI in proxy_pass.** `proxy_pass http://pool/api/` alters path stripping; do not confuse with plain balancing.
+- **DNS upstreams.** Names resolve at startup; IP changes need resolver + variable pattern or literal IPs.
+- **No keepalive by default.** Without `proxy_http_version 1.1` and Connection "" every request opens TCP.
+- **ip_hash behind NAT.** Many clients behind one corporate NAT skew balance.
+- **Sticky without shared state.** When a node dies sticky clients see 502 until cookies refresh.

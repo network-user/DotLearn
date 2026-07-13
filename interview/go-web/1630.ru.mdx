@@ -1,0 +1,69 @@
+---
+id: 1630
+title: "Timeout и cancellation в gRPC"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Timeout и cancellation в gRPC
+
+## Суть
+
+gRPC в Go наследует `context.Context`: deadline через `WithTimeout`/`WithDeadline`, ручная отмена через `WithCancel`. Контекст передаётся в каждый RPC вызов; при cancel или timeout клиент получает ошибку, сервер должен слушать `ctx.Done()` и прекращать работу.
+
+## Что ответить на собесе
+
+- Клиент: `ctx, cancel := context.WithTimeout(parent, 2*time.Second)` + `defer cancel()`.
+- Сервер: в handler проверяю `ctx.Err()` и возвращаю `status.Error(codes.Canceled, ...)`.
+- Deadline propagation в цепочке вызовов: передаю тот же ctx downstream.
+- Interceptor может логировать `grpc.status` и latency.
+- Честно: без cancel на сервере долгий DB query продолжится после ухода клиента.
+
+## Как это работает
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+defer cancel()
+
+resp, err := client.FetchReport(ctx, &pb.ReportRequest{Month: 6})
+if err != nil {
+	if status.Code(err) == codes.DeadlineExceeded {
+		log.Println("client timeout")
+	}
+	return err
+}
+```
+
+Сервер:
+
+```go
+func (s *reportServer) FetchReport(ctx context.Context, req *pb.ReportRequest) (*pb.ReportResponse, error) {
+	done := make(chan *pb.ReportResponse, 1)
+	go func() {
+		done <- s.buildReport(req)
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, status.Error(codes.Canceled, "request canceled")
+	case r := <-done:
+		return r, nil
+	}
+}
+```
+
+gRPC кодирует deadline в metadata `grpc-timeout`; при истечении закрывает stream с соответствующим status code.
+
+## Подводные камни
+
+**Background context на сервере вместо входящего.** Теряется cancel от клиента.
+
+**Забытый `defer cancel()` на клиенте.** Утечка timer до GC.
+
+**Слишком короткий timeout на cold start.** Ложные 504 при деплое.
+
+**Игнор `ctx` в DB driver без context-aware API.** Запрос не прерывается.
+
+**Retry без jitter на DeadlineExceeded.** Thundering herd на перегруженный сервис.

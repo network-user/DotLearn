@@ -1,0 +1,70 @@
+---
+id: 2972
+title: "Истёкший access token: что проверяет QA в клиенте?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Истёкший access token: что проверяет QA в клиенте?
+
+## Суть
+
+Access token короткоживущий; после `exp` resource server отклоняет запросы (обычно 401 с `invalid_token`). Клиент должен обновить токен через refresh, редирект на login или показать понятный UX. QA симулирует истечение сдвигом часов, коротким TTL на staging и ручной подменой JWT payload.
+
+## Что ответить на собесе
+
+- Первый запрос с expired access даёт 401; клиент не должен спамить API десятками параллельных retry без single-flight refresh.
+- При валидном refresh пользователь остаётся в сессии без re-enter password.
+- Без refresh или с отозванным refresh жду logout и очистку storage.
+- Честно: на e2e сдвигаю системные часы только в изолированной VM; на host ломаются другие тесты.
+
+## Как это работает
+
+Последовательность happy path:
+
+```
+GET /api/data → 401 TOKEN_EXPIRED
+POST /oauth/token grant=refresh_token → 200 new access
+GET /api/data (retry) → 200
+```
+
+Gherkin:
+
+```gherkin
+Feature: Поведение при истёкшем access token
+
+  Scenario: Silent refresh продлевает сессию
+    Given access TTL 60s и валидный refresh
+    When QA ждёт 70s
+    And пользователь кликает "Обновить список"
+    Then первый GET возвращает 401
+    And клиент POST refresh один раз
+    And повтор GET возвращает 200
+    And пользователь остаётся на той же странице
+
+  Scenario: Параллельные запросы не дублируют refresh
+    Given access истёк
+    When UI грузит dashboard с 5 API вызовами
+    Then refresh endpoint вызван ровно 1 раз
+    And все 5 запросов eventually 200 или controlled error
+
+  Scenario: Отозванный refresh ведёт на login
+    Given refresh в blacklist
+    When access истёк и клиент пытается refresh
+    Then POST refresh 401
+    And local storage очищен
+    And редирект на /login с message session_expired
+```
+
+Декодирую JWT на jwt.io только на тестовых токенах; секреты в отчёт не копирую.
+
+## Подводные камни
+
+- **Clock skew.** Сервер считает expired, клиент ещё нет; flaky 401.
+- **Refresh rotation без обновления storage.** Второй refresh падает, user logged out.
+- **401 на business error.** Клиент уходит в login зря.
+- **WebSocket с протухшим токеном.** HTTP refresh OK, WS молчит.
+- **Tab в background.** Timer throttle, token expired без refresh до focus.

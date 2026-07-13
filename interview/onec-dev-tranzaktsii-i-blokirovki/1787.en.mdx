@@ -1,0 +1,63 @@
+---
+id: 1787
+title: "How to reduce deadlock risk in 1C"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to reduce deadlock risk in 1C
+
+## In short
+
+Deadlock happens on cyclic lock waits. Risk drops with short transactions, consistent register acquisition order, narrow filters in `БлокировкаДанных`, batching bulk work, and optimistic mode where hard balance contention is absent.
+
+## How to answer in an interview
+
+- I name "same lock order" as the main architectural rule for all posting procedures.
+- In an interview I give an example: goods first, then settlements in every handler.
+- I stress sorting documents by keys before bulk posting.
+- I honestly say retry with backoff helps but does not replace order alignment.
+- I remove unnecessary registers from movements and shorten transaction time.
+
+## How it works
+
+Two scheduled jobs lock registers in different order. Session 1: goods → settlements. Session 2: settlements → goods. The cycle closes.
+
+```bsl
+Процедура ЗаблокироватьРегистрыПроведения(ДокументОбъект) Экспорт
+    Блокировка = Новый БлокировкаДанных;
+    ЭлементТовары = Блокировка.Добавить("РегистрНакопления.ТоварыНаСкладах");
+    ЭлементТовары.Режим = РежимБлокировкиДанных.Исключительный;
+    ЭлементТовары.УстановитьЗначение("Склад", ДокументОбъект.Склад);
+    ЭлементРасчеты = Блокировка.Добавить("РегистрНакопления.Взаиморасчеты");
+    ЭлементРасчеты.Режим = РежимБлокировкиДанных.Исключительный;
+    ЭлементРасчеты.УстановитьЗначение("Контрагент", ДокументОбъект.Контрагент);
+    Блокировка.Заблокировать();
+КонецПроцедуры
+```
+
+A query with `ДЛЯ ОБНОВЛЕНИЯ` locks only selected rows for the UPDATE duration:
+
+```bsl
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Номенклатура.Ссылка
+|ИЗ
+|    Справочник.Номенклатура КАК Номенклатура
+|ГДЕ
+|    Номенклатура.Ссылка = &Ссылка
+|ДЛЯ ОБНОВЛЕНИЯ";
+```
+
+Heavy calculation runs before `НачатьТранзакцию()`. Bulk jobs split into batches of 20–50 documents. For directories with rare collisions keep optimistic write without pre-lock.
+
+## Pitfalls
+
+- **Different order in standard vs custom procedure.** Deadlock only in custom code.
+- **Wide lock "just in case".** Increases overlap.
+- **Parallel jobs without scheduling.** Two jobs in the same window.
+- **Retry in an infinite loop.** Load on the lock manager grows.
+- **Ignoring register totals.** Deadlock on aggregates, not movements.

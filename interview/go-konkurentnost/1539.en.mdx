@@ -1,0 +1,65 @@
+---
+id: 1539
+title: "What do goroutines actually run on?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What do goroutines actually run on?
+
+## In short
+
+Goroutines run in user space under the Go scheduler (M:P:G), which multiplexes them onto a bounded set of OS threads (M). G is not permanently pinned to one thread; when it blocks the runtime may move it to another M.
+
+## How to answer in an interview
+
+- M:N model: many goroutines on few kernel threads; GOMAXPROCS sets the number of P (logical processors).
+- The Go scheduler, not the kernel directly, picks which G runs on which M.
+- A blocking syscall may detach M from P; the netpoller serves I/O without extra threads.
+- Honestly: work stealing and thread parking are internal; M:P:G plus netpoller is enough for interviews.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+	"time"
+)
+
+func spin(label string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for i := 0; i < 3; i++ {
+		fmt.Println(label, i, "gomaxprocs:", runtime.GOMAXPROCS(0))
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func main() {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go spin("A", &wg)
+	go spin("B", &wg)
+	wg.Wait()
+}
+```
+
+Both G share the runtime's M pool. The kernel sees threads; each M runs one G's bytecode at a time on its P. On `Sleep`, G is parked and M picks another ready G from local/global queues.
+
+## Pitfalls
+
+**One goroutine equals one thread.** False; parallelism is capped by GOMAXPROCS, not goroutine count.
+
+**LockOSThread.** Pinning G to M is rare (GUI, some CGO); overuse kills M:N benefits.
+
+**Cgo and kernel threads.** Long CGO may grow the thread pool; watch `runtime.NumCgoCall`.
+
+**NUMA assumptions.** Go's scheduler is only lightly NUMA-aware; HPC setups sometimes tune GOMAXPROCS manually.
+
+**Runtime migration.** G can move between M; thread-local patterns differ from classic pthread code.

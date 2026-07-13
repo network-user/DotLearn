@@ -1,0 +1,70 @@
+---
+id: 4672
+title: "Why do you need a mutex in C++?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why do you need a mutex in C++?
+
+## In short
+
+A mutex (mutual exclusion) serializes access to shared state: only one thread runs the critical section at a time. It removes data races on non-atomic operations like read-modify-write.
+
+## How to answer in an interview
+
+- A mutex is a user-space primitive that may fall back to the kernel under contention.
+- In the STL: `std::mutex` plus `lock_guard`, `unique_lock`, `scoped_lock`.
+- Protect data structure invariants, not whole objects without reason.
+- For simple counters, `std::atomic` is an alternative.
+- Honestly: a mutex does not speed code up; it makes it correct at the cost of latency and deadlock risk.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex tally_gate;
+int tally = 0;
+
+void bump_many(int steps) {
+    for (int i = 0; i < steps; ++i) {
+        std::lock_guard<std::mutex> hold(tally_gate);
+        ++tally;
+    }
+}
+
+int main() {
+    std::thread a(bump_many, 1000);
+    std::thread b(bump_many, 1000);
+    a.join();
+    b.join();
+    std::cout << "tally=" << tally << '\n';
+}
+```
+
+A thread calls `lock()`: if the mutex is free, it owns it; otherwise it blocks until `unlock()`. `lock_guard` unlocks on scope exit, including via exceptions.
+
+STL mutex kinds:
+
+```cpp
+std::mutex plain;
+std::recursive_mutex reentrant;
+std::shared_mutex rw; // shared_lock for readers
+std::timed_mutex with_timeout;
+```
+
+Choice depends on access pattern: write-heavy critical section vs read-mostly config.
+
+## Pitfalls
+
+- **Coarse locking.** One mutex for a whole service kills parallelism.
+- **Lock order.** Multiple mutexes without policy leads to deadlock.
+- **I/O under lock.** Blocking on network/disk bloats the critical section.
+- **Priority inversion.** A low-priority holder blocks a high-priority waiter.
+- **Missing unlock.** Raw `lock()` without RAII is unsafe on early return.

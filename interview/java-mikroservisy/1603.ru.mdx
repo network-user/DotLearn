@@ -1,0 +1,64 @@
+---
+id: 1603
+title: "Что означает eventual consistency в микросервисах?"
+category: java-mikroservisy
+categoryLabel: "Микросервисы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что означает eventual consistency в микросервисах?
+
+## Суть
+
+Eventual consistency допускает временное расхождение данных между репликами или сервисами, но обещает, что при отсутствии новых записей все копии сойдутся к одному состоянию. Это типичный компромисс CAP: выше доступность и устойчивость к сетевым сбоям, ниже мгновенная согласованность.
+
+## Что ответить на собесе
+
+- Формулирую как модель согласованности для распределённых хранилищ, а не «слабую версию ACID».
+- Сравниваю со strong consistency: читатель может увидеть старую версию, пока репликация не догонит лидера.
+- Привожу пример из практики: профиль обновили на одном узле, второй DC ещё отдаёт прежнее имя несколько секунд.
+- Называю системы, где это норма: Cassandra, DynamoDB, асинхронная репликация между сервисами через Kafka/outbox.
+- Честно добавляю: без явной бизнес-логики (version, TTL, conflict resolution) eventual consistency превращается в «иногда данные не сходятся» для пользователя.
+
+## Как это работает
+
+Представим сервис профилей с тремя репликами. Клиент пишет на узел A; запись подтверждается локально, а событие уходит на B и C асинхронно. Пока сообщение в пути, чтение с B может вернуть старый email.
+
+```java
+public record ProfilePatch(String userId, String displayName, long version) {}
+
+public interface ProfileStore {
+    void applyOnLeader(ProfilePatch patch);
+    Optional<String> readFromReplica(String userId);
+}
+
+public final class EventualProfileService {
+    private final ProfileStore store;
+
+    public EventualProfileService(ProfileStore store) {
+        this.store = store;
+    }
+
+    public void renameUser(ProfilePatch patch) {
+        store.applyOnLeader(patch);
+    }
+
+    public String readDisplayName(String userId) {
+        return store.readFromReplica(userId).orElse("unknown");
+    }
+}
+```
+
+Когда новые записи прекращаются, репликация и anti-entropy протоколы догоняют отставшие узлы. В Java-микросервисах это часто выражается через eventual read models: команда пишет в OLTP, проекция в read DB обновляется consumer-ом с задержкой.
+
+Выбор модели зависит от домена: лайк на пост может быть eventual, баланс счёта или резерв товара часто требуют linearizable или transactional outbox с idempotency.
+
+## Подводные камни
+
+- **Stale read без UX-подсказки.** Пользователь видит «сохранено», а второй экран показывает старое значение.
+- **Конфликт параллельных записей.** Last-write-wins теряет обновления; нужны vector clocks или merge-стратегии.
+- **Нет мониторинга lag.** Реплика отстаёт на часы, а алертов нет до инцидента.
+- **Смешение уровней.** Сильная согласованность в одном сервисе не спасает, если соседний read model eventual.
+- **Тесты только на happy path.** Локально всё синхронно; в проде сеть вводит окно несогласованности, которое unit-тест не ловит.

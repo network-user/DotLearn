@@ -1,0 +1,67 @@
+---
+id: 1551
+title: "How do 4 goroutines map onto 4 cores?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do 4 goroutines map onto 4 cores?
+
+## In short
+
+With GOMAXPROCS=4 and four CPU-bound goroutines the runtime may run them in parallel on different P, each bound to an M on its core. There is no guaranteed 1:1 goroutine:core mapping; the scheduler migrates G, and work stealing and blocking change the mapping at any moment.
+
+## How to answer in an interview
+
+- GOMAXPROCS caps parallel CPU execution, not goroutine count.
+- Four tight loops can occupy four cores at once if nothing blocks.
+- I/O-bound goroutines idle often; cores sit idle or run other G.
+- Honestly: for proof I use `GODEBUG=schedtrace=1000` or the execution tracer, not assumptions.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func burn(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	sum := 0
+	for i := 0; i < 50_000_000; i++ {
+		sum += i
+	}
+	fmt.Println(id, sum > 0)
+}
+
+func main() {
+	runtime.GOMAXPROCS(4)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go burn(i, &wg)
+	}
+	wg.Wait()
+}
+```
+
+Four burn goroutines compete for four P. The OS scheduler places M on available cores; Go does not pin G to a core without LockOSThread hacks.
+
+## Pitfalls
+
+**GOMAXPROCS default in containers.** May see 48 logical CPUs with a 2-core quota; use automaxprocs or manual tuning.
+
+**Assuming 1:1 mapping.** Sounds naive in interviews; mention migration.
+
+**Single P bottleneck.** GOMAXPROCS=1 time-slices all 4 G on one core.
+
+**Hyperthreading.** 4 cores may not mean 4 physical; NumCPU can be 8.
+
+**LockOSThread for isolation.** Rare HPC case; breaks M:N if overused.

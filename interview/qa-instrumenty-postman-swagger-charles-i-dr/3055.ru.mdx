@@ -1,0 +1,65 @@
+---
+id: 3055
+title: "Как настроить mock ответа в Charles через Map Local?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как настроить mock ответа в Charles через Map Local?
+
+## Суть
+
+Mock в Charles это подмена remote response локальным файлом: перехватываешь реальный ответ, сохраняешь, правишь JSON/XML, привязываешь URL в Map Local. При следующем запросе Charles отдаёт файл клиенту. Альтернатива: Map Remote на WireMock. QA проверяет UI и client logic без доступного backend.
+
+## Что ответить на собесе
+
+- Export Response → edit в `./mocks/catalog_empty.json`.
+- Tools → Map Local → Add: host/path match + local file path.
+- Enable Map Local checkbox перед прогоном.
+- Документирую в тикете: scenario mocked, not live API.
+- Честно: Map Local не меняет latency и headers по умолчанию; для status 500 нужен Rewrite или Breakpoint.
+
+## Как это работает
+
+```gherkin
+Feature: Charles Map Local mock
+
+  Scenario: Empty product list UI
+    Given captured GET /api/v1/products response saved
+    When file edited to {"items":[],"total":0}
+    And Map Local maps host api.stage.example path /api/v1/products
+    Then mobile app shows empty catalog placeholder
+
+  Scenario: Reuse mock across team
+    Given mocks folder committed in qa-fixtures repo
+    When teammate imports same Map Local xml settings
+    Then identical behavior without re-export from Charles
+
+  Scenario: Disable mock after test
+    Given Map Local enabled for promotions endpoint
+    When tester unchecks Enable Map Local
+    Then app receives live staging data again
+```
+
+Workflow:
+
+```
+1. Repro GET /api/v1/wallet → Export Response → wallet_ok.json
+2. Edit balance to 0 for insufficient funds UI
+3. Map Local: https://api.stage.example/api/v1/wallet → wallet_ok.json
+4. Reload app screen → verify banner "Top up required"
+5. Disable Map Local before next case
+```
+
+Map Local матчит protocol/host/port/path/query; при нескольких rules более специфичный wins. Combine с Breakpoints для one-off правок без файла.
+
+## Подводные камни
+
+- **Wrong Content-Type.** Client parser fails; скопируй headers из export.
+- **Absolute URL vs path.** Rule не срабатывает; дублируй host variants.
+- **Cached ETag.** App не refetch; hard reload или new user session.
+- **Mock на write POST.** GET mock ok, POST still hits server; нужен отдельный rule.
+- **Committed PII in mock file.** Sanitize перед git push.

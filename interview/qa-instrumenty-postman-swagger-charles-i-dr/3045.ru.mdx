@@ -1,0 +1,68 @@
+---
+id: 3045
+title: "Что такое Kibana и как QA использует её для анализа логов?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое Kibana и как QA использует её для анализа логов?
+
+## Суть
+
+Kibana это UI над Elasticsearch в Elastic Stack: поиск, фильтры, визуализации и дашборды по индексированным логам и метрикам. QA не «хранит» логи в Kibana; данные лежат в ES, а Kibana помогает найти requestId, построить timeline инцидента и подтвердить гипотезу о root cause после воспроизведения бага.
+
+## Что ответить на собесе
+
+- Discover: KQL/Lucene фильтр по `service`, `level`, `@timestamp`, `trace.id`.
+- Index pattern или data stream `logs-*` с полем времени `@timestamp`.
+- Lens/Visualization: error rate, top 5 exception class, geo map если есть client ip.
+- Dashboard для релиза: 5xx spike, latency p95, compare window «до/после deploy».
+- Честно: без корреляционного id в логах Kibana бесполезна; сначала договорись о structured logging.
+
+## Как это работает
+
+```gherkin
+Feature: Kibana log triage for QA
+
+  Scenario: Find all errors for checkout during repro
+    Given index pattern logs-checkout-* with field trace.id
+    When tester filters trace.id "a91f-7720" and level ERROR
+    Then Discover shows 12 events between 14:02 and 14:04 UTC
+    And stack trace points to PaymentGatewayTimeout
+
+  Scenario: Release regression dashboard
+    Given dashboard Release Health with panel 5xx rate
+    When deploy marker added at 18:00
+    Then QA sees spike 18:05 to 18:20 and opens ticket with screenshot
+
+  Scenario: Saved search shared with dev
+    Given saved search "staging auth failures last 24h"
+    When link copied to Jira bug
+    Then developer opens same query without retyping KQL
+```
+
+Пример документа в Elasticsearch (переименованные поля):
+
+```json
+{
+  "@timestamp": "2025-07-13T11:22:01.003Z",
+  "level": "ERROR",
+  "service.name": "billing-api",
+  "trace.id": "a91f7720cc",
+  "message": "charge declined upstream",
+  "http.response.status_code": 502
+}
+```
+
+Pipeline: приложение → Filebeat/Logstash → Elasticsearch index → Kibana index pattern → Discover/Dashboard. ILM policy удаляет старые индексы; QA учитывает retention (7/30 дней) при расследовании старых багов.
+
+## Подводные камни
+
+- **@timestamp в wrong timezone.** События «из будущего», фильтр по времени пустой.
+- **Text vs keyword.** Aggregations по `message` вместо `message.keyword` ломают top N.
+- **Слишком широкий index pattern `*`.** Медленный Discover и случайный доступ к prod PII.
+- **Нет mapping для nested json.** Поля не searchable до reindex.
+- **Dashboard без переменных.** Один дашборд на все env; перепутал staging и prod.

@@ -1,0 +1,70 @@
+---
+id: 2089
+title: "JVM heap: what it stores and how it is managed"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JVM heap: what it stores and how it is managed
+
+## In short
+
+The Java heap is the shared arena for all object instances, arrays, and static field values (references + boxed primitives). The stack holds only references and scalars; `new` always hits the heap (or TLAB slice). GC manages lifecycle; `-Xms/-Xmx` bound size; OutOfMemoryError when allocation fails after a full collection attempt.
+
+## How to answer in an interview
+
+- Objects, arrays, Class mirrors (static fields) live on the heap.
+- Primitives in fields inside objects; local int on stack.
+- String literals intern pool (Java 7+ in heap, not PermGen).
+- Heap split generational or regional depending on GC.
+- Honestly: native memory (direct buffers, thread stacks) is not counted in `-Xmx`.
+
+## How it works
+
+```java
+public final class HeapContentsDemo {
+
+    private static final List<String> TAGS = List.of("paid", "pending");
+
+    public static void main(String[] args) {
+        var order = new Order(42, TAGS);
+        inspect(order);
+    }
+
+    private static void inspect(Order order) {
+        int idCopy = order.id();
+        System.out.println(idCopy);
+    }
+
+    record Order(int id, List<String> tags) {}
+}
+```
+
+Memory map:
+
+- `Order` instance + backing `List` impl → heap
+- `"paid"`, `"pending"` strings → heap (intern may dedupe)
+- `TAGS` static ref → heap object; ref itself in Class mirror
+- `order` reference variable in `main` frame → stack
+- `idCopy` int → stack (primitive copy)
+
+Allocation fast path: thread TLAB bump pointer in Eden; on TLAB full slow path + possible minor GC.
+
+OOM:
+
+```
+java.lang.OutOfMemoryError: Java heap space
+```
+
+after GC cannot free enough contiguous space for new object.
+
+## Pitfalls
+
+- **Equating RSS with heap.** Process memory includes metaspace, code cache, threads.
+- **Huge single object.** Array size Integer.MAX_VALUE impossible; OOM earlier.
+- **Memory leak vs needed cache.** Full heap may be legitimate working set.
+- **Autoboxing churn.** Many Integer objects where int stack/local is enough.
+- **Ignoring container limit.** `-Xmx2g` in 1g cgroup → immediate OOMKilled.

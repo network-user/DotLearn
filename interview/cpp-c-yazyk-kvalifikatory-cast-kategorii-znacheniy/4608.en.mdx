@@ -1,0 +1,78 @@
+---
+id: 4608
+title: "What does std::move do to an object?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does std::move do to an object?
+
+## In short
+
+`std::move` does not relocate data by itself: it casts the expression to an rvalue so overload resolution picks a move constructor or move assignment instead of a copy. After a correct move the source must remain valid but is often left in an emptied state.
+
+## How to answer in an interview
+
+- I state clearly: `std::move` is a cast to `T&&`, not a magic relocate.
+- Move pays off for heap-backed types (`std::string`, `std::vector`, custom RAII).
+- After move you may only destroy or reassign the source, not use it as before.
+- With return-by-value the compiler may already apply RVO/NRVO; `std::move` there is often redundant.
+- Honestly: without a `noexcept` move constructor `std::vector` may copy on reallocation instead of moving.
+
+## How it works
+
+Overloads take lvalues and rvalues; for an lvalue `std::move(x)` yields `static_cast<T&&>(x)` and resolution selects `T(T&&)` or `operator=(T&&)`. Resources (pointer, length) transfer and the donor is cleared.
+
+```cpp
+#include <cstring>
+#include <iostream>
+#include <utility>
+
+class TextBuffer {
+public:
+    TextBuffer() : storage(nullptr), len(0) {}
+
+    explicit TextBuffer(const char* src) {
+        len = std::strlen(src);
+        storage = new char[len + 1];
+        std::strcpy(storage, src);
+    }
+
+    TextBuffer(TextBuffer&& donor) noexcept : storage(donor.storage), len(donor.len) {
+        donor.storage = nullptr;
+        donor.len = 0;
+    }
+
+    ~TextBuffer() { delete[] storage; }
+
+    void dump() const {
+        std::cout << (storage ? storage : "<empty>") << '\n';
+    }
+
+private:
+    char* storage;
+    std::size_t len;
+};
+
+int main() {
+    TextBuffer original("Hello, World!");
+    TextBuffer taken = std::move(original);
+
+    original.dump();
+    taken.dump();
+    return 0;
+}
+```
+
+`original` stays valid after the move but empty; `taken` owns the buffer. `original`'s destructor safely deletes `nullptr`.
+
+## Pitfalls
+
+- **Use after move.** Emptied state is not fully specified for every type; do not rely on old contents.
+- **const T&&.** `std::move` on const does not move, only copies.
+- **No move operations.** Types without move fall back to copy; `std::move` won't help.
+- **Exceptions and strong guarantee.** Non-`noexcept` moves block container optimizations.
+- **Double move.** A second move takes an already empty resource; failures accumulate quietly.

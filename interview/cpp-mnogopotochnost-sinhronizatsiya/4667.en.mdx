@@ -1,0 +1,79 @@
+---
+id: 4667
+title: "Can you restart the same std::thread object?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can you restart the same std::thread object?
+
+## In short
+
+A `std::thread` object is single-use: after `join` or `detach` you cannot restart the same handle. To run the code again, create a new `std::thread` or use a thread pool.
+
+## How to answer in an interview
+
+- A finished thread is not restartable; the OS reclaims its stack and TCB.
+- To run again: new `std::thread worker(fn);` or reuse a pool worker.
+- After `join` the `std::thread` has no associated thread; move-assign can attach a new one.
+- `std::jthread` has the same restart semantics.
+- Honestly: restarting from inside the same thread is just a loop in the function, not reusing the OS thread handle.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <thread>
+
+void pulse() {
+    std::cout << "pulse\n";
+}
+
+int main() {
+    std::thread once(pulse);
+    once.join();
+
+    std::thread again(pulse);
+    again.join();
+}
+```
+
+`once` and `again` are different OS threads even with the same callable.
+
+Loop with a fresh thread each iteration:
+
+```cpp
+for (int i = 0; i < 3; ++i) {
+    std::thread tick(pulse);
+    tick.join();
+}
+```
+
+Move-assign after join:
+
+```cpp
+std::thread slot;
+slot = std::thread(pulse);
+slot.join();
+```
+
+Self-restart inside the function is a normal loop, not thread object recreation:
+
+```cpp
+void loop_body(volatile bool* stop) {
+    while (!*stop) {
+        // work
+    }
+}
+```
+
+## Pitfalls
+
+- **Joinable destructor.** Destroying a joinable `std::thread` calls `std::terminate`.
+- **Uncontrolled detach.** A detached thread cannot be joined; shared data must outlive the worker.
+- **Pool illusion.** Pools reuse workers via new task dispatch, not by restarting a finished `std::thread`.
+- **Exception before join.** RAII wrappers or `jthread` reduce terminate risk.
+- **Platform limits.** Frequent create/destroy is costly; use an executor on hot paths.

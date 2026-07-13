@@ -1,0 +1,76 @@
+---
+id: 2371
+title: "ArrayList и LinkedList в Java: что важно знать AQA"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# ArrayList и LinkedList в Java: что важно знать AQA
+
+## Суть
+
+ArrayList в Java хранит элементы в динамическом массиве и даёт O(1) доступ по индексу, но дорогие вставки в середину. LinkedList построен на двусвязных узлах: быстрые локальные insert/remove, но O(n) random access. Для автотестов это влияет на выбор структур в test data builders и на понимание performance-regression в Java-сервисах.
+
+## Что ответить на собесе
+
+- Сравниваю структуры памяти: contiguous array vs nodes с prev/next ссылками.
+- Называю сложности: get по индексу O(1) vs O(n); insert в середину O(n) vs O(1) при известном итераторе.
+- Объясняю, что LinkedList в Java также реализует Deque и подходит для очередей, но редко выигрывает у ArrayDeque.
+- Связываю с тестами: большие коллекции фикстур, параметризация, сериализация ответов API со списками.
+- Честно добавляю: в большинстве Java-кода достаточно ArrayList; LinkedList берут точечно, иначе растёт memory overhead и cache miss.
+
+## Как это работает
+
+ArrayList при переполнении capacity создаёт новый массив (обычно ~1.5x) и копирует элементы. Iterator и for-each идут последовательно и дружелюбны к CPU cache. LinkedList при get(n) обходит узлы с головы или хвоста; remove через ListIterator не требует сдвига всего хвоста массива.
+
+С точки зрения AQA на Python аналоги помогают прогнать микробенч в pytest и показать разницу на больших N:
+
+```python
+from collections import deque
+import time
+
+
+def bench(name: str, setup, op, repeats: int = 1000):
+    start = time.perf_counter()
+    for _ in range(repeats):
+        op(setup())
+    elapsed = time.perf_counter() - start
+    return name, elapsed
+
+
+def random_access_list(size: int):
+    data = list(range(size))
+    return sum(data[i] for i in range(0, size, 7))
+
+
+def random_access_deque(size: int):
+    data = deque(range(size))
+    return sum(data[i] for i in range(0, size, 7))
+
+
+if __name__ == "__main__":
+    n = 50_000
+    for label, fn in [
+        ("list random access", lambda: random_access_list(n)),
+        ("deque random access", lambda: random_access_deque(n)),
+    ]:
+        _, sec = bench(label, lambda: None, lambda _: fn(), repeats=3)
+        print(f"{label}: {sec:.4f}s")
+```
+
+В Java-стеке для UI/API тестов чаще важнее корректность порядка элементов и equals/hashCode, чем микрооптимизация коллекции. Performance-тесты фиксируют SLA на endpoint, который возвращает List из ORM.
+
+## Подводные камни
+
+**LinkedList для random access в hot path.** Код выглядит «как List», но деградирует на больших данных.
+
+**Concurrent modification.** Итератор ArrayList бросает CME при изменении списка в цикле; в тестах это маскирует баг прод-кода.
+
+**equals на подсписках.** SubList связан с родителем; мутация ломает неочевидно другие assert.
+
+**Сериализация JSON.** Порядок сохраняется, но лишние поля в DTO дают false positive сравнения snapshot.
+
+**Выбор по названию.** «Нужен linked» без профиля access pattern часто ошибочен.

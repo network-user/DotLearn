@@ -1,0 +1,72 @@
+---
+id: 4211
+title: "How do you attach a domain to Route 53?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you attach a domain to Route 53?
+
+## In short
+
+Delegating a domain to Route 53: create a public hosted zone, get four AWS NS records, set them at the registrar instead of the old nameservers. After delegation TTL propagates, add A/AAAA/CNAME/ALIAS records pointing to ALB, CloudFront, or S3.
+
+## How to answer in an interview
+
+- A hosted zone is not registration: I can buy the domain from Route 53 or a third-party registrar; DNS still lives in Route 53.
+- NS at the registrar first, then working records; without delegation, an A record in the zone does nothing.
+- ALB and CloudFront: ALIAS on the apex (example.com) avoids CNAME restrictions.
+- Health checks plus failover routing for DR across regions.
+- Honestly: NS changes can take up to 48 hours because of registrar TTL; I do not expect instant cutover.
+
+## How it works
+
+Create a zone and fetch NS records:
+
+```bash
+aws route53 create-hosted-zone \
+  --name myapp.example \
+  --caller-reference "myapp-$(date +%s)" \
+  --hosted-zone-config Comment="prod DNS",PrivateZone=false
+```
+
+Add an ALIAS to an ALB:
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id Z1234567890ABC \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "myapp.example",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z215JYRZR1TFO5",
+          "DNSName": "dualstack.my-alb-123.eu-central-1.elb.amazonaws.com",
+          "EvaluateTargetHealth": true
+        }
+      }
+    }]
+  }'
+```
+
+Verify delegation:
+
+```bash
+dig +short NS myapp.example
+dig +short A myapp.example
+```
+
+In the registrar panel under "Nameservers" I set four values like `ns-xxx.awsdns-xx.com`. Route 53 integrates with ACM (DNS validation), ALB, CloudFront, and S3 static hosting via ALIAS.
+
+## Pitfalls
+
+- **Duplicate zones.** Two public hosted zones for one domain make it unclear which is active.
+- **CNAME on apex.** Root domain CNAME is forbidden by RFC; use ALIAS instead.
+- **Forgotten SOA TTL.** Old NS records stay cached; I lower TTL a week before migration.
+- **Private vs public zone.** The same name in a VPC and on the internet gives split-horizon but confuses debugging.
+- **ACM in the wrong region.** CloudFront certificates must be in us-east-1; validation CNAME goes into the same zone.

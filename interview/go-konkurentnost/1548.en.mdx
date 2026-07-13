@@ -1,0 +1,74 @@
+---
+id: 1548
+title: "Channel or closure: what to pass into a goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Channel or closure: what to pass into a goroutine?
+
+## In short
+
+Function arguments and by-value capture in a closure are safe for a read-only snapshot when the goroutine starts. Shared mutable variables need sync. Channels give typed handoff and backpressure; for pipelines and ownership transfer I prefer channels; for fan-out with immutable input parameters are enough.
+
+## How to answer in an interview
+
+- Pass data as parameters `go worker(job Job)`, do not read mutating globals.
+- Closures capture variables by reference; pass loop index as an argument.
+- Use channels for streams, cancel, and load balancing between stages.
+- Honestly: channels vs shared memory is not binary; hybrid (command chan + local state) is common.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Task struct {
+	ID   int
+	Payload string
+}
+
+func runTask(t Task, out chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	out <- fmt.Sprintf("done %d: %s", t.ID, t.Payload)
+}
+
+func main() {
+	results := make(chan string, 4)
+	var wg sync.WaitGroup
+	tasks := []Task{{1, "a"}, {2, "b"}}
+	for _, t := range tasks {
+		wg.Add(1)
+		go runTask(t, results, &wg)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	for msg := range results {
+		fmt.Println(msg)
+	}
+}
+```
+
+Each goroutine gets a Task copy; the results channel collects output without a shared map.
+
+## Pitfalls
+
+**Pointer to loop variable.** `go func(){ use(&t) }()` was a trap before Go 1.22; pass t by value.
+
+**Shared slice append.** Parallel append to one slice races; single writer or mutex.
+
+**Unbuffered result chan without consumer.** Workers block and WaitGroup never completes.
+
+**Closure over err variable.** In an errgroup loop reusing err without `:=` hides errors.
+
+**Over-channel tiny data.** A million ints through a channel costs more than an atomic counter; choose by profile.

@@ -1,0 +1,63 @@
+---
+id: 1518
+title: "Считается ли interface типом в Go?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Считается ли interface типом в Go?
+
+## Суть
+
+Да: `interface` это отдельный тип, задающий набор методов. Любой тип с нужными методами удовлетворяет интерфейсу неявно (structural typing). Значение интерфейса хранит динамический тип и данные (type + data pair).
+
+## Что ответить на собесе
+
+- Объявляю `var w io.Writer` и кладу туда `bytes.Buffer`, `os.File` и любой тип с `Write([]byte)(int, error)`.
+- Пустой интерфейс `any` принимает любое значение; проверяю конкретный тип через type assertion или switch.
+- Интерфейс с nil value и nil dynamic type ведёт себя иначе, чем typed nil pointer внутри non-nil interface.
+- Честно оговариваю: интерфейсы на hot path добавляют indirect call и могут мешать escape analysis.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+type Notifier interface {
+	Notify(msg string)
+}
+
+type SMS struct{}
+
+func (SMS) Notify(msg string) { fmt.Println("sms:", msg) }
+
+type Email struct{}
+
+func (Email) Notify(msg string) { fmt.Println("email:", msg) }
+
+func broadcast(n Notifier, msg string) {
+	n.Notify(msg)
+}
+
+func main() {
+	channels := []Notifier{SMS{}, Email{}}
+	for _, ch := range channels {
+		broadcast(ch, "deploy done")
+	}
+}
+```
+
+Компилятор проверяет method set на этапе compile time для известных типов. В runtime interface value это пара указателей: tab itable для методов и data pointer на конкретное значение.
+
+## Подводные камни
+
+- **Typed nil в interface.** `var p *T = nil; var i interface{} = p` даёт non-nil interface с nil pointer внутри.
+- **Pointer vs value receiver.** Методы только на `*T` не делают `T` satisfiable без указателя.
+- **Большие interface в параметрах.** Каждый call может аллоцировать, если value не помещается inline в data word.
+- **Пустой interface везде.** Теряю статическую проверку; предпочитаю узкие интерфейсы рядом с потребителем.
+- **Сравнение interface.** Два interface равны при одинаковых dynamic type и comparable data; slice/map внутри ломают сравнение.

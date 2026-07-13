@@ -1,0 +1,79 @@
+---
+id: 3447
+title: "Promises in JavaScript and stable async tests"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Promises in JavaScript and stable async tests
+
+## In short
+
+A Promise represents the future result of an async operation in pending, fulfilled, or rejected state. `.then/.catch/.finally` chains replace nested callbacks. In AQA, without an explicit await/assert on the Promise, the test finishes before the API response arrives.
+
+## How to answer in an interview
+
+- I create them via `new Promise((resolve, reject) => ...)` or a library factory (`fetch`).
+- I catch errors in `.catch` or `try/await`, otherwise CI gets unhandled rejections.
+- In Jest/Playwright I always `return promise` or `await`, otherwise false green.
+- For parallel requests I combine `Promise.all` and a separate test for partial failure.
+- Honestly: `.then` without `return` inside the chain breaks passing the value to the next step.
+
+## How it works
+
+A timer factory:
+
+```
+const loadFixture = () =>
+    new Promise((resolve, reject) => {
+        setTimeout(() => {
+            const ok = true;
+            if (ok) resolve({ status: "ready" });
+            else reject(new Error("fixture failed"));
+        }, 50);
+    });
+```
+
+A chain:
+
+```
+loadFixture()
+    .then((data) => expect(data.status).toBe("ready"))
+    .catch((err) => reportFailure(err))
+    .finally(() => cleanupSession());
+```
+
+In pytest I emulate the waiting contract:
+
+```python
+import asyncio
+import pytest
+
+
+async def fetch_status(delay: float = 0.05) -> dict:
+    await asyncio.sleep(delay)
+    return {"status": "ready"}
+
+
+@pytest.mark.asyncio
+async def test_must_await_before_assert():
+    payload = await fetch_status()
+    assert payload["status"] == "ready"
+```
+
+Promise microtasks run before the next event-loop tick.
+
+## Pitfalls
+
+**Missing return in an async test.** The process exits; rejection arrives later.
+
+**Promise.all on dependent steps.** One failure hides diagnostics for the rest.
+
+**Mixing callbacks and Promises.** Hybrid API clients may resolve twice.
+
+**Silent catch.** An empty `.catch(() => {})` stays green on API 500.
+
+**Timers without a fake clock.** Flaky on a slow CI runner.

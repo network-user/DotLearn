@@ -1,0 +1,60 @@
+---
+id: 3331
+title: "Postman в API-тестировании: когда хватит GUI, когда нужен код"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Postman в API-тестировании: когда хватит GUI, когда нужен код
+
+## Суть
+
+Postman собирает HTTP-запросы, окружения и коллекции, позволяет писать тесты на JavaScript в sandbox и гонять их через Newman в CI. Для AQA это быстрый exploratory-слой и прототип автотестов, но зрелая регрессия обычно уезжает в pytest/httpx ради версионирования и review.
+
+## Что ответить на собесе
+
+- Перечисляю возможности: методы HTTP, pre-request scripts, tests tab, variables, environments, mock server, shared collections.
+- Объясняю Newman/Postman CLI для headless прогона в pipeline.
+- Сравниваю с кодом: Postman быстрее старт, Python лучше для сложной data-driven логики и типизации.
+- Рассказываю про экспорт коллекции в git и синхронизацию с OpenAPI.
+- Честно добавляю: секреты в shared workspace и дрейф локальных переменных часто ломают «works in Postman» vs CI.
+
+## Как это работает
+
+Коллекция хранит запросы; environment подставляет `{{baseUrl}}`, `{{token}}`. После response скрипт `pm.test` валидирует JSON schema или статус. Newman читает ту же коллекцию JSON и exit code падает pipeline при fail.
+
+Параллельно дублирую критичные кейсы в pytest для единого отчёта:
+
+```python
+import httpx
+import pytest
+
+BASE = "https://api.weather.test"
+CITY = "London"
+
+
+def test_current_weather_shape():
+    with httpx.Client(base_url=BASE, timeout=5.0) as client:
+        response = client.get("/v1/current", params={"city": CITY})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["city"] == CITY
+    assert body["temperature"].endswith("C")
+```
+
+Postman оставляю для ручной отладки новых endpoint до появления контракта в OpenAPI.
+
+## Подводные камни
+
+**Только GUI без Newman.** Регрессия не входит в CI.
+
+**Hardcoded prod URL в коллекции.** Опасный accidental run.
+
+**Дублирование assert в Postman и pytest без sync.** Расходятся через месяц.
+
+**OAuth flow в UI.** Refresh token не попадает в automated run.
+
+**Большие бинарные body в коллекции.** Git diff нечитаем; хранить fixtures отдельно.

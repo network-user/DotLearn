@@ -1,0 +1,72 @@
+---
+id: 1631
+title: "Streaming in gRPC"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Streaming in gRPC
+
+## In short
+
+gRPC over HTTP/2 supports long-lived streams: server streaming (one request, many responses), client streaming (many requests, one response), bidirectional (both directions). Each message is a separate protobuf frame in the stream; good for large result sets, chunked upload, and live feeds.
+
+## How to answer in an interview
+
+- In proto: `rpc ListItems(Query) returns (stream Item);` and `stream` variants on both sides.
+- Server: `Send` in a loop; client: `Recv` until `io.EOF`.
+- Backpressure via HTTP/2 flow control.
+- Context cancels the whole stream.
+- Honestly: unary is simpler to monitor; streaming complicates retry and load balancing.
+
+## How it works
+
+```protobuf
+service LogService {
+  rpc Tail(stream TailRequest) returns (stream LogLine);
+}
+
+message TailRequest {
+  string service = 1;
+}
+
+message LogLine {
+  string text = 1;
+}
+```
+
+```go
+func (s *logServer) Tail(stream pb.LogService_TailServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, line := range s.readLines(req.GetService()) {
+			if err := stream.Send(&pb.LogLine{Text: line}); err != nil {
+				return err
+			}
+		}
+	}
+}
+```
+
+The client reads `stream.Recv()` in a goroutine and writes to a UI channel. Server-side streaming for `ListProducts` returns the catalog in chunks without one giant response.
+
+## Pitfalls
+
+**Endless Send without checking ctx.** Goroutine leak when the client disconnects.
+
+**Do not handle `io.EOF` on client stream.** Waits forever for a response.
+
+**Huge message in one stream frame.** Max message size limits on client and server.
+
+**No heartbeat in bidi.** Intermediate proxy drops idle stream.
+
+**Retry client stream after error.** Idempotent chunk handling on the server is required.

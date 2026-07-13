@@ -1,0 +1,65 @@
+---
+id: 1580
+title: "Можно ли задать порядок case в select"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Можно ли задать порядок case в select
+
+## Суть
+
+Select не гарантирует порядок case при нескольких готовых операциях: runtime выбирает pseudo-random среди ready branches. Приоритет вручную только через отдельную логику вне select, не через порядок написания case.
+
+## Что ответить на собесе
+
+- Один ready case: он выполняется.
+- Несколько ready: fair pseudo-random, не top-to-bottom.
+- `default` non-blocking если никто не ready.
+- Честно: для strict priority нужен отдельный dispatcher, не select alone.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	fast := make(chan string, 1)
+	slow := make(chan string, 1)
+	fast <- "A"
+	slow <- "B"
+
+	select {
+	case v := <-slow:
+		fmt.Println("slow:", v)
+	case v := <-fast:
+		fmt.Println("fast:", v)
+	default:
+		fmt.Println("none ready")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+}
+```
+
+Оба chan ready: какой case сработает, решает runtime pseudo-random. Порядок в исходнике не приоритет.
+
+## Подводные камни
+
+**Assumption first case wins.** Flaky tests.
+
+**Select в tight loop без default.** CPU если все blocked кроме одного.
+
+**Nil chan in select.** Никогда не ready, вечный skip.
+
+**Send и recv ready together.** Тоже random among ready.
+
+**Priority через nested select.** Работает, но verbose.

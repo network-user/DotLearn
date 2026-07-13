@@ -1,0 +1,69 @@
+---
+id: 2045
+title: "Плюсы и минусы Gradle для Java-проектов"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Плюсы и минусы Gradle для Java-проектов
+
+## Суть
+
+Gradle силён в скорости (incremental build, build cache, configuration cache), гибкости Kotlin/Groovy DSL и multi-module графах. Слабые стороны: кривая обучения, риск тяжёлой configuration phase логики, потребление RAM на крупных сборках. Для Android и Kotlin он стандарт; для enterprise Java выбор часто зависит от размера монорепо.
+
+## Что ответить на собесе
+
+- Плюсы: task graph, up-to-date, remote cache в CI, type-safe Kotlin DSL.
+- Минусы: сложные скрипты без code review, Groovy без compile-time проверок.
+- Composite builds и version catalogs упрощают multi-repo.
+- `--scan` даёт build insights, Maven такого из коробки не даёт.
+- Честно: Gradle окупается при частых локальных сборках; на tiny lib Maven проще.
+
+## Как это работает
+
+Типичный `build.gradle.kts`:
+
+```kotlin
+plugins {
+    java
+    id("io.spring.dependency-management") version "1.1.6"
+}
+java.toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+tasks.withType<Test> {
+    useJUnitPlatform()
+    maxParallelForks = Runtime.getRuntime().availableProcessors() / 2
+}
+```
+
+Incremental compile: `compileJava` помечается UP-TO-DATE, если sources и classpath inputs не изменились.
+
+Remote cache в `settings.gradle.kts`:
+
+```kotlin
+buildCache {
+    remote<HttpBuildCache> {
+        url = uri("https://cache.acme.io/")
+        isPush = providers.gradleProperty("ci").isPresent
+    }
+}
+```
+
+Сравнение на практике:
+
+| Плюс | Минус |
+|------|-------|
+| Быстрый feedback loop | Скрипт может стать «мини-приложением» |
+| Гибкие custom tasks | Flaky из-за shared mutable state |
+| Отличная IDE sync | Daemon + cache жрут RAM |
+| Единый инструмент с Android | Миграция с Maven дорогая |
+
+## Подводные камни
+
+- **Configuration cache violations.** Reflection в build script ломает CI после upgrade.
+- **Implicit task dependencies.** Нет declared input/output: silent wrong builds.
+- **Version catalog drift.** `libs.versions.toml` не синхронизирован с BOM parent.
+- **Parallel tests + static state.** Зелёный локально, красный в CI.
+- **Отключённый daemon на CI.** Каждый job холодный старт, теряется смысл Gradle speed.

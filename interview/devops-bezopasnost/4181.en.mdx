@@ -1,0 +1,57 @@
+---
+id: 4181
+title: "What are Let's Encrypt risks in production?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What are Let's Encrypt risks in production?
+
+## In short
+
+Let's Encrypt is free and automatable but DV-only: HTTPS does not prove site legitimacy. Short TTL (90 days) needs a reliable renew pipeline. ACME, DNS, or cron mistakes cause mass outage; phishing sites get padlocks too.
+
+## How to answer in an interview
+
+- LE does not replace EV/OV brand trust; users only see encryption.
+- Automate via certbot/Caddy/cert-manager; expiry monitoring is mandatory.
+- LE rate limits: failed orders, duplicate certs, certs per domain per week.
+- I add honestly: internal mesh uses private CA (step-ca); LE only for public ingress.
+
+## How it works
+
+Cron renew with deploy hook:
+
+```bash
+cat > /etc/cron.d/certbot-renew <<'EOF'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+12 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx"
+EOF
+
+certbot certificates
+openssl x509 -in /etc/letsencrypt/live/www.example.com/cert.pem -noout -dates
+```
+
+`renew` runs only when cert expires in <30 days. Deploy hook reloads proxy without downtime. Monitor via Prometheus blackbox or custom `notAfter` script.
+
+Operational risk checks:
+
+```bash
+# dry-run before DNS/firewall changes
+certbot renew --dry-run
+journalctl -u certbot.timer --since today
+```
+
+Dry-run catches broken HTTP-01 paths before prod expiry.
+
+## Pitfalls
+
+- **Padlock equals trust.** Phishing on lookalike domains with LE certs fools users.
+- **Silent cron failure.** Full disk or broken Python → Friday night expiry.
+- **Wildcard without DNS API.** DNS-01 needs automation creds with high privileges.
+- **Multi-host drift.** One server renewed, another not with non-idempotent deploy.
+- **Staging vs prod mix-up.** `--staging` cert in prod config yields untrusted chain.

@@ -1,0 +1,66 @@
+---
+id: 4212
+title: "What handles the EC2 firewall in AWS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What handles the EC2 firewall in AWS?
+
+## In short
+
+At the EC2 instance level, traffic is filtered by a Security Group: a stateful firewall with allow-only rules for inbound and outbound. At the subnet level, a Network ACL (stateless) adds another layer. In an interview, Security Group is the primary "EC2 firewall."
+
+## How to answer in an interview
+
+- Security Group: I attach it to an ENI/instance; I allow only explicit ports and source SG/CIDR.
+- Rules are additive (allow) only; there is no deny, so anything not allowed is blocked.
+- Stateful: return traffic for an outbound request is automatically allowed inbound.
+- For subnet-level deny and guardrails I add an NACL on top of the SG.
+- Honestly: `0.0.0.0/0` on SSH (22) in production is unacceptable; use a bastion or SSM Session Manager.
+
+## How it works
+
+Create an SG and rules via CLI:
+
+```bash
+VPC_ID=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+  --query 'Vpcs[0].VpcId' --output text)
+
+SG_ID=$(aws ec2 create-security-group \
+  --group-name web-tier-sg \
+  --description "HTTP from ALB only" \
+  --vpc-id "$VPC_ID" \
+  --query GroupId --output text)
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
+  --protocol tcp --port 80 \
+  --source-group sg-alb123
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
+  --protocol tcp --port 22 \
+  --cidr 203.0.113.10/32
+```
+
+Attach to an instance:
+
+```bash
+aws ec2 modify-instance-attribute \
+  --instance-id i-0abc \
+  --groups "$SG_ID" sg-monitoring456
+```
+
+You can reference another SG as source (`--source-group`): the common pattern is "app tier accepts 8080 only from the ALB SG." Outbound defaults to allow all; in hardened environments I restrict egress to NAT and specific endpoints.
+
+## Pitfalls
+
+- **Confusing SG and NACL.** SG is stateful on the ENI; NACL is stateless on the subnet with deny rules.
+- **Live SG changes.** A rule applies immediately to every instance in the group; a mistake opens the whole fleet.
+- **60 rules per SG limit.** Large CIDR lists belong in a prefix list or a separate WAF.
+- **IPv6 forgotten.** Separate rules for ::/0; the default SG may allow v6 unexpectedly.
+- **ALB and target SG.** Health checks come from ALB subnet IPs; an overly tight SG marks targets unhealthy.

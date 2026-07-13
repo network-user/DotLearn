@@ -1,0 +1,61 @@
+---
+id: 4188
+title: "Что делает Kafka Connect connector?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает Kafka Connect connector?
+
+## Суть
+
+Kafka Connect connector это готовый плагин фреймворка Kafka Connect, который переносит данные между Kafka и внешней системой без собственного ETL-кода. Source connector пишет в topic, sink connector читает из topic и складывает в приёмник.
+
+## Что ответить на собесе
+
+- Разделяю source (DB, S3, CDC) и sink (warehouse, search, cache).
+- Коннекторы крутятся в distributed Connect cluster с fault tolerance и REST API.
+- Конфиг через JSON: `connector.class`, tasks, transforms, error handling.
+- Честно: не каждый источник покрыт out of the box; кастомный connector или Kafka Streams остаётся вариантом для экзотики.
+
+## Как это работает
+
+Connect worker поднимает задачи коннектора. Debezium source для MySQL читает binlog и публикует изменения строк в topic:
+
+```bash
+curl -s -X POST http://connect.internal:8083/connectors \
+  -H 'Content-Type: application/json' -d '{
+  "name": "inventory-mysql-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "database.hostname": "mysql.internal",
+    "database.port": "3306",
+    "database.user": "replicator",
+    "database.password": "secret",
+    "database.server.id": "184054",
+    "database.server.name": "inventory",
+    "table.include.list": "shop.orders",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka.internal:9092",
+    "schema.history.internal.kafka.topic": "schema.inventory"
+  }
+}'
+```
+
+Проверка статуса:
+
+```bash
+curl -s http://connect.internal:8083/connectors/inventory-mysql-cdc/status | jq .
+```
+
+Sink JDBC пишет из topic в PostgreSQL. Transforms (ExtractField, RegexRouter) меняют payload до записи. Offset коннектора хранится в internal topic `_connect-offsets`, поэтому рестарт продолжает с места остановки.
+
+## Подводные камни
+
+- **Single Message Transforms ломают схему.** Несовместимый transform даёт poison message и stalled task.
+- **Schema evolution без Registry.** Debezium меняет Avro/JSON schema; downstream без совместимости падает.
+- **Overloaded tasks.** Один connector class на тяжёлой таблице без `tasks.max` не масштабируется.
+- **At-least-once дубликаты.** Sink без идемпотентного ключа или upsert размножает строки после retry.
+- **Secrets в plain config.** Пароли в REST body попадают в логи; использую externalized config или vault.

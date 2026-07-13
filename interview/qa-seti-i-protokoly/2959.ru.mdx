@@ -1,0 +1,65 @@
+---
+id: 2959
+title: "DevTools Network: timing, status и тело запроса для QA"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# DevTools Network: timing, status и тело запроса для QA
+
+## Суть
+
+Вкладка Network показывает каждый HTTP/WebSocket запрос: статус, тип, initiator, waterfall timing и payload. QA использует её для воспроизведения багов API без Postman, поиска лишних вызовов, проверки CORS, cache и «200 с ошибкой в JSON». Preserve log и Disable cache обязательны при регрессе auth flow.
+
+## Что ответить на собесе
+
+- Status: 2xx успех, 3xx redirect (смотрю Location chain), 4xx клиент, 5xx сервер; фильтр `-status-code:200` для шума.
+- Timing: TTFB (Waiting) отделяет backend от CDN; Stalled часто лимит 6 connections на HTTP/1.1; SSL отдельная фаза.
+- Request: method, query, headers (Authorization, Content-Type), payload form/JSON; Response: Set-Cookie, CORS headers, body.
+- Честно: copy as cURL передаёт cookies текущей сессии; в багрепорт не вставляю без редактирования токенов.
+
+## Как это работает
+
+Типовой разбор медленного login:
+
+| Фаза | Высокое значение | Гипотеза |
+|------|------------------|----------|
+| DNS Lookup | >100ms | DNS/DoH |
+| Initial connection | >200ms | TCP/TLS |
+| Waiting (TTFB) | >1s | backend/DB |
+| Content Download | большой при маленьком JSON | gzip/brotli ok, смотреть body size |
+
+Gherkin чек-лист регресса:
+
+```gherkin
+Feature: Анализ Network при checkout
+
+  Scenario: Успешная оплата без 5xx
+    When пользователь подтверждает заказ
+    Then POST "/api/checkout" имеет status 200 или 201
+    And нет запросов со status 5xx в той же сессии
+
+  Scenario: Ошибка валидации возвращает 422 с JSON
+    When пользователь отправляет пустой address
+    Then POST "/api/checkout" status 422
+    And response JSON содержит field errors
+    And UI показывает те же сообщения
+
+  Scenario: Redirect chain login не зациклен
+    When пользователь открывает "/account"
+    Then цепочка 302 ведёт на "/login" один раз
+    And финальный document status 200
+```
+
+Фильтры: `method:POST`, `domain:api.example.com`, `ws` для WebSocket. Initiator показывает, какой JS файл вызвал fetch.
+
+## Подводные камни
+
+- **Не включён Preserve log.** Redirect после login стирает первый 401.
+- **Service Worker cache.** Network показывает (from ServiceWorker); путают с CDN HIT.
+- **200 OK с `{error:true}`.** Зелёный status в колонке; нужно смотреть body.
+- **Preflight OPTIONS забыли.** POST «падает» из CORS, винят backend POST.
+- **HAR с PII.** Экспорт HAR в тикет без редактирования Authorization.

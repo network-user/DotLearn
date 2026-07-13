@@ -1,0 +1,62 @@
+---
+id: 4224
+title: "What is default_server in Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is default_server in Nginx?
+
+## In short
+
+`default_server` is the server block that handles requests on a given `listen` socket when Host/SNI matches no `server_name`. It acts as catch-all: 444/404, redirect, or scanner sink. Only one default per IP:port listen directive.
+
+## How to answer in an interview
+
+- I mark `listen 80 default_server;` on a block with `server_name _;` or an empty name.
+- For HTTPS the default matters with unknown SNI; otherwise the client hits the first ssl server block.
+- On default I return 444 (close) or a static 404, never proxy to production apps.
+- I verify `nginx -T | grep default_server` so only one default exists per port.
+- Honestly: without an explicit default Nginx picks the first server block, which is implicit and risky during refactors.
+
+## How it works
+
+Nginx compares the Host header (HTTP) or SNI (TLS) when choosing a server name. On no match, the block with `default_server` on that listen wins.
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    return 444;
+}
+
+server {
+    listen 80;
+    server_name app.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+Post-reload check:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl -sI -H 'Host: unknown.scanner' http://127.0.0.1/ | head -1
+```
+
+## Pitfalls
+
+- **Two defaults on one port.** `nginx -t` may not catch it; the last loaded wins and behavior drifts.
+- **First block as implicit default.** A new server on top changes catch-all without a flag.
+- **TLS wildcard confusion.** Default ssl block serves the wrong cert on bad SNI; watch handshake errors.
+- **Proxy on default.** Random Host values reach the backend; host header attack risk.
+- **IPv4/IPv6 drift.** Set default_server on both `listen` lines in dual-stack setups.

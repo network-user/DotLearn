@@ -1,0 +1,65 @@
+---
+id: 3052
+title: "Как подменить тело ответа сервера в Charles?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как подменить тело ответа сервера в Charles?
+
+## Суть
+
+Да: через Rewrite (правила replace body), Breakpoints (ручная правка на лету) или Map Local (файл вместо remote response). QA подставляет пустой список, 500 или урезанный JSON, чтобы проверить empty state, error UI и pagination без деплоя backend.
+
+## Что ответить на собесе
+
+- Tools → Rewrite → Add rule: If URL contains `/api/catalog`, Body replace `"inStock":true` with `false`.
+- Breakpoints on response: edit JSON, Execute.
+- Map Local: `./fixtures/empty_catalog.json` для GET catalog.
+- В тикете указываю, что сценарий с mock, не интеграционный.
+- Честно: gzip/br response иногда мешает text replace; отключи compression на staging или Map Local.
+
+## Как это работает
+
+```gherkin
+Feature: Replace server response in Charles
+
+  Scenario: Empty cart without backend change
+    Given Map Local maps GET /api/v2/cart to fixtures/cart_empty.json
+    When app opens cart screen
+    Then UI shows empty state illustration and CTA shop
+
+  Scenario: Simulate invalid token 401
+    Given Rewrite replaces response status 200 with 401 on GET /profile
+    And body {"error":"token_expired"}
+    When app refreshes session
+    Then login modal appears without white screen
+
+  Scenario: Breakpoint one-off typo field
+    Given Breakpoints enabled for POST /graphql
+    When response contains "balance": "NaN"
+    Then tester fixes to numeric 0 and verifies formatting
+```
+
+Rewrite rule (логическая запись):
+
+```
+Set: QA Catalog mocks
+If: host shop.stage.example AND path contains /api/catalog
+Response Body: Replace All
+  from: "total": 42
+  to:   "total": 0
+```
+
+Map Local привязывает URL pattern к файлу на диске; Breakpoints хорош для разового repro. После теста отключай rule set, иначе следующий тестер видит «магический» баг.
+
+## Подводные камни
+
+- **Replace по substring в HTML.** Ломает разметку; для UI лучше Map Local целого JSON.
+- **HTTPS без SSL Proxying.** Rewrite не срабатывает на encrypted tunnel.
+- **Кэш клиента.** App показывает старый ответ; force refresh или новый session.
+- **Binary/protobuf body.** Text replace бессмысленен; нужен decoder или mock server.
+- **Забытый активный Rewrite.** Часы debugging «фантомного» дефекта.

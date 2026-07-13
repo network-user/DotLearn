@@ -1,0 +1,88 @@
+---
+id: 4588
+title: "Сколько стоит чтение из хеш-таблицы?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сколько стоит чтение из хеш-таблицы?
+
+## Суть
+
+Чтение значения по ключу повторяет путь поиска: хеш, корзина, разрешение коллизии. В типичных условиях это O(1) в среднем. Вырожденная таблица, где все ключи делят одну корзину, заставляет просматривать до n записей.
+
+## Что ответить на собесе
+
+- Отделяю «чтение» (`at`, `find`, `operator[]` после проверки) от вставки; асимптотика та же, что у поиска.
+- Подчёркиваю, что `operator[]` при отсутствии ключа создаёт элемент (не чистое чтение).
+- Называю `std::unordered_map::at` как вариант с исключением вместо тихой вставки.
+- Упоминаю cache-friendly open addressing vs pointer chasing в chaining.
+- Честно добавляю: для `const` доступа предпочитаю `find` + проверку, иначе легко получить нежелательную мутацию map.
+
+## Как это работает
+
+Метод `get` вычисляет индекс, затем ищет пару с точным совпадением ключа. При chaining обходят список в корзине; при промахе либо бросают исключение, либо возвращают optional.
+
+```cpp
+#include <iostream>
+#include <list>
+#include <optional>
+#include <string>
+#include <vector>
+
+class StringCounter {
+    std::vector<std::list<std::pair<std::string, int>>> buckets;
+
+    std::size_t slot_for(const std::string& label) const {
+        std::size_t mix = 0;
+        for (unsigned char ch : label) mix = mix * 131 + ch;
+        return mix % buckets.size();
+    }
+
+public:
+    explicit StringCounter(std::size_t bucket_count) : buckets(bucket_count) {}
+
+    void put(const std::string& label, int count) {
+        auto& chain = buckets[slot_for(label)];
+        for (auto& item : chain) {
+            if (item.first == label) {
+                item.second = count;
+                return;
+            }
+        }
+        chain.emplace_back(label, count);
+    }
+
+    std::optional<int> read(const std::string& label) const {
+        const auto& chain = buckets[slot_for(label)];
+        for (const auto& item : chain) {
+            if (item.first == label) return item.second;
+        }
+        return std::nullopt;
+    }
+};
+
+int main() {
+    StringCounter counter(13);
+    counter.put("apple", 4);
+    counter.put("banana", 7);
+
+    if (auto v = counter.read("apple")) {
+        std::cout << "apple: " << *v << '\n';
+    }
+    std::cout << (counter.read("pear") ? "found" : "missing") << '\n';
+}
+```
+
+Средняя стоимость доминируется хешем и одним сравнением. Худший случай наступает при намеренно сконструированных ключах или при table_size = 1, когда каждое чтение сканирует всю коллекцию.
+
+## Подводные камни
+
+- **operator[] на const map.** Недоступен; нужен `at` или `find`.
+- **Двойной lookup.** Паттерн `find` + `operator[]` хеширует дважды; лучше итератор.
+- **Ссылка на элемент.** После rehash ссылка в `unordered_map` живёт, итератор нет.
+- **Чтение с побочным эффектом.** `operator[]` на не-const map вставляет default.
+- **Плавающая производительность.** Микробенч без `reserve` смешивает чтение с rehash после вставок.

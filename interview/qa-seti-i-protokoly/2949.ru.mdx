@@ -1,0 +1,63 @@
+---
+id: 2949
+title: "Модели OSI и TCP/IP: как QA мапит сбой на уровень стека?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Модели OSI и TCP/IP: как QA мапит сбой на уровень стека?
+
+## Суть
+
+OSI это семиуровневая учебная модель; TCP/IP это четырёхуровневый практический стек интернета. QA использует их как чек-лист: DNS/HTTP проблема на прикладном, потеря пакетов на транспортном, неверный маршрут на сетевом, обрыв кабеля/Wi‑Fi на канальном/физическом. Сопоставление ускоряет triage между «сайт лежит» и «у одного клиента VPN режет порт».
+
+## Что ответить на собесе
+
+- OSI: L1 физика, L2 канал (MAC, Ethernet), L3 сеть (IP, маршрут), L4 транспорт (TCP/UDP), L5 сеанс, L6 представление (TLS часто обсуждают здесь), L7 приложение (HTTP, DNS).
+- TCP/IP: Network Access (L1+L2), Internet (IP), Transport (TCP/UDP), Application (HTTP, SMTP и др.).
+- На практике curl/DNS смотрю как L7, telnet/nc на порт как L4, ping/traceroute как L3, link down как L1/L2.
+- Честно: в инцидентах редко нужен идеальный номер уровня OSI; важно отделить приложение от сети и от клиентского окружения.
+
+## Как это работает
+
+Сопоставление для triage:
+
+| Симптом | Вероятный уровень | Инструмент QA |
+|---------|-------------------|---------------|
+| 404 на URL | L7 HTTP | curl, DevTools |
+| Connection refused | L4/L7 порт закрыт | nc, telnet |
+| Timeout без ответа | L3/L4 firewall, routing | traceroute, ping |
+| SSL handshake fail | L6/L7 TLS | openssl s_client |
+| Нет link | L1/L2 | другой Wi‑Fi, кабель |
+
+Gherkin для smoke стенда:
+
+```gherkin
+Feature: Сетевой стек и доступность API
+
+  Scenario: Прикладной уровень отвечает
+    When QA выполняет GET "https://api.example.com/health"
+    Then код ответа 200
+    And тело содержит status "ok"
+
+  Scenario: Транспортный уровень принимает TCP на 443
+    When QA проверяет TCP соединение к "api.example.com:443"
+    Then соединение устанавливается за менее чем 3 секунды
+
+  Scenario: DNS резолвит имя хоста
+    When QA резолвит "api.example.com"
+    Then возвращается хотя бы один A или AAAA адрес
+```
+
+При баге «работает в офисе, не работает дома» сначала исключаю L7 (верный host header), затем L3 (split tunnel VPN), затем L2 (MTU на Wi‑Fi).
+
+## Подводные камни
+
+- **Зубрёжка OSI без инструментов.** Номера уровней без ping/curl не помогают воспроизвести.
+- **TLS только «уровень 6».** В TCP/IP TLS часто обсуждают внутри application; спор о номере не решает инцидент.
+- **Игнор MTU/фрагментации.** L3 «пинг есть», L7 большие POST падают.
+- **Смешение моделей в одном ответе.** Путаница L2 MAC и L3 IP у junior triage.
+- **Тест только happy path DNS.** Кэш resolver скрывает сломанный secondary NS.

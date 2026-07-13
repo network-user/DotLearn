@@ -1,0 +1,81 @@
+---
+id: 2515
+title: "Circular import (cross-import)"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Circular import (cross-import)
+
+## In short
+
+A cross-import (circular dependency) happens when module A imports B and B imports A, directly or through a chain. ESM exposes partially initialized exports; CJS may return incomplete `module.exports`. Symptoms: `undefined is not a function`, flaky init order, harder tree shaking.
+
+## How to answer in an interview
+
+- Refactor: move shared types/helpers into a third `kernel` module with no back references.
+- Dependency injection: pass a callback/factory instead of a top-level import in the cycle.
+- Dynamic `import()` inside a function defers loading and breaks the static cycle (a crutch).
+- Honestly: bundlers may "pack" the cycle, but the architectural smell remains; ESLint `import/no-cycle` catches it early.
+- Barrel `index.ts` re-exports often create hidden cycles between feature folders.
+
+## How it works
+
+Bad cycle:
+
+```ts
+// user-card.ts
+import { fetchAvatar } from './avatar-service';
+
+export function renderUserCard(id: string) {
+  return fetchAvatar(id);
+}
+```
+
+```ts
+// avatar-service.ts
+import { renderUserCard } from './user-card';
+
+export function fetchAvatar(id: string) {
+  if (!id) return renderUserCard('guest');
+  return `/img/${id}.webp`;
+}
+```
+
+Fix: shared contract module:
+
+```ts
+// user-types.ts
+export type UserId = string;
+```
+
+```ts
+// avatar-service.ts
+import type { UserId } from './user-types';
+
+export function fetchAvatar(id: UserId) {
+  return `/img/${id}.webp`;
+}
+```
+
+```ts
+// user-card.ts
+import { fetchAvatar } from './avatar-service';
+
+export function renderUserCard(id: string) {
+  return fetchAvatar(id);
+}
+```
+
+Tools: `madge --circular src`, webpack `circularDependencyPlugin` warnings in CI.
+
+## Pitfalls
+
+- **Hidden cycle via barrel.** `features/a → index → features/b → index → a`.
+- **Type-only imports.** `import type` avoids runtime cycles but ESLint still flags design issues.
+- **Lazy import mask.** Dynamic import hides the cycle without removing coupling.
+- **Test mocks.** Jest mock hoisting can change init order vs prod.
+- **Singleton side effect.** Cycle plus top-level side effects become Heisenbugs only in production minify order.

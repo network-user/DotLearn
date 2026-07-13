@@ -1,0 +1,62 @@
+---
+id: 1624
+title: "Что уходит в заголовках HTTP-запроса"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что уходит в заголовках HTTP-запроса
+
+## Суть
+
+Заголовки несут метаданные запроса: хост, тип контента, авторизация, язык, кэш, cookies, trace context. Они идут парами `Name: value` после стартовой строки и до тела. Сервер и промежуточные прокси принимают решения по заголовкам без парсинга payload.
+
+## Что ответить на собесе
+
+- `Host` обязателен в HTTP/1.1; в HTTP/2 эквивалент `:authority`.
+- `Content-Type` и `Content-Length` (или chunked) для тела.
+- `Authorization: Bearer`, `Cookie`, `Accept`, `Accept-Encoding`.
+- Кастомные `X-Request-Id`, `traceparent` для observability.
+- Честно: лишние заголовки раздувают каждый запрос; в HTTP/2 HPACK помогает только на persistent connection.
+
+## Как это работает
+
+```go
+body := strings.NewReader(`{"email":"user@example.com"}`)
+req, _ := http.NewRequest(http.MethodPost, "https://api.example.com/v1/signup", body)
+req.Header.Set("Content-Type", "application/json")
+req.Header.Set("Accept", "application/json")
+req.Header.Set("Authorization", "Bearer "+accessToken)
+req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9")
+req.Header.Set("X-Request-Id", uuid.NewString())
+
+resp, err := http.DefaultClient.Do(req)
+```
+
+Пример сырого HTTP/1.1:
+
+```http
+POST /v1/signup HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+Content-Length: 32
+Authorization: Bearer eyJhbGciOi...
+Accept: application/json
+```
+
+В Go `req.Header` это `http.Header` (`map[string][]string`); `Add` vs `Set` важны для multi-value заголовков (`Set-Cookie` на ответе, `Accept` на запросе).
+
+## Подводные камни
+
+**Секреты в query string вместо Authorization.** Попадают в access logs и Referer.
+
+**Дублирование Host вручную при HTTP/2.** Client library обычно ставит сама; двойной header ломает запрос.
+
+**Content-Length не совпадает с телом.** Сервер обрывает или ждёт вечно.
+
+**Отсутствие `Content-Type` на POST JSON.** Сервер не угадывает формат.
+
+**Передача PII в User-Agent кастомных клиентов.** Утечка в логи CDN.

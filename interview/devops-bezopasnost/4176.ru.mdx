@@ -1,0 +1,49 @@
+---
+id: 4176
+title: "Как устроено шифрование OpenPGP?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроено шифрование OpenPGP?
+
+## Суть
+
+OpenPGP (правопреемник PGP) комбинирует симметричное шифрование payload, асимметричное шифрование session key и цифровую подпись для аутентичности. Публичный ключ распространяют через keyserver или WKD, приватный хранят offline или на hardware token.
+
+## Что ответить на собесе
+
+- Описываю hybrid model: AES/ChaCha для данных, RSA/Ed25519 для обёртки ключа и подписи.
+- Упоминаю web of trust vs corporate CA policy; в проде часто minisignage + internal key ceremony.
+- Для секретов в CI использую GPG decrypt файлов или SOPS с age, не plaintext в repo.
+- Честно добавляю: email PGP редок в enterprise; чаще применяю для backup artifacts, release signing и секретов deploy.
+
+## Как это работает
+
+Отправитель генерирует одноразовый symmetric key, шифрует файл, затем шифрует session key публичным ключом получателя. Подпись строится hash + private key отправителя; получатель проверяет fingerprint и signature перед decrypt.
+
+```bash
+gpg --quick-generate-key "release-bot@corp.example" ed25519 sign 2y
+gpg --armor --export release-bot@corp.example > release-bot.pub
+
+gpg --encrypt --recipient ops@corp.example --sign --local-user release-bot@corp.example \
+  --output backup.sql.gz.pgp backup.sql.gz
+
+gpg --decrypt --local-user ops@corp.example --output backup.sql.gz backup.sql.gz.pgp
+gpg --verify backup.sql.gz.pgp
+```
+
+Первые команды создают ключ подписи релизов и экспортируют public part. `--encrypt --sign` упаковывает ciphertext и signature в ASCII armor. Decrypt требует private key получателя; verify подтверждает, что файл не менялся и подписан доверенным ключом.
+
+Rotation: новый subkey, revoke старый через CRL/revocation certificate, обновление pubkey на keyserver.
+
+## Подводные камни
+
+- **Private key на CI без HSM.** Утечка GPG key = полный decrypt всех прошлых backup.
+- **Short key IDs.** Коллизии fingerprint; всегда сверяю полный 40-char fingerprint.
+- **Missing revocation cert.** Компрометация без revoke certificate блокирует доверие навсегда.
+- **Armor в git.** `.pgp` в repo ок, private key никогда.
+- **Clock skew.** Подписи с expired key или wrong timezone ломают verify в batch jobs.

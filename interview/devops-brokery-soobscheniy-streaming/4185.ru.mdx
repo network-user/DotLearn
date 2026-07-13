@@ -1,0 +1,52 @@
+---
+id: 4185
+title: "Как открыть Kafka кластер для внешних клиентов?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как открыть Kafka кластер для внешних клиентов?
+
+## Суть
+
+Клиенты подключаются к адресам из `advertised.listeners`, а не к internal pod IP. Нужны external listener (SASL_SSL), DNS/LB per broker или single bootstrap с правильным metadata, и firewall/security group только на нужные CIDR.
+
+## Что ответить на собесе
+
+- Разделяю `listeners` (bind) и `advertised.listeners` (что клиент получит в metadata).
+- В K8s: Strimzi/operator external type route, loadbalancer или nodeport + per-broker DNS.
+- TLS + SASL (SCRAM/OAuth) обязательны на public endpoint; PLAINTEXT только в lab.
+- Честно добавляю: открывать Kafka в internet без ACL и auth не делаю; предпочитаю VPN/private link или mirror to edge.
+
+## Как это работает
+
+Фрагмент `server.properties` на брокере:
+
+```bash
+cat >> /opt/kafka/config/server.properties <<'EOF'
+listeners=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094
+advertised.listeners=INTERNAL://kafka-0.internal:9092,EXTERNAL://broker0.kafka.example.com:9094
+listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:SASL_SSL
+inter.broker.listener.name=INTERNAL
+EOF
+```
+
+Клиент снаружи:
+
+```bash
+kafka-topics.sh --bootstrap-server broker0.kafka.example.com:9094 \
+  --command-config client.properties --list
+```
+
+`client.properties` содержит `security.protocol=SASL_SSL`, truststore CA, username/password. Metadata вернёт external hostname; без правильного advertised клиент после первого connect пойдёт на unreachable internal IP.
+
+## Подводные камни
+
+- **Single LB на multi-broker.** Нужен broker-specific DNS или использую dedicated bootstrap + correct advertised per id.
+- **Forgot inter-broker listener.** External change ломает replication если broker общается через wrong listener.
+- **Zookeeper/KRaft exposure.** Открываю только broker port, не controller/quorum порты.
+- **No ACL.** Any authenticated user читает все topics; включаю `allow.everyone.if.no.acl.found=false`.
+- **Large metadata from NAT.** Client idle disconnect; tune `connections.max.idle.ms` и keepalive.

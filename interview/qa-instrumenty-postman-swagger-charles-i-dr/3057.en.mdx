@@ -1,0 +1,64 @@
+---
+id: 3057
+title: "Why does a QA engineer need DBeaver and how to verify data with it?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does a QA engineer need DBeaver and how to verify data with it?
+
+## In short
+
+DBeaver is a universal GUI client for SQL databases (PostgreSQL, MySQL, Oracle, SQL Server, etc.): JDBC connections, query editor, ER diagrams, export/import. QA verifies side effects after API/UI actions: row in table, order status, audit trail, seeding test data on staging read-only or via controlled write.
+
+## How to answer in an interview
+
+- I connect with a read-only user to staging replica, not prod write without approval.
+- After POST /orders I check `orders.status = PAID` and a row in `payment_events`.
+- Regression uses SELECT only; INSERT/UPDATE via approved scripts or fixtures pipeline.
+- Export CSV sample for a bug without dumping the whole table.
+- Honestly: direct SQL does not replace API asserts; it cross-checks when UI hides internal state.
+
+## How it works
+
+```gherkin
+Feature: DBeaver data verification for QA
+
+  Scenario: Confirm order persisted after checkout UI
+    Given user completed checkout for order ext-8821
+    When QA runs SELECT status, total_cents FROM orders WHERE ext_id = 'ext-8821'
+    Then status is fulfilled and total_cents matches UI receipt
+
+  Scenario: Detect duplicate webhook processing
+    Given payment provider sends idempotent webhook twice
+    When QA counts rows in payment_events where idempotency_key = 'pay-991'
+    Then count equals 1 not 2
+
+  Scenario: Seed test user on staging
+    Given approved sql script seed_qa_wallet.sql executed once
+    When login as qa_wallet_user
+    Then balance matches seeded value in wallets table
+```
+
+Sample query (renamed tables):
+
+```sql
+SELECT o.id, o.status, p.provider_ref
+FROM shop_orders o
+JOIN shop_payments p ON p.order_id = o.id
+WHERE o.external_id = 'ext-8821'
+  AND o.created_at > now() - interval '1 day';
+```
+
+DBeaver shows explain plans for slow queries, data diff between sessions, ER generation. NoSQL has separate drivers; DBeaver is SQL-first.
+
+## Pitfalls
+
+- **Accidental write on prod.** Read-only role by default; color-code connections.
+- **SELECT * on huge table.** Lock and timeout; always LIMIT and indexed WHERE.
+- **PII in export.** Mask email/phone in attached CSV.
+- **Replica lag.** Staging replica behind; "no row" false fail, retry or approved primary read.
+- **Manual UPDATE without rollback.** Ruins shared staging; use transaction + ROLLBACK in session.

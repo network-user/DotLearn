@@ -1,0 +1,57 @@
+---
+id: 1530
+title: "When does the runtime switch goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When does the runtime switch goroutines?
+
+## In short
+
+A switch happens when G blocks on a channel, mutex, network, syscall, `time.Sleep`, or on preemption (async preemption in modern Go for long CPU loops). The scheduler does not OS-switch per goroutine; it multiplexes G onto M.
+
+## How to answer in an interview
+
+- Cooperative points: send/receive, select, locks, runtime park.
+- Sysmon wakes Ps and can interrupt a long-running G.
+- `runtime.Gosched()` explicitly yields on the same P.
+- I honestly caveat: without blocking or preemption a CPU-bound loop monopolizes the P.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	go func() {
+		for i := 0; i < 3; i++ {
+			fmt.Println("bg", i)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	for i := 0; i < 3; i++ {
+		fmt.Println("main", i)
+		time.Sleep(30 * time.Millisecond)
+	}
+}
+```
+
+`sleep` parks G on the timer wait queue; M runs another G. When the timer fires, G returns to the P run queue.
+
+## Pitfalls
+
+- **Busy spin.** No yield starves other Gs on the same P.
+- **GOMAXPROCS=1.** Parallelism only through blocking points.
+- **Cgo syscall.** May take M out of the pool; runtime spawns a new thread.
+- **LockOSThread.** `runtime.LockOSThread` breaks normal scheduling.
+- **Scheduler overhead.** Tiny goroutine granularity raises context-switch cost.

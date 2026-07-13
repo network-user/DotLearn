@@ -1,0 +1,49 @@
+---
+id: 2481
+title: "Симметричное шифрование: где применяется на фронте"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Симметричное шифрование: где применяется на фронте
+
+## Суть
+
+Симметричные алгоритмы (AES-GCM, ChaCha20-Poly1305) используют один shared secret key для encrypt/decrypt. Быстрые для bulk data. На фронте встречаются в TLS session keys, Web Crypto локальном шифровании, encrypted localStorage patterns; ключ доставляют через asymmetric handshake.
+
+## Что ответить на собесе
+
+- TLS после handshake шифрует HTTP симметричным session key (AES-GCM).
+- Web Crypto `subtle.encrypt` с AES-GCM для client-side file encryption если product требует.
+- Secret key never hardcode в bundle; derive via PBKDF2/Argon2 от user password или wrap RSA.
+- Честно: browser cannot hide key from XSS if script runs; encryption at rest in IndexedDB still XSS-readable after decrypt.
+- Prefer platform APIs (passkeys) over DIY crypto.
+
+## Как это работает
+
+```ts
+async function aesGcmEncrypt(plain: Uint8Array, rawKey: CryptoKey) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, rawKey, plain);
+  return { iv, cipher: new Uint8Array(cipher) };
+}
+
+async function importAesKey(secretBytes: Uint8Array) {
+  return crypto.subtle.importKey('raw', secretBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+```
+
+Key exchange sketch: client generates random AES key → encrypts with server RSA public key from cert → both use AES for bulk traffic. Same pattern in messaging E2E libs (Signal protocol layers).
+
+Symmetric wins on speed; weakness is key distribution. That is why HTTPS combines asymmetric bootstrap + symmetric tunnel.
+
+## Подводные камни
+
+- **ECB mode legacy.** Never roll own mode; use GCM or ChaCha20-Poly1305.
+- **IV reuse.** Same key+IV destroys confidentiality in GCM.
+- **Key in localStorage.** XSS steals wrapped or raw key material.
+- **Random from Math.random.** Use `crypto.getRandomValues` only.
+- **Compliance theater.** Client-side AES without threat model adds complexity not security.

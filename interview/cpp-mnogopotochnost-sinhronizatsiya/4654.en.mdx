@@ -1,0 +1,53 @@
+---
+id: 4654
+title: "Pros and cons of std::async"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Pros and cons of std::async
+
+## In short
+
+`std::async` launches work and returns a `std::future` for the result and exceptions. It simplifies background compute, but launch policy (`async` vs `deferred`) and the lack of a thread pool make behavior implementation-dependent.
+
+## How to answer in an interview
+
+- Pro: minimal boilerplate; exceptions propagate through `future::get`.
+- Pro: the main thread can do other work until `get()`/`wait()`.
+- Con: without `std::launch::async`, execution may defer until `get()`.
+- Con: frequent calls spawn many threads; no built-in reuse.
+- Honestly: for a stream of tasks I use a thread pool or `jthread` plus a queue, not hundreds of `async` calls.
+
+## How it works
+
+```cpp
+#include <chrono>
+#include <future>
+#include <iostream>
+
+int heavy(int seed) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    return seed * seed;
+}
+
+int main() {
+    auto job = std::async(std::launch::async, heavy, 12);
+
+    std::cout << "main works\n";
+    std::cout << job.get() << '\n';
+}
+```
+
+`async` starts `heavy` in the background (with the `async` policy). While it sleeps 20 ms, main prints. `get()` blocks until result 144 and rethrows any exception from `heavy`.
+
+## Pitfalls
+
+- **deferred by default.** Some STLs default policy may not create a thread; I pass `launch::async` explicitly.
+- **Capture lifetime.** A lambda with `[&]` on main locals is UB after scope ends before `get`.
+- **Cannot get twice.** A second `get()` on the same future throws.
+- **shared_future for fan-out.** One future is single-consumer; many consumers need `shared_future`.
+- **No cancel.** Without cooperative cancel the task runs to completion; `jthread` plus stop_token is better.

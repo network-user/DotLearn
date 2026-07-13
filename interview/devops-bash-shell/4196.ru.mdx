@@ -1,0 +1,61 @@
+---
+id: 4196
+title: "Чем отличаются exec- и shell-форма в Docker?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем отличаются exec- и shell-форма в Docker?
+
+## Суть
+
+В Dockerfile `CMD`/`ENTRYPOINT` бывают exec-форма (JSON array) и shell-форма (строка через `/bin/sh -c`). Exec запускает процесс напрямую как PID 1; shell оборачивает команду в sh, включая раскрытие переменных и цепочки `&&`.
+
+## Что ответить на собесе
+
+- Exec: `CMD ["nginx", "-g", "daemon off;"]` без промежуточного shell.
+- Shell: `CMD nginx -g 'daemon off;'` превращается в `sh -c`.
+- `docker exec` это отдельная команда runtime: новый процесс в живом контейнере для отладки.
+- Честно: shell-форма ломает signal forwarding (SIGTERM до приложения не доходит); в проде предпочитаю exec + явный entrypoint script при необходимости.
+
+## Как это работает
+
+Exec-форма в образе:
+
+```dockerfile
+FROM nginx:1.27
+ENTRYPOINT ["nginx"]
+CMD ["-g", "daemon off;"]
+```
+
+Shell-форма (антипаттерн для PID 1):
+
+```dockerfile
+CMD nginx -g 'daemon off;'
+```
+
+Отладка running container:
+
+```bash
+docker exec -it payments-api-1 /bin/bash
+docker exec payments-api-1 ps aux
+```
+
+Проверяю, кто PID 1:
+
+```bash
+docker top payments-api-1
+```
+
+Init wrapper (`tini`, `dumb-init`) добавляю, если приложение не обрабатывает zombie reaping.
+
+## Подводные камни
+
+- **Shell-форма и переменные окружения.** `$VAR` раскрывается sh, но сигналы теряются.
+- **JSON exec без shell.** `CMD ["sh", "-c", "migrate && app"]` всё же нужен для цепочек.
+- **docker exec как root.** `--user` забывают; отладка ломает file permissions.
+- **PID 1 без graceful shutdown.** Kubernetes SIGTERM не доходит до JVM/Node.
+- **Путаница exec в Dockerfile и docker exec CLI.** На собесе разделяю build-time entrypoint и runtime attach.

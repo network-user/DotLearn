@@ -1,0 +1,45 @@
+---
+id: 4183
+title: "Как работает шифрование с открытым ключом?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как работает шифрование с открытым ключом?
+
+## Суть
+
+Асимметричная криптография использует связанную пару ключей: public шифрует (или проверяет подпись), private расшифровывает (или подписывает). Обмен секретом возможен по открытому каналу; скорость ниже симметрии, поэтому в TLS public-key только на handshake.
+
+## Что ответить на собесе
+
+- Encryption: public получателя, decrypt private получателя.
+- Signature: sign private отправителя, verify public отправителя (не путать с encryption).
+- RSA, ECDSA, Ed25519; предпочитаю ECC для коротких ключей и быстрого verify.
+- Честно добавляю: голый RSA без OAEP/PSS уязвим; в prod только modern padding и длина ключа ≥2048 RSA или 256-bit ECC.
+
+## Как это работает
+
+```bash
+openssl genpkey -algorithm ED25519 -out device.key
+openssl pkey -in device.key -pubout -out device.pub
+
+echo 'rotate config v3' | openssl pkeyutl -encrypt -pubin -inkey device.pub -out secret.bin
+openssl pkeyutl -decrypt -inkey device.key -in secret.bin
+
+echo 'rotate config v3' | openssl dgst -sha256 -sign device.key -out sig.bin
+openssl dgst -sha256 -verify device.pub -signature sig.bin <(echo 'rotate config v3')
+```
+
+Первый блок генерирует Ed25519 пару. `pkeyutl -encrypt` кладёт сообщение только для владельца private key. Подпись отдельная операция: private sign, public verify без расшифровки payload.
+
+## Подводные камни
+
+- **Путаница encrypt/sign.** Подпись private не даёт confidentiality.
+- **Weak RSA 1024.** Факторизация реальна; мигрирую на ECC или RSA 3072+.
+- **Public key без trust.** Нужен CA/WOF или pinned fingerprint, иначе MITM подменит key.
+- **Performance на bulk data.** Шифрую симметричным ключом, asymmetric только wrap.
+- **Key reuse across services.** Компромисс одного private ломает все интеграции.

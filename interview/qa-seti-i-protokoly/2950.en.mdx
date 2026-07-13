@@ -1,0 +1,61 @@
+---
+id: 2950
+title: "Ports and sockets: how does QA verify the service listens on the right endpoint?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Ports and sockets: how does QA verify the service listens on the right endpoint?
+
+## In short
+
+An IP address identifies a host; a port (0..65535) separates processes on that host. A socket is (IP, port, protocol): the endpoint of a TCP or UDP conversation. Testing needs well-known ports (80, 443, 5432), the rule that one port cannot be bound twice on the same interface, and how to reproduce "connection refused" vs "timeout".
+
+## How to answer in an interview
+
+- Well-known 0..1023 (HTTP 80, HTTPS 443); registered up to 49151; ephemeral 49152+ for outbound client connections.
+- TCP socket: connect establishes a session with delivery guarantees; UDP sends datagrams without connect, faster but no guarantees.
+- I check `host:port` with nc/telnet/curl before UI tests to separate "service not up" from "form bug".
+- Honestly: in Docker/K8s the container port may differ from the published port; I put both in the bug report.
+
+## How it works
+
+Example: API listens on `0.0.0.0:8080`, ingress exposes 443.
+
+```
+Client socket: 203.0.113.10:52144  ->  Server socket: 198.51.100.5:443
+NAT/Ingress maps to pod 10.0.1.7:8080
+```
+
+Gherkin for infrastructure smoke:
+
+```gherkin
+Feature: Port and service reachability
+
+  Scenario: HTTPS endpoint accepts connections
+    When QA opens TCP to "shop.example.com:443"
+    Then the TLS handshake completes successfully
+
+  Scenario: Closed port returns refused, not endless timeout
+    When QA connects to "shop.example.com:9999"
+    Then the connection is rejected immediately with connection refused
+    And the UI does not show a generic network error without log detail
+
+  Scenario: Wrong host header on the correct IP
+    Given load balancer IP 198.51.100.5
+    When QA sends GET / with Host "unknown.internal"
+    Then the response is 404 or 421, not production vhost content
+```
+
+Staging regression checklist includes postgres 5432, redis 6379, kafka 9092, reachable only from VPN security groups.
+
+## Pitfalls
+
+- **Confusing port with URL path.** `/8080` in the path is not port 8080.
+- **LISTEN on localhost only.** Timeout from outside, curl OK inside the pod; false "service alive".
+- **TIME_WAIT and ephemeral port exhaustion.** Load test from one agent fails oddly.
+- **UDP silence on firewall block.** No refused, only timeout; different triage than TCP.
+- **IPv6 vs IPv4.** Service listens v6 only while QA checks v4 A record.

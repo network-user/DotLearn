@@ -1,0 +1,65 @@
+---
+id: 1539
+title: "На чём реально крутятся горутины?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# На чём реально крутятся горутины?
+
+## Суть
+
+Горутины исполняются в user space под планировщиком Go (M:P:G), который мультиплексирует их на ограниченное число OS threads (M). G не привязана к конкретному потоку навсегда: при блокировке runtime может перенести G на другой M.
+
+## Что ответить на собесе
+
+- Модель M:N: много goroutines на few kernel threads; GOMAXPROCS задаёт число P (логических процессоров).
+- Планировщик Go, не kernel напрямую, решает какую G поставить на M.
+- Blocking syscall может отвязать M от P; netpoller обслуживает I/O без лишних threads.
+- Честно: детали work stealing и thread parking внутренние; на собесе достаточно M:P:G и netpoller.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+	"time"
+)
+
+func spin(label string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for i := 0; i < 3; i++ {
+		fmt.Println(label, i, "gomaxprocs:", runtime.GOMAXPROCS(0))
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func main() {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go spin("A", &wg)
+	go spin("B", &wg)
+	wg.Wait()
+}
+```
+
+Обе G делят пул M, созданный runtime. Kernel видит threads, каждый M выполняет bytecode одной G за раз на своём P. При `Sleep` G снимается, M берёт другую ready G из local/global queue.
+
+## Подводные камни
+
+**«Одна goroutine = один thread».** Неверно; параллелизм ограничен GOMAXPROCS, не числом goroutines.
+
+**LockOSThread.** Привязка G к M нужна редко (GUI, некоторый CGO); злоупотребление убивает M:N выгоду.
+
+**Cgo и kernel threads.** Долгий CGO может расширить thread pool; следи за `runtime.NumCgoCall`.
+
+**Assumption про NUMA.** Go scheduler NUMA-aware ограниченно; HPC иногда тюнят GOMAXPROCS вручную.
+
+**Runtime migration.** G может переехать между M; thread-local storage через `sync.Pool` и goroutine-local vars работают иначе, чем в pthread коде.

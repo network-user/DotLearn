@@ -1,0 +1,77 @@
+---
+id: 2951
+title: "TCP handshake и HTTP keep-alive: что видит QA в Network?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# TCP handshake и HTTP keep-alive: что видит QA в Network?
+
+## Суть
+
+TCP устанавливает надёжный канал через трёхстороннее рукопожатие SYN → SYN-ACK → ACK; только после ACK можно слать HTTP. HTTP keep-alive (Connection: keep-alive в 1.1 по умолчанию) переиспользует то же TCP для нескольких запросов, снижая latency. В DevTools это видно как один Connect на серию запросов к одному хосту; без keep-alive каждый запрос платит новый handshake.
+
+## Что ответить на собесе
+
+- 3-way handshake синхронизирует sequence numbers; half-open соединения и SYN flood это зона SRE, но QA видит симптом как долгий Connect или timeout.
+- Keep-alive экономит RTT на статике; HTTP/2 и HTTP/3 мультиплексируют поверх одного соединения ещё эффективнее.
+- Проверяю заголовок Connection, timing Connect в waterfall, поведение после idle timeout балансировщика (502 на первом запросе после паузы).
+- Честно: keep-alive на клиенте не поможет, если сервер шлёт Connection: close или LB режет idle через 60s без retry логики.
+
+## Как это работает
+
+Последовательность TCP:
+
+```
+Client -> Server: SYN
+Server -> Client: SYN-ACK
+Client -> Server: ACK
+[данные HTTP]
+```
+
+HTTP/1.1 с keep-alive:
+
+```
+GET /index.html HTTP/1.1
+Host: app.example.com
+Connection: keep-alive
+
+GET /style.css HTTP/1.1
+Host: app.example.com
+Connection: keep-alive
+```
+
+(один TCP, два запроса подряд)
+
+Gherkin для регресса latency:
+
+```gherkin
+Feature: TCP handshake и переиспользование соединения
+
+  Scenario: Первый запрос включает время установки TCP
+    When браузер холодно открывает "https://app.example.com/"
+    Then в timing первого документа присутствует фаза Connect
+
+  Scenario: Последующие ассеты переиспользуют соединение
+    Given главная уже загружена с keep-alive
+    When браузер запрашивает 5 CSS с того же origin
+    Then не более одного нового Connect на эти 5 запросов
+
+  Scenario: Idle timeout балансировщика обрабатывается gracefully
+    Given пользователь простаивает 120 секунд
+    When отправляется следующий API запрос
+    Then клиент повторяет запрос на новом TCP без белого экрана
+```
+
+TCP keepalive (опция сокета, не HTTP) шлёт probe на простаивающее соединение; путают с HTTP keep-alive на собесах часто.
+
+## Подводные камни
+
+- **Смешение TCP keepalive и HTTP keep-alive.** Разные уровни и заголовки.
+- **Proxy закрывает idle.** Первый запрос после ланча падает без retry в SPA.
+- **Measuring только TTFB.** Долгий Connect скрыт если смотреть только waiting.
+- **TLS поверх каждого нового TCP.** Без session resumption handshake дороже.
+- **HTTP/2 в DevTools как один connection.** Старые чек-листы «6 parallel connections» не применимы.

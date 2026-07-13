@@ -1,0 +1,70 @@
+---
+id: 3053
+title: "How do you tell client vs network vs server bugs using Charles?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you tell client vs network vs server bugs using Charles?
+
+## In short
+
+Charles shows the full HTTP(S) path: was the request formed, sent on the wire, answered, and with what status/timing. No entry in Charles during repro → client or proxy bypass. Request without response or long pending → network/TLS/DNS. Response 4xx/5xx with body → server or contract; 200 with wrong JSON → client parsing or backend data bug.
+
+## How to answer in an interview
+
+- First I verify traffic actually flows through Charles (proxy, SSL, Allow device).
+- No HTTP line at all: client logic bug, offline cache, wrong base URL.
+- CONNECT without decrypt: SSL/host list; pending forever: timeout, firewall, captive portal.
+- Status 502/504: gateway/upstream; 400/422: validation; I read response body and correlation id.
+- Honestly: Charles does not see gRPC/protobuf without extra tooling; not everything is HTTP.
+
+## How it works
+
+```gherkin
+Feature: Triage client vs network vs server with Charles
+
+  Scenario: Client never sends request
+    Given user taps Pay on checkout
+    When Charles session has no POST /api/charge
+    Then bug likely client validation or disabled button state
+    And QA checks local logs and feature flag
+
+  Scenario: Network timeout
+    Given Charles shows POST /api/charge in red pending 60s
+    When response eventually failed connection
+    Then triage VPN DNS or staging firewall not application 500
+
+  Scenario: Server returns business error
+    Given Charles shows POST /api/charge status 409
+    And body code INSUFFICIENT_STOCK
+    When UI shows generic error instead of stock message
+    Then client mapping bug not server outage
+```
+
+Decision tree (logical form):
+
+```
+Repro with Charles recording
+├─ No matching request
+│   └─ Client: URL builder, auth gate, crash before send
+├─ Request sent, no response / SSL error
+│   └─ Network: proxy, cert, DNS, offline
+└─ Response received
+    ├─ 5xx / gateway errors → server/infra
+    ├─ 4xx → contract/auth/payload (client or server rules)
+    └─ 200 but wrong data → compare with Postman same token
+```
+
+Compare timing: Charles **Duration** vs TTFB in Postman with the same token. Matching request id in server access log confirms the packet arrived.
+
+## Pitfalls
+
+- **Certificate pinning.** Empty session looks like client bug; it is a security block.
+- **CDN cached 200.** Server never hit; check Age header and cache bypass.
+- **GraphQL single endpoint.** 200 with errors[] in body; status is misleading.
+- **Retry storm.** Several identical POSTs; you inspect the wrong response.
+- **Charles Throttling enabled.** False "network" issue; disable before triage.

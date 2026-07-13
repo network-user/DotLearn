@@ -1,0 +1,69 @@
+---
+id: 3007
+title: "Анатомия log line: что QA проверяет в structured logging?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Анатомия log line: что QA проверяет в structured logging?
+
+## Суть
+
+Типичная запись: timestamp (ISO 8601 UTC), severity level, logger/source, message, optional fields (trace_id, user_id hash, http.status, duration_ms). Structured JSON позволяет Kibana/Loki queries без regex. QA валидирует полноту на critical paths и отсутствие secrets.
+
+## Что ответить на собесе
+
+- Timestamp UTC для correlation across regions.
+- Level для alert routing; source/service name для filter.
+- Message human readable; machine fields in JSON keys.
+- Process/thread id полезен при concurrency bugs.
+- Честно: multiline stack trace must stay one logical event in aggregator.
+
+## Как это работает
+
+```json
+{
+  "@timestamp": "2026-07-13T11:23:45.012Z",
+  "level": "ERROR",
+  "service": "auth-api",
+  "logger": "LoginController",
+  "trace_id": "c9f1",
+  "http.method": "POST",
+  "http.path": "/login",
+  "http.status": 401,
+  "message": "Invalid credentials",
+  "duration_ms": 34
+}
+```
+
+Gherkin:
+
+```gherkin
+Feature: Structured log fields
+
+  Scenario: Login failure log complete
+    When POST /login wrong password
+    Then log contains trace_id http.status 401
+    And no plaintext password field
+
+  Scenario: Parseable timestamp
+    Given log export
+    Then @timestamp sorts chronologically with gateway logs
+
+  Scenario: Source identifies team ownership
+    When ERROR in payment-api
+    Then on-call routing uses service field
+```
+
+Plaintext legacy: `2026-07-13T11:23:45Z ERROR [auth] ...` still parseable if pattern documented.
+
+## Подводные камни
+
+- **Local time without zone.** DST breaks ordering.
+- **Message only JSON as string.** Double escape, cannot query.
+- **Huge blob in one field.** Index rejected, line dropped.
+- **Missing service on worker.** Orphan log in search.
+- **Token in message.** Secret scanner alert, log redacted too late.

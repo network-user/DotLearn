@@ -1,0 +1,69 @@
+---
+id: 1543
+title: "How do multiple goroutines read from one channel?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do multiple goroutines read from one channel?
+
+## In short
+
+Fan-out workers: N goroutines run `for v := range ch` on the same channel; the runtime delivers each value to exactly one reader. The sender closes the channel after all sends; WaitGroup or errgroup waits for workers to finish.
+
+## How to answer in an interview
+
+- One receive per value: two goroutines never duplicate one send.
+- Closing the channel signals EOF to all readers in range.
+- For graceful shutdown combine close + WaitGroup or context cancel before drain.
+- Honestly: processing order across workers is not guaranteed; for order use one consumer or sequence ids.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func consumer(id int, jobs <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for task := range jobs {
+		fmt.Printf("worker %d: task %d\n", id, task)
+	}
+}
+
+func main() {
+	const n = 4
+	jobs := make(chan int, 16)
+	var wg sync.WaitGroup
+	for w := 0; w < n; w++ {
+		wg.Add(1)
+		go consumer(w, jobs, &wg)
+	}
+	for t := 0; t < 12; t++ {
+		jobs <- t
+	}
+	close(jobs)
+	wg.Wait()
+}
+```
+
+Four workers compete on receive; each of 12 tasks is handled by exactly one worker. A buffered channel smooths burst sends without blocking the producer.
+
+## Pitfalls
+
+**Close before sends finish.** Close only after all sends complete; otherwise panic or lost tasks.
+
+**No close.** Range blocks forever; workers never exit.
+
+**Shared mutable state in workers.** Parallel workers need sync for shared counters/maps.
+
+**Unbuffered + slow worker.** One slow consumer stalls the producer and the whole pipeline.
+
+**Broadcast need.** One channel does not broadcast; use pub/sub or fan-out to multiple channels.

@@ -1,0 +1,66 @@
+---
+id: 4210
+title: "EBS volume types: which one fits the workload?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# EBS volume types: which one fits the workload?
+
+## In short
+
+EBS provides block storage for EC2 at different price and I/O profiles. The SSD line (gp2/gp3, io1/io2) targets random IOPS; HDD (st1/sc1) targets sequential throughput. gp3 is the default for most workloads; io2 is for guaranteed IOPS and 99.999% durability.
+
+## How to answer in an interview
+
+- gp3: root volumes, app disks, moderate databases; IOPS and throughput are configured independently of size.
+- io2 Block Express: OLTP with tens of thousands of IOPS and latency SLA.
+- st1: log aggregation, Kafka data dirs, big-data sequential reads.
+- sc1: archives, rare access; cheapest $/GB.
+- Honestly: gp2 on small volumes (< 1 TiB) yields few IOPS; migrating to gp3 is often cheaper and more predictable.
+
+## How it works
+
+Create gp3 with explicit IOPS/throughput:
+
+```bash
+aws ec2 create-volume \
+  --availability-zone eu-central-1a \
+  --size 200 \
+  --volume-type gp3 \
+  --iops 6000 \
+  --throughput 250 \
+  --tag-specifications 'ResourceType=volume,Tags=[{Key=Name,Value=app-data}]'
+```
+
+Attach to an instance:
+
+```bash
+aws ec2 attach-volume \
+  --volume-id vol-0abc123 \
+  --instance-id i-0def456 \
+  --device /dev/sdf
+```
+
+Profile comparison:
+
+| Type | Profile | Typical use |
+|------|---------|-------------|
+| gp3 | SSD, IOPS/throughput separate | General-purpose disk |
+| gp2 | SSD, 3 IOPS/GB (burst) | Legacy; I migrate to gp3 |
+| io2 | SSD, provisioned IOPS up to 256k | Critical databases |
+| st1 | HDD, throughput | Streaming, logs |
+| sc1 | HDD, cold | Backups, archive |
+
+On gp3, 3000 IOPS and 125 MiB/s are included; above that I buy IOPS up to 16k and throughput up to 1000 MiB/s.
+
+## Pitfalls
+
+- **gp2 burst credits.** A small 8 GiB root burns through the burst pool during apt upgrade.
+- **io1/io2 without real load.** You pay for provisioned IOPS even when idle.
+- **HDD for random IOPS.** st1/sc1 on a PostgreSQL data directory kills latency.
+- **AZ binding.** A volume is tied to an AZ; DR uses snapshot + create-volume in another AZ.
+- **Size and modify-volume.** Online grow works; shrink does not; I plan with headroom.

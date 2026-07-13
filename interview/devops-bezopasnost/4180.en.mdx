@@ -1,0 +1,56 @@
+---
+id: 4180
+title: "How does Vault separate authentication and authorization?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does Vault separate authentication and authorization?
+
+## In short
+
+An auth method (Kubernetes, AppRole, OIDC, LDAP) proves identity and issues a short-lived Vault token with TTL and policies. HCL policies restrict paths and capabilities (read, list, sudo). Secrets live in engines (KV, database, PKI); every request passes an ACL check against token policies.
+
+## How to answer in an interview
+
+- AuthN: `vault login -method=...` or agent sidecar injects token into the pod.
+- AuthZ: policy bound to entity/group; least privilege on `secret/data/prod/*`.
+- Dynamic secrets: database engine issues TTL creds instead of static passwords in KV.
+- I add honestly: root token is bootstrap only; prod enables audit log and auto-unseal (KMS/HSM).
+
+## How it works
+
+AppRole for a CI job:
+
+```bash
+export VAULT_ADDR=https://vault.internal:8200
+vault auth enable approle 2>/dev/null || true
+
+vault policy write ci-deploy - <<'EOF'
+path "secret/data/prod/deploy" {
+  capabilities = ["read"]
+}
+EOF
+
+vault write auth/approle/role/ci-deploy token_policies=ci-deploy token_ttl=15m
+ROLE_ID=$(vault read -field=role_id auth/approle/role/ci-deploy/role-id)
+SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/ci-deploy/secret-id)
+
+VAULT_TOKEN=$(vault write -field=token auth/approle/login role_id="$ROLE_ID" secret_id="$SECRET_ID")
+VAULT_TOKEN=$VAULT_TOKEN vault kv get -field=password secret/prod/deploy
+```
+
+Login returns a 15m token with policy `ci-deploy`. KV v2 path `secret/data/...` needs `read` on the data path. secret_id is one-time or limited; role_id is less sensitive.
+
+Kubernetes auth: ServiceAccount JWT → Vault role → policy per namespace.
+
+## Pitfalls
+
+- **Overbroad policy.** `path "secret/*"` with write enables lateral movement on token leak.
+- **Infinite token TTL.** Leak in logs equals permanent access; set max_ttl and periodic tokens deliberately.
+- **Unsealed without audit.** No audit device makes leak investigation impossible.
+- **KV v1/v2 path confusion.** v2 mounts split `/data/` and `/metadata/`.
+- **Agent cache on shared node.** Token cache across tenants on one VM is risky.

@@ -29,6 +29,7 @@ import {
   Sun,
   Waypoints,
 } from 'lucide-react';
+import { useRouterState } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -40,6 +41,7 @@ import {
 } from '@/lib/content-search';
 import { flashcardTopicSlugs } from '@/lib/flashcard-decks';
 import { getCurrentLanguage } from '@/lib/i18n';
+import { applyLanguageSelection } from '@/lib/localized-routes';
 import { conceptTitle, topicTitle } from '@/lib/topics';
 import { useAllNotedKeys, useBookmarks } from '@/lib/use-learning';
 import { useVisibleManifests } from '@/lib/use-manifests';
@@ -85,6 +87,8 @@ interface CommandPaletteProps {
 export default function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { t, i18n } = useTranslation('nav');
   const { t: tCommon } = useTranslation('common');
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const search = useRouterState({ select: (state) => state.location.search });
   const setOpen = (value: boolean): void => onOpenChange(value);
   const manifests = useVisibleManifests();
   const [interview, setInterview] = useState<InterviewQuestionMeta[]>([]);
@@ -187,8 +191,12 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   };
 
   const switchLanguage = (lang: 'ru' | 'en'): void => {
-    void i18n.changeLanguage(lang);
     setOpen(false);
+    void applyLanguageSelection(lang, {
+      pathname,
+      search,
+      navigate: (options) => router.navigate(options),
+    });
   };
 
   const navItems = useMemo(

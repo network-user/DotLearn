@@ -1,0 +1,74 @@
+---
+id: 2473
+title: "OAuth 2.0 from the frontend perspective"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# OAuth 2.0 from the frontend perspective
+
+## In short
+
+OAuth 2.0 delegates resource access without giving the user password to the client. Roles: resource owner, client, authorization server, resource server. SPAs use Authorization Code plus PKCE, not implicit flow.
+
+## How to answer in an interview
+
+- Redirect the user to authorize URL with `code_challenge` (S256) and CSRF `state`.
+- Exchange code for tokens only on backend or PKCE public client without secret.
+- Scopes stay minimal; refresh rotation when the provider supports it.
+- Honestly: OAuth is authorization, not authentication; OpenID Connect adds id_token.
+- I never put client_secret in the browser bundle.
+
+## How it works
+
+```ts
+function buildAuthorizeUrl(config: {
+  clientId: string;
+  redirectUri: string;
+  scope: string;
+  state: string;
+  codeChallenge: string;
+}) {
+  const q = new URLSearchParams({
+    response_type: 'code',
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    scope: config.scope,
+    state: config.state,
+    code_challenge: config.codeChallenge,
+    code_challenge_method: 'S256',
+  });
+  return `https://auth.example/authorize?${q}`;
+}
+
+async function exchangeCode(code: string, verifier: string) {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: 'https://app.example/callback',
+    client_id: 'spa-client',
+    code_verifier: verifier,
+  });
+  const res = await fetch('https://auth.example/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  return res.json();
+}
+```
+
+Flow: redirect → user consent → callback `?code=&state=` → validate state → POST token endpoint → access (+ refresh). Resource APIs use Bearer access token.
+
+PKCE replaces client_secret for public clients (SPA, mobile). `state` binds callback to the originating tab/session.
+
+## Pitfalls
+
+- **Legacy implicit/hybrid.** Access token in URL fragment leaks via Referer/history.
+- **Open redirect on redirect_uri.** Must exact-match registered URIs.
+- **CSRF on callback.** Missing `state` enables login CSRF.
+- **Third-party cookie blocking.** Silent refresh iframe breaks in Safari; use BFF.
+- **Scope creep.** UI requests `email profile admin` «for later».

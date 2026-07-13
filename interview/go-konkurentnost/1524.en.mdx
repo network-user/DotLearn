@@ -1,0 +1,58 @@
+---
+id: 1524
+title: "When is sync.Map justified?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When is sync.Map justified?
+
+## In short
+
+`sync.Map` targets caches with rare writes and heavy reads on a stable key set, or append-only patterns. For a normal map with balanced read/write, prefer `map` plus `RWMutex` or a sharded map.
+
+## How to answer in an interview
+
+- API: `Load`, `Store`, `Delete`, `LoadOrStore`, `Range`.
+- It wins when keys warm up and are mostly read afterward.
+- Not a drop-in for every concurrent map; docs describe a narrow profile.
+- I honestly add: without benchmarks on my workload I do not pick sync.Map just because it says concurrent.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	var cache sync.Map
+
+	cache.Store("cfg:timeout", 30)
+	if v, ok := cache.Load("cfg:timeout"); ok {
+		fmt.Println(v)
+	}
+
+	cache.LoadOrStore("cfg:retries", 3)
+	cache.Range(func(k, v any) bool {
+		fmt.Println(k, v)
+		return true
+	})
+}
+```
+
+Internally there are two structures: a read-only atomic map for the hot path and a dirty map under a mutex for rare writes. After keys promote to the read map, `Load` often avoids locking.
+
+## Pitfalls
+
+- **Range blocks.** `Range` locks dirty; I avoid it on hot paths.
+- **any types.** Assertions on read hide type mistakes until runtime.
+- **Counters with frequent writes.** Each `Store` hits the mutex path; atomic or sharding wins.
+- **Deletes and misses.** Heavy deletion breaks sync.Map's cache-friendly profile.
+- **Replacing RWMutex without measurement.** Plain map+RWMutex is simpler and often faster on mixed loads.

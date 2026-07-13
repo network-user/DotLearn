@@ -1,0 +1,82 @@
+---
+id: 2054
+title: "Exception in finally: suppressing the primary exception"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Exception in finally: suppressing the primary exception
+
+## In short
+
+If `finally` throws a new exception, it **suppresses** the one from `try` or `catch`: only the finally exception propagates outward. The original failure disappears from the stack trace unless you use `addSuppressed` or log the try exception before finally. This is a classic anti-pattern during close/cleanup.
+
+## How to answer in an interview
+
+- A finally exception "wins" during stack unwind.
+- try-with-resources (Java 7+) adds suppressed exceptions automatically on close failure.
+- In finally I prefer logging close errors, not rethrowing, when try already failed.
+- `Throwable.addSuppressed()` manually links primary and secondary.
+- Honestly: throwing from finally is almost always worse than swallow + log on cleanup.
+
+## How it works
+
+```java
+void process() {
+    try {
+        throw new IllegalStateException("business rule violated");
+    } catch (IllegalStateException ex) {
+        log.warn("handled in catch", ex);
+        throw ex;
+    } finally {
+        throw new IOException("failed to flush buffer");
+    }
+}
+```
+
+The caller sees only `IOException` from finally; `IllegalStateException` vanishes from the propagated chain (without suppressed).
+
+Correct cleanup with dual failure:
+
+```java
+IllegalStateException primary = null;
+try {
+    validate();
+} catch (IllegalStateException ex) {
+    primary = ex;
+} finally {
+    try {
+        flush();
+    } catch (IOException closeEx) {
+        if (primary != null) {
+            primary.addSuppressed(closeEx);
+            throw primary;
+        }
+        throw closeEx;
+    }
+    if (primary != null) {
+        throw primary;
+    }
+}
+```
+
+try-with-resources equivalent:
+
+```java
+try (var writer = Files.newBufferedWriter(path)) {
+    writer.write(payload);
+}
+```
+
+If both `write` and `close` throw, primary stays from write; close appears in `getSuppressed()`.
+
+## Pitfalls
+
+- **Silent suppression.** Production incident without root cause in logs.
+- **return in try + throw in finally.** return is lost; only finally exception escapes.
+- **Duplicate throw in catch and finally.** Debugging shows the wrong type.
+- **Logging only the finally ex.** RCA points at I/O, not the business error.
+- **Assuming suppressed everywhere.** Manual finally without addSuppressed has no chain.

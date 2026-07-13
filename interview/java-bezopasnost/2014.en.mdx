@@ -1,0 +1,65 @@
+---
+id: 2014
+title: "Authentication vs authorization: what's the difference?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Authentication vs authorization: what's the difference?
+
+## In short
+
+Authentication (authn) answers "who are you?": verifying identity via password, MFA, or certificate. Authorization (authz) decides "what may you do?" after successful authn: roles, permissions, ABAC policies on resources.
+
+## How to answer in an interview
+
+- Authn = identity; authz = access decision.
+- Spring Security: `AuthenticationManager` for login, `@PreAuthorize` / `AuthorizationManager` for methods.
+- 401 when not authenticated, 403 when authenticated but not permitted.
+- JWT claims (`sub`, `roles`) support authn; scope checks on endpoints are authz.
+- Honestly: ADMIN role in a token without server-side policy review is risky if signature is weak.
+
+## How it works
+
+Authn: compare password hash, not plaintext:
+
+```java
+public Optional<UserAccount> authenticate(String email, String rawPassword) {
+    return userRepository.findByEmail(email)
+        .filter(user -> passwordEncoder.matches(rawPassword, user.passwordHash()))
+        .map(user -> {
+            audit.log("login_ok", user.id());
+            return user;
+        });
+}
+```
+
+Authz after `SecurityContext` is set:
+
+```java
+@Service
+public class InvoiceService {
+    @PreAuthorize("hasAuthority('invoice:read') or #ownerId == authentication.name")
+    public InvoiceDto fetch(UUID invoiceId, String ownerId) {
+        return mapper.toDto(repository.require(invoiceId));
+    }
+
+    @PreAuthorize("hasRole('BILLING_ADMIN')")
+    public void refund(UUID invoiceId) {
+        billing.refund(invoiceId);
+    }
+}
+```
+
+The filter chain first extracts credentials (Basic, Bearer, session cookie) and builds `Authentication`. Then `AuthorizationFilter` matches request URI + HTTP method to rules. OAuth scope `read:invoices` maps to Spring authorities via `JwtAuthenticationConverter`.
+
+## Pitfalls
+
+- **Authz before authn.** Role check before token validation causes NPE or bypass.
+- **Role string drift.** `ROLE_ADMIN` vs `ADMIN` breaks `@PreAuthorize`.
+- **403 vs 404.** Sensitive resources sometimes hide existence.
+- **Client-side authz only.** UI hides a button while API stays open.
+- **Confusing OAuth scope with RBAC.** Token scope does not replace fine-grained domain policy.

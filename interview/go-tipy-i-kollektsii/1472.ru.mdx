@@ -1,0 +1,80 @@
+---
+id: 1472
+title: "Стабилен ли порядок ключей при повторном range по map?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Стабилен ли порядок ключей при повторном range по map?
+
+## Суть
+
+Нет. Спецификация Go не гарантирует порядок обхода map; он может отличаться между двумя `range` в одном запуске и почти наверняка изменится между запусками или после grow/delete.
+
+## Что ответить на собесе
+
+- Отвечаю однозначно: порядок итерации недетерминирован намеренно (раньше даже рандомизировали seed итерации против hash DoS).
+- Если нужен стабильный порядок, собираю ключи в slice, сортирую, затем читаю map по ключам.
+- Уточняю: даже без изменений map второй `range` может выдать другой порядок.
+- Честно добавляю: полагаться на «случайно стабильный» порядок в тестах опасно; тесты должны сравнивать multiset, а не последовательность println.
+
+## Как это работает
+
+Map это хеш-таблица. `for k, v := range m` обходит бакеты во внутреннем порядке runtime. При grow, delete или даже при инициализации с тем же набором ключей traversal order не является частью контракта языка.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sort"
+)
+
+func randomOrder(m map[string]int) {
+	for k, v := range m {
+		fmt.Printf("%s=%d ", k, v)
+	}
+	fmt.Println()
+}
+
+func sortedOrder(m map[string]int) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Printf("%s=%d ", k, m[k])
+	}
+	fmt.Println()
+}
+
+func main() {
+	scores := map[string]int{
+		"alice": 10,
+		"bob":   20,
+		"carol": 15,
+	}
+	fmt.Println("pass 1")
+	randomOrder(scores)
+	fmt.Println("pass 2")
+	randomOrder(scores)
+	fmt.Println("sorted")
+	sortedOrder(scores)
+}
+```
+
+Два подряд `randomOrder` могут напечатать строки в разном порядке. `sortedOrder` даёт воспроизводимый вывод для отчётов и тестов.
+
+Альтернатива упорядоченной map: slice пар `[]struct{K,V}` или сторонняя структура, если порядок вставки важен.
+
+## Подводные камни
+
+- **Зависимость от порядка в бизнес-логике.** Баг проявится только в проде на другой архитектуре.
+- **Тесты с golden file из range.** Flaky CI при смене версии Go.
+- **Удаление во время range.** Допустимо, но поведение «пропустить или пересмотреть» не гарантирует стабильность.
+- **Сериализация map в JSON.** `encoding/json` сортирует ключи для стабильного вывода, это не порядок range.
+- **Путаница с slice.** Slice сохраняет порядок; map нет.

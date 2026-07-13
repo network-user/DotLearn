@@ -1,0 +1,48 @@
+---
+id: 2003
+title: "Какие JVM-профайлеры используешь на практике?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие JVM-профайлеры используешь на практике?
+
+## Суть
+
+Для Java-приложений профилирование делают встроенными и внешними инструментами: JFR/JMC и async-profiler для low-overhead CPU, VisualVM/MAT для heap, JProfiler/YourKit для глубокого анализа в dev. Выбор зависит от среды: prod-safe sampling vs attach в staging с allocation profiling.
+
+## Что ответить на собесе
+
+- async-profiler: flame graphs, wall/alloc modes, мало overhead.
+- JFR (Java Flight Recorder): events в prod, анализ в JMC.
+- VisualVM/jcmd: быстрый локальный snapshot, thread/heap dump.
+- MAT (Eclipse Memory Analyzer): dominator tree, leak suspects.
+- Честно добавляю: коммерческие YourKit/JProfiler удобны в IDE, но в prod чаще JFR + Grafana Pyroscope/Parca.
+
+## Как это работает
+
+Запуск async-profiler в CPU mode (bash на хосте с JVM):
+
+```bash
+./profiler.sh -d 60 -f /tmp/flame.html 8421
+```
+
+60 секунд sampling PID 8421, результат flame.html. Горячие frame `java.util.regex.Pattern` или `com.acme.PricingService.quote` видны шириной полосы. Для памяти:
+
+```bash
+jcmd 8421 VM.native_memory summary
+jcmd 8421 GC.heap_dump /tmp/8421.hprof
+```
+
+Hprof открывают в MAT: dominator tree показывает, что `ConcurrentHashMap` удерживает 40% heap из cache без TTL. JFR включают флагами `-XX:StartFlightRecording=...` и смотрят GC, socket, method profiling offline в JMC без постоянного agent attach.
+
+## Подводные камни
+
+- **Instrumenting profiler в prod.** Искажает latency и throughput.
+- **Профилирование cold JVM.** JIT ещё не прогрел hot methods.
+- **Flame graph без символов.** Obfuscated или отсутствующие debug symbols.
+- **Heap dump как единственный сигнал.** Без allocation profile не видно churn rate.
+- **Attach к wrong PID в k8s.** Sidecar и app PID путают в одном pod.

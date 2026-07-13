@@ -1,0 +1,95 @@
+---
+id: 4283
+title: "What can replace Logstash in a log pipeline?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What can replace Logstash in a log pipeline?
+
+## In short
+
+Logstash is the JVM ETL agent in the Elastic Stack, but the same role (collect → parse → route) can be done by Fluentd/Fluent Bit, Filebeat, Vector, rsyslog, Graylog Input, or the OpenTelemetry Collector. The choice depends on footprint, need for heavy grok, and the target sink (Elasticsearch, Loki, S3).
+
+## How to answer in an interview
+
+- In k8s I usually run Fluent Bit as a DaemonSet: low memory, CRI parser, push to Loki or ES.
+- In the Elastic world Filebeat is lighter than Logstash for shipping; heavy parsing stays in ES ingest pipelines.
+- I pick Vector (Rust) when I need one agent with VRL transforms and multi-sink routing.
+- rsyslog/syslog-ng for classic UDP/TCP relay with TLS at the edge.
+- Honestly: "replacement" is not drop-in; I rewrite parsers and load-test volume.
+
+## How it works
+
+Fluent Bit tails nginx and forwards to a central aggregator:
+
+```bash
+cat <<'EOF' > /etc/fluent-bit/fluent-bit.conf
+[SERVICE]
+    Flush        1
+    Log_Level    info
+
+[INPUT]
+    Name              tail
+    Path              /var/log/nginx/access.log
+    Tag               nginx.access
+    Parser            nginx
+
+[OUTPUT]
+    Name              forward
+    Match             nginx.*
+    Host              log-aggregator.internal
+    Port              24224
+EOF
+```
+
+Filebeat straight to Elasticsearch (no Logstash):
+
+```bash
+cat <<'EOF' > /etc/filebeat/filebeat.yml
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/app/*.json
+    json.keys_under_root: true
+
+output.elasticsearch:
+  hosts: ["https://es.internal:9200"]
+  username: "ingest"
+  password: "${ES_INGEST_PASSWORD}"
+EOF
+```
+
+Vector routes to two sinks:
+
+```bash
+cat <<'EOF' > /etc/vector/vector.toml
+[sources.app]
+type = "file"
+include = ["/var/log/checkout/*.log"]
+
+[sinks.loki]
+type = "loki"
+inputs = ["app"]
+endpoint = "https://loki.internal:3100"
+labels.service = "checkout"
+
+[sinks.s3_archive]
+type = "aws_s3"
+inputs = ["app"]
+bucket = "logs-archive"
+key_prefix = "checkout/%Y/%m/%d/"
+EOF
+```
+
+## Pitfalls
+
+- **Field loss on migration.** Grok in LS produced structured fields; naive JSON tail without schema breaks Kibana dashboards.
+- **Backpressure.** A lightweight agent without buffer overflow drops lines under burst; tune `storage.total_limit` or disk buffers.
+- **Double delivery.** Filebeat and Fluentd on the same host duplicate indexes and counters.
+- **Graylog licensing.** Open core vs enterprise affects HA and SSO; validate before migrating.
+- **Ops maturity.** An exotic agent without an on-call runbook is worse than a heavy but familiar Logstash.

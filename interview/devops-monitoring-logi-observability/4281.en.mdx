@@ -1,0 +1,63 @@
+---
+id: 4281
+title: "Where to find Nginx logs and how to read them"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where to find Nginx logs and how to read them
+
+## In short
+
+Nginx writes an access log (every HTTP request) and an error log (worker and upstream errors). Paths are set in `nginx.conf` via `access_log` and `error_log`; on Debian/Ubuntu the default is often `/var/log/nginx/`. For live triage use `tail -f`; for incidents filter with `grep`/`awk` or ship to Loki/ELK.
+
+## How to answer in an interview
+
+- On 502/504 I check `error.log` first, then `access.log` by status and latency.
+- `tail -f` for realtime, `less +G` for large files, `journalctl` when nginx runs under systemd with redirect.
+- I verify custom paths: `nginx -T | grep -E 'access_log|error_log'`.
+- On k8s: `kubectl logs` on a sidecar or stdout driver instead of files on the pod disk.
+- Honestly: rotation without a log shipper loses context; in prod I always centralize with a retention policy.
+
+## How it works
+
+Discover actual log paths:
+
+```bash
+sudo nginx -T 2>/dev/null | grep -E '^\s*(access_log|error_log)'
+```
+
+Watch 5xx in the access log in realtime:
+
+```bash
+sudo tail -F /var/log/nginx/access.log | awk '$9 ~ /^5/ { print $0 }'
+```
+
+Last 200 error log lines with context:
+
+```bash
+sudo tail -n 200 /var/log/nginx/error.log
+```
+
+Find slow requests (when log_format includes `$request_time`):
+
+```bash
+sudo awk '$NF > 1.0 { print }' /var/log/nginx/access.log | tail -n 50
+```
+
+In a container without file shell access:
+
+```bash
+kubectl logs -n ingress deploy/nginx-ingress -c controller --tail=100 -f
+```
+
+## Pitfalls
+
+- **Wrong vhost log.** A virtual host may log to a separate file; checking only the default misses a 404 storm on another site.
+- **Permission denied.** Regular users cannot read `/var/log/nginx`; you need sudo or the `adm` group.
+- **Rotation and tail -F.** After `logrotate` without `copytruncate` or `create`, tail loses the inode; prefer a shipper with offsets.
+- **Health check noise.** LB probes flood the access log; isolate them in a `location` with `access_log off`.
+- **JSON vs combined.** Parsing combined format with regex is brittle; for analytics I switch to `log_format json`.

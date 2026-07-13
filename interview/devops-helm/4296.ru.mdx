@@ -1,0 +1,57 @@
+---
+id: 4296
+title: "Как откатить Helm-релиз?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как откатить Helm-релиз?
+
+## Суть
+
+Каждый `helm upgrade` создаёт revision в release history (хранится в cluster Secret). `helm rollback <release> <revision>` восстанавливает manifest и values той ревизии. Это быстрый путь назад при bad deploy, но не откатывает внешние миграции БД, которые hook уже применил.
+
+## Что ответить на собесе
+
+- `helm history <release> -n <ns>` показывает REVISION, STATUS, CHART.
+- `helm rollback <release> <rev>` возвращает известное good state.
+- Без номера revision rollback идёт на previous (N-1).
+- После rollback проверяю `helm status` и `kubectl rollout status`.
+- Честно: rollback не undo schema migration; нужен forward-fix или restore DB snapshot.
+
+## Как это работает
+
+Просмотр истории и откат:
+
+```bash
+helm history payments -n prod
+
+helm rollback payments 14 -n prod --wait --timeout 8m
+
+helm status payments -n prod
+kubectl get pods -n prod -l app.kubernetes.io/instance=payments
+```
+
+Сравнение manifest между revisions (Helm 3):
+
+```bash
+helm get manifest payments -n prod --revision 14 | sha256sum
+helm get manifest payments -n prod --revision 15 | sha256sum
+```
+
+Откат с debug при failure:
+
+```bash
+helm rollback payments 14 -n prod --debug 2>&1 | tee /tmp/rollback.log
+```
+
+## Подводные камни
+
+- **Failed revision deploy.** Rollback на revision со статусом `failed` может повторить ту же ошибку; выбираю last `deployed`.
+- **PVC data mismatch.** Новая версия мигрировала data format; rollback образа без DB совместимости даёт crash loop.
+- **CRD forward only.** Откат chart не удаляет новые CRD fields; stale schema остаётся в API.
+- **Hooks re-run.** Rollback может снова запустить pre/post hooks; побочный эффект на БД.
+- **Max history limit.** Старые revision'ы pruning'ятся; критичные manifest архивирую в git до upgrade.

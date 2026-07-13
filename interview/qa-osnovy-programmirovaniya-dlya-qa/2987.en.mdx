@@ -1,0 +1,56 @@
+---
+id: 2987
+title: "Error vs exception: what does QA see in logs and API responses?"
+category: qa-osnovy-programmirovaniya-dlya-qa
+categoryLabel: "Основы программирования для QA"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Error vs exception: what does QA see in logs and API responses?
+
+## In short
+
+An error usually means a fatal environment problem (OutOfMemory, StackOverflow) that the app should not heal with a catch block. An exception is a normal logic event the code intercepts and turns into a clear response. QA tells them apart by recoverability and what reaches the client.
+
+## How to answer in an interview
+
+- Exception: invalid input, not found, conflict; I expect 4xx and structured body.
+- Error: JVM OOM, segfault; process dies, k8s restart, alert on-call.
+- In Java Throwable hierarchy: Exception checked/unchecked vs Error subclass.
+- I test exception paths; error paths via chaos/limit tests on staging.
+- Honestly: devs call everything "error" in JSON `{ error: "..." }`; I look at HTTP status and logs.
+
+## How it works
+
+```gherkin
+Feature: Error vs exception in API
+
+  Scenario: Exception becomes 404
+    When GET /api/users/nonexistent-id
+    Then status is 404
+    And body contains code USER_NOT_FOUND
+    And process stays healthy
+
+  Scenario: Uncaught exception does not expose stack to client
+    When POST /api/orders with broken payload per contract
+    Then status is 400 or 422
+    And body has no java.lang trace
+
+  Scenario: Fatal error restarts pod
+    Given memory limit 256Mi on staging
+    When load scenario triggers OOM
+    Then pod restart count increases
+    And health check temporarily failing
+```
+
+Exception handler middleware catches `NotFoundException`, maps to JSON. JVM-level error bypasses application catch; orchestrator sees exit code != 0.
+
+## Pitfalls
+
+- **Catch Throwable and swallow OOM.** System in zombie state.
+- **500 on business exception.** Client retries non-idempotent POST.
+- **Error message in UI.** "NullPointerException at line 42" for user.
+- **Same word in i18n.** RU "ошибка" mixes both types for PM.
+- **No correlation id on exception.** Cannot link UI toast to log line.

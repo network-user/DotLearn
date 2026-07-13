@@ -1,0 +1,57 @@
+---
+id: 1532
+title: "How does Go schedule goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does Go schedule goroutines?
+
+## In short
+
+The GMP model: G (goroutine) enqueues on a P run queue; M (OS thread) runs G bound to P. P count equals `GOMAXPROCS`. The scheduler balances local queues, the global queue, and work stealing across Ps.
+
+## How to answer in an interview
+
+- A new G from `go` lands on the current P local queue (or global when full).
+- An idle P steals half a queue from another P or pulls a batch from global.
+- A blocked G frees M; syscalls may detach M from P.
+- I honestly caveat: this is user-space scheduling; switches are cheaper than OS threads but not free.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	fmt.Println("procs", runtime.GOMAXPROCS(0))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			fmt.Println(n)
+		}(i)
+	}
+	wg.Wait()
+}
+```
+
+Eight Gs compete for P threads. With GOMAXPROCS=4 at most four CPU-bound Gs run at once; the rest wait in queues.
+
+## Pitfalls
+
+- **G creation outpaces M.** Millions of Gs are possible, but queues grow and latency rises.
+- **Global queue lock.** Mass spawn contends on global runqlock.
+- **Network poller.** Net I/O does not block M the same way some file I/O patterns did historically.
+- **LockOSThread.** Pins scheduling to one M and narrows parallelism.

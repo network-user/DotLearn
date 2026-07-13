@@ -1,0 +1,79 @@
+---
+id: 3447
+title: "Promise в JavaScript и стабильные async-тесты"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Promise в JavaScript и стабильные async-тесты
+
+## Суть
+
+Promise представляет будущий результат асинхронной операции в состояниях pending, fulfilled или rejected. Цепочки `.then/.catch/.finally` заменяют вложенные колбэки. В AQA без явного await/assert на Promise тест завершается до прихода ответа API.
+
+## Что ответить на собесе
+
+- Создаю через `new Promise((resolve, reject) => ...)` или factory библиотеки (`fetch`).
+- Ошибки ловлю в `.catch` или `try/await`, иначе unhandled rejection в CI.
+- В Jest/Playwright всегда `return promise` или `await`, иначе false green.
+- Для параллельных запросов комбинирую `Promise.all` и отдельный тест на partial failure.
+- Честно: `.then` без `return` внутри цепочки рвёт передачу значения в следующий шаг.
+
+## Как это работает
+
+Фабрика с таймером:
+
+```
+const loadFixture = () =>
+    new Promise((resolve, reject) => {
+        setTimeout(() => {
+            const ok = true;
+            if (ok) resolve({ status: "ready" });
+            else reject(new Error("fixture failed"));
+        }, 50);
+    });
+```
+
+Цепочка:
+
+```
+loadFixture()
+    .then((data) => expect(data.status).toBe("ready"))
+    .catch((err) => reportFailure(err))
+    .finally(() => cleanupSession());
+```
+
+В pytest эмулирую контракт ожидания:
+
+```python
+import asyncio
+import pytest
+
+
+async def fetch_status(delay: float = 0.05) -> dict:
+    await asyncio.sleep(delay)
+    return {"status": "ready"}
+
+
+@pytest.mark.asyncio
+async def test_must_await_before_assert():
+    payload = await fetch_status()
+    assert payload["status"] == "ready"
+```
+
+Микротаски Promise выполняются до следующего тика event loop.
+
+## Подводные камни
+
+**Забытый return в async test.** Процесс завершается, rejection приходит позже.
+
+**Promise.all на зависимых шагах.** Падение одного скрывает диагностику остальных.
+
+**Mixing callbacks и Promise.** Двойной resolve при гибридном API client.
+
+**Silent catch.** Пустой `.catch(() => {})` даёт green при 500 от API.
+
+**Таймеры без fake clock.** Flaky на медленном CI runner.

@@ -1,0 +1,72 @@
+---
+id: 1611
+title: "Когда выбрать REST, а когда gRPC?"
+category: java-rest-i-seti
+categoryLabel: "REST и сети"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда выбрать REST, а когда gRPC?
+
+## Суть
+
+REST опирается на HTTP/1.1, ресурсы и текстовые форматы вроде JSON; gRPC работает поверх HTTP/2, использует бинарный Protocol Buffers и генерирует строгие контракты из `.proto`. REST проще отлаживать curl-ом и интегрировать с браузерами; gRPC выигрывает в производительности, типобезопасности и streaming.
+
+## Что ответить на собесе
+
+- Сравниваю транспорт: HTTP/1.1 vs HTTP/2 с мультиплексированием и меньшим overhead на соединение.
+- Подчёркиваю формат: human-readable JSON/XML против compact protobuf.
+- Упоминаю codegen: gRPC требует protoc и версионирование схем; REST часто живёт на OpenAPI.
+- Называю streaming: gRPC из коробки поддерживает server/client/bidi streams; в REST это обычно SSE или WebSocket отдельно.
+- Честно добавляю: для публичного B2B API и мобильных клиентов без grpc-библиотек REST остаётся проще; внутри дата-центра между Java-сервисами gRPC часто рациональнее.
+
+## Как это работает
+
+REST-модель мыслит ресурсами и глаголами HTTP:
+
+```http
+GET /api/v1/customers/42 HTTP/1.1
+Host: shop.example
+Accept: application/json
+```
+
+Ответ сериализуется в JSON; контракт описывают OpenAPI или соглашения команды.
+
+gRPC описывает сервис декларативно:
+
+```proto
+syntax = "proto3";
+
+service CustomerDirectory {
+  rpc FetchCustomer (CustomerQuery) returns (CustomerView);
+}
+
+message CustomerQuery {
+  int64 customer_id = 1;
+}
+
+message CustomerView {
+  string full_name = 1;
+  string email = 2;
+}
+```
+
+Клиент и сервер генерируют stubs; вызов выглядит как обычный RPC:
+
+```java
+CustomerView view = stub.fetchCustomer(
+    CustomerQuery.newBuilder().setCustomerId(42L).build()
+);
+```
+
+HTTP/2 мультиплексирует несколько RPC в одном TCP-соединении, protobuf уменьшает payload. Для real-time потоков (логи, котировки) gRPC открывает long-lived stream без polling.
+
+## Подводные камни
+
+- **REST без версионирования.** Ломающие изменения JSON-полей бьют по всем клиентам; нужны `/v2` или tolerant readers.
+- **gRPC через публичный ingress.** Не каждый LB и WAF одинаково дружат с HTTP/2 и gRPC; иногда нужен grpc-web или sidecar.
+- **Отладка protobuf.** Бинарный трафик не читается в DevTools; без grpcurl/reflection диагностика сложнее.
+- **Deadline и retries.** В gRPC нужно явно прокидывать timeout и idempotency; слепые retry на non-idempotent RPC опасны.
+- **Смешение контрактов.** Дублировать одну доменную модель и в OpenAPI, и в proto без автогенерации ведёт к drift.

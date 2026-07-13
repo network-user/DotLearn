@@ -1,0 +1,66 @@
+---
+id: 3511
+title: "HashMap vs ConcurrentHashMap in parallel tests"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HashMap vs ConcurrentHashMap in parallel tests
+
+## In short
+
+`HashMap` is not thread-safe: concurrent put/get may lose entries or corrupt buckets (historically). `ConcurrentHashMap` supports concurrent reads/writes with segmented locks/CAS, without a global mutex. For a shared registry in a parallel runner I pick CHM; for local expected data in one test, HashMap is enough.
+
+## How to answer in an interview
+
+- Shared test context map: `ConcurrentHashMap<String, Session>`.
+- `Collections.synchronizedMap` is coarser; CHM scales better.
+- Compound actions (`if absent then put`) via `putIfAbsent`, not check-then-put.
+- CHM iteration is weakly consistent; I copy a snapshot for asserts.
+- Honestly: CHM does not make values thread-safe, only the map structure.
+
+## How it works
+
+```
+ConcurrentHashMap<String, String> tokens = new ConcurrentHashMap<>();
+
+tokens.put("worker-1", "jwt-a");
+tokens.putIfAbsent("worker-1", "jwt-b");
+
+String jwt = tokens.get("worker-1");
+```
+
+HashMap in parallel (anti-pattern):
+
+```
+// Map<String, String> shared = new HashMap<>(); // racy in parallel suite
+```
+
+Python mirror:
+
+```python
+from threading import RLock
+
+store: dict[str, str] = {}
+lock = RLock()
+
+
+def put_token(key: str, value: str) -> None:
+    with lock:
+        store[key] = value
+```
+
+## Pitfalls
+
+**Null keys/values.** CHM rejects null; HashMap allows one null key.
+
+**size() under mutation.** Approximate in concurrent use.
+
+**toString for assert.** Order is unstable; compare as a Set of entries.
+
+**computeIfPresent race.** Still atomic, but callback logic must stay pure.
+
+**Synchronized wrapper iteration.** Requires manual sync on the whole iterate block.

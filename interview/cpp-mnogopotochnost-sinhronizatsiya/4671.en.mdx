@@ -1,0 +1,73 @@
+---
+id: 4671
+title: "What is deadlock in a multithreaded program?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is deadlock in a multithreaded program?
+
+## In short
+
+Deadlock is when a set of threads waits forever for resources held by each other and none can make progress. In C++ this usually means mutexes acquired in inconsistent order.
+
+## How to answer in an interview
+
+- Definition: circular wait plus hold-and-wait on exclusive resources.
+- Four Coffman conditions: mutual exclusion, hold-and-wait, no preemption, circular wait.
+- Symptom: CPU idle, threads blocked, no progress without external kill.
+- Prevention: lock ordering, `std::lock`, timeouts, fewer nested locks, lock-free where fit.
+- Honestly: easy on a whiteboard; in production you catch it with stack dumps and TSan, not theory alone.
+
+## How it works
+
+```cpp
+#include <chrono>
+#include <mutex>
+#include <thread>
+
+std::mutex vault;
+std::mutex ledger;
+
+void auditor_path() {
+    std::lock_guard<std::mutex> a(vault);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    std::lock_guard<std::mutex> b(ledger);
+}
+
+void cashier_path() {
+    std::lock_guard<std::mutex> b(ledger);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    std::lock_guard<std::mutex> a(vault);
+}
+
+int main() {
+    std::thread t1(auditor_path);
+    std::thread t2(cashier_path);
+    t1.join();
+    t2.join();
+}
+```
+
+`auditor_path` waits on `ledger`, `cashier_path` waits on `vault`: cycle closed.
+
+Prevention:
+
+```cpp
+inline void take_both(std::mutex& m1, std::mutex& m2) {
+    std::scoped_lock guard(m1, m2);
+}
+```
+
+Production detection: watchdog threads, lock order graphs, periodic stack samples of blocked threads.
+
+## Pitfalls
+
+- **Livelock vs deadlock.** Threads run but make no progress due to retries.
+- **Starvation is not deadlock.** A low-priority thread may starve without a cycle.
+- **Distributed DB deadlock.** Cross-service transactions need timeouts and idempotent retry.
+- **Logging lock.** LOG under a global mutex plus a callback that logs again.
+- **Timeout without root cause.** Timeouts hide bugs; ordering or redesign is safer.

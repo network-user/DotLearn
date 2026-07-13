@@ -1,0 +1,65 @@
+---
+id: 1994
+title: "Как выбрать уровень логирования в Java?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как выбрать уровень логирования в Java?
+
+## Суть
+
+Уровни SLF4J (TRACE, DEBUG, INFO, WARN, ERROR) задают приоритет события. Порог на logger/appender отсекает шум: в prod обычно INFO или WARN, DEBUG только на время расследования. Правильный уровень балансирует диагностику и объём хранения.
+
+## Что ответить на собесе
+
+- TRACE: пошаговый flow, почти никогда в prod.
+- DEBUG: dev/stage диагностика, значения переменных, branch decisions.
+- INFO: штатные бизнес-события (старт job, успешный payment).
+- WARN: деградация, retry, deprecated path, но сервис жив.
+- ERROR: сбой операции, исключение, требует реакции; честно: не каждый catch заслуживает ERROR.
+
+## Как это работает
+
+```java
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+final class PayoutJob {
+    private static final Logger log = LoggerFactory.getLogger(PayoutJob.class);
+
+    void run(String payoutId, int amountCents) {
+        log.info("payout started payoutId={} amountCents={}", payoutId, amountCents);
+
+        if (amountCents <= 0) {
+            log.warn("skipped invalid amount payoutId={} amountCents={}", payoutId, amountCents);
+            return;
+        }
+
+        log.debug("reserving ledger slot payoutId={}", payoutId);
+        try {
+            captureFunds(payoutId, amountCents);
+            log.info("payout completed payoutId={}", payoutId);
+        } catch (PaymentDeclinedException ex) {
+            log.error("payout failed payoutId={} reason={}", payoutId, ex.getCode(), ex);
+        }
+    }
+
+    private void captureFunds(String payoutId, int amountCents) {
+        log.trace("enter captureFunds payoutId={}", payoutId);
+    }
+}
+```
+
+`logback.xml` может держать root на INFO, а для `com.acme.billing` временно DEBUG. Параметризованные сообщения (`{}`) не строят строку, если уровень отключён. ERROR с throwable сохраняет stack trace для RCA. WARN фиксирует аномалию без падения процесса.
+
+## Подводные камни
+
+- **ERROR на ожидаемом отказе.** 404 или validation error как ERROR будят on-call.
+- **INFO спам.** Лог на каждый row в batch миллионы строк в сутки.
+- **DEBUG в prod без TTL.** Забыли вернуть порог, диск и индекс растут.
+- **TRACE в hot path.** Синхронная запись убивает latency.
+- **Смешение уровней и алертов.** Алерт на WARN без фильтра даёт alert fatigue.

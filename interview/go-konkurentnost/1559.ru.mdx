@@ -1,0 +1,62 @@
+---
+id: 1559
+title: "Что делает runtime при send в channel?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает runtime при send в channel?
+
+## Суть
+
+Send проверяет closed, waiting receivers и buffer space. Если receiver ждёт на unbuffered или buffered has slot, copy value и будит receiver. Иначе sender G блокируется в wait queue канала до recv или close panic rules.
+
+## Что ответить на собесе
+
+- Unbuffered: direct handoff, synchronizes two G.
+- Buffered: enqueue if cap free; block if full.
+- Send на closed chan panic; recv на closed drain then zero value.
+- Честно: copy by value; большие struct дороги, передаю pointer с осторожностью.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func unbuffered() {
+	ch := make(chan int)
+	go func() { ch <- 7 }()
+	fmt.Println(<-ch)
+}
+
+func buffered() {
+	ch := make(chan int, 2)
+	ch <- 1
+	ch <- 2
+	fmt.Println(<-ch, <-ch)
+}
+
+func main() {
+	unbuffered()
+	buffered()
+}
+```
+
+Unbuffered send блокирует sender до recv; runtime копирует int между G stacks/heap. Buffered кладёт в ring buffer в hchan struct.
+
+## Подводные камни
+
+**Send without receiver leak.** Sender blocked forever if nobody recv.
+
+**Large value copy.** Channel send copies whole struct; pointer escape to heap.
+
+**Select send fairness.** Multi-writer select pseudo-random among ready.
+
+**Close during send race.** Undefined who wins; design single closer.
+
+**Nil chan send.** Blocks forever, не panic.

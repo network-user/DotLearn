@@ -1,0 +1,67 @@
+---
+id: 2969
+title: "Проксирование HTTP: как QA использует посредника в тестах?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Проксирование HTTP: как QA использует посредника в тестах?
+
+## Суть
+
+Forward proxy принимает запрос клиента, при необходимости меняет заголовки или URL, ходит к origin и возвращает ответ. Reverse proxy (nginx, CDN) стоит перед backend и терминирует TLS. QA чаще работает с forward (Charles, Fiddler, Burp) для map local, throttle и подмены ответов; понимание цепочки помогает отличить баг CDN от баг API.
+
+## Что ответить на собесе
+
+- HTTP proxy для HTTPS использует метод CONNECT: туннель до origin, расшифровка только при MITM с доверенным CA.
+- Кэш proxy может отдать stale 304; после деплоя API смотрю Disable cache в DevTools и hard refresh.
+- Map local в Charles воспроизводит офлайн JSON без мока в коде приложения.
+- Честно: подмена ответа в proxy не заменяет контрактный тест на реальном staging.
+
+## Как это работает
+
+Цепочка с reverse proxy:
+
+```
+Browser → CDN (reverse) → Ingress → Pod
+                ↑ QA здесь смотрит X-Cache, Age
+```
+
+Gherkin с map local:
+
+```gherkin
+Feature: Тест UI при недоступном backend
+
+  Background:
+    Given Charles map local "/api/v1/profile" на fixture profile_ok.json
+
+  Scenario: Профиль грузится из fixture
+    When пользователь открывает /account
+    Then блок "Email" показывает qa@example.com
+    And в Network нет TCP error к origin
+
+  Scenario: Подмена 500 на 200 для проверки error boundary
+    Given map local "/api/v1/orders" на orders_500.json со статусом 500
+    When пользователь открывает /orders
+    Then UI показывает retry banner
+    And Sentry получает событие с correlation_id
+
+  Scenario: Throttle через proxy имитирует 3G
+    Given bandwidth throttle 400 kbps
+    When загрузка каталога
+    Then skeleton виден минимум 2 секунды
+    And нет layout shift после данных
+```
+
+Для API без UI достаточно Postman proxy или `HTTP_PROXY` env в curl.
+
+## Подводные камни
+
+- **Забытый map local.** «Баг» в staging, на самом деле старый fixture.
+- **CONNECT без MITM.** Не видно body HTTPS, только host и timing.
+- **Proxy auth 407.** CI падает, локально работает.
+- **HTTP/2 через старый proxy.** Downgrade до h1 меняет порядок заголовков.
+- **Путают forward proxy QA и WAF.** Блок 403 от WAF не лечится map local.

@@ -1,0 +1,99 @@
+---
+id: 1534
+title: "What modes does sync.Mutex have?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What modes does sync.Mutex have?
+
+## In short
+
+Inside `sync.Mutex`, the runtime switches between normal and starvation mode. In normal mode a new contender can pass a long-waiting goroutine; in starvation mode a waiter that blocked for a long time gets priority to prevent starvation. `sync.RWMutex` is a separate type with read and write locks, not a "mode" of plain Mutex.
+
+## How to answer in an interview
+
+- Normal mode is faster under low contention; starvation mode kicks in after prolonged waiting (~1 ms).
+- For read-heavy workloads I pick `RWMutex`; for short critical sections plain `Mutex` is enough.
+- Calling `Lock` again from the same goroutine without `Unlock` deadlocks; Mutex is not reentrant.
+- Honestly: mode switching is internal, you do not set it in code, but it helps explain latency spikes.
+
+## How it works
+
+`sync.Mutex` keeps state in an atomic word: locked bit, waiter count, starvation flag. On unlock in starvation mode the mutex may hand ownership directly to the first waiter, skipping the race among new Lock calls.
+
+`sync.RWMutex` solves a different problem: many parallel `RLock`s, one exclusive `Lock` for writes.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+type SafeCounter struct {
+	mu sync.Mutex
+	n  int64
+}
+
+func (c *SafeCounter) Inc() {
+	c.mu.Lock()
+	atomic.AddInt64(&c.n, 1)
+	c.mu.Unlock()
+}
+
+func (c *SafeCounter) Snapshot() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+type ConfigStore struct {
+	rw   sync.RWMutex
+	data map[string]string
+}
+
+func (s *ConfigStore) Get(key string) (string, bool) {
+	s.rw.RLock()
+	defer s.rw.RUnlock()
+	v, ok := s.data[key]
+	return v, ok
+}
+
+func (s *ConfigStore) Set(key, val string) {
+	s.rw.Lock()
+	defer s.rw.Unlock()
+	s.data[key] = val
+}
+
+func main() {
+	var counter SafeCounter
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			counter.Inc()
+		}()
+	}
+	wg.Wait()
+	fmt.Println("count:", counter.Snapshot())
+}
+```
+
+## Pitfalls
+
+**Confusing RWMutex with Mutex modes.** RWMutex is its own type; mixing terms in an interview signals a gap in the sync package.
+
+**RWMutex under heavy writes.** A writer blocks all readers; with write-heavy load RWMutex can lose to a plain Mutex.
+
+**Starvation mode and latency.** Rare but visible pauses for competing Lock calls can happen when modes switch; a mutex contention profile separates this from other bottlenecks.
+
+**Copying Mutex.** Do not copy Mutex after first use; keep it by pointer or embed it in a struct without value copies.
+
+**Unlock from another goroutine.** Unlock from a different goroutine triggers a runtime error; this is not a reentrant lock like in Java.

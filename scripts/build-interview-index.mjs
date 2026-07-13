@@ -5,6 +5,19 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const OUT_DIR = resolve(ROOT, 'interview');
+const DIRECTIONS_PATH = resolve(ROOT, 'apps/web/src/lib/interview-directions.data.json');
+
+const resolveInterviewDirection = (category, directionsConfig) => {
+  for (const entry of directionsConfig.directions) {
+    if (entry.id === 'python') continue;
+    for (const prefix of entry.categoryPrefixes) {
+      if (category.startsWith(prefix)) return entry.id;
+    }
+  }
+  const python = directionsConfig.directions.find((entry) => entry.id === 'python');
+  if (python?.legacyCategories.includes(category)) return 'python';
+  return undefined;
+};
 
 const unquote = (value) => {
   const trimmed = value.trim();
@@ -15,7 +28,7 @@ const unquote = (value) => {
 };
 
 function parseFrontmatter(text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---/);
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return undefined;
   const data = {};
   for (const line of match[1].split('\n')) {
@@ -36,6 +49,7 @@ async function isDir(path) {
 }
 
 async function main() {
+  const directionsConfig = JSON.parse(await readFile(DIRECTIONS_PATH, 'utf-8'));
   const names = await readdir(OUT_DIR);
   const index = [];
   const exercisesIndex = [];
@@ -71,11 +85,13 @@ async function main() {
           );
           exerciseCount = valid.length;
           for (const ex of valid) {
+            const direction = resolveInterviewDirection(fm.category, directionsConfig);
             exercisesIndex.push({
               exerciseId: ex.id,
               qid: id,
               category: fm.category,
               categoryLabel: fm.categoryLabel,
+              ...(direction ? { direction } : {}),
               stage: fm.stage,
               stageLabel: fm.stageLabel,
               type: ex.type,
@@ -98,12 +114,14 @@ async function main() {
         }
       }
 
+      const direction = resolveInterviewDirection(fm.category, directionsConfig);
       index.push({
         id,
         title: fm.title,
         ...(titleEn ? { titleEn } : {}),
         category: fm.category,
         categoryLabel: fm.categoryLabel,
+        ...(direction ? { direction } : {}),
         stage: fm.stage,
         stageLabel: fm.stageLabel,
         exerciseCount,

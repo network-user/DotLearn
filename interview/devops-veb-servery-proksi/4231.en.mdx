@@ -1,0 +1,59 @@
+---
+id: 4231
+title: "How do you verify Nginx routes to the right upstream?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you verify Nginx routes to the right upstream?
+
+## In short
+
+Verify in three steps: effective config (`nginx -T`), synthetic request (`curl` with the right Host/path), and log correlation (`access.log` upstream addr, `error.log` connect/upstream errors). For canaries inspect map/split_clients or weights. In production I add `X-Upstream-Name` from the backend for fast triage.
+
+## How to answer in an interview
+
+- `nginx -T` shows merged upstreams and which server block matches.
+- `curl -v -H 'Host: api.example.com' http://127.0.0.1/path` and compare body/headers to a direct backend hit.
+- I extend log format with `$upstream_addr $upstream_status $upstream_response_time`.
+- `stub_status` or nginx-prometheus-exporter for active connections per upstream.
+- Honestly: without a backend marker you cannot prove which node answered; I temporarily add `add_header X-Served-By $upstream_addr`.
+
+## How it works
+
+Custom log format:
+
+```nginx
+log_format upstream_trace '$remote_addr "$request" '
+                          'upstream=$upstream_addr status=$upstream_status '
+                          'rt=$request_time urt=$upstream_response_time';
+
+access_log /var/log/nginx/access.log upstream_trace;
+```
+
+Check:
+
+```bash
+sudo nginx -t && sudo nginx -s reload
+
+curl -sD - -o /dev/null -H 'Host: shop.example.com' http://127.0.0.1/checkout
+
+sudo tail -3 /var/log/nginx/access.log
+```
+
+If upstream is down, error.log shows:
+
+```bash
+sudo grep -E 'connect\(\)|upstream timed out' /var/log/nginx/error.log | tail -5
+```
+
+## Pitfalls
+
+- **Cache hides upstream.** `proxy_cache` HIT skips backends; bypass cache or send `Cache-Control: no-cache` when testing.
+- **Host mismatch on backend.** Backend vhost differs from proxy Host; nginx works but returns 404.
+- **TLS to upstream.** `proxy_pass https://` needs `proxy_ssl_server_name on` and a trusted chain.
+- **map/split_clients canaries.** One curl cannot prove canary routing; sample with varied cookies/IPs.
+- **include overwrite.** New site-enabled deploy loses if old default_server catches the Host first.

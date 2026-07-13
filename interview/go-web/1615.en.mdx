@@ -1,0 +1,80 @@
+---
+id: 1615
+title: "How a gRPC RPC call is structured"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How a gRPC RPC call is structured
+
+## In short
+
+A remote call in gRPC starts with a contract in `.proto`: services, methods, and messages. The compiler generates a client stub and server interface; on the wire, protobuf messages travel over HTTP/2. The client invokes a generated method, the runtime serializes the request, the server deserializes it, runs the handler, and returns the response on the same channel.
+
+## How to answer in an interview
+
+- I start with `.proto`, then `protoc` with `protoc-gen-go` and `protoc-gen-go-grpc`.
+- On the server I implement the generated interface and register the service on `grpc.Server`.
+- The client opens `grpc.Dial` and calls the stub with `context` for deadlines.
+- I mention unary, client/server, and bidi streaming as variants of one contract.
+- Honestly: without codegen and reflection, debugging is harder than REST with curl.
+
+## How it works
+
+```protobuf
+syntax = "proto3";
+
+package greet.v1;
+
+service GreeterService {
+  rpc SayHello(HelloRequest) returns (HelloResponse);
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloResponse {
+  string greeting = 1;
+}
+```
+
+```go
+type greeterServer struct {
+	pb.UnimplementedGreeterServiceServer
+}
+
+func (s *greeterServer) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloResponse, error) {
+	return &pb.HelloResponse{Greeting: "Привет, " + req.GetName()}, nil
+}
+
+func main() {
+	lis, _ := net.Listen("tcp", ":50051")
+	srv := grpc.NewServer()
+	pb.RegisterGreeterServiceServer(srv, &greeterServer{})
+	log.Fatal(srv.Serve(lis))
+}
+```
+
+```go
+conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+client := pb.NewGreeterServiceClient(conn)
+resp, err := client.SayHello(ctx, &pb.HelloRequest{Name: "Аня"})
+```
+
+The chain: the stub builds protobuf, gRPC places frames on an HTTP/2 stream, the server routes by path `/package.Service/Method`, the handler writes the response. Metadata (trace id, auth token) travels in headers alongside the body.
+
+## Pitfalls
+
+**Breaking change in proto.** Changing a field number or type breaks old clients; only additive changes are safe.
+
+**Missing `Unimplemented*Server`.** When a method is added to proto, an old server binary returns `Unimplemented` instead of a compile error.
+
+**Insecure transport in prod.** `insecure.NewCredentials()` is for local development only.
+
+**No client deadline.** Hanging RPCs pile up goroutines and connections.
+
+**Huge unary payload.** gRPC and proxy limits cut large messages; files need streaming.

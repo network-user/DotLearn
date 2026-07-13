@@ -1,0 +1,53 @@
+---
+id: 3002
+title: "5xx, latency, and RPS metrics: how does QA use them in regression?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# 5xx, latency, and RPS metrics: how does QA use them in regression?
+
+## In short
+
+5xx rate shows server-side failures; latency p50/p95/p99 shows tail slowdown; RPS (requests per second) gives load context. QA compares canary vs baseline after deploy: rising 500 without rising traffic is often a regression in new code.
+
+## How to answer in an interview
+
+- 500/502/503/504 different triage: app bug vs gateway vs overload.
+- Latency regression: p95 up at same RPS.
+- Load test with fixed RPS steps, watch error budget burn.
+- Dashboard split by endpoint `/api/checkout` not only global.
+- Honestly: without controlled load metric is noisy; one manual click invisible in p95.
+
+## How it works
+
+```gherkin
+Feature: Post-deploy metric gate
+
+  Scenario: 5xx spike after release
+    Given deploy v2.4.0 at 14:00
+    When Grafana http_5xx_rate{service="api"} over 5m
+    Then rate below 0.5% compared to pre-deploy window
+
+  Scenario: Latency tail
+    When load 200 RPS sustained 10m on /search
+    Then p95 latency below 800ms SLO
+
+  Scenario: 502 from upstream
+    When payment mock down
+    Then metric http_502_count increases
+    And distinct from http_500_internal
+```
+
+Prometheus counter `http_requests_total{status="500"}`; histogram `http_request_duration_seconds`.
+
+## Pitfalls
+
+- **Aggregate hides single endpoint.** Global green, checkout red.
+- **Retry inflates RPS.** Client retry counts as 3 requests.
+- **Cold start after deploy.** Latency spike not regression.
+- **Metric delay 1-2 min.** Rollback decision too late.
+- **No exemplars/trace link.** Metric spike without sample trace.

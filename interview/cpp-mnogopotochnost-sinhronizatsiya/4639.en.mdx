@@ -1,0 +1,60 @@
+---
+id: 4639
+title: "What is a mutex for?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is a mutex for?
+
+## In short
+
+A mutex (mutual exclusion) ensures only one thread at a time enters a critical section guarding a shared resource. It eliminates data races on shared state and preserves data-structure invariants.
+
+## How to answer in an interview
+
+- I wrap access to shared fields, containers, files, and devices in a critical section under a mutex.
+- I prefer RAII: `std::lock_guard`, `std::scoped_lock`, `std::unique_lock` for condition variables.
+- For read-heavy workloads I consider `std::shared_mutex` instead of a single `std::mutex`.
+- I minimize hold time: only invariant work inside the lock, no I/O or sleep.
+- Honestly: a mutex does not fix logical races (check-then-act without atomicity on the condition); the protocol must be correct.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate;
+int balance = 0;
+
+void deposit(int amount) {
+    for (int i = 0; i < 500; ++i) {
+        std::lock_guard lock(gate);
+        balance += amount;
+    }
+}
+
+int main() {
+    std::thread credit(deposit, 1);
+    std::thread debit(deposit, -1);
+    credit.join();
+    debit.join();
+    std::cout << balance << '\n';
+    return 0;
+}
+```
+
+Each increment runs under `gate`: the second thread waits until the first leaves the scope and releases the mutex. Without it, `balance` would be unpredictable. `lock_guard` unlocks on exceptions.
+
+## Pitfalls
+
+- **Deadlock.** Two mutexes acquired in different orders; fix with a fixed order or `std::scoped_lock(m1, m2)`.
+- **Long-held lock.** Holding through network or disk serializes everything and kills throughput.
+- **Recursion.** A plain `std::mutex` locked twice in one thread is UB; use `recursive_mutex`.
+- **Forgotten join vs detach.** A mutex does not replace `join`; races on main exit with live threads remain.
+- **Coarse locking.** One mutex for an entire cache hurts; sharding or targeted atomics may help.

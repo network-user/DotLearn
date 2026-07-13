@@ -1,0 +1,79 @@
+---
+id: 2048
+title: "Error vs Exception в иерархии Throwable"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Error vs Exception в иерархии Throwable
+
+## Суть
+
+`Throwable` делится на `Error` (сбои JVM/ресурсов, обычно не ловят) и `Exception` (условия, которые приложение может обработать). `Exception` дальше: checked (компилятор требует try/catch или throws) и unchecked (`RuntimeException` и наследники). `Error` сигнализирует о проблеме вне бизнес-логики: память, stack overflow, internal VM fault.
+
+## Что ответить на собесе
+
+- `OutOfMemoryError`, `StackOverflowError`, `VirtualMachineError` не catch-у в application code.
+- `IOException`, `SQLException` checked: объявляю `throws` или обрабатываю.
+- `NullPointerException`, `IllegalArgumentException` unchecked: фиксирую код, не глотаю широким catch.
+- В API дизайне предпочитаю unchecked для programming errors, checked для внешних I/O.
+- Честно: catch `Error` и продолжить работу почти всегда маскирует неrecoverable состояние.
+
+## Как это работает
+
+Checked I/O:
+
+```java
+public List<String> loadLines(Path configPath) throws IOException {
+    return Files.readAllLines(configPath);
+}
+
+void bootstrap() {
+    try {
+        var lines = loadLines(Path.of("app.conf"));
+        applyConfig(lines);
+    } catch (IOException ex) {
+        throw new IllegalStateException("Config unreadable", ex);
+    }
+}
+```
+
+Unchecked programming bug:
+
+```java
+int indexOfPositive(int[] values, int target) {
+    if (values == null) {
+        throw new IllegalArgumentException("values must not be null");
+    }
+    for (int i = 0; i < values.length; i++) {
+        if (values[i] == target) {
+            return i;
+        }
+    }
+    throw new NoSuchElementException("target not found");
+}
+```
+
+`Error` пример (не перехватываем в бизнес-коде):
+
+```java
+void leakMemory() {
+    List<byte[]> chunks = new ArrayList<>();
+    while (true) {
+        chunks.add(new byte[10_000_000]);
+    }
+}
+```
+
+Вызов приведёт к `OutOfMemoryError`; правильный ответ: JVM flags, heap dump analysis, fix leak, не `catch (OutOfMemoryError)`.
+
+## Подводные камни
+
+- **catch (Exception) глотает RuntimeException.** Скрывает баги вместо fail-fast.
+- **throws Exception в публичном API.** Размывает контракт метода.
+- **Error в retry loop.** Бессмысленные повторы при OOM.
+- **Checked в stream/lambda.** Нужен wrapper, иначе не компилируется.
+- **Throwable в catch.** Ловит и Error, и Exception: антипаттерн в application layer.

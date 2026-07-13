@@ -1,0 +1,62 @@
+---
+id: 3031
+title: "Для чего нужен RabbitMQ в архитектуре, которую тестирует QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Для чего нужен RabbitMQ в архитектуре, которую тестирует QA?
+
+## Суть
+
+RabbitMQ развязывает сервисы через асинхронные очереди: веб-принимает заказ, дальше независимые workers обновляют БД, шлют SMS, резервируют склад. Гибкая маршрутизация exchange/binding позволяет одному событию питать несколько подсистем. QA тестирует каждую bound queue и сценарии при недоступности consumer.
+
+## Что ответить на собесе
+
+- Order API публикует в exchange, не ждёт email и billing синхронно.
+- Fanout для broadcast; direct/topic для selective routing.
+- Очередь буферизует пик Black Friday без падения API.
+- Проверяю management UI: rates, consumers, memory alarm.
+- Честно: без HA policy и mirrored/quorum queues single node restart теряет non-persistent сообщения.
+
+## Как это работает
+
+```gherkin
+Feature: RabbitMQ in order architecture
+
+  Scenario: New order fans out
+    Given publish routing key order.created to exchange shop.events
+    When bindings to billing queue and notify queue exist
+    Then both queues receive within 1 second
+    And API response time under 200 ms
+
+  Scenario: Slow email worker
+    Given notify queue depth grows
+    When billing consumer healthy
+    Then charges still process emails delayed acceptable per SLA
+
+  Scenario: Order payload contract
+    Given JSON schema orderId uuid amount decimal
+    When invalid amount string published
+    Then consumer nack to DLQ no partial charge
+```
+
+```gherkin
+Feature: Publish order event
+
+  Scenario: Fire and forget from API
+    Given channel queue order_pipeline durable true
+    When basic_publish body New order 8812
+    Then log shows x Sent and connection closed cleanly
+```
+
+## Подводные камни
+
+- **Тест только HTTP path.** Async workers не покрыты.
+- **Одна очередь вместо реальной топологии.** Пропуск routing багов.
+- **Memory alarm на брокере.** Publish блокируется, кажется баг API.
+- **Guest user на staging.** Права не совпадают с prod vhost.
+- **Нет теста vhost isolation.** Сообщение утекает в чужую очередь.

@@ -1,0 +1,77 @@
+---
+id: 2052
+title: "Проброс исключений через throws"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Проброс исключений через throws
+
+## Суть
+
+Ключевое слово `throws` в сигнатуре метода объявляет checked exceptions, которые метод не обрабатывает, а передаёт вызывающему коду. Компилятор проверяет, что caller либо ловит, либо тоже объявляет `throws`. Unchecked (`RuntimeException`) объявлять не обязательно, но иногда указывают для документации. Проброс сохраняет stack trace при rethrow без обёртки.
+
+## Что ответить на собесе
+
+- `throws IOException` в DAO, обработка на controller/service boundary.
+- Multi-throws: `throws IOException, ParseException`.
+- Rethrow: `catch (IOException ex) { throw ex; }` или `throw new ServiceException("msg", ex)`.
+- В override метод throws только те checked, что разрешены родителем (covariant или subset).
+- Честно: `throws Exception` в публичном API это ленивый контракт, избегаю.
+
+## Как это работает
+
+```java
+public final class CsvReportLoader {
+
+    public List<Row> load(Path csvPath) throws IOException {
+        return Files.readAllLines(csvPath).stream()
+            .skip(1)
+            .map(Row::parse)
+            .toList();
+    }
+}
+
+public final class ReportService {
+
+    private final CsvReportLoader loader = new CsvReportLoader();
+
+    public List<Row> fetchMonthly(Path path) {
+        try {
+            return loader.load(path);
+        } catch (IOException ex) {
+            throw new ReportUnavailableException("Cannot read " + path, ex);
+        }
+    }
+}
+```
+
+`load` пробрасывает checked `IOException` наверх. `fetchMonthly` конвертирует в доменный unchecked, чтобы REST layer не объявлял IOException.
+
+Override с сужением throws:
+
+```java
+interface Storage {
+    void save(byte[] payload) throws IOException;
+}
+
+class S3Storage implements Storage {
+    @Override
+    public void save(byte[] payload) throws IOException {
+        client.putObject(bucket, key, payload);
+    }
+}
+```
+
+Добавить `throws SQLException` в override нельзя, если интерфейс не объявляет.
+
+## Подводные камни
+
+- **Забыли throws у private метода.** Компилятор требует handle внутри или throws.
+- **throws в interface ломает lambda.** Checked в functional interface неудобен.
+- **Глотание и throw new без cause.** Теряется stack trace оригинала.
+- **throws RuntimeException в сигнатуре.** Шум, не влияет на компилятор.
+- **Метод throws, caller игнорирует.** Только unchecked можно пропустить; checked не скомпилируется.

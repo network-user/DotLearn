@@ -1,0 +1,88 @@
+---
+id: 4664
+title: "Что будет, если два потока пишут в одну память без sync?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что будет, если два потока пишут в одну память без sync?
+
+## Суть
+
+Параллельный доступ к одной переменной без синхронизации даёт data race и неопределённое поведение в C++. Результат зависит от порядка инструкций и может отличаться от ожидаемого даже на одной машине.
+
+## Что ответить на собесе
+
+- Это data race, если хотя бы один поток пишет, а синхронизации нет.
+- `++counter` не атомарен: read-modify-write из нескольких шагов.
+- Исправления: `std::mutex`, `std::atomic`, immutable shared data.
+- ThreadSanitizer (`-fsanitize=thread`) ловит такие места в dev-сборке.
+- Честно: иногда «случайно работает» тысячи раз, но это не гарантия; оптимизации компилятора усиливают хаос.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <thread>
+
+int tally = 0;
+
+void bump() {
+    for (int i = 0; i < 1000; ++i) {
+        ++tally;
+    }
+}
+
+int main() {
+    std::thread a(bump);
+    std::thread b(bump);
+    a.join();
+    b.join();
+    std::cout << "tally=" << tally << '\n';
+}
+```
+
+Ожидаем 2000, часто получаем меньше: оба потока читают одно значение, инкрементируют локально и перезаписывают.
+
+Вариант с mutex:
+
+```cpp
+#include <mutex>
+
+std::mutex gate;
+int tally = 0;
+
+void bump_safe() {
+    for (int i = 0; i < 1000; ++i) {
+        std::lock_guard<std::mutex> hold(gate);
+        ++tally;
+    }
+}
+```
+
+Для простого счётчика лучше atomic:
+
+```cpp
+#include <atomic>
+
+std::atomic<int> tally{0};
+
+void bump_atomic() {
+    for (int i = 0; i < 1000; ++i) {
+        tally.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+```
+
+Чтение без гонки допустимо только если все пишут через atomic или под mutex. Смешивать atomic и обычные доступы к одной ячейке нельзя.
+
+## Подводные камни
+
+- **False sharing.** Два atomic рядом в памяти могут биться за cache line даже без логической гонки.
+- **Visibility.** Без happens-before другой поток может не увидеть запись без atomic/mutex.
+- **Const data races.** Даже чтение во время записи без sync это UB, если писатель не atomic.
+- **Optimistic lock-free.** Сложные структуры требуют memory order осознанно, не «atomic по умолчанию».
+- **Sanitizer off in prod.** TSan не в релизе; code review и тесты под нагрузкой всё равно нужны.

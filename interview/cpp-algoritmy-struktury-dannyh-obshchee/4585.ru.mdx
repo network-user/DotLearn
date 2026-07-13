@@ -1,0 +1,92 @@
+---
+id: 4585
+title: "Какой размер хеш-таблицы снижает коллизии?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой размер хеш-таблицы снижает коллизии?
+
+## Суть
+
+Число коллизий задаёт не только размер таблицы, а баланс между ёмкостью корзин и ожидаемым числом элементов (load factor). Практичный ориентир: держать загрузку примерно 0.5–0.75 до rehash; в `std::unordered_map` порог настраивается через `max_load_factor()`, а `reserve(n)` задаёт минимум корзин заранее.
+
+## Что ответить на собесе
+
+- Определяю load factor как `size / bucket_count` и связываю с длиной цепочек.
+- Говорю, что простые числа корзин помогают учебным хешам вида `key % m`, но для `std::unordered_map` важнее качество `std::hash` и rehash policy.
+- Упоминаю динамическое расширение: при превышении порога таблица растёт и элементы перераспределяются.
+- Привожу правило: если жду N вставок, вызываю `reserve(N)` или закладываю запас 20–30%.
+- Честно добавляю: слишком большой bucket_count тратит память почти без выигрыша, если hash плохо перемешивает ключи.
+
+## Как это работает
+
+При низкой загрузке вероятность попадания двух ключей в одну корзину мала, операции близки к O(1). Когда элементов становится больше относительно корзин, цепочки удлиняются и растёт стоимость сравнений внутри bucket.
+
+```cpp
+#include <iostream>
+#include <list>
+#include <vector>
+
+class ChainMap {
+    std::vector<std::list<std::pair<int, int>>> buckets;
+    float max_load = 0.75f;
+    std::size_t item_count = 0;
+
+    std::size_t index_for(int key) const {
+        return static_cast<std::size_t>(key) % buckets.size();
+    }
+
+    void grow_if_needed() {
+        if (item_count + 1 <= buckets.size() * max_load) return;
+        auto old = std::move(buckets);
+        buckets.assign(old.size() * 2 + 1, {});
+        item_count = 0;
+        for (auto& chain : old) {
+            for (auto& entry : chain) {
+                insert(entry.first, entry.second);
+            }
+        }
+    }
+
+public:
+    explicit ChainMap(std::size_t initial_buckets) : buckets(initial_buckets) {}
+
+    void insert(int key, int value) {
+        grow_if_needed();
+        buckets[index_for(key)].emplace_back(key, value);
+        ++item_count;
+    }
+
+    int* find(int key) {
+        for (auto& [k, v] : buckets[index_for(key)]) {
+            if (k == key) return &v;
+        }
+        return nullptr;
+    }
+
+    float load() const {
+        return buckets.empty() ? 0.f
+            : static_cast<float>(item_count) / static_cast<float>(buckets.size());
+    }
+};
+
+int main() {
+    ChainMap map(7);
+    for (int k : {10, 17, 24, 31, 38}) map.insert(k, k * 10);
+    std::cout << "load factor: " << map.load() << '\n';
+}
+```
+
+Учебная таблица стартует с простого размера 7 и удваивает корзины при превышении 0.75. В стандартном контейнере ту же роль играет внутренний rehash: пользователь задаёт ожидания через `reserve` и `max_load_factor`, не подбирая простое число вручную.
+
+## Подводные камни
+
+- **Магическое простое число.** Само по себе не спасает от коррелированных ключей и слабого `% m`.
+- **Забытый reserve.** Массовая вставка без `reserve` вызывает серию rehash и просадку по времени.
+- **Слишком высокий max_load_factor.** Экономия памяти оборачивается длинными цепочками.
+- **Неверная оценка N.** `reserve` задаёт минимум корзин, не ограничивает `size`; переполнение всё равно вызовет rehash.
+- **Статическая таблица.** Без роста фиксированный размер в итоге деградирует к O(n) при любом хорошем hash.

@@ -1,0 +1,57 @@
+---
+id: 2463
+title: "JWT authorization from the frontend perspective"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JWT authorization from the frontend perspective
+
+## In short
+
+A JWT is a signed string of header, payload, and signature (Base64URL). After login the client gets an access token and sends `Authorization: Bearer`. The server verifies signature and claims (`exp`, `aud`, `iss`) without a session store, but revocation needs an extra strategy.
+
+## How to answer in an interview
+
+- I keep the access token in memory or short-lived storage; refresh only in httpOnly cookies.
+- I check `exp` locally before requests but trust only server validation.
+- I avoid putting PII or permanent roles in the payload: JWT is base64, not encryption.
+- Honestly: stateless JWTs cannot be revoked instantly without blacklist/TTL; logout needs a server denylist or short TTL.
+- On the frontend I parse payload for UI only; security decisions stay on the backend.
+
+## How it works
+
+Structure: `header.payload.signature`. Header sets alg (`HS256`, `RS256`). Payload holds claims: `sub`, `exp`, custom scopes.
+
+```ts
+type JwtParts = { header: Record<string, unknown>; payload: Record<string, unknown> };
+
+function parseJwt(token: string): JwtParts {
+  const [headerB64, payloadB64] = token.split('.');
+  const decode = (part: string) => JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+  return { header: decode(headerB64), payload: decode(payloadB64) };
+}
+
+async function apiGet(path: string, accessToken: string) {
+  const res = await fetch(path, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 401) throw new Error('token expired');
+  return res.json();
+}
+```
+
+Flow: login POST → tokens → attach Bearer on API calls → 401 triggers refresh endpoint → retry once. Refresh rotation: server issues a new refresh and invalidates the old one.
+
+Signing happens on the server with HMAC secret or RSA private key. The client does not verify signatures (no secret); it only decodes for UI labels/roles.
+
+## Pitfalls
+
+- **localStorage + XSS.** Any script reads the JWT; prefer httpOnly refresh plus in-memory access.
+- **Clock skew.** Client `exp` checks need a ±60s buffer.
+- **Alg none / key confusion.** Backend must enforce allowed algs.
+- **Large cookies.** JWTs over 4KB break cookie headers; chunking breaks proxies.
+- **Tab sync.** Multiple tabs refreshing at once need a mutex or shared worker.

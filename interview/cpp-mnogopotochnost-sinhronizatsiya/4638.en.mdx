@@ -1,0 +1,73 @@
+---
+id: 4638
+title: "Do threads see the same global variable?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Do threads see the same global variable?
+
+## In short
+
+Yes: globals and static variables with a single definition live in the process-wide memory, and all threads read the same object. Concurrent writes without synchronization cause a data race and undefined behavior.
+
+## How to answer in an interview
+
+- Every thread in a process shares the address space; globals and static storage duration are shared.
+- For counters and flags I use `std::mutex`, `std::atomic`, or isolation via thread-local storage.
+- `thread_local` gives each thread its own copy when shared state is not required.
+- Read-only access from many threads is safe only if nobody writes (or data is immutable after init).
+- Honestly: "visible" does not mean "safe to mutate"; without happens-before, freshness needs atomics or a mutex.
+
+## How it works
+
+```cpp
+#include <atomic>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+int legacyHits = 0;
+std::atomic<int> safeHits{0};
+std::mutex legacyGuard;
+
+void bumpLegacy() {
+    for (int i = 0; i < 1000; ++i) {
+        std::lock_guard lock(legacyGuard);
+        ++legacyHits;
+    }
+}
+
+void bumpAtomic() {
+    for (int i = 0; i < 1000; ++i) {
+        ++safeHits;
+    }
+}
+
+int main() {
+    std::thread t1(bumpLegacy);
+    std::thread t2(bumpLegacy);
+    t1.join();
+    t2.join();
+
+    std::thread a1(bumpAtomic);
+    std::thread a2(bumpAtomic);
+    a1.join();
+    a2.join();
+
+    std::cout << legacyHits << ' ' << safeHits.load() << '\n';
+}
+```
+
+`legacyHits` would race without a mutex; with `legacyGuard` the result is 2000. `safeHits` increments atomically without a mutex. Both use one variable per process; the difference is access guarantees.
+
+## Pitfalls
+
+- **Data race UB.** Even a "simple" `++` on `int` is not atomic; the compiler may vectorize and break expectations.
+- **Static init fiasco.** Statics across translation units without `inline`/`constexpr` risk ODR and init order bugs.
+- **False sharing.** Different atomics on one cache line hurt performance; padding helps.
+- **const global after init.** Concurrent reads are fine only if publication was synchronized (e.g., after the init thread joins).
+- **DLL boundaries.** On Windows, separate data copies in modules without proper export/import.

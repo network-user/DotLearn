@@ -1,0 +1,78 @@
+---
+id: 1597
+title: "Sharding algorithms"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Sharding algorithms
+
+## In short
+
+Main schemes: range (by key range), hash modulo (even spread, painful rehash when N changes), consistent hashing (minimal remapping on add/remove), lookup table (explicit routing). Choice depends on access patterns and ops tolerance for resharding.
+
+## How to answer in an interview
+
+- Hash for even point lookups.
+- Range for time-series and range scans.
+- Consistent hash for caches and elastic clusters.
+- Honestly: virtual nodes and bounded loads are needed in a production ring.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"hash/fnv"
+	"sort"
+)
+
+type Ring struct {
+	slots []uint32
+}
+
+func (r *Ring) Add(nodeID string) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(nodeID))
+	r.slots = append(r.slots, h.Sum32())
+	sort.Slice(r.slots, func(i, j int) bool { return r.slots[i] < r.slots[j] })
+}
+
+func (r *Ring) Locate(key string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	k := h.Sum32()
+	for _, slot := range r.slots {
+		if k <= slot {
+			return slot
+		}
+	}
+	return r.slots[0]
+}
+
+func main() {
+	var ring Ring
+	ring.Add("shard-1")
+	ring.Add("shard-2")
+	fmt.Println(ring.Locate("user-991"))
+}
+```
+
+The key finds the first slot ≥ hash on the ring. Adding a shard only affects a neighboring segment.
+
+## Pitfalls
+
+**Modulo rehash storm.** Full migration when shard count changes.
+
+**Range hot tail.** Latest dates overload one shard.
+
+**Consistent hash skew.** Too few virtual nodes.
+
+**Lookup table ops burden.** Manual updates are error-prone.
+
+**Cross-shard aggregate queries.** Not solved by the algorithm alone.

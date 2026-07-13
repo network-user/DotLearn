@@ -1,0 +1,60 @@
+---
+id: 1523
+title: "Зачем нужен sync.WaitGroup?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужен sync.WaitGroup?
+
+## Суть
+
+`sync.WaitGroup` это счётчик активных goroutine: `Add` увеличивает, `Done` уменьшает, `Wait` блокирует, пока счётчик не станет 0. Использую, когда main (или coordinator) должен дождаться пакета фоновых задач без channel per task.
+
+## Что ответить на собесе
+
+- Паттерн: `wg.Add(1)` перед `go`, `defer wg.Done()` внутри worker.
+- `Wait` не возвращается, пока счётчик > 0; подходит для fork-join без передачи результатов.
+- Для ошибок комбинирую с `errgroup` или channel, WaitGroup сам ошибки не собирает.
+- Честно оговариваю: `Add` после `Wait` или отрицательный счётчик даёт panic; `Add` должен завершиться до `Wait`.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func fetch(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("fetched", id)
+}
+
+func main() {
+	var wg sync.WaitGroup
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go fetch(i, &wg)
+	}
+
+	wg.Wait()
+	fmt.Println("all fetched")
+}
+```
+
+WaitGroup не передаёт данные между goroutine; только синхронизирует завершение. Результаты кладу в shared structure с mutex, channel или отдельный errgroup.
+
+## Подводные камни
+
+- **Add внутри goroutine после Wait.** Race и panic; считаю задачи до старта или синхронизирую Add отдельно.
+- **Копия WaitGroup.** Передаю только по указателю `*sync.WaitGroup`.
+- **Done без Add.** Счётчик уходит ниже нуля, panic.
+- **Нет отмены.** Wait блокирует бесконечно, если worker завис; нужен context + select.
+- **Смешение с channel close.** Два механизма «всё готово» в одном flow путают читателя кода.

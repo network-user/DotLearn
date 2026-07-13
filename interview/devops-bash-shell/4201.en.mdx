@@ -1,0 +1,52 @@
+---
+id: 4201
+title: "Why put set -e at the top of a script?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why put set -e at the top of a script?
+
+## In short
+
+`set -e` (errexit) exits the script on a non-zero status from any command in a subshell context where errexit is active. The goal is to avoid continuing a deploy after a hidden failure and cascading broken state.
+
+## How to answer in an interview
+
+- I pair it with `set -u` and `pipefail` in CI/CD and install scripts.
+- A pipeline without `pipefail` plus `set -e` can still swallow a mid-pipe error.
+- Expected failures go in `if cmd; then` or conscious `cmd || true`.
+- Honestly: `set -e` is not magic; behavior differs in functions and subshells; I duplicate `$?` checks on critical steps.
+
+## How it works
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "start release"
+tar -xzf artifact.tgz -C /opt/app
+systemctl restart app.service
+echo "release done"
+```
+
+If `tar` fails, `systemctl restart` does not run. In GitLab CI a non-zero script exit marks the job failed. For an optional step:
+
+```bash
+if systemctl is-active --quiet legacy-agent; then
+  systemctl stop legacy-agent
+fi
+```
+
+I can temporarily disable errexit with `set +e` around an experimental block, then restore `set -e`.
+
+## Pitfalls
+
+- **Command in if does not trigger errexit.** False confidence: protected here but failure elsewhere.
+- **`set -e` and `$(cmd)`.** Substitution may not stop the script on older bash without `shopt -s inherit_errexit`.
+- **Pipeline with only `set -e`.** A `grep` error in `cmd | grep x` is ignored without pipefail.
+- **`|| true` everywhere.** Script always green in CI.
+- **No EXIT trap handler.** Partial deploy leaves inconsistent state without rollback.

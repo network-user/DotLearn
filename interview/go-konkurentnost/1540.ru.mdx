@@ -1,0 +1,66 @@
+---
+id: 1540
+title: "Сколько goroutines можно создать на N ядер?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сколько goroutines можно создать на N ядер?
+
+## Суть
+
+Число goroutines не ограничено количеством ядер: можно создать миллионы. Параллельно на CPU одновременно выполняется до GOMAXPROCS (обычно = число ядер) goroutines в CPU-bound фазе; остальные ждут в run queue или блокировке.
+
+## Что ответить на собесе
+
+- Spawn не привязан к cores; лимит задаёт RAM, scheduler overhead и логика приложения.
+- I/O-bound сервис держит goroutine на conn без привязки «одна conn = одно ядро».
+- CPU-bound pool разумно sizing ≈ GOMAXPROCS или workers с semaphore.
+- Честно: миллионы goroutines возможны, но без backpressure это operational риск, не feature.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	fmt.Println("cores:", runtime.NumCPU(), "gomaxprocs:", runtime.GOMAXPROCS(0))
+	const workers = 10_000
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			_ = id * id
+			<-sem
+		}(i)
+	}
+	wg.Wait()
+	fmt.Println("finished", workers)
+}
+```
+
+10k goroutines стартуют мгновенно; semaphore ограничивает одновременный CPU-bound участок до GOMAXPROCS. Без sem все 10k конкурировали бы за те же P.
+
+## Подводные камни
+
+**Утечка goroutine.** Нет лимита от ядер; забытый listener goroutine копится бесконечно.
+
+**GOMAXPROCS=NumCPU не магия.** Container CPU quota может дать меньше effective cores; runtime может не знать лимит cgroup.
+
+**Scheduler latency.** Сотни тысяч runnable G увеличивают tail latency даже на 64 ядрах.
+
+**Memory sum.** 2 KiB stack × 1M goroutines уже гигабайты до heap объектов.
+
+**Сравнение с thread pool.** Thread pool size ≈ cores для CPU; goroutine pool для I/O может быть orders of magnitude больше.

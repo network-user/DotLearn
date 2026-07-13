@@ -1,0 +1,68 @@
+---
+id: 3003
+title: "Бесполезные логи: что QA просит добавить в observability?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Бесполезные логи: что QA просит добавить в observability?
+
+## Суть
+
+Лог «Processing order» без orderId, userId, correlation id не позволяет воспроизвести баг. QA эскалирует observability gap: structured JSON, business ids, error codes, duration, sanitized input snapshot. Acceptance criteria включают log contract для critical flows.
+
+## Что ответить на собесе
+
+- Минимум: timestamp UTC, level, service, trace_id, message, error.code.
+- Business context: orderId, paymentId, не password/card PAN.
+- Structured JSON для Kibana filters, не free text only.
+- Тicket template: «cannot debug without X» с примером желаемой строки.
+- Честно: PII в логах хуже их отсутствия; просим hash/mask.
+
+## Как это работает
+
+Плохо:
+
+```json
+{"msg": "failed"}
+```
+
+Хорошо:
+
+```json
+{
+  "level": "ERROR",
+  "trace_id": "a1b2",
+  "order_id": "ORD-88",
+  "step": "payment_capture",
+  "error_code": "GATEWAY_TIMEOUT",
+  "duration_ms": 3012
+}
+```
+
+Gherkin:
+
+```gherkin
+Feature: Log contract checkout
+
+  Scenario: Failed payment log searchable
+    When checkout fails on staging
+    Then log line contains trace_id matching response header
+    And order_id equals UI displayed order number
+    And no raw card number in message
+
+  Scenario: Missing context rejected in review
+    Given PR removes order_id from error log
+    Then QA blocks until observability checklist met
+```
+
+## Подводные камни
+
+- **Log everything DEBUG in prod.** Cost explosion, PII leak.
+- **String concat logs.** Cannot query json.order_id.
+- **Duplicate logs per retry.** Looks like 5 failures, one timeout.
+- **No log on silent catch.** User error, empty logs.
+- **Different format per service.** Cross-service search fails.

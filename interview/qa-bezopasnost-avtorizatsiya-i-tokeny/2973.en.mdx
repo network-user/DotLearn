@@ -1,0 +1,78 @@
+---
+id: 2973
+title: "Refresh flow: how does QA exercise token renewal?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Refresh flow: how does QA exercise token renewal?
+
+## In short
+
+Refresh flow trades a long-lived refresh token for a new access token (and sometimes a new refresh with rotation). This shrinks the access compromise window and avoids frequent password entry. QA checks positive exchange, revocation, reuse detection, refresh leakage in logs, and cookie vs body transport.
+
+## How to answer in an interview
+
+- After login I get access+refresh; I expire access, one POST `/token` with `grant_type=refresh_token` yields new access.
+- Rotation: old refresh is invalid after a successful exchange; retry with old expects 401 and all sessions revoked.
+- Refresh only over HTTPS; prefer HttpOnly cookie for refresh in browser apps.
+- Honestly: I do not treat refresh in localStorage as best practice; if the product does it, I escalate security review.
+
+## How it works
+
+Refresh request:
+
+```http
+POST /oauth/token HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=rt_8f3k...&client_id=spa
+```
+
+Response:
+
+```json
+{
+  "access_token": "at_new",
+  "expires_in": 900,
+  "refresh_token": "rt_rotated"
+}
+```
+
+Gherkin:
+
+```gherkin
+Feature: OAuth refresh flow
+
+  Scenario: Successful access renewal
+    Given valid refresh rt_valid
+    When POST /oauth/token with grant_type refresh_token
+    Then status is 200
+    And access_token is new
+    And expires_in is greater than 0
+
+  Scenario: Reuse old refresh after rotation
+    Given refresh already used and rt_new issued
+    When POST with rt_old again
+    Then status is 401 invalid_grant
+    And all user sessions revoked
+
+  Scenario: Expired refresh requires login
+    Given refresh exp in the past
+    When POST refresh
+    Then status is 401
+    And SPA redirects to /login
+```
+
+In Network I filter `token`; refresh must not appear in analytics query params.
+
+## Pitfalls
+
+- **Refresh in redirect URL.** Leak via Referer and server logs.
+- **No binding refresh to client_id.** Stolen refresh works from another origin.
+- **Infinite refresh loop on 500.** Client DDoS auth server.
+- **Concurrent tab double refresh.** Race breaks rotation.
+- **Mobile background refresh without network.** Silent fail until foreground.

@@ -1,0 +1,67 @@
+---
+id: 1557
+title: "In select, channel or context: which wins?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# In select, channel or context: which wins?
+
+## In short
+
+When multiple select cases are ready at once the runtime picks one pseudo-randomly. `ctx.Done()` is a normal channel receive; context has no priority over a data channel. If no case is ready, select blocks until one becomes ready, or default runs.
+
+## How to answer in an interview
+
+- Fair pseudo-random among ready cases, not source order FIFO.
+- Context deadline and data chan are equal when both are ready.
+- To prioritize cancel over work use a separate select or check ctx before a blocking recv.
+- Honestly: "context first" is a common interview myth; the right answer is random among ready cases.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	data := make(chan string, 1)
+	data <- "payload"
+
+	for i := 0; i < 5; i++ {
+		select {
+		case msg := <-data:
+			fmt.Println("data:", msg)
+			data = nil
+		case <-ctx.Done():
+			fmt.Println("ctx:", ctx.Err())
+		default:
+			fmt.Println("none ready")
+		}
+	}
+}
+```
+
+First select: buffered data ready, ctx maybe not. If both are ready the winner is pseudo-random. A nil chan case is ignored forever.
+
+## Pitfalls
+
+**Assuming ctx priority.** Cancel may lose to a data case at the same instant.
+
+**Empty select.** Blocks forever.
+
+**select in tight loop without default.** Burns CPU if the outer loop spins.
+
+**Forgot nil chan disable.** After first read nil out or use a close pattern.
+
+**Multiple ready fairness tests.** Flaky tests from random choice; do not assert order.

@@ -1,0 +1,64 @@
+---
+id: 2008
+title: "Как работает CSRF и чем защищают Spring-приложения?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как работает CSRF и чем защищают Spring-приложения?
+
+## Суть
+
+CSRF заставляет браузер жертвы отправить state-changing запрос на сайт, где она уже залогинена. Cookie сессии уходит автоматически, сервер может принять операцию как легитимную. Защита: непредсказуемый токен, SameSite cookies, проверка Origin.
+
+## Что ответить на собесе
+
+- CSRF бьёт по cookie-based session, не по Bearer API с явным заголовком.
+- Для форм: synchronizer token в session + hidden field.
+- `SameSite=Lax/Strict` режет cross-site POST с cookies.
+- State-changing GET не делаю; idempotent GET CSRF не интересует.
+- Честно: SPA на JWT без cookies CSRF не затрагивает, но XSS становится критичнее.
+
+## Как это работает
+
+Сценарий: пользователь залогинен в bank.app, открывает evil.site с авто-submit формы:
+
+```html
+<form action="https://bank.app/transfer" method="POST">
+  <input type="hidden" name="to" value="attacker">
+  <input type="hidden" name="amount" value="10000">
+</form>
+<script>document.forms[0].submit();</script>
+```
+
+Браузер приложит session cookie. Серверная защита в Java:
+
+```java
+@Controller
+public class TransferController {
+    @PostMapping("/transfer")
+    public String transfer(HttpSession session, @RequestParam String csrfToken,
+                           @RequestParam BigDecimal amount) {
+        String expected = (String) session.getAttribute("csrfToken");
+        if (expected == null || !MessageDigest.isEqual(
+                expected.getBytes(UTF_8), csrfToken.getBytes(UTF_8))) {
+            throw new SecurityException("csrf mismatch");
+        }
+        ledgerService.transfer(amount);
+        return "redirect:/done";
+    }
+}
+```
+
+Токен генерируют при рендере формы и кладут в session. Spring Security включает CSRF filter по умолчанию для session apps. Для REST с JWT CSRF отключают, но CORS и XSS hardening обязательны.
+
+## Подводные камни
+
+- **CSRF-токен в cookie без double-submit.** Злоумышленник не прочитает HttpOnly, но может не понадобиться при других дырах.
+- **Referer check как единственная линия.** Privacy режимы режут заголовок.
+- **SameSite=None без Secure.** Cookie утекает по HTTP.
+- **Login CSRF.** Подмена session до входа жертвы реже обсуждают, но возможна.
+- **GraphQL POST без CSRF на cookie auth.** Одна mutation с cookies опасна.

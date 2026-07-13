@@ -1,0 +1,69 @@
+---
+id: 2970
+title: "RBAC: how does QA test role-based access?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# RBAC: how does QA test role-based access?
+
+## In short
+
+Role-Based Access Control assigns permissions to a role and one or more roles to a user. QA checks: positive actions per role, negative attempts (UI, API, direct URL), horizontal escalation between accounts with the same role. Server-side enforcement matters, not only hiding buttons.
+
+## How to answer in an interview
+
+- Matrix of role × permission × endpoint; at minimum admin, manager, viewer plus a custom role from production.
+- Direct API call with a weak-role token: expect 403, not redirect to login.
+- IDOR: user A must not read user B's object with the same viewer role.
+- Honestly: without seed accounts on staging I do not sign off RBAC; I ask DevOps for fixed test users.
+
+## How it works
+
+Sample matrix:
+
+| Role | GET /projects | DELETE /projects/{id} |
+|------|---------------|------------------------|
+| admin | 200 | 204 |
+| manager | 200 | 403 |
+| viewer | 200 read-only | 403 |
+
+Gherkin RBAC:
+
+```gherkin
+Feature: Admin area access by role
+
+  Scenario: Admin sees Users menu and API allows
+    Given user with role admin
+    When GET /api/v1/users
+    Then status is 200
+    And the UI has link "Users"
+
+  Scenario: Viewer cannot delete project via UI or API
+    Given user with role viewer
+    And project_id 42
+    When DELETE /api/v1/projects/42 with viewer token
+    Then status is 403
+    When viewer opens /projects/42
+    Then Delete button is absent or disabled
+    And direct delete POST via DevTools fetch returns 403
+
+  Scenario: Manager cannot assign admin role
+    Given user with role manager
+    When PATCH /api/v1/users/7 role admin
+    Then status is 403
+    And role in DB is unchanged
+```
+
+Checklist: logout/login role change, parallel sessions, SPA cache after permission revoke.
+
+## Pitfalls
+
+- **UI-only protection.** Button hidden, API open in Postman.
+- **Stale role in JWT.** Revoked in DB, token still admin for 15 minutes.
+- **Composite roles.** Union permissions obscure, deny rule missed.
+- **Guest/default role.** Empty role grants extra read.
+- **Staging test admins.** False green, different policy in prod.

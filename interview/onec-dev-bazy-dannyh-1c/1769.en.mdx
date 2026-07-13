@@ -1,0 +1,59 @@
+---
+id: 1769
+title: "How an information register is stored in DBMS tables"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How an information register is stored in DBMS tables
+
+## In short
+
+An information register in SQL is a record table with dimensions, resources, and attributes; a periodic register adds a period or validity interval column. Row uniqueness is defined by dimension combinations and period when applicable.
+
+## How to answer in an interview
+
+- I separate periodic, nonperiodic, and validity-interval registers: the key and `СрезПоследних` query depend on that choice.
+- In an interview I say a write replaces the previous row for the same key in an independent register or adds history in a periodic one.
+- I stress the difference from an accumulation register: there is no receipt/issue, a fact slice is stored.
+- I honestly note that wrong periodicity in metadata breaks as-of-date reports and creates duplicate rows.
+- An index on dimensions and period is critical for `СрезПоследних` at scale.
+
+## How it works
+
+An independent information register keeps one current row per dimension combination. A periodic register writes a new row on each change with a `Period` field, and an as-of slice picks the latest row not after the boundary.
+
+```bsl
+Набор = РегистрыСведений.ЦеныНоменклатуры.СоздатьНаборЗаписей();
+Набор.Отбор.Номенклатура.Установить(НоменклатураСсылка);
+Набор.Отбор.ТипЦен.Установить(ТипЦенРозница);
+Запись = Набор.Добавить();
+Запись.Период = НачалоДня(ТекущаяДатаСеанса());
+Запись.Цена = НоваяЦена;
+Набор.Записать();
+```
+
+In the DBMS this is `_InfoRegN` with `_Period`, dimensions as references, and resources as numbers or strings. The platform unique index prevents two rows with the same key in independent mode.
+
+Slice query:
+
+```bsl
+"ВЫБРАТЬ
+|    Цены.Номенклатура,
+|    Цены.Цена
+|ИЗ
+|    РегистрСведений.ЦеныНоменклатуры.СрезПоследних(&Дата, ) КАК Цены";
+```
+
+A validity-interval register stores `Active` and `PeriodEnd`, which complicates the key but speeds finding the active row on a date without scanning full history.
+
+## Pitfalls
+
+- **Write without a filter in the record set.** You can overwrite other dimensions or get a duplicate key.
+- **Slice without a date parameter.** Returns the wrong state at document time.
+- **Confusing periodic and independent.** Duplicate prices or lost change history.
+- **Reading through objects in a loop.** Slower than a batch `СрезПоследних` query over an item list.
+- **Manual table edits.** Breaks cache and slices until a scheduled job reposts.

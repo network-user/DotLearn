@@ -1,0 +1,51 @@
+---
+id: 4261
+title: "How do SSH keys end up in ~/.ssh?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do SSH keys end up in ~/.ssh?
+
+## In short
+
+Keys appear via `ssh-keygen` (local generation), manual copy, provisioning (cloud-init, Ansible), or a secret from vault in CI. The public key lands on the server in `authorized_keys`; the private key stays on the client with mode 600. `ssh-copy-id` automates pubkey deploy.
+
+## How to answer in an interview
+
+- `ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519` creates the pair.
+- `ssh-copy-id user@host` appends pubkey to remote authorized_keys.
+- Cloud-init `ssh_authorized_keys` on first VM boot.
+- CI: secret mount `~/.ssh/id_ci` before deploy job.
+- Honestly: keys baked into VM image or AMI are an anti-pattern; rotate on every instance.
+
+## How it works
+
+Generate and deploy:
+
+```bash
+install -d -m 700 ~/.ssh
+ssh-keygen -t ed25519 -C "frog@workstation" -f ~/.ssh/id_ed25519 -N ""
+
+ssh-copy-id -i ~/.ssh/id_ed25519.pub deploy@prod-web-01
+ssh -i ~/.ssh/id_ed25519 deploy@prod-web-01 'hostname'
+```
+
+Verify remote permissions:
+
+```bash
+ssh deploy@prod-web-01 'ls -la ~/.ssh && tail -1 ~/.ssh/authorized_keys'
+```
+
+Expected: `.ssh` 700, `authorized_keys` 600, pubkey one line.
+
+## Pitfalls
+
+- **authorized_keys 644 or dir 755.** sshd rejects; subtle lockout after hardening script.
+- **Wrong key offered.** ssh tries many keys; `IdentitiesOnly yes` in config.
+- **Home on NFS root-squash.** authorized_keys not readable; use local home or fix export.
+- **Duplicate pubkey lines.** Same key twice breaks nothing but audit messy.
+- **Private key in ticket/chat.** Rotate immediately; assume compromised.

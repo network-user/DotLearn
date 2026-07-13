@@ -1,0 +1,70 @@
+---
+id: 2090
+title: "ClassLoader uniqueness in the JVM"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# ClassLoader uniqueness in the JVM
+
+## In short
+
+A class is identified by the pair (binary name, defining loader). One loader loads a given name at most once (cached in loader namespace). Delegation model: child asks parent first, enabling shared JDK classes. Different loaders allow duplicate FQNs, enabling plugin isolation and hot redeploy patterns.
+
+## How to answer in an interview
+
+- Loading = find bytes → defineClass → link (verify, prepare, resolve).
+- Bootstrap (null loader ref) loads core JDK classes.
+- Application ClassLoader reads classpath/module path.
+- Custom loader for WAR, OSGi bundle, bytecode generated at runtime.
+- Honestly: duplicate class across loaders breaks naive dependency injection casts.
+
+## How it works
+
+```java
+public final class LoaderUniqueness {
+
+    public static void main(String[] args) throws Exception {
+        Class<?> fromApp = Class.forName("com.acme.api.InvoiceDto");
+        Class<?> fromCustom = new ByteArrayLoader().load("com.acme.api.InvoiceDto");
+
+        System.out.println(fromApp.getClassLoader());
+        System.out.println(fromCustom.getClassLoader());
+        System.out.println(fromApp == fromCustom);
+    }
+}
+
+final class ByteArrayLoader extends ClassLoader {
+
+    Class<?> load(String name) throws ClassNotFoundException {
+        return loadClass(name);
+    }
+
+    @Override
+    protected Class<?> findClass(String name) throws ClassNotFoundException {
+        byte[] bytes = fetchFromDatabase(name);
+        return defineClass(name, bytes, 0, bytes.length);
+    }
+
+    private byte[] fetchFromDatabase(String name) {
+        throw new UnsupportedOperationException("stub");
+    }
+}
+```
+
+`loadClass` checks if already defined in this loader; if not, parent delegation chain, then `findClass`.
+
+Dynamic proxy / Lambda generate classes via `LambdaMetafactory` into special hidden loaders tied to caller.
+
+Hot redeploy: new ClassLoader per deployment version; old loader unreachable → classes collectible (if no static leaks).
+
+## Pitfalls
+
+- **Breaking delegation.** Override loadClass without parent call → split JDK visibility.
+- **ClassCastException across loaders.** Same source, different instances.
+- **Memory leak on redeploy.** Thread or driver holds old class ref.
+- **Module layer vs classic loader.** JPMS adds readability/export rules on top.
+- **Assuming forName always app loader.** TCCL may differ in EE container.

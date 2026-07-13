@@ -1,0 +1,60 @@
+---
+id: 1583
+title: "Send в закрытый channel"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Send в закрытый channel
+
+## Суть
+
+Send после `close(ch)` вызывает panic: `send on closed channel`. Recv из closed chan legal: zero value + ok=false после drain. Close только sender side; idempotent close второй раз тоже panic.
+
+## Что ответить на собесе
+
+- Write closed: panic unless recover.
+- Read closed: drain then (zero, false).
+- Close сигнал «больше данных не будет».
+- Честно: sync.Once или dedicated closer goroutine для broadcast shutdown.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	inbox := make(chan int, 1)
+	inbox <- 42
+	close(inbox)
+
+	v, ok := <-inbox
+	fmt.Println(v, ok)
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("panic:", r)
+		}
+	}()
+	inbox <- 1
+}
+```
+
+Первый recv OK. Send после close panic, recoverable если нужно.
+
+## Подводные камни
+
+**Concurrent close + send.** Race, panic timing nondeterministic.
+
+**Close consumer side.** Protocol violation, subtle bugs.
+
+**Range after partial drain + send attempt.** Writer must stop before close.
+
+**Buffered: send before close OK, after panic.**
+
+**Select send on closed.** Same panic as direct send.

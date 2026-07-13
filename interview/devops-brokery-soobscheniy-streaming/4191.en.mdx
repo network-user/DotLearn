@@ -1,0 +1,50 @@
+---
+id: 4191
+title: "What role did ZooKeeper play in Kafka?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What role did ZooKeeper play in Kafka?
+
+## In short
+
+In classic Kafka clusters ZooKeeper stored metadata: broker lists, partition leader assignment, ACLs, and controller election. From Kafka 3.x metadata moved to KRaft (a Raft quorum inside brokers); ZooKeeper is the legacy path.
+
+## How to answer in an interview
+
+- Ephemeral znodes registered live brokers; losing a node triggered leader failover.
+- The controller broker read ZK and assigned partition leadership.
+- Consumer offsets could live in ZK in older eras; today the standard is the `__consumer_offsets` topic.
+- Honestly: on greenfield 3.5+ I deploy KRaft without ZK; ZK→KRaft migration needs a planned maintenance window.
+
+## How it works
+
+Legacy broker.conf pointed at the ensemble:
+
+```bash
+grep zookeeper.connect /etc/kafka/server.properties
+# zookeeper.connect=zk-1:2181,zk-2:2181,zk-3:2181
+
+echo stat | nc zk-1 2181
+echo ls /brokers/ids | nc zk-1 2181
+```
+
+When broker-2 fails its ephemeral `/brokers/ids/2` vanishes and the controller reassigns partition leaders. KRaft replaces this with a metadata log on a dedicated controller quorum:
+
+```bash
+kafka-metadata.sh --snapshot /var/lib/kraft/metadata.log --print
+```
+
+I watch `UnderReplicatedPartitions` and controller failover latency. In hybrid migration I run dual-mode first, then drop `zookeeper.connect`.
+
+## Pitfalls
+
+- **Undersized ZK ensemble.** Three nodes without dedicated disks cause latency spikes and split-brain risk on network partition.
+- **Old clients on ZK offsets.** After ZK is disabled the consumer group breaks without offset migration.
+- **Session timeout mismatch.** An aggressive timeout causes false-positive broker drops.
+- **No ZK data dir backup.** Losing snapshots without quorum rebuild stops the whole cluster.
+- **Mixed KRaft and ZK versions.** Incompatible Kafka image tags break rolling upgrades.

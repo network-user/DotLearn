@@ -88,9 +88,12 @@ export const loadTopicSessionCards = async (
 
 export const loadInterviewSessionCards = async (
   language: string,
-  filter?: { category?: string; stage?: string },
+  filter?: { category?: string; stage?: string; direction?: string },
 ): Promise<SessionCard[]> => {
   let cards = await loadInterviewCards(language);
+  if (filter?.direction && filter.direction !== 'all') {
+    cards = cards.filter((card) => card.direction === filter.direction);
+  }
   if (filter?.category && filter.category !== 'all') {
     cards = cards.filter((card) => card.category === filter.category);
   }

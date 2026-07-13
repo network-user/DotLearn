@@ -1,0 +1,81 @@
+---
+id: 3456
+title: "Flaky-тесты в JS UI/API автоматизации"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Flaky-тесты в JS UI/API автоматизации
+
+## Суть
+
+Flaky test даёт разный исход на одном и том же коде: зелёный и красный без изменений. В JS стеке причины: гонки async UI, нестабильный staging API, shared state между spec, resource starvation в CI. Лечение: явные ожидания, изоляция данных, стабы, quarantine с метрикой flake rate.
+
+## Что ответить на собесе
+
+- Сначала воспроизвожу 20+ прогонов одного spec (`--repeat-each` в Playwright).
+- Заменяю `sleep` на `expect(locator).toBeVisible()` или polling assertion.
+- API suite перевожу на MSW/nock, UI на mock route или test clock.
+- Каждый тест создаёт уникальный user/session, не reuse id из global hook.
+- Честно: quarantine без тикета и owner превращается в свалку отключенных регрессий.
+
+## Как это работает
+
+Плохой паттерн:
+
+```
+await page.click("#save");
+await page.waitForTimeout(2000);
+await expect(page.locator(".toast")).toBeVisible();
+```
+
+Надёжный:
+
+```
+await page.getByRole("button", { name: "Save" }).click();
+await expect(page.getByRole("status")).toContainText("Saved");
+```
+
+API с явным wait:
+
+```
+await driver.wait(until.elementLocated(By.id("ready")), 10_000);
+```
+
+Метрика flake в pytest отчёте:
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class RunOutcome:
+    passed: int
+    failed: int
+
+
+def flake_rate(outcomes: list[RunOutcome]) -> float:
+    total = sum(o.passed + o.failed for o in outcomes)
+    fails = sum(o.failed for o in outcomes)
+    return 0.0 if total == 0 else fails / total
+
+
+def test_flake_rate_threshold():
+    sample = [RunOutcome(1, 0)] * 19 + [RunOutcome(0, 1)]
+    assert flake_rate(sample) <= 0.1
+```
+
+## Подводные камни
+
+**Retry на уровне CI без fix.** Маскирует продуктовый баг месяцами.
+
+**Параллель workers и один test user.** Коллизия данных даёт random fail.
+
+**Animation и screenshot compare.** Anti-aliasing различается headless vs headed.
+
+**Сетевой stub с race.** Ответ приходит раньше subscribe на route.
+
+**Зависимость от порядка spec.** `test B` падает только после `test A` без cleanup.

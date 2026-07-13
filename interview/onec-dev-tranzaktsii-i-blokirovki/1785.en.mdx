@@ -1,0 +1,55 @@
+---
+id: 1785
+title: "What a transaction is in 1C and why it matters"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What a transaction is in 1C and why it matters
+
+## In short
+
+A transaction groups changes into an atomic block: either all operations commit or all roll back. In 1C transactions provide ACID on document write, posting, batch scheduled jobs, and explicit `НачатьТранзакцию()` calls.
+
+## How to answer in an interview
+
+- I explain ACID in plain terms using a document posted to several registers.
+- In an interview I separate the platform implicit transaction from an explicit one in handler code.
+- I stress the `ЗафиксироватьТранзакцию()` / `ОтменитьТранзакцию()` pair inside `Попытка`.
+- I honestly say nested `НачатьТранзакцию()` does not give independent commits on one connection.
+- I note isolation is implemented jointly by the platform and DBMS.
+
+## How it works
+
+Posting a document must write header, tabular section, and register movements as a whole. The platform opens a transaction for the operation duration.
+
+```bsl
+Процедура ПеренестиОстаткиМеждуСкладами(СкладОткуда, СкладКуда, ТаблицаСтрок) Экспорт
+    НачатьТранзакцию();
+    Попытка
+        СписатьСоСклада(СкладОткуда, ТаблицаСтрок);
+        ОприходоватьНаСклад(СкладКуда, ТаблицаСтрок);
+        ЗафиксироватьТранзакцию();
+    Исключение
+        ОтменитьТранзакцию();
+        ВызватьИсключение;
+    КонецПопытки;
+КонецПроцедуры
+```
+
+Atomicity: if the second call fails, the first write-off rolls back. Consistency: after commit balances on both warehouses match movements.
+
+Isolation: uncommitted movements are invisible to other balance queries depending on DBMS isolation level. Durability: after commit data survives rphost crash (with a healthy DBMS).
+
+An implicit transaction opens on `Документ.Записать()` without explicit `НачатьТранзакцию()`. Explicit is needed when several objects must commit together.
+
+## Pitfalls
+
+- **Commit inside a library procedure.** Caller loses a shared rollback.
+- **Forgotten rollback in Исключение.** Hanging transaction and locks.
+- **Expecting savepoints where there are none.** Classic savepoints are not used by application code in 1C.
+- **Long transaction "for atomicity".** Atomicity achieved, parallelism killed.
+- **Mixing with managed locks.** SQL rollback does not cancel a wrongly set application lock outside the transaction.

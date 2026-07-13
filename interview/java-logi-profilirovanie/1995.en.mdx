@@ -1,0 +1,64 @@
+---
+id: 1995
+title: "How is Logback configuration structured?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How is Logback configuration structured?
+
+## In short
+
+Logback has three layers: Logger (what to log and at which level), Appender (where to write), and Encoder/Layout (how to format). Configuration lives in `logback.xml` or programmatically through `LoggerContext`. Logger name hierarchies inherit levels from parents; additivity controls bubbling to root.
+
+## How to answer in an interview
+
+- I describe the chain: log call → logger level check → appenders → encoder → destination.
+- I mention `logback-spring.xml` and Spring Boot profiles.
+- I show RollingFileAppender with size/time policy.
+- I explain `additivity="false"` to avoid duplicating output to root.
+- I add honestly: an async appender cuts latency, but you can lose the buffer on crash.
+
+## How it works
+
+```xml
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{ISO8601} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/app.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+    </appender>
+
+    <logger name="com.acme.billing" level="DEBUG" additivity="false">
+        <appender-ref ref="FILE"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>
+```
+
+`CONSOLE` writes a human-readable pattern to stdout for k8s. `FILE` rotates by date and size, JSON via LogstashEncoder for ELK. Logger `com.acme.billing` gets DEBUG to file only without duplication through additivity. Root catches the rest of the classpath at INFO. Programmatic config is for embedded or test runtime when XML is unavailable.
+
+## Pitfalls
+
+- **Duplicate appenders.** Child and root both write to the same file.
+- **Synchronous FILE at high RPS.** Blocking I/O in the request thread.
+- **Too broad DEBUG on root.** The whole classpath goes verbose.
+- **Pattern without exception.** `%msg` without `%ex` drops the stack.
+- **Hard-coded file path.** In a container without a volume, logs are lost on restart.

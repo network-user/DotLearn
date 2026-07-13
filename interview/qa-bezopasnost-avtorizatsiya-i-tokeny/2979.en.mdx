@@ -1,0 +1,62 @@
+---
+id: 2979
+title: "HTTPS and TLS: what does QA verify in secure transport?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTPS and TLS: what does QA verify in secure transport?
+
+## In short
+
+HTTPS is HTTP over TLS: channel encryption, server certificate verification, and data integrity. QA checks forced redirect from HTTP, valid certificate chain, HSTS, no mixed content, and TLS version on staging/prod. Without TLS I do not treat login and tokens as "secure".
+
+## How to answer in an interview
+
+- Padlock in the browser is not enough: I check issuer, SAN for hostname, expiry, OCSP stapling on critical stands.
+- Mixed content: HTTPS page must not load active HTTP (scripts, XHR); passive images may warn.
+- HSTS preload protects first visit after list inclusion; without HSTS sslstrip is possible on first HTTP hop.
+- Honestly: self-signed on internal staging is OK only with CA import in test trust store, not "proceed anyway" in regression.
+
+## How it works
+
+Simplified handshake:
+
+```
+ClientHello → ServerHello + Certificate → key exchange → encrypted HTTP
+```
+
+Gherkin:
+
+```gherkin
+Feature: TLS on public endpoints
+
+  Scenario: HTTP redirects to HTTPS
+    When QA GET http://app.example.com/
+    Then response is 301 or 308
+    And Location starts with https://
+
+  Scenario: No mixed active content on login
+    Given page https://app.example.com/login
+    When QA opens Console
+    Then no Mixed Content errors on script and xhr
+
+  Scenario: Expired certificate blocks access
+    Given staging cert expired yesterday
+    When user opens URL
+    Then browser shows certificate error
+    And app does not send password past the warning
+```
+
+Tools: `openssl s_client -connect host:443 -servername host`, SSL Labs on prod by agreement, Charles only with corporate CA.
+
+## Pitfalls
+
+- **TLS termination at CDN.** Origin HTTP inside, redirect forgotten at edge.
+- **Cert on apex, not www.** One hostname fails.
+- **Weak TLS 1.0 on legacy LB.** Banking clients refuse.
+- **Certificate pinning in app.** Staging rotation breaks mobile client.
+- **Only homepage checked.** API subdomain lacks valid cert.

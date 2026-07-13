@@ -1,0 +1,68 @@
+---
+id: 2071
+title: "Kubernetes for QA: what to verify in a container environment?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Kubernetes for QA: what to verify in a container environment?
+
+## In short
+
+Kubernetes (K8s) automates running, scaling, and recovering containerized apps in a cluster. The control plane schedules Pods on nodes, Service provides stable access, and Deployment manages replicas and rolling updates. For manual QA, K8s is an environment where bugs may sit in the image, config, probes, or network policies, not only in feature code.
+
+## How to answer in an interview
+
+- K8s for me is a container orchestrator: Pod is the smallest deploy unit; Service/Ingress expose it externally.
+- On staging I verify not only app behavior but readiness/liveness: a Pod must not take traffic until ready.
+- I test rolling update as "deploy new version without user downtime" plus rollback on failed rollout.
+- Honestly: without kubectl or a dashboard QA relies on CI/CD and DevOps, but knowing Pod/Deployment helps read incidents.
+
+## How it works
+
+A cluster splits into control plane (API server, scheduler, controllers) and worker nodes with kubelet. Manifests declare desired state; controllers reconcile reality to spec.
+
+**Pod** groups one or more containers sharing network and volumes. **Deployment** keeps replica count and updates Pods via RollingUpdate. **Service** provides DNS and load-balances to Pods by label selector even when IPs change. **ConfigMap/Secret** inject config and secrets without rebuilding the image.
+
+QA scenarios often look like this:
+
+```gherkin
+Feature: Web app availability after deploy to Kubernetes
+
+  Background:
+    Given Deployment "storefront" with 3 replicas in namespace staging
+    And Ingress routes host "shop.test" to Service "storefront"
+
+  Scenario: Readiness blocks traffic to an unready Pod
+    Given a new Pod takes longer than 60 seconds to start
+    When the user opens https://shop.test/health
+    Then 200 responses come only from Pods with a successful readinessProbe
+    And Pods without readiness do not receive traffic via Service
+
+  Scenario: Rolling update without breaking sessions
+    When image storefront:v2 is rolled out
+    Then at least 2 replicas stay Ready at all times
+    And the user completes checkout without a 502 error
+```
+
+Manifest fragment QA compares to behavior:
+
+```gherkin
+# Deployment storefront: replicas=3, image tag from CI
+# containerPort 8080, readinessProbe GET /health every 5s
+# livenessProbe GET /live every 10s
+# env from ConfigMap app-config, secrets from Secret db-credentials
+```
+
+During regression I check Pod logs (`kubectl logs`), events (`kubectl describe pod`), and restart counts. If the app "flaps", an aggressive livenessProbe or slow JVM startup is often the cause.
+
+## Pitfalls
+
+- **Docker vs K8s confusion.** Image built locally but cluster uses another tag or pull policy Never on a node without the image.
+- **Config drift.** ConfigMap updated but Pods not restarted: env inside the container is stale while QA tests the "new" UI.
+- **Probes check the wrong thing.** Readiness hits `/`, always 200 while DB is down; traffic goes to a dead instance.
+- **Ingress vs Service.** Tests hit NodePort directly, bypassing TLS and Ingress rules; bug only reproduces "from outside."
+- **Load on minimal replicas.** HPA only in prod; one Pod on staging yields false performance conclusions.

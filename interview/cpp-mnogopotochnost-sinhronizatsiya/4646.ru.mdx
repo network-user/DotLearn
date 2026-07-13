@@ -1,0 +1,60 @@
+---
+id: 4646
+title: "Какие mutex есть в стандартной библиотеке C++?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие mutex есть в стандартной библиотеке C++?
+
+## Суть
+
+Стандарт даёт несколько mutex-типов под разные паттерны доступа: базовый `std::mutex`, рекурсивный, с таймаутом, shared (много читателей / один писатель) и их комбинации. Обёртки RAII (`lock_guard`, `unique_lock`, `shared_lock`, `scoped_lock`) снимают ручной unlock.
+
+## Что ответить на собесе
+
+- `std::mutex` по умолчанию для взаимного исключения.
+- `std::recursive_mutex` если один поток повторно входит в тот же guard (осторожно с дизайном).
+- `std::timed_mutex` / `std::recursive_timed_mutex` для `try_lock_for` / `try_lock_until`.
+- `std::shared_mutex` (C++17) для read/write: `shared_lock` на чтение, `unique_lock` на запись.
+- Честно: начинаю с обычного `mutex`; shared и recursive добавляю только при измеренной нужде.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <shared_mutex>
+
+std::shared_mutex catalogGuard;
+int catalogVersion = 0;
+
+void readCatalog() {
+    std::shared_lock lock(catalogGuard);
+    std::cout << "version " << catalogVersion << '\n';
+}
+
+void publishCatalog(int next) {
+    std::unique_lock lock(catalogGuard);
+    catalogVersion = next;
+}
+
+std::recursive_mutex logStack;
+void logLayer(int depth) {
+    std::lock_guard lock(logStack);
+    if (depth > 0) logLayer(depth - 1);
+}
+```
+
+Несколько `readCatalog` идут параллельно под `shared_lock`. `publishCatalog` эксклюзивен. `recursive_mutex` позволяет `logLayer` реентерабельно захватывать один и тот же mutex.
+
+## Подводные камни
+
+- **shared_mutex дороже.** На малых критических секциях проще один `mutex`.
+- **Writer starvation.** При постоянных readers writer может ждать долго; политика fairness зависит от реализации.
+- **recursive маскирует дизайн.** Глубокая рекурсия с lock усложняет reasoning.
+- **timed без backoff.** `try_lock_for` в tight loop жжёт CPU.
+- **Несовместимые lock типы.** `condition_variable` ждёт только `std::mutex` (не recursive) в классической схеме; для generic есть `condition_variable_any`.

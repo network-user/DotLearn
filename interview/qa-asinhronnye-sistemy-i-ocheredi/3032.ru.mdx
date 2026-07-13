@@ -1,0 +1,63 @@
+---
+id: 3032
+title: "Producer и consumer: в чём разница для тестировщика?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Producer и consumer: в чём разница для тестировщика?
+
+## Суть
+
+Producer создаёт и отправляет событие в брокер; consumer подписывается, читает и выполняет бизнес-логику. Это разные роли, часто разные сервисы и деплои. Баг может быть только на одной стороне: publish без подписчика или consumer падает на валидном сообщении. QA тестирует контракт между ними и независимые сбои каждой стороны.
+
+## Что ответить на собесе
+
+- Producer отвечает за корректный payload, key, headers, idempotency key.
+- Consumer отвечает за ack/nack, retry, side effects, DLQ.
+- Один topic, несколько consumer group в Kafka: каждая группа независима.
+- Ломаю consumer на staging: очередь растёт, producer продолжает принимать API.
+- Честно: исправление только consumer не требует повторного publish старых событий если retention позволяет replay.
+
+## Как это работает
+
+```gherkin
+Feature: Producer vs consumer responsibility
+
+  Scenario: Producer publishes valid event
+    Given billing API emits InvoiceIssued to topic invoices
+    When schema validation passes on publish
+    Then broker acks producer
+    And consumer not required for API 201 response
+
+  Scenario: Consumer failure isolation
+    Given consumer deployment broken
+    When producer keeps sending
+    Then lag grows no producer 500 unless configured fail-fast
+
+  Scenario: Invalid payload caught at consumer
+    Given producer bug sends negative amount
+    When consumer validates
+    Then nack to DLQ producer still got broker ack QA files two-team bug
+```
+
+```gherkin
+Feature: Kafka roles smoke
+
+  Scenario: Round trip
+    Given KafkaProducer to topic smoke.ping
+    When send payload ping-44
+    And KafkaConsumer group qa-smoke reads
+    Then stdout shows received ping-44
+```
+
+## Подводные камни
+
+- **Тестирую только producer REST.** Consumer silent fail.
+- **Одинаковый логин broker для обеих ролей.** Путаю, кто не ack.
+- **Consumer без contract test.** Producer меняет поле, падение в prod.
+- **Ожидаю sync ответ от producer.** Async семантика нарушена в ожиданиях.
+- **Replay забывают после fix consumer.** Старые сообщения не обработаны.

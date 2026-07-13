@@ -1,0 +1,62 @@
+---
+id: 1526
+title: "Какие операции доступны с channel?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие операции доступны с channel?
+
+## Суть
+
+Канал создаю `make(chan T)` или с буфером `make(chan T, n)`. Операции: send `ch <- v`, receive `v := <-ch`, close `close(ch)`, проверка `v, ok := <-ch`, мультиплексирование `select`. Блокировка зависит от буфера и готовности парной goroutine.
+
+## Что ответить на собесе
+
+- Unbuffered channel синхронизирует handoff: send и receive встречаются rendezvous.
+- Buffered send блокируется только при заполненном буфере; receive при пустом.
+- Закрытие: zero value + `ok=false` после drain; send в closed channel panic.
+- Честно добавляю: для сигналов без данных использую `chan struct{}` или `close` как broadcast.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	jobs := make(chan int, 2)
+	done := make(chan struct{})
+
+	jobs <- 1
+	jobs <- 2
+	close(jobs)
+
+	for {
+		select {
+		case v, ok := <-jobs:
+			if !ok {
+				done <- struct{}{}
+				return
+			}
+			fmt.Println(v)
+		case <-done:
+			return
+		}
+	}
+}
+```
+
+`select` выбирает готовую ветку псевдослучайно при нескольких готовых. `default` делает non-blocking попытку.
+
+## Подводные камни
+
+- **Send на nil channel.** Блокируется навсегда.
+- **Receive на nil channel.** Тоже вечная блокировка.
+- **Double close.** Panic; владелец один, обычно producer.
+- **Утечка goroutine.** Send без receive (или наоборот) блокирует навсегда.
+- **Range без close.** `for v := range ch` ждёт close от sender; забытый close висит вечно.

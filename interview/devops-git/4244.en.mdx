@@ -1,0 +1,83 @@
+---
+id: 4244
+title: "What is the core idea of GitOps?"
+category: devops-git
+categoryLabel: "Git"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is the core idea of GitOps?
+
+## In short
+
+GitOps declares desired infrastructure and application state in Git and automatically reconciles the cluster to that state. The repository is the single source of truth: every change goes through commit and review, and a controller (Argo CD, Flux) applies manifests without manual kubectl apply in production.
+
+## How to answer in an interview
+
+- I describe desired state in YAML/Helm/Kustomize in Git; I change prod only via merge to main.
+- A controller in the cluster continuously compares live state with Git and syncs or alerts on drift.
+- Rollback: revert the commit or pin to a previous tag; the controller rolls resources back.
+- CI runs lint/validate; CD performs sync, not "a script over SSH to the server."
+- Honestly: GitOps does not replace secrets management or cluster bootstrap; initial controller install is still outside Git or in a separate repo.
+
+## How it works
+
+Typical Kubernetes cycle:
+
+```bash
+git clone git@github.com:org/platform-config.git
+cd platform-config/apps/payments
+
+cat > deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: billing-api
+  template:
+    metadata:
+      labels:
+        app: billing-api
+    spec:
+      containers:
+      - name: api
+        image: registry.example/billing:2.4.1
+        ports:
+        - containerPort: 8080
+EOF
+
+git add deployment.yaml
+git commit -m "feat(payments): bump billing-api to 2.4.1"
+git push origin main
+```
+
+An Argo CD Application watches `platform-config`; after push, sync brings up three replicas with the new image. Drift (manual scale or edit) shows as OutOfSync.
+
+<figure aria-label="GitOps loop">
+<svg viewBox="0 0 320 80" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="20" width="70" height="40" rx="4"/>
+  <text x="39" y="45" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">Git</text>
+  <path d="M74 40h40"/>
+  <polygon points="114,40 108,36 108,44" fill="currentColor"/>
+  <rect x="118" y="20" width="80" height="40" rx="4"/>
+  <text x="158" y="45" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">Controller</text>
+  <path d="M198 40h40"/>
+  <polygon points="238,40 232,36 232,44" fill="currentColor"/>
+  <rect x="242" y="20" width="74" height="40" rx="4"/>
+  <text x="279" y="45" text-anchor="middle" font-size="11" fill="currentColor" stroke="none">Cluster</text>
+</svg>
+</figure>
+
+## Pitfalls
+
+- **Secret leakage.** Plain passwords in Git YAML are unacceptable; I use SOPS, External Secrets, or sealed-secrets.
+- **Bootstrap chicken-and-egg.** Argo CD itself must be installed before Git becomes the source of truth.
+- **Drift tolerance.** Auto-sync without policy can overwrite a legitimate emergency patch; I configure sync windows and RBAC.
+- **Monorepo vs multirepo.** One repo for everything simplifies review but widens blast radius; I split by domain deliberately.
+- **Helm values drift.** Chart version in Git with values only on the server breaks reproducibility; all values live in the repo.

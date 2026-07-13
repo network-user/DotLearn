@@ -1,0 +1,66 @@
+---
+id: 2986
+title: "Runtime exceptions: how does QA test error handling?"
+category: qa-osnovy-programmirovaniya-dlya-qa
+categoryLabel: "Основы программирования для QA"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Runtime exceptions: how does QA test error handling?
+
+## In short
+
+An exception breaks normal execution when an invariant fails: division by zero, out-of-range index, I/O failure. A handler (try/catch, middleware) turns a crash into a controlled response. QA checks HTTP status, error body, logs, and no stack trace exposed externally.
+
+## How to answer in an interview
+
+- I distinguish compile-time errors (won't start) from runtime exceptions (fail on prod path).
+- Negative testing: invalid input, null, boundary values, simulated timeout.
+- I expect structured error `{ code, message }`, not 500 with SQL in the body.
+- Server logs contain stack; client gets a generic message.
+- Honestly: swallowing exceptions without logs hides bugs; I check observability, not only UI toast.
+
+## How it works
+
+Chain in a web API:
+
+1. Controller calls service
+2. Service throws `NotFoundError`
+3. Global exception filter maps to `404` JSON
+4. `finally`/cleanup closes connection
+
+Gherkin:
+
+```gherkin
+Feature: Runtime exceptions in API
+
+  Scenario: Division by zero does not return 500 externally
+    Given endpoint /api/stats/ratio accepts denominator
+    When GET /api/stats/ratio?denominator=0
+    Then status is 400
+    And body.code equals INVALID_ARGUMENT
+    And body does not contain stack trace
+
+  Scenario: Index out of range on empty collection
+    When GET /api/items/999999
+    Then status is 404
+    And message is user-friendly
+
+  Scenario: Upstream timeout handled gracefully
+    Given mock payment gateway delay 30s
+    When POST /api/checkout
+    Then status is 504 or 503 with retry hint
+    And correlation id is present in response and logs
+```
+
+In UI an exception may become a React error boundary: white screen vs fallback page. QA triggers via broken API mock or feature flag.
+
+## Pitfalls
+
+- **Generic 500 for all exceptions.** Client cannot tell retryable from fatal.
+- **Stack trace in production JSON.** Information disclosure.
+- **Silent catch.** User sees success, data not saved.
+- **Exception type mismatch.** Broad `Exception` caught, `OutOfMemory` swallowed.
+- **Flaky only under load.** Race not reproduced in single-thread manual test.

@@ -1,0 +1,65 @@
+---
+id: 2583
+title: "Cookie в веб-тестировании: что хранится в браузере и как проверить?"
+category: qa-web-testirovanie-devtools-i-hranilischa
+categoryLabel: "Web-тестирование, DevTools и хранилища"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Cookie в веб-тестировании: что хранится в браузере и как проверить?
+
+## Суть
+
+Cookie это небольшая пара имя значение, которую сервер задаёт через заголовок Set-Cookie, а браузер отправляет обратно в Cookie при последующих запросах к подходящему домену и path. Используются для сессии, локали, A/B, иногда для трекинга. QA проверяет атрибуты (Secure, HttpOnly, SameSite, Expires/Max-Age), область видимости и поведение после logout.
+
+## Что ответить на собесе
+
+- Session cookie живёт до закрытия браузера (без Expires); persistent имеет Max-Age или Expires и переживает перезапуск.
+- HttpOnly закрывает доступ из document.cookie (защита от кражи через XSS); Secure отправляет cookie только по HTTPS.
+- SameSite=Lax/Strict ограничивает cross-site запросы; для OAuth и embedded iframe это частый источник багов.
+- Честно: cookie не замена серверной авторизации; подмена значения в DevTools должна давать 401, а не эскалацию прав.
+
+## Как это работает
+
+Сервер отвечает:
+
+```
+Set-Cookie: sid=abc123; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+```
+
+Браузер на следующий GET `/account` добавит `Cookie: sid=abc123`, если домен и path совпадают.
+
+Gherkin для auth и logout:
+
+```gherkin
+Feature: Cookie сессии и безопасность
+
+  Scenario: После логина выставляется session cookie с защитными флагами
+    When пользователь успешно логинится с валидными credentials
+    Then ответ содержит Set-Cookie "sid"
+    And cookie "sid" имеет флаги HttpOnly и Secure
+    And SameSite равен Lax или Strict
+
+  Scenario: Logout инвалидирует cookie на клиенте
+    Given пользователь авторизован с cookie "sid"
+    When пользователь нажимает Logout
+    Then cookie "sid" удалена или Max-Age равен 0
+    And запрос к "/account" без нового логина возвращает 401 или редирект на login
+
+  Scenario: Подмена cookie не даёт чужую сессию
+    Given пользователь A авторизован
+    When в DevTools значение sid заменено на случайную строку
+    Then запрос к защищённому API возвращает 401
+```
+
+В Application → Cookies DevTools видны domain, path, size, expiration. Для регресса GDPR/consent проверяю, что marketing cookie не ставится до согласия, а essential cookie остаётся.
+
+## Подводные камни
+
+- **Cookie на неправильном domain.** `.example.com` утекает на все поддомены, включая staging.
+- **Отсутствие Secure на prod.** Session перехватывается на публичном Wi‑Fi при downgrade.
+- **SameSite=None без Secure.** Браузер отбрасывает cookie; SSO «работает в Chrome, падает в Safari».
+- **Огромные cookie.** Лимит ~4 KB на cookie и лимит заголовков; 413 на API без явной ошибки в UI.
+- **Тест только через document.cookie.** HttpOnly cookie не видны JS; нужен DevTools или перехват сети.

@@ -1,0 +1,99 @@
+---
+id: 1534
+title: "Какие режимы есть у sync.Mutex?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие режимы есть у sync.Mutex?
+
+## Суть
+
+Внутри `sync.Mutex` runtime переключает normal и starvation mode. В normal новый претендент может обойти долго ждущую горутину; в starvation долго ожидающий получает приоритет, чтобы исключить голодание. `sync.RWMutex` это отдельный тип с блокировками на чтение и запись, а не «режим» обычного Mutex.
+
+## Что ответить на собесе
+
+- Normal mode быстрее при низкой конкуренции, starvation mode включается после длительного ожидания (~1 ms).
+- Для read-heavy сценариев беру `RWMutex`, для коротких критических секций достаточно `Mutex`.
+- Повторный `Lock` из той же горутины без `Unlock` приведёт к deadlock; Mutex не reentrant.
+- Честно: переключение режимов внутреннее, в коде его не задаёшь, но понимание помогает объяснить latency spikes.
+
+## Как это работает
+
+`sync.Mutex` хранит состояние в atomic word: бит locked, счётчик ожидающих, флаг starvation. При unlock в starvation mode mutex может передать владение напрямую первому в очереди waiter через handoff, минуя гонку новых Lock.
+
+`sync.RWMutex` решает другую задачу: много параллельных `RLock`, один эксклюзивный `Lock` на запись.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+type SafeCounter struct {
+	mu sync.Mutex
+	n  int64
+}
+
+func (c *SafeCounter) Inc() {
+	c.mu.Lock()
+	atomic.AddInt64(&c.n, 1)
+	c.mu.Unlock()
+}
+
+func (c *SafeCounter) Snapshot() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+type ConfigStore struct {
+	rw   sync.RWMutex
+	data map[string]string
+}
+
+func (s *ConfigStore) Get(key string) (string, bool) {
+	s.rw.RLock()
+	defer s.rw.RUnlock()
+	v, ok := s.data[key]
+	return v, ok
+}
+
+func (s *ConfigStore) Set(key, val string) {
+	s.rw.Lock()
+	defer s.rw.Unlock()
+	s.data[key] = val
+}
+
+func main() {
+	var counter SafeCounter
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			counter.Inc()
+		}()
+	}
+	wg.Wait()
+	fmt.Println("count:", counter.Snapshot())
+}
+```
+
+## Подводные камни
+
+**Путаница с RWMutex.** Это не режим Mutex, а отдельная структура; смешивать термины на собесе выглядит как пробел в sync-пакете.
+
+**RWMutex при частых записях.** Writer блокирует всех readers; при write-heavy нагрузке RWMutex может проигрывать простому Mutex.
+
+**Starvation mode и latency.** Редкие, но заметные паузы у конкурирующих Lock возможны при переключении режимов; профилировщик mutex contention помогает отличить от других узких мест.
+
+**Copy Mutex.** Mutex нельзя копировать после первого использования; храни его по указателю или встраивай в struct без value-copy.
+
+**Unlock не той горутины.** Вызов Unlock из другой горутины даёт runtime error; это не reentrant lock как в Java.

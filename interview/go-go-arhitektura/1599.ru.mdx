@@ -1,0 +1,59 @@
+---
+id: 1599
+title: "Orchestration vs choreography Saga"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Orchestration vs choreography Saga
+
+## Суть
+
+Saga координирует distributed transaction через local transactions + compensating actions. Orchestration: central coordinator commands steps and rollbacks. Choreography: services react to events без central brain. Orchestration проще debug и explicit flow; choreography looser coupling, harder global view.
+
+## Что ответить на собесе
+
+- Orchestration проще стартовать: один workflow engine, compensations listed.
+- Choreography масштабируется органически, но tracing сложнее.
+- Оба требуют idempotent handlers и outbox/inbox.
+- Честно: orchestration SPOF mitigated репликацией coordinator; choreography needs schema registry.
+
+## Как это работает
+
+```go
+type Saga struct {
+	forward  []func() error
+	rollback []func() error
+}
+
+func (s *Saga) Run() error {
+	done := 0
+	for i, step := range s.forward {
+		if err := step(); err != nil {
+			for j := done - 1; j >= 0; j-- {
+				_ = s.rollback[j]()
+			}
+			return err
+		}
+		done = i + 1
+	}
+	return nil
+}
+```
+
+Coordinator runs forward; on error runs rollback in reverse order. Choreography variant: each service publishes `PaymentFailed` and peers subscribe to compensate.
+
+## Подводные камни
+
+**Missing compensation idempotency.** Double refund.
+
+**Orchestrator state not durable.** Crash mid-saga inconsistent.
+
+**Choreography cyclic events.** Infinite loop.
+
+**Sync saga over HTTP chain.** Timeouts break partial state.
+
+**User sees success before async steps finish.** UX vs consistency tradeoff.

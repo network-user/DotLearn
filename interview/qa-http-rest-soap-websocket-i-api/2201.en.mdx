@@ -1,0 +1,71 @@
+---
+id: 2201
+title: "REST vs Kafka API: when is synchronous HTTP enough and when do you need event streams?"
+category: qa-http-rest-soap-websocket-i-api
+categoryLabel: "HTTP, REST, SOAP, WebSocket и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# REST vs Kafka API: when is synchronous HTTP enough and when do you need event streams?
+
+## In short
+
+A REST API follows a request-response pattern over HTTP: the client hits a resource URL and gets an immediate result. A Kafka API deals with message streams in pub/sub: producers write to topics and consumers read asynchronously. For QA these are different risk sets: HTTP contract checks versus ordering, offsets, and event delivery.
+
+## How to answer in an interview
+
+- I test REST with CRUD flows, status codes, JSON schema, and PUT/DELETE idempotency; Kafka with topics, partitions, consumer groups, and lag.
+- REST fits when the user needs an instant answer (forms, catalogs); Kafka when events can be processed later (logs, analytics, integrations).
+- In hybrid systems REST often accepts a command while Kafka carries the outcome; I test end-to-end and data consistency.
+- Honestly: "Kafka API" in interviews usually means producer/consumer client APIs, not a REST gateway to the broker; I clarify what we are actually testing.
+
+## How it works
+
+**REST.** The client sends an HTTP request to `/users`; the server responds with a body and status. The server does not hold session state between calls: each request is self-contained. Responses can be cached via headers. Typical QA smoke:
+
+```gherkin
+Feature: REST user catalog
+
+  Scenario: GET returns a list
+    When the client sends GET "/users" with Accept application/json
+    Then the response status is 200
+    And the body contains a users array
+
+  Scenario: POST creates a resource
+    When the client sends POST "/users" with valid JSON
+    Then the response status is 201
+    And the Location header points to the new id
+```
+
+**Kafka.** A producer publishes records to topic `user-events`; brokers store them in partitions with offsets. Consumers in one group split partitions: each partition is handled by one instance at a time. Integration regression scenario:
+
+```gherkin
+Feature: Activity event publishing
+
+  Scenario: Login event lands in the topic and is consumed
+    Given topic "user-events" with 3 partitions
+    And a consumer in group "analytics-workers" subscribed to the topic
+    When the producer sends record key "acct-7" value "login"
+    Then the consumer receives a message with the same value
+    And the offset commits after successful processing
+    And a resend with the same key goes to the same partition
+```
+
+Comparison for a test plan:
+
+| Criterion | REST | Kafka |
+|----------|------|-------|
+| Model | synchronous request | asynchronous stream |
+| Failure visibility | HTTP status immediately | lag, DLQ, retries |
+| Scale | horizontal behind a load balancer | partitions + consumer group |
+| Typical bug | wrong status/schema | duplicates, broken order per key |
+
+## Pitfalls
+
+- **"Which is faster" comparisons.** Kafka wins on event volume; REST is easier to debug in Charles/Postman; mixing metrics is misleading.
+- **REST on top of Kafka without contract checks.** HTTP 200 while the write to the topic failed hides the failure; you need offset and dead-letter checks.
+- **Ignoring order within a partition.** User events without a key may arrive out of order; "order before payment" regressions break.
+- **Testing REST happy path only.** Async downstream is uncovered: order created but the consumer never sent email.
+- **Confusing Kafka REST Proxy with the product REST API.** Different endpoints, auth, and semantics; keep separate checklists.

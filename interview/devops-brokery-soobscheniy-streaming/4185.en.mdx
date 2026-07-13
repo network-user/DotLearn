@@ -1,0 +1,52 @@
+---
+id: 4185
+title: "How do you expose a Kafka cluster to external clients?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you expose a Kafka cluster to external clients?
+
+## In short
+
+Clients connect to addresses from `advertised.listeners`, not internal pod IPs. You need an external listener (SASL_SSL), DNS/LB per broker or correct bootstrap metadata, and firewall/security groups limited to required CIDRs.
+
+## How to answer in an interview
+
+- I separate `listeners` (bind) and `advertised.listeners` (what clients get in metadata).
+- On K8s: Strimzi/operator external route, LoadBalancer, or NodePort plus per-broker DNS.
+- TLS plus SASL (SCRAM/OAuth) on public endpoints; PLAINTEXT is lab only.
+- I add honestly: I do not expose Kafka to the internet without ACL and auth; prefer VPN/private link or mirror to edge.
+
+## How it works
+
+Broker `server.properties` snippet:
+
+```bash
+cat >> /opt/kafka/config/server.properties <<'EOF'
+listeners=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094
+advertised.listeners=INTERNAL://kafka-0.internal:9092,EXTERNAL://broker0.kafka.example.com:9094
+listener.security.protocol.map=INTERNAL:PLAINTEXT,EXTERNAL:SASL_SSL
+inter.broker.listener.name=INTERNAL
+EOF
+```
+
+External client:
+
+```bash
+kafka-topics.sh --bootstrap-server broker0.kafka.example.com:9094 \
+  --command-config client.properties --list
+```
+
+`client.properties` sets `security.protocol=SASL_SSL`, truststore CA, credentials. Metadata returns external hostnames; wrong advertised addresses send clients to unreachable internal IPs after first connect.
+
+## Pitfalls
+
+- **Single LB for multi-broker.** Need broker-specific DNS or correct per-id advertised names.
+- **Wrong inter-broker listener.** External changes break replication if brokers talk on the wrong listener.
+- **Zookeeper/KRaft exposure.** Open broker ports only, not controller/quorum ports.
+- **No ACL.** Any authenticated user reads all topics; set `allow.everyone.if.no.acl.found=false`.
+- **NAT metadata issues.** Idle disconnects; tune `connections.max.idle.ms` and keepalive.

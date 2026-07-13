@@ -1,0 +1,79 @@
+---
+id: 4661
+title: "Can you kill a std::thread from its creator?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can you kill a std::thread from its creator?
+
+## In short
+
+The C++ standard offers no safe way to forcibly terminate another `std::thread`. The worker must exit on a cooperative signal, or the whole process ends via `std::terminate` when a joinable thread is destroyed.
+
+## How to answer in an interview
+
+- There is no `thread.kill()` in the standard library.
+- Correct paths: `join()` after finish, `detach()` when lifetime does not matter, or a flag/`std::stop_token` for graceful stop.
+- `std::jthread` (C++20) takes a stop token and auto-joins in its destructor.
+- Platform `pthread_cancel`/`TerminateThread` is not used in portable production C++.
+- Honestly: forced kill breaks RAII invariants and can leave mutexes locked; cooperative shutdown is almost always the right answer.
+
+## How it works
+
+A thread runs until its callable returns. The parent only manages the handle lifetime through `join`/`detach`.
+
+```cpp
+#include <atomic>
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+std::atomic<bool> shutdown{false};
+
+void pump() {
+    while (!shutdown.load(std::memory_order_relaxed)) {
+        std::cout << "working...\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+    std::cout << "worker exits cleanly\n";
+}
+
+int main() {
+    std::thread worker(pump);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    shutdown.store(true, std::memory_order_relaxed);
+    worker.join();
+}
+```
+
+C++20 with `std::jthread`:
+
+```cpp
+#include <stop_token>
+#include <thread>
+
+void pump_stoppable(std::stop_token token) {
+    while (!token.stop_requested()) {
+        // work unit
+    }
+}
+
+void demo() {
+    std::jthread worker(pump_stoppable);
+    worker.request_stop();
+}
+```
+
+Destroying a joinable `std::thread` without `join`/`detach` calls `std::terminate()`. That is not killing the worker; it aborts the entire process.
+
+## Pitfalls
+
+- **terminate on destructor.** Forgetting join on scope exit kills the program.
+- **Detached orphan.** `detach()` without lifetime control causes use-after-free if the worker touches destroyed objects.
+- **Blocking join.** A worker stuck in a syscall never sees the atomic flag; you need interruptible I/O or an architectural timeout policy.
+- **Locked mutex.** Forced kill (if it existed) would leave mutexes locked and deadlock other threads.
+- **Cancellation points.** Even POSIX cancel is safe only at documented cancellation points; that is not part of the C++ standard model.

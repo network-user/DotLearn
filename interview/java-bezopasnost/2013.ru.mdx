@@ -1,0 +1,59 @@
+---
+id: 2013
+title: "Что делает Certificate Authority в PKI?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает Certificate Authority в PKI?
+
+## Суть
+
+Certificate Authority (CA) подписывает X.509-сертификаты, связывая публичный ключ с идентичностью домена или организации. Браузеры и JVM доверяют заранее загруженным root CA; цепочка от leaf до root доказывает, что ключ принадлежит заявленному владельцу.
+
+## Что ответить на собесе
+
+- CA = доверенный издатель в модели PKI; private key CA подписывает intermediate/leaf.
+- DV проверяет контроль DNS, OV/EV добавляют организацию (EV сегодня редок).
+- Java `cacerts` содержит root; corporate CA импортируют для internal TLS.
+- Certificate Transparency логи фиксируют выданные cert для обнаружения mis-issue.
+- Честно: компромисс root CA ломает доверие ко всей ветке; поэтому offline root + online intermediate.
+
+## Как это работает
+
+Запрос сертификата:
+
+1. Админ генерирует key pair, формирует CSR с CN/SAN.
+2. CA проверяет домен (HTTP-01, DNS-01 для ACME).
+3. CA подписывает leaf своим intermediate key.
+4. Сервер отдаёт клиенту chain leaf + intermediate; root уже в trust store.
+
+Проверка cert в Java:
+
+```java
+CertificateFactory factory = CertificateFactory.getInstance("X.509");
+X509Certificate leaf = (X509Certificate) factory.generateCertificate(
+    new FileInputStream("/etc/ssl/certs/shop.example.crt"));
+
+System.out.println("Subject: " + leaf.getSubjectX500Principal());
+System.out.println("Issuer: " + leaf.getIssuerX500Principal());
+leaf.checkValidity();
+
+TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+tmf.init((KeyStore) null);
+X509TrustManager trust = (X509TrustManager) tmf.getTrustManagers()[0];
+trust.checkServerTrusted(new X509Certificate[] { leaf }, "RSA");
+```
+
+`checkServerTrusted` строит path до root из `cacerts`. Let's Encrypt ISRG Root X1 уже там; корпоративный CA добавляют через `keytool -importcert`. OCSP/CRL сообщают об отозванных cert до expiry.
+
+## Подводные камни
+
+- **Private CA без распространения trust.** Клиенты падают с `PKIX path building failed`.
+- **Слишком долгий validity.** Годовой cert без auto-renew = outage.
+- **Wildcard на всё подряд.** Один compromised key покрывает сотни host.
+- **Игнор revocation.** Просроченный CRL check пропускает украденный cert.
+- **Self-signed в prod без pinning.** Пользователи учатся жать «продолжить anyway».

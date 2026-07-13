@@ -1,0 +1,60 @@
+---
+id: 4639
+title: "Зачем нужен мьютекс?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужен мьютекс?
+
+## Суть
+
+Мьютекс (mutual exclusion) гарантирует, что только один поток в момент времени входит в критическую секцию с общим ресурсом. Это убирает data race при чтении/записи разделяемого состояния и сохраняет инварианты структур данных.
+
+## Что ответить на собесе
+
+- Оборачиваю доступ к общим полям, контейнерам, файлам и устройствами в критическую секцию под mutex.
+- Предпочитаю RAII: `std::lock_guard`, `std::scoped_lock`, `std::unique_lock` для condition_variable.
+- Для read-heavy сценариев рассматриваю `std::shared_mutex` вместо одного `std::mutex`.
+- Минимизирую время удержания lock: только работа с инвариантом, без I/O и sleep внутри.
+- Честно: mutex не спасает от логических гонок (check-then-act без атомарности условия); нужна правильная схема.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate;
+int balance = 0;
+
+void deposit(int amount) {
+    for (int i = 0; i < 500; ++i) {
+        std::lock_guard lock(gate);
+        balance += amount;
+    }
+}
+
+int main() {
+    std::thread credit(deposit, 1);
+    std::thread debit(deposit, -1);
+    credit.join();
+    debit.join();
+    std::cout << balance << '\n';
+    return 0;
+}
+```
+
+Каждый инкремент проходит под `gate`: второй поток ждёт, пока первый выйдет из scope и освободит mutex. Без него итог `balance` был бы непредсказуем. `lock_guard` гарантирует unlock при исключении.
+
+## Подводные камни
+
+- **Deadlock.** Два mutex в разном порядке в разных потоках; лечение: фиксированный порядок, `std::scoped_lock(m1, m2)`.
+- **Долгий lock.** Блокировка на сеть или диск сериализует всё и убивает throughput.
+- **Рекурсия.** Обычный `std::mutex` повторно в том же потоке UB; нужен `recursive_mutex`.
+- **Забытый join + detach.** Mutex не заменяет join; гонка при выходе из main с живыми потоками остаётся.
+- **Spurious performance.** Слишком грубый один mutex на весь кэш; иногда шардирование или atomics точечно.

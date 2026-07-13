@@ -1,0 +1,80 @@
+---
+id: 1472
+title: "Is map key order stable across repeated range loops?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Is map key order stable across repeated range loops?
+
+## In short
+
+No. The Go spec does not guarantee map iteration order; it may differ between two `range` loops in one run and will likely change across runs or after grow/delete.
+
+## How to answer in an interview
+
+- I answer clearly: iteration order is intentionally nondeterministic (iteration seed was randomized to mitigate hash DoS).
+- For stable order I collect keys into a slice, sort, then read the map by key.
+- I clarify: even without mutating the map, a second `range` may emit a different order.
+- I add honestly: relying on "accidentally stable" order in tests is risky; tests should compare multisets, not println sequence.
+
+## How it works
+
+A map is a hash table. `for k, v := range m` walks buckets in runtime-internal order. On grow, delete, or even when initializing the same key set, traversal order is not part of the language contract.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sort"
+)
+
+func randomOrder(m map[string]int) {
+	for k, v := range m {
+		fmt.Printf("%s=%d ", k, v)
+	}
+	fmt.Println()
+}
+
+func sortedOrder(m map[string]int) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Printf("%s=%d ", k, m[k])
+	}
+	fmt.Println()
+}
+
+func main() {
+	scores := map[string]int{
+		"alice": 10,
+		"bob":   20,
+		"carol": 15,
+	}
+	fmt.Println("pass 1")
+	randomOrder(scores)
+	fmt.Println("pass 2")
+	randomOrder(scores)
+	fmt.Println("sorted")
+	sortedOrder(scores)
+}
+```
+
+Two back-to-back `randomOrder` calls may print lines in different orders. `sortedOrder` yields reproducible output for reports and tests.
+
+If insertion order matters, use a slice of pairs `[]struct{K,V}` or another structure instead of relying on map order.
+
+## Pitfalls
+
+- **Business logic depending on order.** Bugs show up only in production on another architecture.
+- **Golden-file tests from range.** Flaky CI when Go version changes.
+- **Delete during range.** Allowed, but skip/revisit behavior does not imply stable order.
+- **JSON map serialization.** `encoding/json` sorts keys for stable output; that is not range order.
+- **Confusion with slice.** Slices keep order; maps do not.

@@ -1,0 +1,56 @@
+---
+id: 1578
+title: "Обязателен ли размер буфера при make(chan)"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Обязателен ли размер буфера при make(chan)
+
+## Суть
+
+Второй аргумент `make` опционален. Без него cap=0: unbuffered channel, rendezvous sync. С положительным cap: buffered, send не блокирует пока len < cap.
+
+## Что ответить на собесе
+
+- `make(chan T)` и `make(chan T, 0)` эквивалентны: синхронная handoff.
+- Buffer > 0 decouples producer/consumer на N элементов.
+- Nil chan без make блокирует навсегда (отдельный кейс).
+- Честно: unbuffered проще reasoning, buffered нужен для throughput и сглаживания bursts.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	syncCh := make(chan string)
+	bufCh := make(chan string, 2)
+
+	go func() { syncCh <- "ping" }()
+	fmt.Println(<-syncCh)
+
+	bufCh <- "a"
+	bufCh <- "b"
+	fmt.Println(<-bufCh, <-bufCh)
+}
+```
+
+Unbuffered: sender и receiver встречаются на одной операции. Buffered: два send без goroutine-receiver, пока cap не исчерпан.
+
+## Подводные камни
+
+**Путать zero value chan и make.** `var c chan int` nil, не unbuffered.
+
+**Buffer=1 «на всякий случай».** Может скрыть deadlock design.
+
+**Range без close на unbuffered.** Reader ждёт writer forever.
+
+**Большой buffer + slow consumer.** OOM по элементам в chan.
+
+**Directional chan type в API.** `<-chan` vs `chan<-` не меняет buffer semantics.

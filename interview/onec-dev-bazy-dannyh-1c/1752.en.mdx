@@ -1,0 +1,80 @@
+---
+id: 1752
+title: "What SQL locks appear when 1C runs and why they matter"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What SQL locks appear when 1C runs and why they matter
+
+## In short
+
+When several 1C sessions write to the same database at once, the DBMS places locks on rows, pages, or entire tables. This is how transactions stay isolated: parallel operations cannot corrupt the same data and accounting stays consistent.
+
+## How to answer in an interview
+
+- In an interview I separate locks by granularity: row, data page, whole table; the smaller the object, the fewer cross-session waits.
+- In typical 1C workloads I most often see row locks on UPDATE and INSERT into registers and tabular sections; bulk work can escalate a lock to the page level.
+- A table lock shows up during DDL, large rebuilds, or when the optimizer decides row-level locking is more expensive than a full scan.
+- I am honest that there is no perfect scheme: aggressive locking protects data but increases timeouts and posting hangs for users.
+- For diagnosis I inspect active transactions in the DBMS, how long locks are held, and correlate that with posting code and the isolation level.
+
+## How it works
+
+The 1C platform turns document writes, register movements, and background jobs into SQL operations. Every transaction opened via `НачатьТранзакцию()` or implicitly during posting gets exclusive or shared access to the affected resources.
+
+A **row lock** pins a single record. Two sessions can update different rows in the same accumulation register table in parallel, and the DBMS will not let them overwrite the same position.
+
+A **page lock** covers a table fragment (usually 8 KB in MS SQL). It appears when many adjacent rows on one page are updated in sequence, or when the engine escalates fine locks to save memory on lock bookkeeping.
+
+A **table lock** blocks any competing change to the object. In 1C production this is rare for DML but possible during restructuring, index rebuilds, or heavy batch recalculation.
+
+A typical fragment that creates row locks during posting:
+
+```bsl
+НачатьТранзакцию();
+Попытка
+    НаборЗаписей = РегистрыНакопления.ОстаткиТоваров.СоздатьНаборЗаписей();
+    НаборЗаписей.Отбор.Склад.Установить(СкладОтгрузки);
+    НаборЗаписей.Прочитать();
+
+    Движение = НаборЗаписей.Добавить();
+    Движение.ВидДвижения = ВидДвиженияНакопления.Расход;
+    Движение.Номенклатура = СтрокаТаблицы.Номенклатура;
+    Движение.Количество = СтрокаТаблицы.Количество;
+
+    НаборЗаписей.Записать();
+    ЗафиксироватьТранзакцию();
+Исключение
+    ОтменитьТранзакцию();
+    ВызватьИсключение;
+КонецПопытки;
+```
+
+At the DBMS level each set record becomes an INSERT/UPDATE with the lock held until `COMMIT`. If a second session tries to change the same dimension combination, it waits for the resource or hits a timeout error.
+
+<figure aria-label="Lock escalation">
+<svg viewBox="0 0 420 72" width="100%" height="72" fill="none" xmlns="http://www.w3.org/2000/svg" role="img">
+  <rect x="8" y="24" width="100" height="24" rx="4" stroke="currentColor" stroke-width="1.5"/>
+  <text x="58" y="40" text-anchor="middle" fill="currentColor" font-size="11">Row</text>
+  <path d="M118 36h40" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+  <rect x="168" y="24" width="100" height="24" rx="4" stroke="currentColor" stroke-width="1.5"/>
+  <text x="218" y="40" text-anchor="middle" fill="currentColor" font-size="11">Page</text>
+  <path d="M278 36h40" stroke="currentColor" stroke-width="1.5"/>
+  <rect x="328" y="24" width="84" height="24" rx="4" stroke="currentColor" stroke-width="1.5"/>
+  <text x="370" y="40" text-anchor="middle" fill="currentColor" font-size="11">Table</text>
+</svg>
+</figure>
+
+Knowing the lock level helps explain why the bottleneck shifts from disk to cross-session waits and how to split batch operations.
+
+## Pitfalls
+
+- **Long transactions.** If a dialog or network call sits between `НачатьТранзакцию()` and `ЗафиксироватьТранзакцию()`, locks live for seconds or minutes, not milliseconds.
+- **Escalation to a table.** Mass posting without batching can lock an entire register and stop warehouse work.
+- **Dirty reads.** At a lower isolation level a report may see uncommitted movements; that can be acceptable for management reports, not for statutory accounting.
+- **Different DBMS engines.** PostgreSQL, MS SQL, and others name modes differently and escalate locks differently; portable 1C code does not replace DBMS-specific knowledge.
+- **Indexes without query analysis.** An index speeds lookup but does not remove write conflicts: two sessions still queue on the same balance row.

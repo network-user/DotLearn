@@ -1,0 +1,63 @@
+---
+id: 3546
+title: "Waits and retries in AQA"
+category: aqa-pytest
+categoryLabel: "PyTest"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Waits and retries in AQA
+
+## In short
+
+An explicit wait targets a specific condition with timeout and poll interval; an implicit wait globally slows every find. Retry repeats an operation or test on transient failure with a capped attempt count. In PyTest UI layers I use playwright `expect` or tenacity on API polls, not bare `time.sleep`.
+
+## How to answer in an interview
+
+- Explicit: `wait_until(lambda: status() == "ready", timeout=10)`.
+- Implicit in Selenium once per driver; mix with explicit carefully.
+- Retry on HTTP 502 with exponential backoff, not on 404.
+- I separate step retry from rerunning the whole test.
+- Honestly: sleep(5) masks bugs, does not stabilize; it only lengthens the suite.
+
+## How it works
+
+Poll helper:
+
+```python
+import time
+
+
+def wait_until(predicate, timeout: float = 10, interval: float = 0.2) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(interval)
+    raise TimeoutError("condition not met")
+```
+
+Tenacity on API:
+
+```python
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5))
+def fetch_job(job_id: str) -> dict:
+    return api.get_job(job_id)
+```
+
+## Pitfalls
+
+**Too long implicit.** Every missing element waits the max time.
+
+**Retry on assertion.** Repeats wrong expected; does not fix the test.
+
+**No jitter.** Parallel retries hit the API at once.
+
+**Condition with side effects.** The predicate mutates state; races follow.
+
+**Playwright auto-wait off.** A `no_wait` flag breaks click stability.

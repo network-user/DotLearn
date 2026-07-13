@@ -1,0 +1,66 @@
+---
+id: 1469
+title: "How much does slice capacity grow on append?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How much does slice capacity grow on append?
+
+## In short
+
+When `len` hits `cap`, the runtime allocates a new array and copies data. While `cap` is small, growth is close to doubling; for large slices the bump is roughly 25% plus existing capacity. Exact thresholds depend on Go version and element size.
+
+## How to answer in an interview
+
+- I cite runtime behavior: double at small cap; at large sizes `newcap = oldcap + oldcap/4` with alignment rounding.
+- I stress: after growth the old array may linger if other slices still reference it.
+- I mention `make([]T, 0, hint)` to cut reallocs when size is known.
+- I add honestly: 1024/25% figures are runtime heuristics, not language guarantees; newer releases may tweak them.
+
+## How it works
+
+A slice is a header (pointer, len, cap) over an array. `append` writes into the existing array while space remains. Otherwise the runtime computes `newcap`, allocates, copies elements, updates the header.
+
+```go
+package main
+
+import "fmt"
+
+func trackGrowth() {
+	var nums []int
+	fmt.Printf("start len=%d cap=%d\n", len(nums), cap(nums))
+	for i := 0; i < 12; i++ {
+		nums = append(nums, i)
+		fmt.Printf("i=%d len=%d cap=%d\n", i, len(nums), cap(nums))
+	}
+}
+
+func aliasTrap() {
+	base := make([]byte, 3, 8)
+	chunk := base[:2]
+	base = append(base, 99, 100, 101, 102, 103)
+	fmt.Println("base", base)
+	fmt.Println("chunk", chunk)
+}
+
+func main() {
+	trackGrowth()
+	aliasTrap()
+}
+```
+
+The first block prints `cap` jumps. The second shows the trap: `chunk` shares the array with `base` until realloc; after `base` grows, `chunk` may point at stale storage or overwritten slots.
+
+Capacity planning matters on hot paths: extra copies on every append yield O(n²) when building a large slice.
+
+## Pitfalls
+
+- **Exact doubling myth.** Expecting ×2 every step is wrong; the runtime rounds for type alignment.
+- **Shared backing array.** Subslice plus append on a sibling slice overwrites data without growing cap.
+- **append(nil, x).** The first append from nil starts with tiny cap; many appends without a hint are costly.
+- **Slice of structs with pointers.** Growth copies pointers, not deep copies of objects.
+- **Version dependence.** Go 1.18+ adjusted growth rules; in interviews I say "double when small, ~25% when large".

@@ -1,0 +1,56 @@
+---
+id: 4273
+title: "SSH hangs on connect: what do you check?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# SSH hangs on connect: what do you check?
+
+## In short
+
+Connect hang is usually DNS, routing, firewall drop (not reject), GSSAPI auth delay, or reverse DNS lookup on the server. Diagnose with verbose ssh, tcp connect test, traceroute, and ConnectTimeout vs default hang. Session freeze after login: MTU, idle NAT timeout, dead connection without ServerAlive.
+
+## How to answer in an interview
+
+- `ssh -vvv user@host` to see where it stalls: DNS, TCP, key exchange, auth.
+- `nc -vz host 22` or `timeout 5 bash -c '</dev/tcp/host/22'`.
+- Client config: `GSSAPIAuthentication no`, `ConnectTimeout 10`, `ServerAliveInterval 60`.
+- Server: `UseDNS no` if PTR lookup is slow; check MaxStartups, fail2ban.
+- Honestly: "hang" is often MTU black hole on VPN; lower MSS or fix tunnel.
+
+## How it works
+
+Debug connect:
+
+```bash
+ssh -vvv -o ConnectTimeout=10 -o GSSAPIAuthentication=no deploy@prod.example.com
+time nc -vz prod.example.com 22
+dig +short prod.example.com
+mtr -rwzc 10 prod.example.com
+```
+
+Client ~/.ssh/config hardening:
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+Host *
+  ConnectTimeout 15
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+  GSSAPIAuthentication no
+EOF
+```
+
+Escape hatch for frozen session: Enter ~. (local ssh escape) to disconnect.
+
+## Pitfalls
+
+- **DNS IPv6 first.** Broken AAAA, long timeout before IPv4; `AddressFamily inet` workaround.
+- **Bastion ProxyJump chain.** Hang on middle hop; test each `-J` segment separately.
+- **sshd MaxStartups.** Connection accepted slowly under load; looks like hang.
+- **No reject firewall.** SYN blackhole waits full TCP timeout.
+- **Mosh not installed.** Blame SSH for mobile sleep; different tool for roaming.

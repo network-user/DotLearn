@@ -1,0 +1,56 @@
+---
+id: 3018
+title: "What should QA do when a message is processed twice?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What should QA do when a message is processed twice?
+
+## In short
+
+Double processing is an idempotency failure or missing dedup under at-least-once delivery. QA reproduces redelivery, records duplicate data, and classifies whether broker behavior is expected or the app is wrong. Expected fixes: idempotency key, unique index, transactional outbox, ack only after commit.
+
+## How to answer in an interview
+
+- I reproduce: kill consumer mid-process, republish, producer network timeout.
+- I collect proof: two identical side effects, logs with one messageId, DLQ metrics.
+- I file a bug with business impact: double charge, two shipment labels.
+- I verify the fix: rerun yields exactly one outcome.
+- Honestly: if the product does not promise exactly-once, idempotent consumers are mandatory.
+
+## How it works
+
+```gherkin
+Feature: Double processing response
+
+  Scenario: Reproduce redelivery
+    Given consumer processes payment msg pm-77
+    When consumer crashes before ack
+    And broker redelivers pm-77
+    Then QA records two ledger entries unless idempotency guard exists
+
+  Scenario: Verify fix with idempotency store
+    Given table processed_messages primary key message_id
+    When pm-77 delivered twice
+    Then second attempt logs skipped duplicate
+    And single charge on account
+
+  Scenario: Regression test in release checklist
+    Given staging chaos restart consumer pod
+    When publish 50 unique payment events
+    Then reconciliation report shows zero duplicates
+```
+
+Before a fix QA may suggest a manual reconciliation job and alerts on abnormal transaction growth. After the fix add a negative case to async service smoke tests.
+
+## Pitfalls
+
+- **Blaming broker retry.** Confuse infra with application logic.
+- **No financial reconciliation.** Duplicate visible only in logs.
+- **Test without crash.** Redelivery never happens.
+- **Manual ack before commit.** Guaranteed repeat.
+- **Environment mismatch.** Staging without durable queue, prod with redelivery.

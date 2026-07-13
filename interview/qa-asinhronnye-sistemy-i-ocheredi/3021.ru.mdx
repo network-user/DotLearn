@@ -1,0 +1,56 @@
+---
+id: 3021
+title: "Как устроена Kafka: producer, topic, partition, consumer для QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроена Kafka: producer, topic, partition, consumer для QA?
+
+## Суть
+
+Producer пишет записи в topic; topic делится на partition для параллелизма. Каждая запись получает offset внутри partition. Consumer group распределяет partition между инстансами: одна partition в момент времени читает один consumer в группе. QA проверяет доставку, порядок по ключу, lag и поведение при rebalance.
+
+## Что ответить на собесе
+
+- Producer выбирает partition по key hash или round-robin.
+- Topic это лог, не очередь с удалением после read: retention по времени/размеру.
+- Consumer commit offset после обработки; при сбое чтение продолжается с последнего commit.
+- Метрики: consumer lag, under-replicated partitions.
+- Честно: без partition key порядок между связанными событиями не гарантирован.
+
+## Как это работает
+
+```gherkin
+Feature: Kafka flow understanding
+
+  Scenario: Publish with user key
+    Given producer sends to topic billing-events key user-55
+    When three partitions exist
+    Then all events user-55 land same partition preserve order
+
+  Scenario: Consumer group scale
+    Given group invoice-workers two consumers
+    When topic has four partitions
+    Then each consumer assigned two partitions approximately
+
+  Scenario: Lag after outage
+    Given consumer stopped 30 minutes
+    When producer rate 1000 per minute
+    Then lag metric rises QA verifies catch-up without data loss
+```
+
+<figure aria-label="Kafka · producer · topic · partition · consumer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="24" width="56" height="32" rx="4"/><text x="36" y="44" text-anchor="middle" font-size="9" fill="currentColor">Producer</text><path d="M64 40h32"/><rect x="96" y="16" width="64" height="48" rx="4"/><text x="128" y="36" text-anchor="middle" font-size="8" fill="currentColor">Topic</text><text x="128" y="52" text-anchor="middle" font-size="7" fill="currentColor">P0 P1 P2</text><path d="M160 40h32"/><rect x="192" y="24" width="56" height="32" rx="4"/><text x="220" y="44" text-anchor="middle" font-size="9" fill="currentColor">Consumer</text></svg></figure>
+
+QA smoke: отправить тестовое сообщение, найти в UI по offset, убедиться что handler отработал.
+
+## Подводные камни
+
+- **Путаю topic и consumer group.** Разные группы читают один topic независимо.
+- **auto commit до обработки.** Потеря при crash между read и business logic.
+- **Один partition на high load.** Bottleneck при scale producers.
+- **Тест без key.** Порядок случайный, баг «не воспроизводится».
+- **Игнор compaction topic.** Последнее значение ключа, не полная история.

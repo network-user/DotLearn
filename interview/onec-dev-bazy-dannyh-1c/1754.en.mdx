@@ -1,0 +1,72 @@
+---
+id: 1754
+title: "How DCS loads the DBMS and what to do about it"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How DCS loads the DBMS and what to do about it
+
+## In short
+
+The Data Composition System builds SQL from report settings: fields, filters, groupings, and links. The heavier the resulting query and the more rows it returns, the higher the DBMS load and the longer the user waits.
+
+## How to answer in an interview
+
+- I start by noting that DCS does not read registers in a loop through objects; it compiles a batch of queries against platform tables.
+- In an interview I list load factors: extra joins, nested groupings, missing period filters, calculated fields without indexable equivalents.
+- I show that limiting period and organization slice in report parameters often helps more than hardware upgrades.
+- I am honest: composition cache helps only with stable data; on live registers it goes stale quickly.
+- For heavy reports I suggest a scheduled job that materializes into an information register or a separate data mart.
+
+## How it works
+
+The user or developer defines a composition schema: data sources, links, resources, filters. The settings composer turns that into a layout, and the composition processor generates SQL on `Сформировать()` and runs it through the 1C server.
+
+A simplified programmatic flow:
+
+```bsl
+Процедура СформироватьОтчетПродаж(НастройкиОтчета, ПериодНачало, ПериодКонец) Экспорт
+    Компоновщик = Новый КомпоновщикНастроекКомпоновкиДанных;
+    Компоновщик.Инициализировать(Новый ИсточникДоступныхНастроекКомпоновкиДанных(СхемаКомпоновки));
+
+    Настройки = Компоновщик.ПолучитьНастройки();
+    ЭлементПериода = Настройки.ПараметрыДанных.Элементы.Найти("Период");
+    Если ЭлементПериода <> Неопределено Тогда
+        ЭлементПериода.Значение = Новый СтандартныйПериод(ПериодНачало, ПериодКонец);
+    КонецЕсли;
+
+    Компоновщик.ЗагрузитьНастройки(Настройки);
+    Макет = Компоновщик.Выполнить();
+
+    Процессор = Новый ПроцессорКомпоновкиДанных;
+    Процессор.Инициализировать(Макет);
+
+    Результат = Новый ТабличныйДокумент;
+    ПроцессорВывода = Новый ПроцессорВыводаРезультатаКомпоновкиДанныхВТабличныйДокумент;
+    ПроцессорВывода.УстановитьДокумент(Результат);
+    ПроцессорВывода.Вывести(Процессор);
+КонецПроцедуры
+```
+
+On the DBMS side heavy reports show up as:
+
+- multiple JOINs on movement tables with a period filter;
+- aggregates with GROUP BY on large dimensions;
+- sorting without a covering index;
+- repeated scans when printing totals and percentages.
+
+Optimization starts with the actual SQL in the technological log or DBMS profiler. Often it is enough to narrow the field set, move a complex filter into a virtual table parameter such as `ОстаткиИОбороты`, and drop a catalog join that was added just in case.
+
+Caching settings and reusing a layout cuts CPU on the 1C server but does not remove database read cost. Splitting the report into a parameter header and background generation improves UI responsiveness even when total DBMS load stays the same.
+
+## Pitfalls
+
+- **Join on a non-indexed field.** DCS makes it easy to link on a presentation or calculated attribute and the plan falls back to a full scan.
+- **Totals over the whole register.** A report without a mandatory period filter reads history from go-live.
+- **Nested groupings in user settings.** A user can break an optimized layout by enabling extra fields in detail rows.
+- **Mixing DCS and post-processing.** Loading hundreds of thousands of rows into a spreadsheet document on the client creates a memory spike while the bottleneck looks like slow SQL.
+- **Cache illusion.** A rerun with different parameters still hits the DBMS; caching only makes sense for stable slices.

@@ -1,0 +1,75 @@
+---
+id: 1633
+title: "Как HTTP определяет длину тела"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как HTTP определяет длину тела
+
+## Суть
+
+Если длина известна заранее, ставят `Content-Length` в байтах. Если тело генерируется потоково или размер неизвестен, используют `Transfer-Encoding: chunked` без Content-Length. Для GET и HEAD тела обычно нет. HTTP/2 имеет встроенное framing, но семантика длины сохраняется на уровне API.
+
+## Что ответить на собесе
+
+- Content-Length обязателен для HTTP/1.1, если нет chunked.
+- Chunked: hex размер chunk, данные, CRLF; терминатор `0\r\n\r\n`.
+- `Content-Length: 0` для пустого POST иногда нужен явно.
+- `http.ResponseWriter` с неизвестной длиной включает chunked автоматически.
+- Честно: mismatch Content-Length и реального тела классическая уязвимость desync.
+
+## Как это работает
+
+Фиксированная длина:
+
+```http
+POST /login HTTP/1.1
+Host: auth.example
+Content-Type: application/json
+Content-Length: 45
+
+{"user":"dev","password":"***"}
+```
+
+Chunked ответ:
+
+```http
+HTTP/1.1 200 OK
+Transfer-Encoding: chunked
+Content-Type: text/plain
+
+5
+Hello
+0
+
+```
+
+```go
+func streamLogs(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	for _, line := range tailLogs() {
+		fmt.Fprintln(w, line)
+		if ok {
+			flusher.Flush()
+		}
+	}
+}
+```
+
+`net/http` при `Write` без `Content-Length` добавляет chunked на HTTP/1.1. На HTTP/2 DATA frames несут длину явно в frame header.
+
+## Подводные камни
+
+**Два Content-Length.** Поведение непредсказуемо, риск request smuggling.
+
+**Content-Length с chunked одновременно.** Нарушение RFC, прокси могут сломать тело.
+
+**Стриминг без flush.** Клиент видит ответ только в конце буфера.
+
+**Закрытие соединения как длина (HTTP/1.0 style).** Ломает keep-alive.
+
+**Прокси буферизует chunked до конца.** Теряется смысл live stream.

@@ -1,0 +1,70 @@
+---
+id: 4657
+title: "How do you lock two mutexes atomically?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you lock two mutexes atomically?
+
+## In short
+
+When two threads need two mutexes at once, manual lock ordering invites deadlock. The C++ standard library provides `std::lock` to acquire every mutex passed to it without deadlock.
+
+## How to answer in an interview
+
+- I use `std::lock(m1, m2, ...)` for atomic multi-mutex acquisition.
+- After `std::lock`, I wrap each mutex in `std::lock_guard` with `std::adopt_lock` so RAII guarantees unlock on scope exit.
+- Alternative: `std::scoped_lock lock(m1, m2)` in C++17 does the same in one line.
+- If I lock manually, I always follow a global lock order.
+- Honestly: `std::lock` does not speed things up; it only reduces deadlock risk when grabbing several resources.
+
+## How it works
+
+`std::lock` runs an algorithm that tries to acquire all mutexes and rolls back any it already holds on conflict, then retries. Two threads cannot wait forever because each chose a different manual order.
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate_a;
+std::mutex gate_b;
+
+void worker(int tag) {
+    std::lock(gate_a, gate_b);
+    std::lock_guard<std::mutex> hold_a(gate_a, std::adopt_lock);
+    std::lock_guard<std::mutex> hold_b(gate_b, std::adopt_lock);
+
+    std::cout << "worker " << tag << " owns both gates\n";
+}
+
+int main() {
+    std::thread t1(worker, 1);
+    std::thread t2(worker, 2);
+    t1.join();
+    t2.join();
+}
+```
+
+In C++17 the equivalent is shorter:
+
+```cpp
+void worker_modern(int tag) {
+    std::scoped_lock guard(gate_a, gate_b);
+    std::cout << "worker " << tag << " owns both gates\n";
+}
+```
+
+Both threads may call the function in any order: the mechanism picks a safe acquisition sequence. If an exception escapes the critical section, `lock_guard`/`scoped_lock` release the mutexes in their destructors.
+
+## Pitfalls
+
+- **Manual ordering.** One thread doing `lock(m1); lock(m2);` while another does `lock(m2); lock(m1);` deadlocks without `std::lock`.
+- **Double lock.** `std::mutex` is not recursive; locking again in the same thread is UB or hangs.
+- **Missing adopt_lock.** After `std::lock`, you must not call `lock()` again on the same mutex through a plain `lock_guard`.
+- **Long critical sections.** Even without deadlock, holding two mutexes increases contention and latency.
+- **Not an architecture fix.** Sometimes one mutex, a lock-order policy, or finer-grained data beats constantly grabbing a pair of locks.

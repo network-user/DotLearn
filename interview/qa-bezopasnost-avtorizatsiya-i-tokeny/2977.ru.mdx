@@ -1,0 +1,69 @@
+---
+id: 2977
+title: "Claims в JWT: что QA допускает в payload?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Claims в JWT: что QA допускает в payload?
+
+## Суть
+
+Payload JWT хранит claims: `sub` (идентификатор), `roles`/`scope`, `exp`/`iat`, иногда `aud` и `iss`. Данные не зашифрованы, только подписаны. QA проверяет, что приложение не доверяет опасным claim из клиента и что лишние PII не попадают в токен, который копируется в логи.
+
+## Что ответить на собесе
+
+- Минимум в access: `sub`, `exp`, scopes; роли лучше коротким списком или ссылкой на server-side policy.
+- Запрещено: пароль, номер карты, полный email в открытом виде если не нужен UI.
+- Стандартные зарезервированные поля (`exp`, `nbf`) сервер валидирует строго.
+- Честно: если в JWT 50 claims и 4KB, смотрю latency и 413 на gateway, не только security.
+
+## Как это работает
+
+Пример lean payload:
+
+```json
+{
+  "sub": "usr_9k2",
+  "scope": "orders:read profile:read",
+  "iat": 1710000000,
+  "exp": 1710003600,
+  "aud": "api.example.com"
+}
+```
+
+Gherkin:
+
+```gherkin
+Feature: Содержимое JWT claims
+
+  Scenario: API отклоняет токен без обязательного aud
+    Given JWT без claim aud
+    When GET /api/v1/orders
+    Then статус 401 invalid_audience
+
+  Scenario: Escalation через подмену role claim
+    Given токен viewer
+    When QA подменяет role admin в payload локально
+    And отправляет запрос без валидной подписи
+    Then статус 401
+
+  Scenario: UI не показывает чувствительные claims
+    Given JWT содержит tax_id в payload
+    When пользователь открывает /account/debug
+    Then tax_id не отображается в DOM
+    And не попадает в analytics events
+```
+
+Сверяю документацию auth service с фактическим decode на staging login.
+
+## Подводные камни
+
+- **Доверие client-only claim.** SPA читает `isAdmin` из JWT без server check.
+- **PII в логах APM.** Trace включает Authorization decode.
+- **Слишком долгий exp.** «Вечная» сессия при утечке.
+- **Custom claim без namespace.** Коллизии `role` vs `roles`.
+- **Unicode в name claim.** Ломает отображение, не security, но регресс.

@@ -1,0 +1,65 @@
+---
+id: 4673
+title: "Что такое семафор и чем он отличается от mutex?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое семафор и чем он отличается от mutex?
+
+## Суть
+
+Семафор хранит счётчик разрешений на ресурс: потоки ждут на `acquire` (P) и сигналят `release` (V). Бинарный семафор похож на mutex, счётный ограничивает N одновременных пользователей pool ресурса.
+
+## Что ответить на собесе
+
+- Mutex: ownership one thread, unlock только owner.
+- Counting semaphore: N слотов, release может сделать любой поток (producer/consumer).
+- В C++20: `std::counting_semaphore`, `std::binary_semaphore`.
+- Классический кейс: bounded buffer, connection pool, throttle parallel jobs.
+- Честно: для exclusive section чаще mutex; semaphore когда важен лимит параллелизма, а не владение.
+
+## Как это работает
+
+Pool из двух соединений:
+
+```cpp
+#include <chrono>
+#include <iostream>
+#include <semaphore>
+#include <thread>
+
+std::counting_semaphore<2> slots{2};
+
+void client(int id) {
+    slots.acquire();
+    std::cout << "client " << id << " connected\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    std::cout << "client " << id << " done\n";
+    slots.release();
+}
+
+int main() {
+    std::thread c1(client, 1);
+    std::thread c2(client, 2);
+    std::thread c3(client, 3);
+    c1.join();
+    c2.join();
+    c3.join();
+}
+```
+
+Первые два клиента пройдут сразу, третий ждёт первого `release`. С binary semaphore можно построить event signal между потоками, но ownership semantics слабее mutex.
+
+POSIX `sem_t` исторически использовали между процессами; C++20 semaphores primarily intra-process.
+
+## Подводные камни
+
+- **Release без acquire.** Счётчик может уйти выше capacity; logic error.
+- **Spurious logic bugs.** Забытый release deadlock'ит всех waiters.
+- **Mutex vs semaphore confusion.** На собесе уточняй ownership model.
+- **Priority inversion.** Как у mutex, при долгом holder.
+- **Not a replacement for condvar.** Сложные condition wait лучше `condition_variable` + predicate.

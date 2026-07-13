@@ -1,0 +1,64 @@
+---
+id: 1568
+title: "Context values across call stack levels"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Context values across call stack levels
+
+## In short
+
+Context is immutable: WithValue returns a new ctx, the parent is unchanged. A child sees parent values plus its own; sibling branches do not see each other's values. Cancel/deadline propagates down the entire subtree.
+
+## How to answer in an interview
+
+- Pass derived ctx down the stack; do not mutate globals.
+- Value set at a mid layer is visible deeper through that ctx reference.
+- A parent caller without reassignment does not see WithValue done in callee unless returned.
+- Honestly: "two levels" means parent ctx vs child WithValue; not a shared mutable bag.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+)
+
+type reqIDKey struct{}
+
+func middleware(ctx context.Context) context.Context {
+	return context.WithValue(ctx, reqIDKey{}, "abc")
+}
+
+func service(ctx context.Context) {
+	id, _ := ctx.Value(reqIDKey{}).(string)
+	fmt.Println("service:", id)
+}
+
+func main() {
+	base := context.Background()
+	ctx := middleware(base)
+	service(ctx)
+}
+```
+
+middleware returns new ctx; service reads req id. base stays unchanged if the caller keeps only the base variable.
+
+## Pitfalls
+
+**Shadow ctx variable.** `ctx = WithValue` in one layer but pass old ctx elsewhere.
+
+**Expect upward propagation.** Values do not bubble to parent.
+
+**Sibling subtrees.** Two WithValue from same parent are invisible to each other.
+
+**Type assertion panic.** Use comma ok for Value.
+
+**Parent vs child deadline.** Shorter child deadline; parent deadline still cancels child.

@@ -1,0 +1,63 @@
+---
+id: 2479
+title: "Можно ли обновить cookie из JavaScript"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Можно ли обновить cookie из JavaScript
+
+## Суть
+
+JS может записать cookie через `document.cookie`, если cookie не HttpOnly. Перезапись с тем же name+domain+path заменяет value или expires. HttpOnly и Secure cookies с сервера JS не читает и не меняет; это by design для session tokens.
+
+## Что ответить на собесе
+
+- Preferences (theme, locale) могу писать из JS non-HttpOnly cookie или localStorage.
+- Session/auth cookies только Set-Cookie с сервера HttpOnly.
+- JS не может установить HttpOnly flag; browser ignores from script.
+- Честно: `document.cookie` API awkward; использую cookie lib или server endpoints для sensitive updates.
+- SameSite и Secure flags JS может задать только при create non-HttpOnly cookie.
+
+## Как это работает
+
+```ts
+function setClientPref(name: string, value: string, days = 30) {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+function readClientPref(name: string): string | null {
+  const match = document.cookie
+    .split('; ')
+    .find((row) => row.startsWith(`${encodeURIComponent(name)}=`));
+  if (!match) return null;
+  return decodeURIComponent(match.split('=')[1] ?? '');
+}
+
+setClientPref('theme', 'dark');
+```
+
+Server session update:
+
+```ts
+await fetch('/api/session/locale', {
+  method: 'POST',
+  credentials: 'include',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ locale: 'ru' }),
+});
+```
+
+Browser sends Set-Cookie in response; JS cannot see HttpOnly value after.
+
+## Подводные камни
+
+- **Size limit.** ~4KB per domain total cookie jar.
+- **Encoding.** Commas/spaces in value break parsing without encodeURIComponent.
+- **Subdomain scope.** JS on `app.example.com` cannot set Domain=example.com without proper domain attribute rules.
+- **GDPR.** Non-essential client cookies need consent banner in EU.
+- **SSR mismatch.** Theme cookie read on server must match client hydration value.

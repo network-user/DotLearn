@@ -1,0 +1,49 @@
+---
+id: 4187
+title: "Why does Kafka use partitions?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does Kafka use partitions?
+
+## In short
+
+A partition is an ordered append-only log inside a topic. Partitions enable parallelism (multiple consumers), spread load across brokers, and independent retention per shard. Message keys pick the partition (`hash(key) % N`) for per-entity ordering.
+
+## How to answer in an interview
+
+- Ordering is guaranteed only within one partition.
+- Consumer group: max parallel consumers ≈ partition count for the topic.
+- Leader/follower replication per partition; ISR defines commit safety.
+- I add honestly: you can increase partitions later but key routing changes; plan count upfront or accept sticky rebalancing tradeoffs.
+
+## How it works
+
+```bash
+kafka-topics.sh --bootstrap-server kafka.internal:9092 \
+  --describe --topic payments
+
+kafka-run-class.sh kafka.tools.GetOffsetShell \
+  --broker-list kafka.internal:9092 --topic payments --time -1
+```
+
+Producer with key:
+
+```bash
+kafka-console-producer.sh --bootstrap-server kafka.internal:9092 --topic payments \
+  --property parse.key=true --property key.separator=: <<<'user-42:{"amount":1200}'
+```
+
+One key always maps to one partition, preserving user event order. Without a key, round-robin balances but loses per-entity order. `GetOffsetShell` shows high watermark per partition for capacity planning.
+
+## Pitfalls
+
+- **Increasing partitions breaks key order history.** New hash slot applies only to new messages for old keys.
+- **Single-partition topic.** Throughput ceiling of one consumer.
+- **Under-replicated partition.** Leader without ISR ack risks loss on crash.
+- **Compacted topic missing keys.** Tombstone compaction requires a key on every message.
+- **Imbalanced lag.** Monitor per-partition lag, not totals only.

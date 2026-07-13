@@ -1,0 +1,75 @@
+---
+id: 4293
+title: "Что такое exporter в Prometheus?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое exporter в Prometheus?
+
+## Суть
+
+Exporter это sidecar-процесс или standalone сервис, который переводит метрики чужой системы (OS, MySQL, blackbox HTTP) в Prometheus text exposition format на HTTP `/metrics`. Prometheus pull'ит exporter, не трогая приложение напрямую. Паттерн расширяет scrape model на всё, что не встроило client library.
+
+## Что ответить на собесе
+
+- node_exporter: CPU, mem, disk, systemd на Linux host.
+- mysql_exporter, postgres_exporter, redis_exporter для datastore stats.
+- blackbox_exporter: synthetic probe HTTP/TCP/ICMP.
+- В `scrape_configs` указываю target `host:9100`, labels `job`, `env`.
+- Честно: community exporter без maintainer и CVE review не ставлю в prod без fork pin.
+
+## Как это работает
+
+Установка node_exporter и systemd unit:
+
+```bash
+curl -fsSL https://github.com/prometheus/node_exporter/releases/download/v1.8.2/node_exporter-1.8.2.linux-amd64.tar.gz \
+  | tar -xz -C /usr/local/bin --strip-components=1 node_exporter-1.8.2.linux-amd64/node_exporter
+
+cat <<'EOF' > /etc/systemd/system/node_exporter.service
+[Unit]
+Description=Prometheus Node Exporter
+After=network.target
+
+[Service]
+User=nodeexp
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=:9100
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable --now node_exporter
+```
+
+Prometheus scrape job:
+
+```bash
+cat <<'EOF' >> /etc/prometheus/prometheus.yml
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["10.0.1.12:9100", "10.0.1.13:9100"]
+        labels:
+          env: prod
+EOF
+```
+
+Проверка exposition:
+
+```bash
+curl -s http://10.0.1.12:9100/metrics | head -n 5
+```
+
+## Подводные камни
+
+- **Слишком широкий scrape.** Default node_exporter collectors включают textfile и perf; отключаю лишнее флагами.
+- **Credentials в exporter.** DSN с паролем в env виден через `/proc`; использую file-based secret и минимальные priv.
+- **Version skew.** Exporter и Prometheus metric name changes между major; фиксирую dashboard queries при апгрейде.
+- **Network exposure.** `:9100` публично отдаёт host topology; firewall или auth proxy обязателен.
+- **High cardinality labels.** Exporter добавляет `device` per mount; на ephemeral FS раздувает TSDB.

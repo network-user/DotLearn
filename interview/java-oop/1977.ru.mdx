@@ -1,0 +1,62 @@
+---
+id: 1977
+title: "Зачем делать класс immutable?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем делать класс immutable?
+
+## Суть
+
+Immutable объект не меняет состояние после создания: все поля final (или effectively final), нет сеттеров, наружу не утекают mutable references. Это упрощает reasoning, делает объект thread-safe без locks и снижает риск случайных мутаций при передаче между слоями.
+
+## Что ответить на собесе
+
+- Перечисляю выгоды: thread safety, predictability, безопасный ключ в `HashMap`, кэширование hashCode.
+- Называю recipe: final class, final fields, defensive copy in/out, no setters.
+- Упоминаю `String`, `Integer`, Java time API, `record` как примеры.
+- Объясняю «изменение» через new instance (`withAmount`) вместо mutation.
+- Честно добавляю: immutability не бесплатна при больших структурах; частые мелкие изменения могут аллоцировать много объектов.
+
+## Как это работает
+
+```java
+public final class Money {
+    private final long minorUnits;
+    private final String currency;
+
+    public Money(long minorUnits, String currency) {
+        if (minorUnits < 0) throw new IllegalArgumentException("negative amount");
+        this.minorUnits = minorUnits;
+        this.currency = Objects.requireNonNull(currency);
+    }
+
+    public long minorUnits() { return minorUnits; }
+    public String currency() { return currency; }
+
+    public Money add(Money other) {
+        requireSameCurrency(other);
+        return new Money(minorUnits + other.minorUnits, currency);
+    }
+
+    private void requireSameCurrency(Money other) {
+        if (!currency.equals(other.currency)) {
+            throw new IllegalArgumentException("currency mismatch");
+        }
+    }
+}
+```
+
+Операция `add` возвращает новый `Money`, исходный не меняется. Такой объект можно freely share между потоками и использовать как map key (при корректных equals/hashCode).
+
+## Подводные камни
+
+- **Mutable field или leaked array.** `private final Date` или `final List` без `List.copyOf` ломает immutability.
+- **Subclass breaking immutability.** Non-final class может добавить mutable state.
+- **Lazy cache без sync.** Mutable cache field в «immutable» классе требует safe publication.
+- **Serialization proxy.** Deserialization может обойти final fields без `readResolve`.
+- **Performance на hot path.** Много копий больших коллекций; иногда нужен persistent data structure или builder snapshot.

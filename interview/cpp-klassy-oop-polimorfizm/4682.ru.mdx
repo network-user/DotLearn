@@ -1,0 +1,63 @@
+---
+id: 4682
+title: "Когда base destructor должен быть virtual?"
+category: cpp-klassy-oop-polimorfizm
+categoryLabel: "Классы / ООП / Полиморфизм"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда base destructor должен быть virtual?
+
+## Суть
+
+Virtual destructor нужен, если объект derived может удаляться через `Base*` или храниться как `unique_ptr<Base>`. Иначе вызывается только ~Base и теряются ресурсы derived.
+
+## Что ответить на собесе
+
+- Interface/base с virtual methods => virtual ~Base (often `= default`).
+- Value types, deleted through concrete type, final classes: virtual не обязателен.
+- Rule: polymorphic ownership через base pointer требует virtual dtor.
+- Protected ~Base non-virtual иногда для abstract factory pattern.
+- Честно: если delete только `Derived*`, virtual не нужен; проблема именно в upcast delete.
+
+## Как это работает
+
+```cpp
+struct Port {
+    virtual ~Port() = default;
+    virtual void send() = 0;
+};
+
+struct TcpPort : Port {
+    ~TcpPort() override { /* close socket */ }
+    void send() override {}
+};
+
+void shutdown(Port* p) {
+    delete p;
+}
+```
+
+Без virtual ~Port:
+
+```cpp
+struct PortBad {
+    ~PortBad() {}
+};
+
+struct TcpPortBad : PortBad {
+    ~TcpPortBad() { /* skipped on PortBad* delete */ }
+};
+```
+
+`shutdown` на `PortBad*` leaks Tcp state.
+
+## Подводные камни
+
+- **std::unique_ptr incomplete type.** Need virtual ~ visible where delete happens.
+- **Stack polymorphic objects.** Virtual dtor less critical; slicing still bad on copy.
+- **Multiple inheritance diamond.** Virtual bases affect destruction order.
+- **= default in header.** Inline virtual ~ OK for polymorphic root.
+- **Non-owning Base*.** Observer pointer без delete не требует virtual ~ для safety delete path.

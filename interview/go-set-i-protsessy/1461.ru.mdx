@@ -1,0 +1,97 @@
+---
+id: 1461
+title: "Почему сетевой I/O в Go «неблокирующий», хотя внутри есть syscall?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему сетевой I/O в Go «неблокирующий», хотя внутри есть syscall?
+
+## Суть
+
+С точки зрения процесса сетевые операции не замирают целиком: горутина паркуется, а runtime через netpoller (epoll, kqueue, IOCP) ждёт готовности дескриптора и продолжает другие задачи. Syscall остаётся, но блокировка локализована на одну `G`, а не на всё приложение.
+
+## Что ответить на собесе
+
+- Уточняю формулировку: «неблокирующий» для разработчика значит, что тысячи соединений мультиплексируются без тысячи потоков ОС.
+- Объясняю netpoller: сокеты переводят в non-blocking mode, события readiness обрабатывает отдельная goroutine runtime.
+- Связываю с планировщиком: пока одна `G` ждёт сеть, `M` выполняет другие runnable-горутины.
+- Честно добавляю: на уровне ядра отдельные syscalls всё ещё могут блокировать поток; модель не отменяет физику I/O, она скрывает её от остального кода.
+
+## Как это работает
+
+Пакет `net` при создании listener или dial регистрирует файловый дескриптор в internal poller. `Read`/`Write` сначала пробуют немедленную операцию; если данных нет (`EAGAIN`), горутина снимается с `M` и ставится в очередь ожидания poller. Когда epoll сигнализирует readiness, runtime будит `G` и возвращает её в runnable.
+
+Так один поток ОС обслуживает множество соединений. Блокирующий syscall в классическом смысле (поток спит в ядре на одном fd) для сетевого пути в Go стараются избегать именно через non-blocking fd + poller.
+
+```go
+package main
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"sync"
+)
+
+func echoServer(addr string) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		panic(err)
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			_, _ = io.Copy(c, c)
+		}(conn)
+	}
+}
+
+func hammer(client *http.Client, url string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Println("fail:", err)
+		return
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
+func main() {
+	go echoServer(":19090")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "ok")
+	})
+	go http.ListenAndServe(":18080", mux)
+
+	var wg sync.WaitGroup
+	client := &http.Client{}
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go hammer(client, "http://127.0.0.1:18080/", &wg)
+	}
+	wg.Wait()
+}
+```
+
+Пятьдесят параллельных `Get` не требуют пятидесяти потоков: большинство горутин ждут poller, пока ответ не готов. Syscall происходит, но поток не простаивает на каждом ожидании.
+
+DNS, некоторые файловые операции и CGO могут обходить poller и временно блокировать `M`; для чистого TCP/UDP картина описанная выше.
+
+## Подводные камни
+
+- **Буквальное «syscall не блокирует».** На собесе лучше говорить о кооперативной модели и netpoller, иначе ловят на контрпримере с диском.
+- **Синхронный DNS.** `net.Dial` без кастомного resolver может блокировать `M` на резолве; в проде настраиваю resolver или кэш.
+- **Блокирующий Read без net.** `os.File` и pipe не всегда идут через тот же poller, что сокеты.
+- **GOMAXPROCS=1.** При одном `P` выигрыш меньше заметен, хотя poller всё равно помогает.
+- **Путаница с async/await.** Go не даёт синтаксиса future; неблокируемость достигается goroutine + scheduler, а не корутинами языка в стиле C#.

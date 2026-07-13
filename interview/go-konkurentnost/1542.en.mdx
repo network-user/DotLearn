@@ -1,0 +1,83 @@
+---
+id: 1542
+title: "How do you fix a data race in Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you fix a data race in Go?
+
+## In short
+
+A data race happens when goroutines access the same memory concurrently and at least one access writes without synchronization. Fix with mutex/RWMutex, atomics, channels, a single-writer goroutine, or immutable data; detect with `go test -race` and CI race builds.
+
+## How to answer in an interview
+
+- I reproduce with `-race`, map shared state, and define ownership boundaries.
+- For counters and flags I often use `atomic`; for struct invariants I use Mutex.
+- "Share memory by communicating": one goroutine owns the map, others send messages.
+- Honestly: the race detector slows runs and misses logical races (TOCTOU without a shared write).
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+func withMutex(n int) int {
+	var mu sync.Mutex
+	sum := 0
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			sum++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return sum
+}
+
+func withAtomic(n int) int64 {
+	var total atomic.Int64
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			total.Add(1)
+		}()
+	}
+	wg.Wait()
+	return total.Load()
+}
+
+func main() {
+	fmt.Println(withMutex(1000), withAtomic(1000))
+}
+```
+
+Mutex serializes increment; atomic gives a lock-free counter but not complex struct protection. For composite state I pick one mechanism and document the invariant.
+
+## Pitfalls
+
+**Races only in prod.** Without `-race` in CI races surface randomly under load.
+
+**Mutex copy.** A copied Mutex after use silently breaks locking.
+
+**Channel as mutex hack.** Buffered chan size 1 works but reads and profiles worse than Mutex.
+
+**False confidence from atomics.** Atomic int plus non-atomic struct fields nearby still race.
+
+**Logical race without detector.** Two goroutines doing read-modify-write via DB without a transaction is still a "race", but Go's detector won't catch it.

@@ -1,0 +1,66 @@
+---
+id: 2953
+title: "Proxy servers: how does QA test through Charles and corporate proxies?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Proxy servers: how does QA test through Charles and corporate proxies?
+
+## In short
+
+A proxy sits between client and origin: it terminates connections, may cache, filter, rewrite headers, and load-balance. A forward proxy (corporate, Charles) handles outbound client traffic; a reverse proxy (nginx, CDN) sits in front of the server. QA uses forward proxies to intercept HTTPS and reverse proxies to verify X-Forwarded-For and sticky sessions.
+
+## How to answer in an interview
+
+- Anonymity: outsiders see the proxy IP, not the client; matters for geo and rate limit tests.
+- Proxy cache may serve stale content; after deploy I check Cache-Control bypass or hard refresh through the proxy.
+- MITM proxies (Charles) need a trusted CA on the device; test stands only.
+- Honestly: "works without proxy, fails in office" is often PAC/WPAD or SSL inspection; I reproduce the QA machine system proxy.
+
+## How it works
+
+Forward proxy in automation (config):
+
+```
+HTTP_PROXY=http://proxy.corp:8080
+HTTPS_PROXY=http://proxy.corp:8080
+NO_PROXY=localhost,127.0.0.1,.internal
+```
+
+Gherkin scenarios:
+
+```gherkin
+Feature: Behavior behind a forward proxy
+
+  Scenario: API reachable via corporate proxy
+    Given HTTP_PROXY and HTTPS_PROXY point to "proxy.corp:8080"
+    When QA sends GET "https://api.example.com/health"
+    Then status is 200
+    And the body contains status "ok"
+
+  Scenario: Charles intercepts and shows decrypted login JSON
+    Given Charles root CA is installed on the device
+    And the browser uses proxy 127.0.0.1:8888
+    When the user logs in
+    Then Charles shows POST /auth with JSON body
+    And the password is not duplicated in the query string
+
+  Scenario: Reverse proxy forwards real client IP
+    When a client without proxy opens "https://shop.example.com/"
+    Then upstream receives X-Forwarded-For with client IP
+    And rate limit applies to client IP, not only the load balancer IP
+```
+
+Reverse proxy cache: GET /static/app.js may return 304; QA compares ETag after release.
+
+## Pitfalls
+
+- **Forgotten NO_PROXY.** Local mock goes through corp proxy and 502s.
+- **SSL inspection breaks pinning.** Mobile app does not trust corp CA.
+- **Proxy cache hides bugs.** Prod without proxy already has new JS, office sees old.
+- **CONNECT tunnel not logged.** "Empty" Charles with wrong HTTPS setup.
+- **X-Forwarded-Proto http behind TLS.** Redirects break absolute URLs in the app.

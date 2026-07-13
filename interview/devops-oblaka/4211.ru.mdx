@@ -1,0 +1,72 @@
+---
+id: 4211
+title: "Как привязать домен к Route 53?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как привязать домен к Route 53?
+
+## Суть
+
+Делегирование домена в Route 53: создаю public hosted zone, получаю четыре NS-записи AWS, прописываю их у регистратора вместо старых nameserver. После TTL делегации добавляю A/AAAA/CNAME/ALIAS на ALB, CloudFront или S3.
+
+## Что ответить на собесе
+
+- Hosted zone ≠ регистрация: домен могу купить у Route 53 или у стороннего registrar, DNS всё равно в Route 53.
+- Сначала NS у registrar, потом рабочие записи; без делегации A-запись в зоне бесполезна.
+- ALB и CloudFront: ALIAS на apex (example.com) без CNAME-ограничения.
+- Health checks + failover routing для DR между регионами.
+- Честно: смена NS занимает до 48 ч из-за TTL у registrar; не жду мгновенного cutover.
+
+## Как это работает
+
+Создание зоны и получение NS:
+
+```bash
+aws route53 create-hosted-zone \
+  --name myapp.example \
+  --caller-reference "myapp-$(date +%s)" \
+  --hosted-zone-config Comment="prod DNS",PrivateZone=false
+```
+
+Добавление ALIAS на ALB:
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id Z1234567890ABC \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "myapp.example",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z215JYRZR1TFO5",
+          "DNSName": "dualstack.my-alb-123.eu-central-1.elb.amazonaws.com",
+          "EvaluateTargetHealth": true
+        }
+      }
+    }]
+  }'
+```
+
+Проверка делегации:
+
+```bash
+dig +short NS myapp.example
+dig +short A myapp.example
+```
+
+У registrar в панели «Nameservers» ставлю четыре значения вида `ns-xxx.awsdns-xx.com`. Route 53 интегрируется с ACM (валидация DNS), ALB, CloudFront, S3 static hosting через ALIAS.
+
+## Подводные камни
+
+- **Дублирование зоны.** Две public hosted zone на один домен путают, какая активна.
+- **CNAME на apex.** На корне домена CNAME запрещён RFC; нужен ALIAS.
+- **Забытый SOA TTL.** Старый NS кэшируется; снижаю TTL до миграции за неделю.
+- **Private vs Public zone.** Одинаковое имя в VPC и в интернете даёт split-horizon, но путает при отладке.
+- **ACM в другом регионе.** Сертификат для CloudFront только в us-east-1; CNAME валидации в ту же зону.

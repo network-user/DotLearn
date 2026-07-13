@@ -1,0 +1,61 @@
+---
+id: 1573
+title: "Goroutine and a synchronous syscall"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Goroutine and a synchronous syscall?
+
+## In short
+
+A sync syscall (blocking read/write, some file ops) moves G to waiting; the runtime may retake P from the M running the syscall and run other G on a new or existing M. After return G is runnable again. Net often uses the poller without fully blocking a thread.
+
+## How to answer in an interview
+
+- G blocked does not always mean the whole process is blocked.
+- Thread count may grow with many concurrent blocking syscalls.
+- Prefer net/http and os file APIs that integrate with the poller where possible.
+- Honestly: disk I/O may block an OS thread longer than net.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"os"
+	"sync"
+)
+
+func readFile(path string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	data, err := os.ReadFile(path)
+	fmt.Println(len(data), err)
+}
+
+func main() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go readFile(os.Args[0], &wg)
+	wg.Wait()
+}
+```
+
+ReadFile is a blocking syscall that parks G; the scheduler keeps other goroutines moving if GOMAXPROCS>1 and work exists.
+
+## Pitfalls
+
+**Long cgo syscall.** Dedicated M occupied.
+
+**Assuming instant resume after syscall.** G re-queues; scheduling delay applies.
+
+**Many sync file reads.** Thread pool growth; monitor runtime threads.
+
+**Blocking syscall under lock.** Extends critical section across the process.
+
+**Mixing sync and async wrongly.** Sync read on fd while poller expects edge-triggered I/O.

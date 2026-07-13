@@ -1,0 +1,81 @@
+---
+id: 3476
+title: "Промежуточные операции Stream API"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Промежуточные операции Stream API
+
+## Суть
+
+Intermediate ops возвращают новый Stream и остаются lazy: `filter`, `map`, `flatMap`, `sorted`, `distinct`, `limit`, `skip`, `peek`. Они composable в цепочку и выполняются только при terminal. В тестовых helper это фильтрация flaky кейсов, нормализация DTO и dedup ключей перед assert.
+
+## Что ответить на собесе
+
+- `filter` отсекает SKIP статусы перед aggregate.
+- `map` проецирует entity в id для set comparison.
+- `flatMap` разворачивает nested lists из API ответа.
+- `distinct` + `sorted` стабилизируют order-independent assert.
+- Честно: длинная цепочка без именованных методов хуже читается, чем private helper.
+
+## Как это работает
+
+```
+List<String> active = users.stream()
+    .filter(u -> u.isActive())
+    .map(User::email)
+    .distinct()
+    .sorted()
+    .limit(10)
+    .collect(Collectors.toList());
+```
+
+skip и flatMap:
+
+```
+List<String> tokens = batches.stream()
+    .skip(1)
+    .flatMap(b -> b.tokens().stream())
+    .collect(Collectors.toList());
+```
+
+Python pipeline:
+
+```python
+def active_emails(users: list[dict]) -> list[str]:
+    seen = set()
+    result = []
+    for user in sorted(u for u in users if u["active"]):
+        email = user["email"]
+        if email not in seen:
+            seen.add(email)
+            result.append(email)
+        if len(result) == 10:
+            break
+    return result
+
+
+def test_intermediate_chain():
+    data = [
+        {"active": True, "email": "b@test"},
+        {"active": False, "email": "x@test"},
+        {"active": True, "email": "a@test"},
+    ]
+    assert active_emails(data) == ["a@test", "b@test"]
+```
+
+## Подводные камни
+
+**distinct без equals/hashCode.** Объекты не схлопнутся.
+
+**sorted comparator nulls.** NPE если поле nullable.
+
+**limit short-circuit.** downstream filter может не увидеть элементы.
+
+**peek в production assert.** Забытый debug peek остаётся в CI log flood.
+
+**flatMap null collection.** NPE, заменяю на `Optional.stream` pattern.

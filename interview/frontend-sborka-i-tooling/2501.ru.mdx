@@ -1,0 +1,65 @@
+---
+id: 2501
+title: "Tree shaking в JS бандлах"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Tree shaking в JS бандлах
+
+## Суть
+
+Tree shaking удаляет неиспользуемые exports из production bundle на основе static import graph. Работает с ESM (`import { onlyUsed } from 'lib'`), потому что imports анализируются до запуска. Dead code elimination (Terser/esbuild) дополнительно сжимает оставшийся AST.
+
+## Что ответить на собесе
+
+- Named import позволяет bundlerу выкинуть остальные exports модуля.
+- `import pkg from 'lodash'` тянет весь пакет; prefer `lodash-es` или per-method paths.
+- `sideEffects: false` в package.json библиотеки разрешает агрессивный shake.
+- Честно: CommonJS dynamic `require` и barrel files с side effects ломают shaking.
+- Production mode (`mode: 'production'`, `build.minify`) включает shake + minify pipeline.
+
+## Как это работает
+
+Library module:
+
+```ts
+export function addPair(a: number, b: number) {
+  return a + b;
+}
+
+export function subtractPair(a: number, b: number) {
+  return a - b;
+}
+```
+
+App entry:
+
+```ts
+import { addPair } from './math-helpers';
+
+console.log(addPair(2, 3));
+```
+
+Bundler graph: только `addPair` reachable → `subtractPair` dropped from emitted chunk. Webpack 5 + Rollup + esbuild поддерживают module level shake. Package metadata:
+
+```json
+{
+  "name": "math-helpers",
+  "sideEffects": false,
+  "module": "./dist/index.esm.js"
+}
+```
+
+Terser `usedExports: true` помечает unused within file. Vite uses Rollup for prod, dev ESM native без полного shake до build.
+
+## Подводные камни
+
+- **Barrel re-export.** `export * from './icons'` импортирует сотни компонентов ради одного.
+- **Side effect imports.** `import 'polyfill'` нельзя удалить даже если кажется unused.
+- **eval / dynamic import template.** `import(\`./locales/${lang}\`)` ограничивает static analysis.
+- **False confidence.** Shake уменьшает JS, но не автоматически чинит тяжёлые assets/images.
+- **CJS deps.** Legacy npm package без ESM build остаётся целиком в bundle.

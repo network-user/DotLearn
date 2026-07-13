@@ -1,0 +1,59 @@
+---
+id: 1788
+title: "When the 1C platform opens a transaction automatically"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When the 1C platform opens a transaction automatically
+
+## In short
+
+If the developer did not call `НачатьТранзакцию()`, the platform wraps mutating operations in a transaction: object write and delete, posting and unposting, information register record set write. An explicit transaction is needed to batch several operations under one commit.
+
+## How to answer in an interview
+
+- I say a single `Записать()` is already atomic without manual `НачатьТранзакцию()`.
+- In an interview I list triggers: `Записать()`, `Удалить()`, `Записать(Проведение)`, `МенеджерЗаписи` write.
+- I stress an explicit transaction does not auto-close at method end if opened manually.
+- I honestly note read (`Прочитать()`, read query) does not open a transaction.
+- For several documents in one commit I call `НачатьТранзакцию()` explicitly.
+
+## How it works
+
+A procedure writes one document. The platform opens a transaction, writes the object and movements, commits or rolls back on error.
+
+```bsl
+Процедура СохранитьНакладную(ДокументОбъект) Экспорт
+    ДокументОбъект.Записать(РежимЗаписиДокумента.Проведение);
+КонецПроцедуры
+```
+
+Inside `Записать(Проведение)` the platform runs handlers, builds movements, commits. The developer sees no explicit calls but locks and rollback work.
+
+For a batch of two related documents there is no automatic merge:
+
+```bsl
+НачатьТранзакцию();
+Попытка
+    ДокументРасхода.Записать(РежимЗаписиДокумента.Проведение);
+    ДокументПрихода.Записать(РежимЗаписиДокумента.Проведение);
+    ЗафиксироватьТранзакцию();
+Исключение
+    ОтменитьТранзакцию();
+    ВызватьИсключение;
+КонецПопытки;
+```
+
+Without an outer transaction each `Записать()` commits separately. Object delete and deletion mark also run in an automatic transaction. A read-only query does not start a transaction unless `НачатьТранзакцию()` was called earlier.
+
+## Pitfalls
+
+- **Two Записать() calls without a shared transaction.** First succeeds, second fails, data inconsistent.
+- **Explicit transaction without commit.** Auto-close does not work like implicit mode.
+- **Expecting a transaction on read.** No extra overhead, but no write isolation either.
+- **Nested call with rollback.** The whole outer block rolls back.
+- **Server call from a form.** Automatic transaction boundary matches the call boundary.

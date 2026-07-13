@@ -1,0 +1,86 @@
+---
+id: 3005
+title: "Логи как источник правды при разборе падений тестов"
+category: aqa-logi-monitoring-i-observability
+categoryLabel: "Логи, мониторинг и observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Логи как источник правды при разборе падений тестов
+
+## Суть
+
+Логи фиксируют события приложения и инфраструктуры с меткой времени, уровнем и контекстом. Для AQA они связывают упавший assert с request-id, stack trace и состоянием окружения, особенно в CI и nightly прогонах.
+
+## Что ответить на собесе
+
+- Определяю log levels: DEBUG для разработки, INFO для business events, WARNING/ERROR для деградаций и сбоев.
+- Объясняю structured logging (JSON) vs plain text и почему JSON проще фильтровать в ELK/Loki.
+- Рассказываю, как прикрепляю логи к Allure/JUnit: correlation-id из заголовка, tail файла контейнера после fail.
+- Упоминаю три столпа observability: logs, metrics, traces; лог дополняет, но не заменяет метрики latency.
+- Честно добавляю: без политики retention и PII masking логи опасны; в тестах не включаю DEBUG на prod-like данных без маскирования.
+
+## Как это работает
+
+Приложение пишет через logging API; handler отправляет в stdout, файл или агент. В pytest можно перехватить logging и assert на сообщение, а при интegration failure собрать docker logs по label сервиса.
+
+```python
+import logging
+import json
+import pytest
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", None),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def configure_logging():
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+def process_payment(order_id: str, request_id: str) -> None:
+    log = logging.getLogger("billing")
+    extra = {"request_id": request_id}
+    log.info("payment started", extra=extra)
+    if order_id.endswith("FAIL"):
+        log.error("gateway declined", extra=extra)
+        raise RuntimeError("payment failed")
+    log.info("payment captured", extra=extra)
+
+
+def test_payment_failure_emits_error_log(caplog):
+    configure_logging()
+    caplog.set_level(logging.ERROR)
+    with pytest.raises(RuntimeError):
+        process_payment("ORD-FAIL", request_id="req-42")
+    assert any("gateway declined" in r.message for r in caplog.records)
+    assert caplog.records[-1].request_id == "req-42"
+```
+
+В pipeline добавляю шаг «on failure: upload logs artifact» и поиск по `request_id` из HTTP response header.
+
+## Подводные камни
+
+**Лог без correlation-id.** Невозможно связать UI, API и worker в одном сценарии.
+
+**Слишком verbose DEBUG в CI.** Затопляет storage и скрывает signal.
+
+**Секреты в логах.** Password/token в теле запроса попадают в artifact.
+
+**Timezone без UTC.** Сложно сопоставить лог приложения и ingress.
+
+**Assert только на exit code.** Сервис падает silently без ERROR level.

@@ -1,0 +1,65 @@
+---
+id: 4228
+title: "Чем LEMP отличается от LAMP?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем LEMP отличается от LAMP?
+
+## Суть
+
+LAMP: Linux + Apache + MySQL/MariaDB + PHP/Python/Perl. LEMP меняет A на Nginx (Engine-X). База и язык те же; разница в веб-сервере и схеме исполнения PHP: Apache mod_php vs Nginx + PHP-FPM через FastCGI. Nginx чаще выигрывает на static и high-concurrency proxy.
+
+## Что ответить на собесе
+
+- LAMP: `.htaccess`, mod_php, prefork/event MPM; привычен для shared hosting и legacy.
+- LEMP: Nginx терминирует HTTP, PHP только в FPM pool; нет per-request embed в web server process.
+- Static и TLS на Nginx снимают CPU с Apache/PHP для типичного CMS трафика.
+- Миграция: перенос rewrite rules из `.htaccess` в nginx config вручную.
+- Честно: для tiny traffic разница мала; на high RPS LEMP обычно экономит RAM и latency.
+
+## Как это работает
+
+LEMP server block с PHP-FPM:
+
+```nginx
+server {
+    listen 80;
+    server_name blog.example.com;
+    root /var/www/blog/public;
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+```
+
+Проверка FPM socket:
+
+```bash
+ls -l /run/php/php8.3-fpm.sock
+curl -sI -H 'Host: blog.example.com' http://127.0.0.1/
+```
+
+## Подводные камни
+
+- **.htaccess не переносится.** Каждый rewrite нужно явно в nginx; пропуск ломает pretty URLs.
+- **FPM pool sizing.** `pm.max_children` × RAM per worker легко OOM при нагрузке.
+- **Apache modules.** mod_security, LDAP auth не имеют 1:1 в nginx; ищу альтернативы заранее.
+- **Mixed stack риск.** Nginx proxy на Apache «для совместимости» усложняет цепочку без выгоды.
+- **Session files path.** PHP sessions на shared disk требуют sticky sessions или centralized session store.

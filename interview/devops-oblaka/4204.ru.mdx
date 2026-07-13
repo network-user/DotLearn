@@ -1,0 +1,47 @@
+---
+id: 4204
+title: "Сколько AZ охватывает Multi-AZ RDS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сколько AZ охватывает Multi-AZ RDS?
+
+## Суть
+
+RDS Multi-AZ держит синхронную standby-копию в другой Availability Zone того же региона: одна primary AZ и одна standby AZ (две зоны). Это не cross-region replica; read scaling делается отдельно через Read Replica.
+
+## Что ответить на собесе
+
+- Failover automatic: DNS endpoint переключается на standby при сбое primary.
+- Синхронная реплика: commit ждёт standby (latency чуть выше single-AZ).
+- Backup и maintenance часто идут со standby, снижая нагрузку на primary.
+- Честно: Multi-AZ удваивает compute cost instance; для dev часто single-AZ + snapshot policy.
+
+## Как это работает
+
+Включение Multi-AZ через CLI:
+
+```bash
+aws rds modify-db-instance \
+  --db-instance-identifier payments-primary \
+  --multi-az \
+  --apply-immediately
+
+aws rds describe-db-instances \
+  --db-instance-identifier payments-primary \
+  --query 'DBInstances[0].{MultiAZ:MultiAZ,AZ:AvailabilityZone,Secondary:SecondaryAvailabilityZone}'
+```
+
+При падении AZ RDS поднимает standby в другой зоне; приложение переподключается к тому же endpoint. RPO близок к нулю для sync replica; RTO минуты. Cross-region DR: отдельный Read Replica в другом регионе с promote.
+
+## Подводные камни
+
+- **Путают с Read Replica.** Replica в той же region не даёт auto failover Multi-AZ.
+- **Failover во время peak.** Connection storm без pooler (RDS Proxy) валит app.
+- **Maintenance reboot.** Multi-AZ снижает downtime, но не ноль без graceful drain.
+- **Одна standby только.** Не три AZ копии из коробки.
+- **Latency sensitive writes.** Sync replica в соседней AZ добавляет ms на commit.

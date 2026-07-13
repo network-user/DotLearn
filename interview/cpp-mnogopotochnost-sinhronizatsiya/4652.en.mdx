@@ -1,0 +1,61 @@
+---
+id: 4652
+title: "How do you create a thread with the STL?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you create a thread with the STL?
+
+## In short
+
+The standard library provides `std::thread` (and since C++20 `std::jthread` with automatic join/stop_token) plus high-level `std::async` with `std::future`. The `std::thread` constructor takes a callable and arguments and starts execution immediately.
+
+## How to answer in an interview
+
+- `std::thread t(func, args...)` for an explicit thread.
+- Lambda, functor with `operator()`, free function, or method plus object.
+- `std::async(std::launch::async, task)` when you need a result via `future`.
+- I prefer `std::jthread` in C++20: RAII join and cooperative stop.
+- Honestly: `async` without `launch::async` may defer until `get()` (deferred), which is not a background thread.
+
+## How it works
+
+```cpp
+#include <future>
+#include <iostream>
+#include <thread>
+
+int square(int x) { return x * x; }
+
+struct Doubler {
+    void operator()(int& v) const { v *= 2; }
+};
+
+int main() {
+    std::thread raw(square, 6);
+
+    int value = 3;
+    Doubler d;
+    std::thread mutator(d, std::ref(value));
+
+    auto fut = std::async(std::launch::async, square, 9);
+
+    raw.join();
+    mutator.join();
+    std::cout << value << ' ' << fut.get() << '\n';
+}
+```
+
+`raw` runs `square` on a separate thread. `mutator` invokes the functor with a reference via `std::ref`. `async` returns a `future` with result 81. Each path needs completion sync (`join` or `get`).
+
+## Pitfalls
+
+- **Copy instead of ref.** Without `std::ref`, mutator gets a copy of `value`.
+- **No default detach.** Forgotten join → `terminate`.
+- **async is not a thread pool.** Implementations may spawn a thread per call.
+- **Exception in thread.** Propagates through `future::get`; raw threads can end the process on join under older rules.
+- **Callable overloads.** The `thread` template constructor may pick the wrong overload for overloaded `operator()`.

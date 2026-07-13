@@ -1,0 +1,66 @@
+---
+id: 2009
+title: "How does a Bearer token work in HTTP APIs?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a Bearer token work in HTTP APIs?
+
+## In short
+
+A Bearer token grants access to whoever presents it: whoever knows the string is the client. In HTTP it goes in `Authorization: Bearer <token>`. The server validates signature, expiry, and scope without asking for a password on every request.
+
+## How to answer in an interview
+
+- Scheme from RFC 6750, often JWT or an opaque token from an IdP.
+- HTTPS only; tokens must not appear in logs or Referer.
+- Short TTL plus refresh or re-login on compromise.
+- The resource server never trusts the client blindly: it checks issuer, audience, signature.
+- Honestly: Bearer does not encrypt JWT payload; claims are visible in Base64, secrecy is in the signature.
+
+## How it works
+
+1. The client obtains a token at `/oauth/token` after login or code exchange.
+2. Every API call carries the header:
+
+```java
+var request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.example.com/invoices"))
+    .header("Authorization", "Bearer " + accessToken)
+    .GET()
+    .build();
+```
+
+3. Gateway or Spring filter parses the header:
+
+```java
+public class BearerAuthFilter extends OncePerRequestFilter {
+    @Override
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
+                                    FilterChain chain) throws ServletException, IOException {
+        String header = req.getHeader(HttpHeaders.AUTHORIZATION);
+        if (header != null && header.startsWith("Bearer ")) {
+            String raw = header.substring(7);
+            JwtClaims claims = tokenValidator.parse(raw);
+            SecurityContextHolder.getContext().setAuthentication(toAuth(claims));
+        }
+        chain.doFilter(req, res);
+    }
+}
+```
+
+4. Invalid token yields `401 Unauthorized`, no anonymous fallback on protected routes.
+
+Opaque tokens are validated via introspection; JWTs are verified locally with JWKS public keys.
+
+## Pitfalls
+
+- **Token in query string.** CDNs and access logs retain the secret.
+- **Logging Authorization.** DEBUG appenders leak into SIEM.
+- **Missing audience check.** A token for another client_id is accepted.
+- **Long TTL without revoke.** Stolen Bearer works until exp.
+- **WebSocket subprotocol without TLS.** Bearer is readable on the wire.

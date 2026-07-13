@@ -1,0 +1,67 @@
+---
+id: 4666
+title: "What memory is allocated when a thread is created?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What memory is allocated when a thread is created?
+
+## In short
+
+A new thread gets its own stack and kernel/user structures (TCB, registers). It shares the process heap and globals; `thread_local` gives a per-thread instance.
+
+## How to answer in an interview
+
+- Thread stack: locals and call frames (often 1–8 MiB, OS/`pthread_attr` dependent).
+- TCB in kernel/RTL: id, state, saved registers, stack pointer.
+- Shared: heap, statics/globals, process code segment.
+- `thread_local` storage creates a per-thread copy on first use.
+- Honestly: exact stack size and limits are platform-specific; portable C++ `std::thread` has no standard stack-size API without native extensions.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <thread>
+
+void probe() {
+    int on_stack = 42;
+    std::cout << "stack var at " << static_cast<void*>(&on_stack) << '\n';
+}
+
+int main() {
+    int main_stack = 7;
+    std::thread worker(probe);
+    worker.join();
+    std::cout << "main stack at " << static_cast<void*>(&main_stack) << '\n';
+}
+```
+
+`on_stack` sits in a different range from `main_stack`: threads have separate stacks.
+
+`thread_local`:
+
+```cpp
+thread_local int lane_id = -1;
+
+void tag_lane(int id) {
+    lane_id = id;
+    std::cout << "lane " << lane_id << '\n';
+}
+```
+
+Each thread sees its own `lane_id`; process-global memory is shared.
+
+When constructing `std::thread`, the runtime asks the OS to create a thread: stack mapping, entry point, bookkeeping for `join`. After `join` resources are reclaimed; with `detach` the stack lives until the worker exits.
+
+## Pitfalls
+
+- **Stack overflow.** Deep recursion or large stack arrays in a worker overflow easily.
+- **Default stack size.** Linux often uses 8 MiB per thread; 10k threads means tens of GiB on stacks alone.
+- **Heap not isolated.** A leak in one thread is visible to all; use allocators and sync.
+- **TLS init order.** Static `thread_local` objects have subtle init/fini ordering.
+- **Cache misconception.** Separate stacks do not imply cache isolation for shared heap data.

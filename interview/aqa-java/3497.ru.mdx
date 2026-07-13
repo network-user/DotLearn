@@ -1,0 +1,71 @@
+---
+id: 3497
+title: "Переполнение Integer в тестовых расчётах"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Переполнение Integer в тестовых расчётах
+
+## Суть
+
+`int`/`Integer` в Java 32-битные со знаком: диапазон от −2_147_483_648 до 2_147_483_647. Выход за границу не бросает исключение, а «заворачивает» значение (overflow/underflow). В тестах это ломает assert на счётчиках, timestamp diff и агрегатах, если не проверять границы явно.
+
+## Что ответить на собесе
+
+- Для больших id и сумм использую `long` или `BigInteger` в expected.
+- `Math.addExact`/`multiplyExact` бросают `ArithmeticException` вместо silent wrap.
+- Проверяю boundary: `Integer.MAX_VALUE`, `MIN_VALUE` в property-based тестах.
+- JSON числа > 2^31 могут приходить как long в Jackson, не путаю типы.
+- Честно: silent overflow в проде хуже NPE, в тестах ловлю exact math API.
+
+## Как это работает
+
+```
+int peak = Integer.MAX_VALUE;
+int wrapped = peak + 1;
+// wrapped == Integer.MIN_VALUE
+
+long safe = (long) peak + 1L;
+assertEquals(2147483648L, safe);
+```
+
+Exact arithmetic:
+
+```
+int total = Math.addExact(peak, 1);
+```
+
+Python mirror (unbounded int, но тест на контракт):
+
+```python
+JAVA_INT_MAX = 2_147_483_647
+
+
+def java_add_int(a: int, b: int) -> int:
+    value = a + b
+    if value > JAVA_INT_MAX or value < -JAVA_INT_MAX - 1:
+        raise OverflowError("int32 wrap")
+    return value
+
+
+def test_overflow_guard():
+    import pytest
+    with pytest.raises(OverflowError):
+        java_add_int(JAVA_INT_MAX, 1)
+```
+
+## Подводные камни
+
+**Автоинкремент счётчика.** После MAX_VALUE тест «ожидает +1» падает неочевидно.
+
+**Умножение.** `100000 * 100000` wrap без исключения.
+
+**Сравнение с long.** `int` promoted, но промежуточный overflow уже случился.
+
+**Integer cache.** `valueOf(127)` кэшируется, не влияет на overflow, но на identity assert.
+
+**Time millis cast.** `(int) System.currentTimeMillis()` почти всегда ошибка.

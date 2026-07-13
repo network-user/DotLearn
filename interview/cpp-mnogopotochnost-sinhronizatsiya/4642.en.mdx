@@ -1,0 +1,62 @@
+---
+id: 4642
+title: "When does deadlock happen?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When does deadlock happen?
+
+## In short
+
+Deadlock occurs when threads wait on each other's resources forever in a cycle. The classic Coffman model needs four conditions at once: mutual exclusion, hold and wait, no preemption, and circular wait.
+
+## How to answer in an interview
+
+- Typical case: thread A holds lock1 and waits for lock2; thread B holds lock2 and waits for lock1.
+- Breaking a fixed lock order across threads almost guarantees risk.
+- Production symptoms: threads alive, low CPU, zero progress, profiler stuck on mutex waits.
+- Prevention: one lock order, `std::scoped_lock`, timeouts, fewer nested locks.
+- Honestly: deadlocks may never show in unit tests; stress tests and operation timeouts help.
+
+## How it works
+
+```cpp
+#include <mutex>
+#include <thread>
+
+std::mutex leftGate;
+std::mutex rightGate;
+
+void routeA() {
+    std::lock_guard a(leftGate);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::lock_guard b(rightGate);
+}
+
+void routeB() {
+    std::lock_guard b(rightGate);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::lock_guard a(leftGate);
+}
+
+int main() {
+    std::thread t1(routeA);
+    std::thread t2(routeB);
+    t1.join();
+    t2.join();
+}
+```
+
+`routeA` takes `leftGate` then `rightGate`; `routeB` reverses the order. After a short pause each holds its first mutex and blocks on the second. The wait cycle never breaks without a timeout or restart.
+
+## Pitfalls
+
+- **Hidden locks.** Calling third-party APIs under your mutex may acquire another lock inside.
+- **condition_variable + mutex.** Waiting on one mutex and notifying under another breaks invariants and can sleep forever.
+- **Database and file locks.** External locks join the same wait-for graph.
+- **try_lock without backoff.** Infinite spinning on two mutexes can still deadlock logic.
+- **Diagnosis.** Without stack dumps of all threads, deadlock is easy to confuse with slow I/O.

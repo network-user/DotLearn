@@ -1,0 +1,69 @@
+---
+id: 1630
+title: "Timeout and cancellation in gRPC"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Timeout and cancellation in gRPC
+
+## In short
+
+gRPC in Go inherits `context.Context`: deadline via `WithTimeout`/`WithDeadline`, manual cancel via `WithCancel`. Context is passed into every RPC call; on cancel or timeout the client gets an error; the server must watch `ctx.Done()` and stop work.
+
+## How to answer in an interview
+
+- Client: `ctx, cancel := context.WithTimeout(parent, 2*time.Second)` + `defer cancel()`.
+- Server: in the handler I check `ctx.Err()` and return `status.Error(codes.Canceled, ...)`.
+- Deadline propagation in call chains: pass the same ctx downstream.
+- Interceptor can log `grpc.status` and latency.
+- Honestly: without cancel on the server a long DB query continues after the client leaves.
+
+## How it works
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+defer cancel()
+
+resp, err := client.FetchReport(ctx, &pb.ReportRequest{Month: 6})
+if err != nil {
+	if status.Code(err) == codes.DeadlineExceeded {
+		log.Println("client timeout")
+	}
+	return err
+}
+```
+
+Server:
+
+```go
+func (s *reportServer) FetchReport(ctx context.Context, req *pb.ReportRequest) (*pb.ReportResponse, error) {
+	done := make(chan *pb.ReportResponse, 1)
+	go func() {
+		done <- s.buildReport(req)
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, status.Error(codes.Canceled, "request canceled")
+	case r := <-done:
+		return r, nil
+	}
+}
+```
+
+gRPC encodes the deadline in metadata `grpc-timeout`; on expiry it closes the stream with the matching status code.
+
+## Pitfalls
+
+**Background context on the server instead of the incoming one.** Client cancel is lost.
+
+**Forgotten `defer cancel()` on the client.** Timer leak until GC.
+
+**Too short timeout on cold start.** False 504s during deploy.
+
+**Ignore `ctx` in DB driver without context-aware API.** Query is not interrupted.
+
+**Retry without jitter on DeadlineExceeded.** Thundering herd on an overloaded service.

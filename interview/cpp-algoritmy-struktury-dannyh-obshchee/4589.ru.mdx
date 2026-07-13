@@ -1,0 +1,106 @@
+---
+id: 4589
+title: "Какие бывают способы разрешения коллизий?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие бывают способы разрешения коллизий?
+
+## Суть
+
+Когда два ключа попадают в один индекс, хеш-таблица выбирает стратегию коллизий. Две базовые семьи: chaining (цепочки вне или внутри корзины) и open addressing (все записи в массиве слотов с пробированием). У open addressing есть линейное, квадратичное и двойное хеширование.
+
+## Что ответить на собесе
+
+- Перечисляю chaining и open addressing как главные ветки; `std::unordered_map` в mainstream STL использует chaining.
+- Для open addressing называю linear probing, quadratic probing, double hashing.
+- Сравниваю trade-off: chaining проще при высокой загрузке, open addressing экономит указатели, но страдает от кластеров.
+- Упоминаю tombstone при удалении в open addressing.
+- Честно добавляю: в продакшене выбор часто уже сделан стандартной библиотекой; на собесе важно объяснить идею, а не переписать libc.
+
+## Как это работает
+
+**Chaining:** корзина хранит коллекцию записей с одним индексом; вставка добавляет узел, поиск сканирует цепочку.
+
+**Open addressing:** массив слотов; при занятости вычисляют следующий индекс по правилу пробирования до пустой ячейки или нахождения ключа.
+
+```cpp
+#include <iostream>
+#include <list>
+#include <optional>
+#include <vector>
+
+class ChainSet {
+    std::vector<std::list<int>> buckets;
+    int modulo;
+
+public:
+    explicit ChainSet(int m) : buckets(m), modulo(m) {}
+
+    void add(int value) {
+        auto& chain = buckets[value % modulo];
+        for (int v : chain) if (v == value) return;
+        chain.push_back(value);
+    }
+
+    bool has(int value) const {
+        for (int v : buckets[value % modulo]) if (v == value) return true;
+        return false;
+    }
+};
+
+class LinearProbeSet {
+    std::vector<std::optional<int>> cells;
+    int modulo;
+    static constexpr int kEmpty = -1;
+
+public:
+    explicit LinearProbeSet(int m) : cells(m), modulo(m) {}
+
+    void add(int value) {
+        int idx = value % modulo;
+        for (int step = 0; step < modulo; ++step) {
+            int slot = (idx + step) % modulo;
+            if (!cells[slot].has_value() || cells[slot].value() == kEmpty) {
+                cells[slot] = value;
+                return;
+            }
+            if (cells[slot].value() == value) return;
+        }
+    }
+
+    bool has(int value) const {
+        int idx = value % modulo;
+        for (int step = 0; step < modulo; ++step) {
+            int slot = (idx + step) % modulo;
+            if (!cells[slot].has_value() || cells[slot].value() == kEmpty) return false;
+            if (cells[slot].value() == value) return true;
+        }
+        return false;
+    }
+};
+
+int main() {
+    ChainSet chained(8);
+    LinearProbeSet probed(8);
+    for (int v : {15, 23, 31}) {
+        chained.add(v);
+        probed.add(v);
+    }
+    std::cout << chained.has(23) << ' ' << probed.has(23) << '\n';
+}
+```
+
+Квадратичное пробирование смещает шаг как `1, 4, 9...`, снижая primary clustering. Double hashing берёт вторую hash-функцию для шага. Удаление в open addressing помечает tombstone, иначе поиск обрывается раньше времени.
+
+## Подводные камни
+
+- **Primary clustering.** Linear probing слипает занятые блоки; вставка замедляется раньше, чем растёт load на бумаге.
+- **Load factor потолок.** Open addressing требует запас пустых слотов; выше ~0.7 без rehash резко падает.
+- **Удаление в chaining.** Нужно удалять конкретный узел в цепочке, не всю корзину.
+- **Несовместимость hash и probe.** Double hashing требует независимой второй функции.
+- **Robin Hood / cuckoo.** На собесе могут спросить продвинутые варианты; знать название и идею выравнивания дистанции полезно.

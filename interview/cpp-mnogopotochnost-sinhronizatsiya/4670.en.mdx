@@ -1,0 +1,72 @@
+---
+id: 4670
+title: "What happens if you lock std::mutex twice in one thread?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What happens if you lock std::mutex twice in one thread?
+
+## In short
+
+`std::mutex` is not reentrant: a second `lock()` in the same thread blocks forever (self-deadlock). For nested acquisition use `std::recursive_mutex`.
+
+## How to answer in an interview
+
+- Plain `std::mutex`: re-lock in the owner thread deadlocks with itself.
+- Two `std::lock_guard` scopes on the same mutex nested the same way.
+- Design fix: shrink the critical section; do not call code that locks the same mutex again.
+- Alternative: `std::recursive_mutex` with matched unlock count.
+- Honestly: interviews call this deadlock, though it is single-thread self-deadlock, not a Coffman cycle between threads.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate;
+
+void nested_trap() {
+    gate.lock();
+    std::cout << "first acquire\n";
+    gate.lock(); // hangs forever on plain mutex
+    std::cout << "never reached\n";
+    gate.unlock();
+    gate.unlock();
+}
+
+int main() {
+    std::thread worker(nested_trap);
+    worker.join();
+}
+```
+
+With `recursive_mutex`:
+
+```cpp
+#include <mutex>
+
+std::recursive_mutex nested_gate;
+
+void nested_ok() {
+    nested_gate.lock();
+    nested_gate.lock();
+    nested_gate.unlock();
+    nested_gate.unlock();
+}
+```
+
+Unlock count must match successful locks. RAII with `lock_guard<recursive_mutex>` keeps balance.
+
+## Pitfalls
+
+- **Hidden re-entry.** A public method under mutex calls another method that locks the same member mutex.
+- **Recursive mutex abuse.** Hides poor lock granularity; refactor is often better.
+- **try_lock.** A second try_lock returns false instead of hanging; easy to miss in review.
+- **Shared mutex.** Double `shared_lock` in one thread on `shared_mutex` can also be problematic.
+- **Sanitizer silence.** TSan may not flag self-deadlock as clearly as data races.

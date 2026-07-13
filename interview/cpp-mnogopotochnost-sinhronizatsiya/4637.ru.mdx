@@ -1,0 +1,71 @@
+---
+id: 4637
+title: "Чем мьютекс отличается от семафора?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем мьютекс отличается от семафора?
+
+## Суть
+
+Мьютекс даёт взаимное исключение: владелец один. Семафор ведёт счётчик допусков и может пускать несколько потоков одновременно до заданного лимита. Бинарный семафор близок к мьютексу, но семантика владения и повторного захвата отличается.
+
+## Что ответить на собесе
+
+- Мьютекс защищает критическую секцию с одним writer/reader group; семафор ограничивает пул ресурсов (N слотов).
+- `std::mutex` не рекурсивен по умолчанию; `std::recursive_mutex` если нужен повторный lock в том же потоке.
+- В C++20 есть `std::counting_semaphore` / `std::binary_semaphore` для счётного допуска.
+- Для вывода в `std::cout` беру mutex; для пула из трёх соединений к БД — counting semaphore.
+- Честно: семафор не требует освобождать тот же поток, что захватил; с мьютексом так делать нельзя.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <semaphore>
+#include <thread>
+
+std::mutex logGuard;
+
+void emit(const char* tag) {
+    std::lock_guard lock(logGuard);
+    std::cout << tag << '\n';
+}
+
+std::counting_semaphore<2> slot{2};
+
+void useSlot(int id) {
+    slot.acquire();
+    std::cout << "worker " << id << " in slot\n";
+    slot.release();
+}
+
+int main() {
+    std::thread t1(emit, "A");
+    std::thread t2(emit, "B");
+    t1.join();
+    t2.join();
+
+    std::thread w1(useSlot, 1);
+    std::thread w2(useSlot, 2);
+    std::thread w3(useSlot, 3);
+    w1.join();
+    w2.join();
+    w3.join();
+}
+```
+
+`logGuard` сериализует вывод: одновременно печатает один поток. `slot` с лимитом 2 впускает двух workers; третий ждёт `release()`. Мьютекс не считает «сколько уже внутри»; семафор хранит остаток пропусков.
+
+## Подводные камни
+
+- **Забытый unlock.** Ручной `lock`/`unlock` при исключении оставляет deadlock; предпочитаю RAII (`lock_guard`, `unique_lock`).
+- **Priority inversion.** Мьютекс без priority inheritance может задержать high-priority поток за low-priority владельцем.
+- **Спин vs блок.** `std::mutex` блокирует поток; busy-wait только в спецпримитивах (`atomic` + pause).
+- **Бинарный семафор ≠ mutex.** Повторный `release` без `acquire` раздувает счётчик и ломает инвариант.
+- **Отсутствие в C++17.** До C++20 семафоры через POSIX/WinAPI или condition_variable + счётчик.

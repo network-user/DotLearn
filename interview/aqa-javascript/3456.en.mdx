@@ -1,0 +1,81 @@
+---
+id: 3456
+title: "Flaky tests in JS UI/API automation"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Flaky tests in JS UI/API automation
+
+## In short
+
+A flaky test yields different outcomes on the same code: green and red without changes. In the JS stack, causes include async UI races, unstable staging APIs, shared state between specs, and CI resource starvation. Fixes: explicit waits, data isolation, stubs, and quarantine with flake-rate metrics.
+
+## How to answer in an interview
+
+- I reproduce with 20+ runs of one spec (`--repeat-each` in Playwright).
+- I replace `sleep` with `expect(locator).toBeVisible()` or polling assertions.
+- API suites move to MSW/nock; UI uses mock routes or a test clock.
+- Each test creates a unique user/session; no reused id from a global hook.
+- Honestly: quarantine without a ticket and owner becomes a pile of disabled regressions.
+
+## How it works
+
+Bad pattern:
+
+```
+await page.click("#save");
+await page.waitForTimeout(2000);
+await expect(page.locator(".toast")).toBeVisible();
+```
+
+Reliable:
+
+```
+await page.getByRole("button", { name: "Save" }).click();
+await expect(page.getByRole("status")).toContainText("Saved");
+```
+
+API with an explicit wait:
+
+```
+await driver.wait(until.elementLocated(By.id("ready")), 10_000);
+```
+
+Flake metric in a pytest report:
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class RunOutcome:
+    passed: int
+    failed: int
+
+
+def flake_rate(outcomes: list[RunOutcome]) -> float:
+    total = sum(o.passed + o.failed for o in outcomes)
+    fails = sum(o.failed for o in outcomes)
+    return 0.0 if total == 0 else fails / total
+
+
+def test_flake_rate_threshold():
+    sample = [RunOutcome(1, 0)] * 19 + [RunOutcome(0, 1)]
+    assert flake_rate(sample) <= 0.1
+```
+
+## Pitfalls
+
+**CI-level retry without a fix.** Hides a product bug for months.
+
+**Parallel workers and one test user.** Data collisions cause random failures.
+
+**Animation and screenshot compare.** Anti-aliasing differs headless vs headed.
+
+**Network stub race.** Response arrives before route subscription.
+
+**Spec order dependency.** `test B` fails only after `test A` without cleanup.

@@ -1,0 +1,66 @@
+---
+id: 2498
+title: "Environment variables на фронтенде"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Environment variables на фронтенде
+
+## Суть
+
+На фронте env vars вшиваются на этапе сборки: bundler заменяет `import.meta.env.VITE_*` или `process.env.REACT_APP_*` на литералы. Runtime в браузере не читает OS environment. Это конфиг per deploy target (dev/stage/prod), не секретное хранилище: любой пользователь увидит значения в bundle.
+
+## Что ответить на собесе
+
+- Vite: только переменные с префиксом `VITE_` попадают в client code; `.env`, `.env.production` по mode.
+- CRA/React scripts: `REACT_APP_` prefix, `process.env` static replacement.
+- Secrets (private API keys) держим на backend proxy, не в frontend env.
+- Честно: «скрыть» ключ через env на клиенте нельзя; obfuscation не защита.
+- CI inject через `ENVFILE` или pipeline variables перед `pnpm build`.
+
+## Как это работает
+
+`.env.production`:
+
+```
+VITE_API_ORIGIN=https://api.example.com
+VITE_FEATURE_FLAGS=checkout_v2
+```
+
+```ts
+const apiOrigin = import.meta.env.VITE_API_ORIGIN;
+const flags = import.meta.env.VITE_FEATURE_FLAGS?.split(',') ?? [];
+
+export async function fetchProfile() {
+  const response = await fetch(`${apiOrigin}/profile`, { credentials: 'include' });
+  return response.json();
+}
+
+export function isCheckoutV2Enabled() {
+  return flags.includes('checkout_v2');
+}
+```
+
+Webpack-style (legacy):
+
+```ts
+const apiOrigin = process.env.REACT_APP_API_ORIGIN;
+
+if (!apiOrigin) {
+  throw new Error('REACT_APP_API_ORIGIN is required at build time');
+}
+```
+
+Build pipeline подставляет значения: `VITE_API_ORIGIN=https://staging.api.example.com pnpm build`. После deploy изменить URL без rebuild нельзя (исключение: runtime config endpoint или window.__CONFIG__ injection через server HTML template).
+
+## Подводные камни
+
+- **False security.** Публикация `VITE_STRIPE_KEY` в repo `.env` всё равно утекает в JS.
+- **Drift между env files.** Dev `.env.local` с другим API ломает repro production bug.
+- **Typo in prefix.** `API_URL` без `VITE_` silently undefined в Vite.
+- **Boolean as string.** `VITE_DEBUG=false` truthy; сравнивай `=== 'true'`.
+- **SSR leak.** Env попадает и в server bundle; не дублируй server-only secrets в `VITE_` vars.

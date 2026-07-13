@@ -1,0 +1,59 @@
+---
+id: 1617
+title: "Как работает HTTPS"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как работает HTTPS
+
+## Суть
+
+HTTPS это HTTP поверх TLS: сначала криптографическое рукопожатие и проверка сертификата, затем симметричное шифрование всего прикладного обмена. Гарантируются конфиденциальность, целостность и аутентификация сервера; при mTLS ещё и клиента.
+
+## Что ответить на собесе
+
+- TLS 1.2+ handshake: cipher suite, cert validation, session key derivation.
+- После handshake HTTP методы и заголовки идут внутри зашифрованных TLS record.
+- HSTS, secure cookies, redirect HTTP→HTTPS на edge.
+- В Go `ListenAndServeTLS` или reverse proxy termination.
+- Честно: HTTPS не скрывает IP и SNI; для полной приватности метаданных нужны дополнительные меры.
+
+## Как это работает
+
+```go
+mux := http.NewServeMux()
+mux.HandleFunc("/api/profile", func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+})
+
+log.Fatal(http.ListenAndServeTLS(":443", "fullchain.pem", "privkey.pem", mux))
+```
+
+Упрощённый диалог handshake:
+
+```
+Клиент → ServerHello, supported ciphers
+Сервер → cert, chosen cipher
+Клиент → проверка CA, key share
+Обе стороны → Finished, session keys ready
+Далее → зашифрованный GET /api/profile
+```
+
+Браузер или `http.Client` проверяет цепочку до trusted root. Сервер доказывает владение приватным ключом cert. Дальше AES-GCM или ChaCha20-Poly1305 шифруют каждый TLS record с уникальным nonce.
+
+## Подводные камни
+
+**Mixed content.** Страница по HTTPS грузит `http://` скрипты: браузер блокирует или ослабляет защиту.
+
+**Слабые cipher suites в конфиге.** Оставленные RC4 или export-grade проходят аудит только на бумаге.
+
+**Просроченный cert без мониторинга.** Ночной outage после silent expiry.
+
+**TLS termination без HSTS.** Downgrade attack на первом визите пользователя.
+
+**Логирование тел запросов на прокси.** Расшифрованный трафик на балансировщике требует политики доступа.

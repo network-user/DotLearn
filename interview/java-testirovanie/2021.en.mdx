@@ -1,0 +1,76 @@
+---
+id: 2021
+title: "Why isolate dependencies in tests?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why isolate dependencies in tests?
+
+## In short
+
+Isolating dependencies lowers coupling and makes unit tests deterministic: a failure points at one class, not an unavailable DB or flaky API. Achieved via DI, port/adapter interfaces, and test doubles.
+
+## How to answer in an interview
+
+- Lower coupling: change `PaymentProcessor` without touching `OrderService`.
+- Fast tests: in-memory fake instead of Testcontainers per method.
+- Localized failures: red test = one module.
+- DI via constructor injection; field `@Autowired` complicates substitution.
+- Honestly: full isolation hides mapping/serialization bugs; balance with slice tests.
+
+## How it works
+
+Port interface plus injection:
+
+```java
+public interface InvoiceMailer {
+    void sendIssued(Invoice invoice);
+}
+
+public class InvoiceService {
+    private final InvoiceRepository repo;
+    private final InvoiceMailer mailer;
+
+    public InvoiceService(InvoiceRepository repo, InvoiceMailer mailer) {
+        this.repo = repo;
+        this.mailer = mailer;
+    }
+
+    public Invoice issue(UUID orderId) {
+        Invoice invoice = Invoice.fromOrder(orderId);
+        repo.save(invoice);
+        mailer.sendIssued(invoice);
+        return invoice;
+    }
+}
+```
+
+Unit test:
+
+```java
+@Test
+void issuePersistsAndNotifies() {
+    InvoiceRepository repo = new InMemoryInvoiceRepository();
+    InvoiceMailer mailer = mock(InvoiceMailer.class);
+    InvoiceService service = new InvoiceService(repo, mailer);
+
+    Invoice created = service.issue(UUID.randomUUID());
+
+    assertTrue(repo.find(created.id()).isPresent());
+    verify(mailer).sendIssued(created);
+}
+```
+
+Spring `@Configuration` wires production beans; in tests I substitute fakes manually or via `@TestConfiguration`. No IoC container needed for pure domain tests.
+
+## Pitfalls
+
+- **Service locator inside class.** `Database.getInstance()` breaks isolation.
+- **Testing through concrete JDBC.** Unit test pulls schema migrations.
+- **Interface explosion.** Every private helper as a port; YAGNI.
+- **Shared Spring context between tests.** Polluted bean state across classes.
+- **Mock boundary too high.** Isolated everything; integration gap to prod.

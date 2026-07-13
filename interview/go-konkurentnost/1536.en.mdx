@@ -1,0 +1,80 @@
+---
+id: 1536
+title: "What states can a channel be in?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What states can a channel be in?
+
+## In short
+
+A channel can be nil (zero value of the type), open (created with make), or closed (after close). An open channel synchronizes send/recv; a closed one rejects send, drains any buffered values, then returns the zero value with ok=false; operations on nil block forever.
+
+## How to answer in an interview
+
+- A nil channel is ignored in select; a lone operation blocks forever.
+- Only the sender should close; a second close panics.
+- Reading a closed unbuffered channel immediately yields the zero value, ok=false.
+- Honestly: "three states" is an interview model; the runtime tracks more (buffer, waiters).
+
+## How it works
+
+```go
+package main
+
+import "fmt"
+
+func demoOpen() {
+	queue := make(chan int, 2)
+	queue <- 10
+	queue <- 20
+	fmt.Println(<-queue, <-queue)
+}
+
+func demoClosed() {
+	events := make(chan string, 1)
+	events <- "ready"
+	close(events)
+	for msg := range events {
+		fmt.Println("event:", msg)
+	}
+	val, ok := <-events
+	fmt.Println("drained:", val, ok)
+}
+
+func demoNilSelect(in <-chan int) {
+	var sink chan int
+	select {
+	case v := <-in:
+		fmt.Println("in:", v)
+	case sink <- 1:
+		fmt.Println("never")
+	default:
+		fmt.Println("nil branch skipped in select")
+	}
+}
+
+func main() {
+	demoOpen()
+	demoClosed()
+	demoNilSelect(nil)
+}
+```
+
+An open buffered channel does not block send while len < cap. After close, send panics; range reads until empty and exits.
+
+## Pitfalls
+
+**Send on closed channel.** Always panics; close only when receivers know no more data is coming.
+
+**Close from the reader side.** Race with a still-sending writer; agree who closes.
+
+**nil without make.** `var ch chan T` plus a forgotten make causes silent deadlock in production.
+
+**range without close.** If the sender never closes and never exits, range blocks forever.
+
+**Closed but buffered.** A closed buffered channel still delivers queued values; zero value after drain is not a data error.

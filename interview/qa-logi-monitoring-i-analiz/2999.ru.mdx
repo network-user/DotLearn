@@ -1,0 +1,61 @@
+---
+id: 2999
+title: "Correlation ID: как QA связывает UI-баг с логами микросервисов?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Correlation ID: как QA связывает UI-баг с логами микросервисов?
+
+## Суть
+
+Correlation ID (request id, trace id) это уникальный маркер запроса, который gateway прокидывает во все downstream сервисы и пишет в логи. QA копирует id из response header или error screen и ищет полную цепочку в Kibana/Grafana/Loki.
+
+## Что ответить на собесе
+
+- Генерирую или принимаю `X-Request-Id` / `traceparent` на edge.
+- Тот же id в access log nginx, api, worker, DB audit.
+- При багрепорте: steps + timestamp + correlation id обязательны.
+- Distributed tracing (Jaeger) визуализирует spans с тем же trace id.
+- Честно: если id не возвращается клиенту, QA слеп на prod без admin log access.
+
+## Как это работает
+
+```http
+GET /api/checkout HTTP/1.1
+X-Request-Id: 7f3a9c2e-4b1d-4e8a-9c0f-2d8e1a4b6c7d
+```
+
+Gherkin:
+
+```gherkin
+Feature: Correlation id сквозь сервисы
+
+  Scenario: Response header содержит request id
+    When POST /api/payment fails
+    Then header X-Request-Id present
+    And QA записывает значение в bug ticket
+
+  Scenario: Поиск в centralized logs
+    Given request id 7f3a9c2e
+    When query in Kibana correlation_id:7f3a9c2e
+    Then entries from gateway payment inventory visible
+    And timestamps ascending
+
+  Scenario: Id propagated to async worker
+    Given checkout enqueue job
+    Then job log contains same correlation id as HTTP response
+```
+
+UUID v4 или snowflake; W3C Trace Context `traceparent` совместим с OpenTelemetry.
+
+## Подводные камни
+
+- **New id per internal hop.** Chain breaks, cannot correlate.
+- **Id only in DEBUG logs.** Prod level INFO без id.
+- **PII in log line with id.** GDPR leak in ticket paste.
+- **Clock skew between services.** Wrong order in timeline.
+- **Client-generated id not trusted.** Spoof floods logs.

@@ -1,0 +1,63 @@
+---
+id: 1577
+title: "На каком уровне создаётся goroutine"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# На каком уровне создаётся goroutine
+
+## Суть
+
+Goroutine это сущность Go runtime (структура G + стек kilobytes), не отдельный OS thread. Runtime multiplexes тысячи G на пул потоков M, привязанных к P (logical CPU). `go fn()` аллоцирует G и ставит в run queue.
+
+## Что ответить на собесе
+
+- User-level green thread под управлением runtime, не 1:1 с pthread.
+- Стек растёт динамически, старт ~2 KB.
+- Scheduler (G-M-P) решает mapping на hardware threads.
+- Честно: под капотом всё равно OS threads, но goroutine не равна одному thread.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func worker(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Printf("G %d on thread-ish stack\n", id)
+}
+
+func main() {
+	fmt.Println("GOMAXPROCS:", runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go worker(i, &wg)
+	}
+	wg.Wait()
+}
+```
+
+Каждый `go` создаёт G в heap/runtime arena. M выполняет G пока block или preemption. Создание дешевле fork thread: нет kernel syscall на каждую G.
+
+## Подводные камни
+
+**«Goroutine = thread».** Неверная модель для собеса.
+
+**Unbounded spawn.** Память на стеки G и scheduler overhead.
+
+**LockOSThread при массовом go.** Сжимает pool M.
+
+**Cgo callback thread.** Отдельный M, не ваш G stack rules.
+
+**Runtime stack limit.** Stack overflow panic при deep recursion без tail opt.

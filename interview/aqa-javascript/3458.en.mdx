@@ -1,0 +1,66 @@
+---
+id: 3458
+title: "Microtasks and macrotasks in the event loop queue"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Microtasks and macrotasks in the event loop queue
+
+## In short
+
+Macrotasks (`setTimeout`, I/O, UI events) enter the task queue and run one per loop turn. Microtasks (Promise callbacks, `queueMicrotask`, `MutationObserver`) drain fully after each macrotask and before the next. That is why `then` beats `setTimeout(0)` in test logs.
+
+## How to answer in an interview
+
+- After sync code the loop empties the microtask queue first.
+- One macrotask, then all microtasks again, and so on.
+- In Node, `process.nextTick` runs even before ordinary microtasks (separate queue).
+- I fix flaky log-order asserts with an explicit await on a condition, not a timer.
+- Honestly: an endless `then` chain that keeps enqueueing microtasks blocks macrotasks and UI render.
+
+## How it works
+
+```
+console.log("sync");
+setTimeout(() => console.log("macro"), 0);
+Promise.resolve().then(() => console.log("micro"));
+```
+
+Order: sync, micro, macro.
+
+API polling in a test:
+
+```
+await expect.poll(async () => page.locator("#status").innerText()).toBe("done");
+```
+
+In pytest I model queue priority:
+
+```python
+def drain_order(sync, microtasks, macrotasks):
+    log = list(sync)
+    log.extend(microtasks)
+    log.extend(macrotasks)
+    return log
+
+
+def test_microtasks_before_macrotasks():
+    order = drain_order(["A"], ["B"], ["C"])
+    assert order.index("B") < order.index("C")
+```
+
+## Pitfalls
+
+**MutationObserver in component tests.** Microtask storms after DOM patches.
+
+**Awaiting only setTimeout.** Promise microtasks are still queued.
+
+**Confusing requestIdleCallback with macro.** Different priority, not for assert timing.
+
+**Fake timers without microtasks.** Jest `advanceTimers` does not move every `then`.
+
+**Macrotask starvation.** Recursive `then` without yield freezes the page.

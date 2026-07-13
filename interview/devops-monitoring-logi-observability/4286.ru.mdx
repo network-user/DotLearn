@@ -1,0 +1,85 @@
+---
+id: 4286
+title: "Какой стек для мониторинга и логов в DevOps?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой стек для мониторинга и логов в DevOps?
+
+## Суть
+
+Классическая связка: метрики (Prometheus + Alertmanager + Grafana) и логи (ELK или Loki stack). ELK = Elasticsearch + Logstash/Beats + Kibana для полнотекстового поиска по событиям; Grafana визуализирует time series и может алертить по Loki/Tempo. Современные платформы добавляют OpenTelemetry для единого сбора traces/metrics/logs.
+
+## Что ответить на собесе
+
+- Метрики: Prometheus scrape + node_exporter + kube-state-metrics; алерты в Alertmanager → Slack/PagerDuty.
+- Логи: Fluent Bit → Loki или Beats → Elasticsearch; корреляция trace_id в обоих слоях.
+- Дашборды и explore: Grafana с datasource Prometheus, Loki, Elasticsearch.
+- Для audit/compliance дольше держу ES; для k8s-native и cost часто Loki.
+- Честно: «ELK vs Grafana» неверная дихотомия; Grafana чаще UI, ELK backend для логов, они дополняют друг друга.
+
+## Как это работает
+
+Минимальный docker-compose фрагмент связки Prometheus + Grafana + Loki:
+
+```bash
+cat <<'EOF' > observability.compose.yml
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: changeme
+
+  loki:
+    image: grafana/loki:3.1.0
+    ports: ["3100:3100"]
+
+  promtail:
+    image: grafana/promtail:3.1.0
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail.yml:/etc/promtail/config.yml:ro
+EOF
+```
+
+Logstash → Elasticsearch ingest (ELK path):
+
+```bash
+cat <<'EOF' > logstash.conf
+input { beats { port => 5044 } }
+filter { json { source => "message" } }
+output {
+  elasticsearch {
+    hosts => ["http://es:9200"]
+    index => "app-%{+YYYY.MM.dd}"
+  }
+}
+EOF
+```
+
+Проверка health всего стека одной командой:
+
+```bash
+for url in http://localhost:9090/-/healthy http://localhost:3000/api/health http://localhost:3100/ready; do
+  echo -n "$url -> "; curl -sf -o /dev/null -w '%{http_code}\n' "$url"
+done
+```
+
+## Подводные камни
+
+- **Alert fatigue.** Prometheus rules без `for:` и grouping в Alertmanager спамят on-call.
+- **Index/label cardinality.** ES daily index + Loki high-cardinality labels оба бьют по диску по-разному; нужны лимиты.
+- **Единый timezone.** Логи UTC, метрики scrape local; при RCA свожу в Grafana timezone setting.
+- **Security по умолчанию.** Kibana/Grafana admin без SSO и TLS в internal network утекают при одном VPN breach.
+- **Отсутствие traces.** Метрики + логи без OpenTelemetry/Jaeger усложняют root cause при latency spikes.

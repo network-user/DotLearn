@@ -6,6 +6,7 @@ import {
   parseInterviewIndex,
   type Exercise,
   type InterviewCategory,
+  type InterviewDirection,
   type InterviewExerciseMeta,
   type InterviewQuestionMeta,
   type InterviewRelatedTopic,
@@ -13,6 +14,7 @@ import {
 } from '@dotlearn/contracts';
 
 import categoryData from './interview-categories.data.json';
+import { resolveInterviewDirection } from './interview-directions';
 
 const indexModules = import.meta.glob<{ default: unknown }>('../../../../interview/index.json', {
   eager: true,
@@ -54,11 +56,26 @@ export interface StageInfo {
   count: number;
 }
 
+export interface DirectionScoped {
+  category: InterviewCategory;
+  direction?: InterviewDirection | undefined;
+}
+
+export const directionOf = (item: DirectionScoped): InterviewDirection | undefined =>
+  item.direction ?? resolveInterviewDirection(item.category);
+
+export const filterByDirection = <T extends DirectionScoped>(
+  items: readonly T[],
+  directionId: InterviewDirection | 'all',
+): T[] =>
+  directionId === 'all' ? [...items] : items.filter((item) => directionOf(item) === directionId);
+
 const buildFacets = <T extends string>(
+  questions: readonly InterviewQuestionMeta[],
   pick: (q: InterviewQuestionMeta) => { slug: T; label: string },
 ): { slug: T; label: string; count: number }[] => {
   const map = new Map<T, { slug: T; label: string; count: number }>();
-  for (const question of getInterviewIndex()) {
+  for (const question of questions) {
     const { slug, label } = pick(question);
     const existing = map.get(slug);
     if (existing) {
@@ -72,9 +89,15 @@ const buildFacets = <T extends string>(
 
 let interviewCategoriesCache: CategoryInfo[] | undefined;
 
-export const getInterviewCategories = (): CategoryInfo[] => {
+export const getInterviewCategories = (direction?: InterviewDirection): CategoryInfo[] => {
+  if (direction) {
+    return buildFacets(filterByDirection(getInterviewIndex(), direction), (q) => ({
+      slug: q.category,
+      label: q.categoryLabel,
+    }));
+  }
   if (!interviewCategoriesCache) {
-    interviewCategoriesCache = buildFacets((q) => ({
+    interviewCategoriesCache = buildFacets(getInterviewIndex(), (q) => ({
       slug: q.category,
       label: q.categoryLabel,
     }));
@@ -84,16 +107,14 @@ export const getInterviewCategories = (): CategoryInfo[] => {
 
 const STAGE_ORDER: InterviewStage[] = ['hr', 'tech', 'system-design'];
 
-let interviewStagesCache: StageInfo[] | undefined;
-
-export const getInterviewStages = (): StageInfo[] => {
-  if (!interviewStagesCache) {
-    interviewStagesCache = buildFacets((q) => ({
-      slug: q.stage,
-      label: q.stageLabel,
-    })).sort((a, b) => STAGE_ORDER.indexOf(a.slug) - STAGE_ORDER.indexOf(b.slug));
-  }
-  return interviewStagesCache;
+export const getInterviewStages = (direction?: InterviewDirection): StageInfo[] => {
+  const questions = direction
+    ? filterByDirection(getInterviewIndex(), direction)
+    : getInterviewIndex();
+  return buildFacets(questions, (q) => ({
+    slug: q.stage,
+    label: q.stageLabel,
+  })).sort((a, b) => STAGE_ORDER.indexOf(a.slug) - STAGE_ORDER.indexOf(b.slug));
 };
 
 export const getInterviewQuestion = (id: number): InterviewQuestionMeta | undefined =>

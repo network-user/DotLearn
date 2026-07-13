@@ -1,0 +1,56 @@
+---
+id: 4273
+title: "SSH завис при подключении: что проверить?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# SSH завис при подключении: что проверить?
+
+## Суть
+
+Hang на connect обычно DNS, routing, firewall drop (not reject), GSSAPI auth delay или reverse DNS lookup on server. Диагностика: verbose ssh, tcp connect test, traceroute, compare ConnectTimeout vs default hang. Session freeze after login: MTU, idle NAT timeout, dead connection without ServerAlive.
+
+## Что ответить на собесе
+
+- `ssh -vvv user@host` смотрю где застряло: DNS, TCP, key exchange, auth.
+- `nc -vz host 22` или `timeout 5 bash -c '</dev/tcp/host/22'`.
+- Client config: `GSSAPIAuthentication no`, `ConnectTimeout 10`, `ServerAliveInterval 60`.
+- Server: `UseDNS no` если PTR lookup тормозит; check MaxStartups, fail2ban.
+- Честно: «завис» часто MTU black hole на VPN; lower MSS or fix tunnel.
+
+## Как это работает
+
+Debug connect:
+
+```bash
+ssh -vvv -o ConnectTimeout=10 -o GSSAPIAuthentication=no deploy@prod.example.com
+time nc -vz prod.example.com 22
+dig +short prod.example.com
+mtr -rwzc 10 prod.example.com
+```
+
+Client ~/.ssh/config hardening:
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+Host *
+  ConnectTimeout 15
+  ServerAliveInterval 30
+  ServerAliveCountMax 4
+  GSSAPIAuthentication no
+EOF
+```
+
+Escape hatch frozen session: Enter ~. (local ssh escape) disconnect.
+
+## Подводные камни
+
+- **DNS IPv6 first.** AAAA broken, long timeout before IPv4; `AddressFamily inet` workaround.
+- **Bastion ProxyJump chain.** Hang on middle hop; `-J` each segment test separately.
+- **sshd MaxStartups.** Connection accepted slowly under load; looks like hang.
+- **No reject firewall.** SYN blackhole waits full TCP timeout.
+- **Mosh not installed.** Blame SSH for mobile sleep; different tool for roaming.

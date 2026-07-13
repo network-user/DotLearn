@@ -1,0 +1,69 @@
+---
+id: 2960
+title: "Timeout and retransmit: how does QA separate network from slow API?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Timeout and retransmit: how does QA separate network from slow API?
+
+## In short
+
+A timeout is the maximum wait for a response: when it expires the client or server aborts and returns an error. Retransmit (TCP) resends a segment if ACK does not arrive within RTO. At application level QA sees HTTP client read timeout, 504 Gateway Timeout from a proxy, and spinners with no feedback when client timeout is too short.
+
+## How to answer in an interview
+
+- TCP retransmit is transparent to HTTP but increases latency; in DevTools that is long Waiting without a clear error.
+- Application timeout in Postman/axios caps wait; if less than server processing time QA gets a false timeout.
+- 504 from nginx means upstream missed proxy_read_timeout; 408 is rarer, client abort is common.
+- Honestly: infinite retry without backoff DDoS a recovering server; I check idempotency and jitter.
+
+## How it works
+
+Timeout chain:
+
+```
+Client read timeout 30s
+  -> LB idle 60s
+    -> App thread 120s
+      -> DB statement 30s
+```
+
+Negative scenario Gherkin:
+
+```gherkin
+Feature: Timeout and retries
+
+  Scenario: Slow upstream returns 504 via proxy
+    Given upstream sleeps 65s
+    And proxy_read_timeout is 60s
+    When the client GET "/api/report"
+    Then status is 504 Gateway Timeout
+    And the body has a clear code without stack trace
+
+  Scenario: Client timeout shorter than server processing
+    Given the server responds in 15s
+    And client timeout is 10s
+    When the client GET "/api/report"
+    Then the client gets a timeout error
+    And the server eventually finishes the job without cancel
+
+  Scenario: Backoff retry on idempotent GET
+    Given the first two requests reset connection
+    When the client GET "/api/health" with retry max 3
+    Then the third attempt status is 200
+    And at most 3 requests in 10 seconds
+```
+
+Wireshark/tcpdump for retransmit on the stand; for web QA curl `--max-time` and DevTools throttling suffice.
+
+## Pitfalls
+
+- **One timeout for the whole chain.** DB hangs 2 minutes, UI timeout 5s; "network" blamed.
+- **Retry POST without idempotency.** Duplicate orders after packet loss.
+- **Keep-alive + idle LB.** First request after pause 502, second OK; looks like flaky UI.
+- **Zero timeout = infinite.** Hung tab; no cancel on navigation away.
+- **Confusing TCP retransmit and HTTP retry.** Different layers, different metrics.

@@ -1,0 +1,64 @@
+---
+id: 3027
+title: "Основные компоненты RabbitMQ: что проверяет QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Основные компоненты RabbitMQ: что проверяет QA?
+
+## Суть
+
+Producer публикует в exchange, binding с routing key направляет в queue, consumer читает и ack. Типы exchange (direct, fanout, topic, headers) задают маршрутизацию. QA валидирует, что сообщение попало в нужную очередь, consumer подтвердил обработку и при ошибке сработал DLX/retry.
+
+## Что ответить на собесе
+
+- Producer не пишет напрямую в queue без binding.
+- Direct: точное совпадение routing key; topic: шаблон `orders.*.eu`.
+- Fanout: копия во все bound queues.
+- Manual ack: nack requeue vs reject to DLQ.
+- Честно: auto_ack=true на staging скрывает потерю при crash consumer.
+
+## Как это работает
+
+```gherkin
+Feature: RabbitMQ components
+
+  Scenario: Topic routing to region queue
+    Given exchange orders.topic type topic
+    And binding routing key orders.created.ru to queue ru-fulfillment
+    When publish routing key orders.created.ru
+    Then ru-fulfillment receives message eu queue empty
+
+  Scenario: Fanout notification broadcast
+    Given fanout exchange alerts.broadcast
+    When critical alert published
+    Then sms queue and email queue both receive
+
+  Scenario: Manual ack after DB commit
+    Given consumer manual ack mode
+    When DB transaction commits
+    Then basicAck called message removed from queue
+```
+
+```gherkin
+Feature: Consumer startup
+
+  Scenario: Wait for messages
+    Given queue alerts.pending bound to exchange
+    When consumer subscribed with prefetch 10
+    Then callback processes each body until channel closed
+```
+
+Management UI: проверяю rates, consumers, unacked count.
+
+## Подводные камни
+
+- **Публикация без объявления queue на staging.** Auto-create с другими флагами в prod.
+- **Неверный exchange type.** Сообщения в «чёрную дыру».
+- **Нет DLQ binding.** Poison message крутится бесконечно.
+- **Несколько consumer без prefetch.** Один забирает все сообщения.
+- **Путаю routing key и queue name.** Тест пишет в несуществующий маршрут.

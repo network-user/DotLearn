@@ -1,0 +1,86 @@
+---
+id: 4287
+title: "What data does the ELK stack collect?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What data does the ELK stack collect?
+
+## In short
+
+ELK (Elasticsearch, Logstash/Beats, Kibana) is primarily about events and text: application logs, syslog, audit trails, security events, sometimes metrics via Metricbeat. Any JSON/CSV/plaintext you can parse and index works as a document. It is not a TSDB for sub-second metrics, but a strong layer for search and forensic analysis.
+
+## How to answer in an interview
+
+- Application and web server logs (nginx, app JSON, container stdout).
+- Security: auth failures, WAF, IDS, cloud trail events via S3 input.
+- Infra: syslog, Windows event forwarder, network flow when a collector exists.
+- Business events from DB/API poll (Logstash JDBC input) for operational analytics.
+- Honestly: I index only what must be searchable; raw high-volume debug goes to cold storage or Loki.
+
+## How it works
+
+Multi-source Logstash pipeline:
+
+```bash
+cat <<'EOF' > /etc/logstash/conf.d/multi.conf
+input {
+  beats { port => 5044 }
+  syslog { port => 5514 }
+  s3 {
+    bucket => "cloudtrail-archive"
+    prefix => "AWSLogs/"
+    region => "eu-central-1"
+  }
+}
+
+filter {
+  if [fields][log_type] == "apache" {
+    grok { match => { "message" => "%{COMBINEDAPACHELOG}" } }
+  }
+  mutate { add_field => { "[@metadata][index_prefix]" => "mixed" } }
+}
+
+output {
+  elasticsearch {
+    hosts => ["https://es.internal:9200"]
+    index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
+  }
+}
+EOF
+```
+
+Metricbeat side channel into the same cluster:
+
+```bash
+cat <<'EOF' > /etc/metricbeat/metricbeat.yml
+metricbeat.modules:
+  - module: system
+    metricsets: [cpu, memory, network]
+    period: 30s
+
+output.elasticsearch:
+  hosts: ["https://es.internal:9200"]
+  index: "metrics-system-%{+yyyy.MM.dd}"
+EOF
+```
+
+Inspect document kinds in an index:
+
+```bash
+curl -s -u reader:$PASS 'https://es.internal:9200/app-*/_search?size=0' \
+  -H 'Content-Type: application/json' \
+  -d '{"aggs":{"by_kind":{"terms":{"field":"event.kind.keyword","size":10}}}}' | jq .
+```
+
+## Pitfalls
+
+- **Metrics in ES without planning.** Metricbeat at 1s on thousands of hosts is expensive to index; use downsampling or Prometheus.
+- **Unstructured swamp.** Plaintext without grok is only full-text searchable; disk burns with little value.
+- **PII in security logs.** Audit trails in ES without field-level security leak with broad Kibana access.
+- **Mapping conflicts.** One field as text and keyword across pipelines breaks ingest; use a single index template.
+- **Retention mismatch.** Security needs years, debug hours; one index pattern without ILM burns budget.

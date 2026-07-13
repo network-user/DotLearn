@@ -1,0 +1,70 @@
+---
+id: 2079
+title: "Путь Java-кода от исходника до исполнения"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Путь Java-кода от исходника до исполнения
+
+## Суть
+
+`.java` компилируется `javac` в platform-independent bytecode (`.class`). JVM ClassLoader загружает bytes, verifier проверяет safety, linker resolves symbols в Metaspace. Interpreter выполняет bytecode; HotSpot JIT (C1/C2) компилирует hot methods в native code в code cache. На Linux итог исполняется CPU как native instructions с GC и runtime services JVM.
+
+## Что ответить на собесе
+
+- javac: source → bytecode + constant pool + metadata, не machine code.
+- Loading hierarchy: Bootstrap → Platform → Application class loaders.
+- Verification: stack map frames, type safety before execution.
+- JIT tiers: interpreter → C1 → C2 on invocation counter thresholds.
+- Честно: AOT (GraalVM native-image) меняет pipeline; classic HotSpot path выше.
+
+## Как это работает
+
+Source:
+
+```java
+public final class HashProbe {
+
+    public static int mix(int seed, String key) {
+        return seed * 31 + key.hashCode();
+    }
+
+    public static void main(String[] args) {
+        System.out.println(mix(7, "sku-991"));
+    }
+}
+```
+
+Pipeline:
+
+```
+HashProbe.java
+    │ javac
+    ▼
+HashProbe.class (bytecode)
+    │ java HashProbe  →  Launcher  →  ClassLoader.loadClass
+    ▼
+Verify + Link (Metaspace: klass, methods)
+    ▼
+Interpreter runs main
+    ▼
+mix() becomes hot → JIT C2 → native code in Code Cache
+    ▼
+CPU executes machine instructions
+```
+
+`java` command bootstraps through `sun.launcher.LauncherHelper`; classpath/module path определяет Application ClassLoader search path.
+
+Module system (JPMS): `module-info.java` ограничивает exports/opens; illegal access blocked at compile and runtime.
+
+## Подводные камни
+
+- **Wrong classpath.** ClassNotFoundException до любого bytecode run.
+- **VerifyError on bytecode manipulation.** ASM agent bug → class rejected at load.
+- **Assuming javac version = runtime.** New language feature on old JRE fails at verify.
+- **Decompile ≠ original source.** Lost generics/local names in bytecode view.
+- **JIT deopt after class reload.** Agent redefine may invalidate compiled code mid-flight.

@@ -1,0 +1,76 @@
+---
+id: 2021
+title: "Зачем изолировать зависимости в тестах?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем изолировать зависимости в тестах?
+
+## Суть
+
+Изоляция зависимостей снижает coupling и делает unit-тест детерминированным: падение теста указывает на конкретный класс, а не на недоступную БД или flaky API. Достигается через DI, интерфейсы ports/adapters и test doubles.
+
+## Что ответить на собесе
+
+- Меньше связность: меняю `PaymentProcessor` без правок `OrderService`.
+- Тест быстрый: in-memory fake вместо Testcontainers на каждый метод.
+- Failures локализованы: красный тест = один модуль.
+- DI через constructor injection; field `@Autowired` усложняет подмену.
+- Честно: полная изоляция скрывает mapping/serialization баги; balance с slice tests.
+
+## Как это работает
+
+Port interface + inject:
+
+```java
+public interface InvoiceMailer {
+    void sendIssued(Invoice invoice);
+}
+
+public class InvoiceService {
+    private final InvoiceRepository repo;
+    private final InvoiceMailer mailer;
+
+    public InvoiceService(InvoiceRepository repo, InvoiceMailer mailer) {
+        this.repo = repo;
+        this.mailer = mailer;
+    }
+
+    public Invoice issue(UUID orderId) {
+        Invoice invoice = Invoice.fromOrder(orderId);
+        repo.save(invoice);
+        mailer.sendIssued(invoice);
+        return invoice;
+    }
+}
+```
+
+Unit test:
+
+```java
+@Test
+void issuePersistsAndNotifies() {
+    InvoiceRepository repo = new InMemoryInvoiceRepository();
+    InvoiceMailer mailer = mock(InvoiceMailer.class);
+    InvoiceService service = new InvoiceService(repo, mailer);
+
+    Invoice created = service.issue(UUID.randomUUID());
+
+    assertTrue(repo.find(created.id()).isPresent());
+    verify(mailer).sendIssued(created);
+}
+```
+
+Spring `@Configuration` wiring production beans; в тесте подставляю fakes вручную или `@TestConfiguration`. IoC container не нужен для pure domain test.
+
+## Подводные камни
+
+- **Service locator inside class.** `Database.getInstance()` ломает изоляцию.
+- **Testing through concrete JDBC.** Unit test тянет schema migration.
+- **Interface explosion.** Каждый private helper как port; YAGNI.
+- **Shared Spring context между tests.** Polluted bean state между классами.
+- **Mock boundary too high.** Изолировали всё, integration gap до prod.

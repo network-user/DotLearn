@@ -1,0 +1,67 @@
+---
+id: 3499
+title: "JVM thread stack and test debugging"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JVM thread stack and test debugging
+
+## In short
+
+Each JVM thread has its own call stack of frames: local variables, operand stack, and a reference to the current method. Nested calls push and pop frames. `StackOverflowError` comes from infinite recursion; in CI reports a thread dump shows the frame chain for a stuck test.
+
+## How to answer in an interview
+
+- Each `@Test` method gets its own frame with locals and parameters.
+- A recursive helper without a base case kills the suite with `StackOverflowError`.
+- Jenkins thread dump: I look for a blocked frame on `WebDriverWait` or a lock.
+- `-Xss` increases stack depth for deep JSON path recursion (rare).
+- Honestly: flaky root cause is often heap/GC, but a stack dump is the first quick deadlock signal.
+
+## How it works
+
+```
+public static int sum(int left, int right) {
+  return left + right;
+}
+
+public static void main(String[] args) {
+  int total = sum(4, 6);
+}
+```
+
+Calling `sum` creates a frame with `left`, `right`, operand stack for `+`, then pops the frame; the result lands in the `main` frame.
+
+Python call stack mirror:
+
+```python
+import traceback
+
+
+def nested() -> None:
+    raise RuntimeError("stuck wait")
+
+
+def test_stack_trace_contains_frame():
+    try:
+        nested()
+    except RuntimeError:
+        frames = traceback.format_exc()
+        assert "nested" in frames
+```
+
+## Pitfalls
+
+**Stack vs heap.** Objects live on the heap; references sit in frame locals.
+
+**Deep recursion in data gen.** Faker trees without a limit.
+
+**Native stack.** JNI/WebDriver chromedriver adds native frames outside the Java stack.
+
+**Async stack.** CompletableFuture hides the obvious stack without `exceptionally`.
+
+**Parallel streams.** One stack per worker; easy to misread dumps.

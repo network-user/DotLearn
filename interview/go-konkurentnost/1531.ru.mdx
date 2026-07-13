@@ -1,0 +1,51 @@
+---
+id: 1531
+title: "Как читать из unbuffered channel?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как читать из unbuffered channel?
+
+## Суть
+
+Unbuffered channel синхронизирует пару send/receive: обе стороны встречаются в одной точке передачи. Читаю `<-ch`, `v, ok := <-ch`, `for range`, или `select` с `ctx.Done()` для отмены. Без готового sender receive блокируется.
+
+## Что ответить на собесе
+
+- Producer и consumer должны быть запущены; иначе deadlock на первой операции.
+- Handoff гарантирует happens-before между send и receive на том же значении.
+- Для shutdown комбинирую `ok` после close с `select` на done channel.
+- Честно добавляю: unbuffered не «медленнее buffered» по смыслу; он другой контракт синхронизации.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	ping := make(chan string)
+
+	go func() {
+		ping <- "pong"
+	}()
+
+	msg := <-ping
+	fmt.Println(msg)
+}
+```
+
+Send блокируется, пока main не войдёт в receive. Значение копируется напрямую из стека sender в receiver без промежуточного буфера.
+
+## Подводные камни
+
+- **Deadlock в main.** Send и receive в одной goroutine на unbuffered channel.
+- **Забытый receiver.** Sender висит навсегда, утечка goroutine.
+- **Select default.** Слишком ранний default маскирует готовность channel.
+- **Nil channel в select.** Ветка никогда не готова; использую для disable case.
+- **Range без close.** Вечное ожидание, если producer не закроет и не отправит.

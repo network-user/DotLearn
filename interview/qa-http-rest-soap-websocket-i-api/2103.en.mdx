@@ -1,0 +1,72 @@
+---
+id: 2103
+title: "REST API: how should a tester verify resources and HTTP methods?"
+category: qa-http-rest-soap-websocket-i-api
+categoryLabel: "HTTP, REST, SOAP, WebSocket и API"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# REST API: how should a tester verify resources and HTTP methods?
+
+## In short
+
+REST (Representational State Transfer) is an architectural style for web APIs: resources are identified by URLs, operations map to HTTP methods, and exchanges are stateless on the server between requests. For QA, REST yields a predictable test matrix: CRUD, status codes, headers, idempotency, and JSON contract.
+
+## How to answer in an interview
+
+- REST for me is not a protocol but constraints: stateless, uniform interface, nouns in URLs, verbs via GET/POST/PUT/PATCH/DELETE.
+- I test the contract: status, body, field schema, Cache-Control and Content-Type headers, plus negatives (401, 404, 422).
+- I verify PUT and DELETE idempotency: repeating a request must not spawn duplicates or change outcomes unpredictably.
+- Honestly: decks say "RESTful" while HATEOAS and versioning are missing; I follow the OpenAPI/Swagger spec, not the buzzword.
+
+## How it works
+
+Client and server are separated: the UI does not know where data lives. Each request carries context (token, idempotency-key); the server does not hold business session state between calls. Responses cache via headers. Layers (CDN, gateway, app) stay transparent if the contract is stable.
+
+Typical book library model:
+
+| Method | Path | Meaning |
+|--------|------|---------|
+| GET | /books | list |
+| GET | /books/{id} | one book |
+| POST | /books | create |
+| PUT | /books/{id} | full replace |
+| PATCH | /books/{id} | partial update |
+| DELETE | /books/{id} | delete |
+
+Gherkin for API regression in Postman/Newman or REST-assured:
+
+```gherkin
+Feature: REST contract for book catalog
+
+  Scenario: GET book list
+    When the client sends GET "/books" with Accept application/json
+    Then response status is 200
+    And body contains an items array
+    And each item has id, title, and author fields
+
+  Scenario: POST creates a resource and returns Location
+    Given valid book JSON without id
+    When the client sends POST "/books"
+    Then response status is 201
+    And Location header points to the created /books/{id}
+    And a follow-up GET on Location returns the same data
+
+  Scenario: DELETE is idempotent
+    Given book with id "42" exists
+    When the client sends DELETE "/books/42" twice
+    Then first response is 204
+    And second response is 404 or 204 with no side effects
+```
+
+Negative checks: invalid JSON, extra fields (if strict schema), pagination bounds, rate limit 429. For auth add scenarios without a token and with an expired JWT.
+
+## Pitfalls
+
+- **POST instead of GET for reads.** Breaks caching and semantics; Postman tests pass while CDN and monitoring fail.
+- **200 OK with error in body.** `{ "success": false }` without 4xx/5xx hides failures in alerts and client retries.
+- **Wrong POST idempotency.** Double click "Pay" creates two orders without an idempotency-key.
+- **URL vs header versioning.** `/v1/books` and `/v2/books` need separate regression; mixing breaks mobile clients.
+- **Ignoring Content-Type.** Server returns nginx HTML instead of JSON; client parser fails obscurely.

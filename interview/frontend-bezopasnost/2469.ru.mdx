@@ -1,0 +1,57 @@
+---
+id: 2469
+title: "Access Token: роль на клиенте"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Access Token: роль на клиенте
+
+## Суть
+
+Access token это краткоживущий credential для доступа к API после login. Клиент передаёт его в `Authorization: Bearer` или как cookie (BFF). Сервер проверяет подпись/scopes и выдаёт ресурс без повторного пароля.
+
+## Что ответить на собесе
+
+- Получаю access после OAuth/password grant; TTL минуты, не дни.
+- Прикрепляю только к API calls, не логирую, не кладу в URL.
+- При 401 пробую refresh один раз, потом redirect login.
+- Честно: access в JS memory теряется на F5; нужен refresh/bootstrap flow.
+- Scopes в token читаю для UI gating, но authorization только server-side.
+
+## Как это работает
+
+```ts
+async function login(username: string, password: string) {
+  const res = await fetch('/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) throw new Error('auth failed');
+  return (await res.json()) as { accessToken: string; expiresIn: number };
+}
+
+async function fetchProfile(accessToken: string) {
+  const res = await fetch('/api/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error('unauthorized');
+  return res.json();
+}
+```
+
+OAuth 2.0 access token может быть opaque string или JWT. Bearer scheme означает «любой holder может использовать»; transport must be TLS. Rotation: некоторые IdP выдают rolling access при activity.
+
+На фронте храню expiry timestamp, планирую proactive refresh за 30–60 секунд до exp чтобы не прерывать UX mid-form.
+
+## Подводные камни
+
+- **Bearer leakage.** Token в WebSocket query или `<img src>` утекает через logs.
+- **Over-scoped token.** UI скрывает кнопку, но API должно enforce scope.
+- **Clock skew.** Client-side expiry timer без NTP drift даёт ложные 401.
+- **Multiple tabs.** BroadcastChannel синхронизирует logout/invalidate.
+- **Third-party APIs.** CORS + token in header OK; token in cookie cross-site blocked.

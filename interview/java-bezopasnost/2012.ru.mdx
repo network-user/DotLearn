@@ -1,0 +1,56 @@
+---
+id: 2012
+title: "Как проходит TLS handshake?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как проходит TLS handshake?
+
+## Суть
+
+TLS handshake согласует версию протокола, cipher suite, аутентифицирует сервер (и опционально клиента) и выводит общие session keys. Только после `Finished` трафик идёт в зашифрованном виде с integrity check.
+
+## Что ответить на собесе
+
+- 1-RTT в TLS 1.3: ClientHello, ServerHello + cert + key share, Finished.
+- Сервер доказывает владение private key через подпись transcript или key exchange.
+- Symmetric keys из ECDHE shared secret + HKDF, не из RSA encrypt premaster (legacy).
+- Java: `SSLSocket.startHandshake()` или implicit при первом `read/write`.
+- Честно: handshake CPU дорог на коротких conn; session resumption (TLS ticket) экономит RTT и CPU.
+
+## Как это работает
+
+TLS 1.2 упрощённо:
+
+1. **ClientHello:** версии, cipher suites, random, SNI hostname.
+2. **ServerHello + Certificate:** выбранный cipher, cert chain.
+3. **ServerKeyExchange** (для DHE/ECDHE): параметры группы.
+4. **ClientKeyExchange:** premaster / public share клиента.
+5. **ChangeCipherSpec + Finished** с обеих сторон: MAC transcript под новым ключом.
+
+В Java явный handshake:
+
+```java
+try (SSLSocket socket = (SSLSocket) SSLSocketFactory.getDefault()
+        .createSocket("api.example.com", 443)) {
+    socket.setEnabledProtocols(new String[] { "TLSv1.3", "TLSv1.2" });
+    socket.startHandshake();
+    SSLSession session = socket.getSession();
+    System.out.println("Cipher: " + session.getCipherSuite());
+    socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: api.example.com\r\n\r\n".getBytes(UTF_8));
+}
+```
+
+`startHandshake()` блокирует до завершения обмена. После успеха `getSession()` показывает negotiated cipher (`TLS_AES_256_GCM_SHA384` в 1.3). Certificate validation и hostname check выполняет JSSE автоматически при корректном trust store.
+
+## Подводные камни
+
+- **TLS renegotiation attacks (legacy).** Отключай renegotiation на старых стеках.
+- **Downgrade без HSTS.** Первый запрос HTTP перехватывают до redirect.
+- **Weak cipher остаётся включённым.** `setEnabledCipherSuites` не фильтруют, остаётся 3DES.
+- **Missing SNI на shared IP.** Неверный cert на multi-tenant nginx.
+- **Handshake без OCSP stapling.** Дополнительная задержка и privacy leak при CRL check.

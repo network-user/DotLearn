@@ -1,0 +1,52 @@
+---
+id: 4220
+title: "Можно ли примонтировать один EBS к двум серверам?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Можно ли примонтировать один EBS к двум серверам?
+
+## Суть
+
+Стандартный EBS том attach к одному EC2 в момент времени. Одновременная запись с двух хостов без кластерной ФС приведёт к corruption. Для shared storage беру EFS, FSx или объектное S3. Multi-Attach для io2 существует, но только с clustered filesystem (Oracle RAC и подобные), не для обычного ext4 на двух Linux.
+
+## Что ответить на собесе
+
+- Один volume, один instance; для HA делаю snapshot/re-attach при failover (RTO минуты).
+- EFS NFS для POSIX shared read/write между autoscaling web nodes.
+- FSx for Windows если нужен SMB; FSx Lustre для HPC throughput.
+- io2 Multi-Attach только при доказанной поддержке СУБД/кластера, не для generic Linux.
+- Честно: попытка NFS-export с EBS на второй хост это антипаттерн; latency и locking не для продакшена.
+
+## Как это работает
+
+Attach/detach через API; при detach старый инстанс должен освободить device. Failover сценарий: stop app, detach, attach к standby, mount filesystem.
+
+```bash
+aws ec2 detach-volume --volume-id vol-0a1b2c3d4e5f67890 --force
+
+aws ec2 attach-volume \
+  --volume-id vol-0a1b2c3d4e5f67890 \
+  --instance-id i-standby0001 \
+  --device /dev/xvdf
+
+sudo mount /dev/xvdf /var/lib/app-data
+```
+
+Для concurrent access мигрирую на EFS:
+
+```bash
+sudo mount -t efs -o tls fs-prod1234:/ /var/www/uploads
+```
+
+## Подводные камни
+
+- **Force detach.** Риск partial write и journal recovery; сначала graceful umount и stop сервиса.
+- **AZ mismatch.** Том и инстанс должны быть в одной AZ (кроме restore из snapshot в другую AZ).
+- **Device rename.** После attach device name может отличаться (/dev/sdf vs /dev/xvdf); использую UUID в fstab.
+- **Split brain на Multi-Attach.** Два узла без GFS/OCFS2 уничтожат ext4 за секунды.
+- **RTO attach.** Автоматический failover через ASG + EFS быстрее, чем скрипт detach/attach EBS.

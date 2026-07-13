@@ -1,0 +1,79 @@
+---
+id: 1556
+title: "На чём внутри построен sync.Mutex?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# На чём внутри построен sync.Mutex?
+
+## Суть
+
+`sync.Mutex` в runtime использует atomic CAS на word состояния (locked, waiter count, starvation flag). При contention goroutine park через sema (futex-like sleep на Linux), без busy spin в common case. Это user-space примитив, не прямой pthread mutex в public API.
+
+## Что ответить на собесе
+
+- Fast path: atomic compare-and-swap захватывает lock без syscall.
+- Slow path: semacquire/semasleep очередь waiters.
+- RWMutex расширяет модель reader counter + writer lock.
+- Честно: детали менялись (spin, fairness); CAS + semaphore story достаточна на собесе.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+type Counter struct {
+	mu sync.Mutex
+	v  int64
+}
+
+func (c *Counter) Add(n int64) {
+	c.mu.Lock()
+	atomic.AddInt64(&c.v, n)
+	c.mu.Unlock()
+}
+
+func (c *Counter) Val() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.v
+}
+
+func main() {
+	var c Counter
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Add(1)
+		}()
+	}
+	wg.Wait()
+	fmt.Println(c.Val())
+}
+```
+
+Lock/unlock компилируются в runtime calls `sync.(*Mutex).Lock`. Contention переводит G в waiting queue mutex'а.
+
+## Подводные камни
+
+**Думать что это OS mutex.** API Go level; kernel участвует только на park через futex.
+
+**Spin before park.** Короткий spin возможен; не полагаться на spin для perf tuning в app.
+
+**Mutex size zero value.** Zero value usable, но copy после use ломает state.
+
+**Compare with sync/atomic.** Для одного int atomic проще; mutex для invariants на struct.
+
+**RWMutex heavier.** Reader tracking adds atomic ops; не «бесплатный» read lock.

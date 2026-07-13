@@ -1,0 +1,57 @@
+---
+id: 4181
+title: "Какие риски у Let's Encrypt в проде?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие риски у Let's Encrypt в проде?
+
+## Суть
+
+Let's Encrypt бесплатен и автоматизируем, но DV-only: наличие HTTPS не доказывает легитимность сайта. Короткий TTL (90 дней) требует надёжного renew pipeline. Ошибки ACME, DNS или cron приводят к mass outage; фишинг тоже получает «зелёный замок».
+
+## Что ответить на собесе
+
+- LE не заменяет EV/OV доверие бренду; пользователь видит только шифрование.
+- Автоматизация через certbot/caddy/ cert-manager; мониторинг expiry обязателен.
+- Rate limits LE: failed orders, duplicate cert, certs per domain per week.
+- Честно добавляю: для internal mesh использую private CA (step-ca), LE только для public ingress.
+
+## Как это работает
+
+Cron renew с deploy hook:
+
+```bash
+cat > /etc/cron.d/certbot-renew <<'EOF'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+12 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx"
+EOF
+
+certbot certificates
+openssl x509 -in /etc/letsencrypt/live/www.example.com/cert.pem -noout -dates
+```
+
+`renew` запускается только если cert истекает <30 дней. Deploy hook reload proxy без downtime. Мониторинг: Prometheus blackbox или custom script на `notAfter`.
+
+Риски operational:
+
+```bash
+# dry-run перед изменением DNS/firewall
+certbot renew --dry-run
+journalctl -u certbot.timer --since today
+```
+
+Dry-run ловит сломанный HTTP-01 path до prod expiry.
+
+## Подводные камни
+
+- **Padlock = trust.** Фишинг на lookalike domain с LE cert обманывает пользователей.
+- **Silent cron fail.** Disk full или python break → expired cert Friday night.
+- **Wildcard без DNS API.** DNS-01 требует automation credentials с высокими правами.
+- **Multi-host drift.** Один сервер обновился, другой нет при неидempotent deploy.
+- **Staging vs prod mix-up.** `--staging` cert в prod config даёт untrusted chain.

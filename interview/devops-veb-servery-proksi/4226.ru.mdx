@@ -1,0 +1,51 @@
+---
+id: 4226
+title: "Как убедиться, что Nginx слушает нужный порт?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как убедиться, что Nginx слушает нужный порт?
+
+## Суть
+
+Проверяю слой сокета (`ss -tlnp sport = :443`), затем HTTP-ответ (`curl -vk https://127.0.0.1:8443/`) и сверяю с `nginx -T | grep listen`. Если порт занят не nginx, `ss` покажет другой процесс. После `reload` обязателен `nginx -t`, иначе старый master держит старые listen.
+
+## Что ответить на собесе
+
+- `ss -tlnp | grep ':80 '` предпочитаю netstat: быстрее и показывает pid/process name.
+- `curl -sI http://127.0.0.1:PORT` подтверждает, что отвечает именно HTTP-сервер.
+- `nginx -T` выводит effective config со всеми include.
+- Для TLS проверяю `openssl s_client -connect host:443 -servername app.example.com`.
+- Честно: firewall (ufw/nftables) или security group может блокировать снаружи при открытом local listen.
+
+## Как это работает
+
+Master process bind'ит listen directives из всех server blocks. Конфликт порта даёт `bind() failed` в error.log.
+
+```bash
+PORT=8443
+sudo ss -tlnp | grep ":${PORT} "
+
+curl -sI "http://127.0.0.1:${PORT}/" | head -5
+
+sudo nginx -T 2>/dev/null | grep -E "listen.*${PORT}"
+```
+
+Если порт не слушается:
+
+```bash
+sudo tail -30 /var/log/nginx/error.log
+sudo systemctl restart nginx
+```
+
+## Подводные камни
+
+- **Listen только на localhost.** `listen 127.0.0.1:8080` недоступен с другой машины; это feature, не баг.
+- **SO_REUSEPORT / несколько workers.** В `ss` несколько строк на один порт нормальны.
+- **Stale bind после failed reload.** Master жив со старым конфигом; смотрю `systemctl status` и error.log.
+- **Порт в Docker/K8s.** Publish mapping в container port, не host nginx напрямую.
+- **IPv6 only.** `listen [::]:80` без IPv4; клиент по A-record не подключится.

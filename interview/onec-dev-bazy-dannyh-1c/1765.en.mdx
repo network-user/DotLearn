@@ -1,0 +1,53 @@
+---
+id: 1765
+title: "When an index in a 1C database stops helping"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When an index in a 1C database stops helping
+
+## In short
+
+An index stops helping when the optimizer picks a full scan, index maintenance on writes costs more than read savings, or the structure does not match query predicates. In 1C this often shows up on low-selectivity fields and stale DBMS statistics.
+
+## How to answer in an interview
+
+- I name signals: index scan over most of the table, slower posting after adding an index, a plan with Key Lookup on millions of rows.
+- In an interview I mention low selectivity on booleans and status fields, functions in WHERE, composite index field order mismatch.
+- I stress fragmentation and stale statistics as administrative causes of degradation.
+- I am honest that an index built for an old report becomes dead weight after the query is redesigned.
+- Before dropping an index I capture the plan in production, not only on an empty copy.
+
+## How it works
+
+The optimizer estimates cardinality: if an index on `ПометкаУдаления` returns 40% of the table, index seek costs more than a sequential read. Similarly a filter `Статус В (1, 2, 3, 4, 5)` on a catalog with five statuses covers almost the whole set.
+
+```bsl
+Запрос = Новый Запрос;
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Документ.Ссылка
+|ИЗ
+|    Документ.ЗаказКлиента КАК Документ
+|ГДЕ
+|    НЕ Документ.ПометкаУдаления
+|    И ГОД(Документ.Дата) = &ГодОтчета";
+```
+
+Even with a date index the predicate with `ГОД()` blocks range seek. You need `Документ.Дата МЕЖДУ &Начало И &Конец`.
+
+On posting every register insert updates all nonclustered indexes on the table. Five redundant indexes on dimensions that are never filtered multiply movement write time.
+
+Fragmentation appears on ever-growing registers: B-tree leaves scatter and random reads grow. `ALTER INDEX REORGANIZE` or rebuild on the DBMS side restores efficiency if the index is still relevant to queries.
+
+## Pitfalls
+
+- **Dropping a slow index without a plan.** You may remove a structure that protects a nightly job.
+- **Index on a query expression.** A column index does not help `ВРЕГ()` or `ПОДСТРОКА()` in the condition.
+- **Too wide a table.** A covering index on a dozen columns grows faster than it speeds one report.
+- **Parameter below threshold.** Sometimes the optimizer ignores an index because of `@param` with unknown selectivity before the first run.
+- **Reorganizing a meaningless index.** REORGANIZE does not fix wrongly chosen fields.

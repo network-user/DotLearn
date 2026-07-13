@@ -1,0 +1,72 @@
+---
+id: 1631
+title: "Streaming в gRPC"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Streaming в gRPC
+
+## Суть
+
+gRPC поверх HTTP/2 поддерживает длинные потоки: server streaming (один запрос, много ответов), client streaming (много запросов, один ответ), bidirectional (оба направления). Каждое сообщение это отдельный protobuf frame в stream; подходит для больших выборок, upload chunk и live feed.
+
+## Что ответить на собесе
+
+- В proto: `rpc ListItems(Query) returns (stream Item);` и варианты `stream` с обеих сторон.
+- Сервер: `Send` в цикле; клиент: `Recv` до `io.EOF`.
+- Backpressure через flow control HTTP/2.
+- Context отменяет stream целиком.
+- Честно: unary проще в мониторинге; streaming усложняет retry и балансировку.
+
+## Как это работает
+
+```protobuf
+service LogService {
+  rpc Tail(stream TailRequest) returns (stream LogLine);
+}
+
+message TailRequest {
+  string service = 1;
+}
+
+message LogLine {
+  string text = 1;
+}
+```
+
+```go
+func (s *logServer) Tail(stream pb.LogService_TailServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, line := range s.readLines(req.GetService()) {
+			if err := stream.Send(&pb.LogLine{Text: line}); err != nil {
+				return err
+			}
+		}
+	}
+}
+```
+
+Клиент читает `stream.Recv()` в goroutine и пишет в UI channel. Server-side streaming для `ListProducts` отдаёт каталог порциями без одного гигантского ответа.
+
+## Подводные камни
+
+**Бесконечный Send без проверки ctx.** Утечка goroutine при disconnect клиента.
+
+**Не обрабатывать `io.EOF` на client stream.** Висит ожидание ответа.
+
+**Huge message в одном stream frame.** Лимиты max message size на клиенте и сервере.
+
+**Нет heartbeat в bidi.** Промежуточный proxy рвёт idle stream.
+
+**Повтор client stream после ошибки.** Идемпотентность обработки chunk на сервере обязательна.

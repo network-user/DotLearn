@@ -1,0 +1,68 @@
+---
+id: 1478
+title: "Чем интерфейсы Go отличаются от Java и C#?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем интерфейсы Go отличаются от Java и C#?
+
+## Суть
+
+В Go интерфейс это набор методов, а соответствие типа проверяется неявно: достаточно реализовать методы, без `implements`. Это structural typing, а не номинative иерархия как в Java/C#.
+
+## Что ответить на собесе
+
+- Подчёркиваю implicit satisfaction: тип становится `io.Reader`, если есть `Read([]byte) (int, error)`.
+- Говорю, что интерфейсы маленькие (accept interfaces, return structs) и часто объявляются у потребителя, не у автора типа.
+- Сравниваю с Java/C#: там явное `implements`, default methods появились позже, иерархии шире.
+- Честно добавляю: неявность удобна для decoupling, но IDE хуже подсказывает «кто реализует интерфейс», нужны тесты и grep.
+
+## Как это работает
+
+Компилятор строит itable для пары (конкретный тип, интерфейс) при первом присваивании. Методы вызываются через таблицу диспетчеризации. Пустой интерфейс `any` принимает любой тип, но для доменной логики берут узкие интерфейсы из stdlib: `fmt.Stringer`, `error`, `context.Context`.
+
+```go
+package main
+
+import "fmt"
+
+type Notifier interface {
+	Notify(msg string)
+}
+
+type EmailGateway struct{}
+
+func (EmailGateway) Notify(msg string) {
+	fmt.Println("email:", msg)
+}
+
+type SMSGateway struct{}
+
+func (SMSGateway) Notify(msg string) {
+	fmt.Println("sms:", msg)
+}
+
+func broadcast(channels []Notifier, text string) {
+	for _, ch := range channels {
+		ch.Notify(text)
+	}
+}
+
+func main() {
+	broadcast([]Notifier{EmailGateway{}, SMSGateway{}}, "deploy done")
+}
+```
+
+Ни `EmailGateway`, ни `SMSGateway` не объявляют `implements Notifier`, но оба попадают в слайс `[]Notifier`.
+
+## Подводные камни
+
+- **Pointer vs value receiver.** Метод с pointer receiver не попадёт в interface для value type и наоборот; это частая compile error.
+- **Nil interface method call.** Вызов метода на nil interface value паникует; на typed nil pointer внутри interface тоже возможна panic.
+- **Fat interfaces.** Интерфейс на десять методов сложно мокать; лучше несколько маленьких.
+- **Type assertion без ok.** `v.(Concrete)` паникует при несовпадении; в hot path использую `v, ok := x.(T)`.
+- **Embedding не наследование.** Встраивание struct даёт promotion методов, но не substitutability как в классическом ООП.

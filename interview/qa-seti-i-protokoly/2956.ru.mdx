@@ -1,0 +1,64 @@
+---
+id: 2956
+title: "Localhost 127.0.0.1: как QA тестирует сервис только на loopback?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Localhost 127.0.0.1: как QA тестирует сервис только на loopback?
+
+## Суть
+
+Localhost (имя) и 127.0.0.1 (IPv4 loopback) направляют трафик на сетевой стек того же хоста без выхода в LAN/интернет. Диапазон 127.0.0.0/8 зарезервирован для loopback; ::1 в IPv6. QA использует это для локальных mock, dev-серверов Vite, WireMock и проверки «не торчит наружу».
+
+## Что ответить на собесе
+
+- 127.0.0.1 всегда «этот компьютер»; с другой машины этот адрес недоступен.
+- Binding 127.0.0.1 vs 0.0.0.0: первый только локально, второй принимает LAN/WAN (риск утечки dev API).
+- hosts file может мапить custom.name на 127.0.0.1 для OAuth redirect тестов.
+- Честно: «работает на localhost» не равно prod; проверяю CORS, cookies SameSite и HTTPS only после деплоя.
+
+## Как это работает
+
+Dev API слушает loopback:
+
+```
+Server bind: 127.0.0.1:3000
+Browser: http://localhost:5173 -> fetch http://127.0.0.1:3000/api
+```
+
+Gherkin безопасности и доступности:
+
+```gherkin
+Feature: Loopback и локальный стенд
+
+  Scenario: Сервис на 127.0.0.1 недоступен с другого хоста LAN
+    Given API запущен на "127.0.0.1:3000"
+    When QA с соседней VM выполняет curl "http://127.0.0.1:3000/health"
+    Then соединение не устанавливается к dev machine QA
+    And health доступен только с самой dev machine
+
+  Scenario: SPA на localhost ходит в local API
+    Given фронт на "http://localhost:5173"
+    And API на "http://127.0.0.1:3000"
+    When пользователь открывает dashboard
+    Then GET /api/profile возвращает 200
+
+  Scenario: OAuth redirect uri localhost разрешён только в dev client
+    When login redirect идёт на "http://localhost:8080/callback"
+    Then auth server принимает redirect только для dev client id
+    And production client id с localhost redirect отклоняется
+```
+
+IPv6 loopback ::1 иногда не прописан в приложении; проверяю явный http://127.0.0.1 если flaky.
+
+## Подводные камни
+
+- **0.0.0.0 bind на dev.** Коллега в офисной Wi‑Fi видит ваш mock без auth.
+- **localhost vs 127.0.0.1 в cookies.** Разные site for cookie в некоторых браузерах.
+- **Docker: localhost внутри контейнера.** Это контейнер, не хост; нужен host.docker.internal.
+- **HTTPS на localhost.** Self-signed cert; CI должен trust или skip verify осознанно.
+- **Забытый процесс на 8080.** «Случайный» сервер отвечает вместо нужного; проверяю lsof/netstat.

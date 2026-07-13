@@ -1,0 +1,64 @@
+---
+id: 4288
+title: "Prometheus или VictoriaMetrics: кто прожорливее?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Prometheus или VictoriaMetrics: кто прожорливее?
+
+## Суть
+
+При сопоставимом объёме series VictoriaMetrics обычно ест меньше RAM и диска, чем нативный Prometheus TSDB: сжатие и merge blocks эффективнее. Prometheus может быть lean на малых инсталляциях, но на миллионах active series и длинном retention VM/VictoriaMetrics cluster чаще выигрывает по cost per sample. Сравнение всегда на вашей cardinality и scrape interval.
+
+## Что ответить на собесе
+
+- Бенчмаркю на реальном `scrape_series_added` и churn, не по маркетинговым цифрам.
+- VM single-node принимает remote_write от Prometheus и отдаёт PromQL совместимый API.
+- Prometheus оставляю как scraper + short local retention; VM как long-term backend.
+- Смотрю RSS, disk churn, query latency p99 под типичными dashboard queries.
+- Честно: миграция ради 10% экономии не окупается; при 5-10x series difference VM обычно заметно дешевле.
+
+## Как это работает
+
+Сравнение footprint на одном хосте (RSS процесса):
+
+```bash
+ps -o pid,rss,cmd -C prometheus -C victoria-metrics-prod
+```
+
+Prometheus remote_write в VictoriaMetrics:
+
+```bash
+cat <<'EOF' >> /etc/prometheus/prometheus.yml
+remote_write:
+  - url: http://victoriametrics:8428/api/v1/write
+    queue_config:
+      max_samples_per_send: 10000
+EOF
+```
+
+Запрос одинакового PromQL к обоим:
+
+```bash
+QUERY='sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))'
+curl -G 'http://prometheus:9090/api/v1/query' --data-urlencode "query=$QUERY"
+curl -G 'http://victoriametrics:8428/api/v1/query' --data-urlencode "query=$QUERY"
+```
+
+Оценка диска TSDB:
+
+```bash
+du -sh /var/lib/prometheus /var/lib/victoria-metrics-data
+```
+
+## Подводные камни
+
+- **Apples to oranges.** Prometheus 15s scrape vs VM с 5s ingestion меняют вывод; фиксирую interval.
+- **Query compatibility.** Редкие PromQL функции в VM ведут себя иначе; regression test dashboards обязателен.
+- **Single VM SPOF.** Один VM процесс без cluster replication не даёт HA, только экономию.
+- **Cardinality не лечится.** VM сжимает лучше, но label explosion всё равно убивает любой backend.
+- **Ops familiarity.** Команда знает Prometheus ops; скрытый cost обучения VM учитываю в TCO.

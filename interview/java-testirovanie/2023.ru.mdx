@@ -1,0 +1,63 @@
+---
+id: 2023
+title: "Что проверяют integration tests?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что проверяют integration tests?
+
+## Суть
+
+Integration tests проверяют стыки модулей: Spring context wiring, JPA mapping, HTTP controller + service + repository, message serialization. Они медленнее unit, но ловят ошибки контрактов, транзакций и конфигурации, которые mocks скрывают.
+
+## Что ответить на собесе
+
+- Реальные (или Testcontainers) DB, embedded Kafka, WireMock для внешнего API.
+- `@SpringBootTest` / `@DataJpaTest` / `@WebMvcTest` slice по слою.
+- Проверяю SQL schema, `@Transactional` rollback, JSON field names.
+- Не дублирую все unit cases; happy path + critical integration edges.
+- Честно: полный `@SpringBootTest` на каждый метод раздувает CI; slice + few full smoke.
+
+## Как это работает
+
+Testcontainers PostgreSQL + Spring:
+
+```java
+@SpringBootTest
+@Testcontainers
+class OrderRepositoryIT {
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+    @DynamicPropertySource
+    static void dbProps(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+    }
+
+    @Autowired OrderRepository orders;
+
+    @Test
+    void savesAndLoadsByCustomer() {
+        Order row = orders.save(OrderEntity.pending("cust-1"));
+        Optional<OrderEntity> loaded = orders.findById(row.getId());
+        assertTrue(loaded.isPresent());
+        assertEquals("cust-1", loaded.get().getCustomerId());
+    }
+}
+```
+
+`@WebMvcTest(OrderController.class)` поднимает MVC slice с `@MockBean OrderService` для controller contract. Full stack test бьёт `MockMvc` POST `/orders` и проверяет row в DB.
+
+## Подводные камни
+
+- **Mock всё в «integration» test.** Остаётся unit с тяжёлым context.
+- **Shared mutable DB без cleanup.** Flaky counts между tests.
+- **Flyway skip.** Schema drift только на CI nightly.
+- **Random port без `@LocalServerPort`.** Hardcoded 8080 collision parallel jobs.
+- **Testing vendor SDK.** Integration на ваш adapter, не на AWS client internals.

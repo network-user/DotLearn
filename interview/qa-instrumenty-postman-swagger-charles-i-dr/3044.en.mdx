@@ -1,0 +1,70 @@
+---
+id: 3044
+title: "What is Docker and why does a QA engineer need it?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is Docker and why does a QA engineer need it?
+
+## In short
+
+Docker packages an app with dependencies into an image and runs an isolated container on a shared Linux kernel. For QA that means a reproducible stand: one `docker compose up` brings up API, database, mocks, and WireMock with fixed versions. Containers are lighter than VMs, start in seconds, and behave the same on a laptop and in CI.
+
+## How to answer in an interview
+
+- An image is immutable; a container is a runtime instance with a writable layer.
+- A Dockerfile describes the build; compose orchestrates multiple services and volumes.
+- QA uses it for local stands, isolated DB seeds, and parallel job agents.
+- Before regression I pin image tags, not `latest`, to compare build-to-build.
+- Honestly: Docker does not emulate iOS or replace a device farm; native mobile still needs real devices.
+
+## How it works
+
+```gherkin
+Feature: Docker test environment for QA
+
+  Scenario: Spin up integration stack locally
+    Given docker compose file defines api postgres redis mailhog
+    When QA runs docker compose up -d
+    Then healthcheck on api returns 200 within 90 seconds
+    And tests hit http://localhost:8080 with seeded data volume
+
+  Scenario: Tear down after regression
+    Given containers running for feature branch tests
+    When QA runs docker compose down -v
+    Then ports freed and database volume removed for clean next run
+
+  Scenario: CI agent pulls pinned image
+    Given pipeline uses image registry.example/shop-api:4.2.1-rc3
+    When newman suite executes against container network alias api
+    Then same digest runs on every agent without drift
+```
+
+Minimal Dockerfile for a static mock (renamed paths):
+
+```dockerfile
+FROM nginx:1.27-alpine
+COPY ./mocks/ /usr/share/nginx/html/
+EXPOSE 80
+```
+
+Run:
+
+```
+docker build -t qa-wiremock-static:1.0 .
+docker run -d --name wiremock-static -p 9090:80 qa-wiremock-static:1.0
+```
+
+Unlike a VM, a container shares the host kernel, no guest OS; isolation via namespaces and cgroups. For QA, **volumes** (DB data across restarts), **networks** (compose service aliases), and **env files** (staging feature flags) matter most.
+
+## Pitfalls
+
+- **`:latest` in compose.** Last night's run and today's run use different layers; pin digest.
+- **Port clash on 5432/6379.** Local Postgres blocks compose; map to 15432.
+- **Root in container on CI.** Permission denied on volumes; use a user directive or fix ownership.
+- **Forgotten `down -v`.** Next run sees dirty data and flaky assertions.
+- **ARM vs x86 image.** M1 Mac pulls a different manifest; verify platform in the pipeline.

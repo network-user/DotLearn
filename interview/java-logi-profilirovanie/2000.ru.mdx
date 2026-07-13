@@ -1,0 +1,71 @@
+---
+id: 2000
+title: "Как устроен distributed tracing с traceId и spanId?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроен distributed tracing с traceId и spanId?
+
+## Суть
+
+Distributed tracing моделирует запрос как дерево spans. TraceId объединяет всё дерево; каждый spanId это одна операция (HTTP call, SQL, cache) с timing и tags. Parent spanId связывает дочерние шаги; экспорт в Jaeger/Tempo даёт waterfall и критический path latency.
+
+## Что ответить на собесе
+
+- Trace = полный путь запроса; span = единица работы с start/end timestamps.
+- Parent/child links строят call tree; span kind: CLIENT, SERVER, INTERNAL.
+- W3C Trace Context: traceparent несёт trace-id и parent span-id.
+- В Java: OpenTelemetry SDK, Micrometer Tracing, Brave.
+- Честно добавляю: 100% sampling в prod дорог; head-based 1-5% + tail sampling на errors типичен.
+
+## Как это работает
+
+```java
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
+
+final class CheckoutFacade {
+    private final Tracer tracer;
+    private final InventoryClient inventory;
+
+    CheckoutFacade(Tracer tracer, InventoryClient inventory) {
+        this.tracer = tracer;
+        this.inventory = inventory;
+    }
+
+    void checkout(String orderId) {
+        Span root = tracer.spanBuilder("checkout").startSpan();
+        try (Scope scope = root.makeCurrent()) {
+            reserveStock(orderId);
+        } finally {
+            root.end();
+        }
+    }
+
+    private void reserveStock(String orderId) {
+        Span child = tracer.spanBuilder("inventory.reserve")
+            .setAttribute("orderId", orderId)
+            .startSpan();
+        try (Scope scope = child.makeCurrent()) {
+            inventory.reserve(orderId);
+        } finally {
+            child.end();
+        }
+    }
+}
+```
+
+`checkout` span становится root с общим traceId. `inventory.reserve` child наследует traceId, получает свой spanId и parent link. Exporter отправляет оба span в backend; UI строит timeline: checkout 120ms, из них reserve 95ms (узкое место). Ошибки помечаются `span.recordException(ex)` для красного span в trace view.
+
+## Подводные камни
+
+- **Orphan spans.** Downstream не получил propagated context.
+- **Слишком мелкие spans.** Каждый getter в trace раздувает storage.
+- **Clock skew между хостами.** Неверный порядок без NTP.
+- **Забытый span.end().** Утечки и незакрытые duration в backend.
+- **Tracing только на HTTP.** Пропущены Kafka consumers и batch jobs.

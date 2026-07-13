@@ -1,0 +1,52 @@
+---
+id: 1712
+title: "How does the JVM reclaim memory with Garbage Collector?"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does the JVM reclaim memory with Garbage Collector?
+
+## In short
+
+The Garbage Collector finds objects with no reachable references from GC roots and reclaims their memory without manual `free`. Modern JVMs split the heap into generations and apply different algorithms to young and old generations so most short-lived objects are collected quickly.
+
+## How to answer in an interview
+
+- Define GC as automatic heap management: the programmer does not release memory explicitly.
+- Explain reachability: live objects are reachable from stacks, static fields, JNI handles, and similar roots.
+- Name common algorithms: mark-sweep, copying in the young gen, the generational hypothesis.
+- Mention stop-the-world pauses and concurrent collectors (G1, ZGC, Shenandoah) to cut latency.
+- Be honest: `System.gc()` only *suggests* a collection and is often disabled or ignored in production; you cannot rely on it.
+
+## How it works
+
+New objects allocate in the eden young generation. Minor GC copies survivors into survivor space; after several cycles they promote to old gen. Major GC (or mixed collections in G1) handles long-lived structures.
+
+```java
+public final class EphemeralBufferDemo {
+    public static void main(String[] args) {
+        byte[] payload = new byte[1024];
+        System.out.println("allocated length=" + payload.length);
+
+        payload = null;
+
+        System.gc();
+    }
+}
+```
+
+After `payload = null` the array becomes unreachable if nothing else references it. GC may reclaim it on the next cycle, but timing is nondeterministic. The JVM picks a collector via flags (`-XX:+UseG1GC`, `-XX:+UseZGC`) and heap size (`-Xms`, `-Xmx`).
+
+Monitoring GC logs (`-Xlog:gc*`), pause time, and allocation rate helps separate memory leaks (reachable but unused) from high allocation churn.
+
+## Pitfalls
+
+- **Leak through static/cache.** An object reachable from a static map lives until process exit; GC never collects it.
+- **Finalizer and Cleaner.** Delayed resource release extends lifetime; for files and sockets prefer try-with-resources.
+- **Premature promotion.** Oversized objects or high survival rates fill old gen and trigger long full GCs.
+- **Wrong heap size.** Too small a heap increases GC frequency; too large lengthens mark phases.
+- **Off-heap blind spot.** Direct buffers and native memory sit outside the heap; track them separately from `-Xmx`.

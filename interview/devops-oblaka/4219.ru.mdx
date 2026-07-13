@@ -1,0 +1,47 @@
+---
+id: 4219
+title: "Какой сервис даёт общую ФС для нескольких EC2?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой сервис даёт общую ФС для нескольких EC2?
+
+## Суть
+
+Amazon EFS (Elastic File System) это managed NFS, который монтируется на множество EC2 одновременно в рамках VPC. Подходит для shared config, uploads, CMS media, batch scratch. Альтернативы: FSx (Windows/Lustre/ONTAP) под специфичные протоколы; EBS multi-attach не заменяет shared POSIX FS.
+
+## Что ответить на собесе
+
+- EFS Standard для multi-AZ durability; One Zone дешевле, но без cross-AZ отказоустойчивости.
+- Монтирую NFSv4.1 через EFS mount helper или EFS Access Points для изоляции путей.
+- Security groups и NACL открываю только от app tier к порту 2049.
+- Lifecycle management переводит cold data в Infrequent Access.
+- Честно: EFS не для latency-sensitive random I/O; тяжёлые БД держу на EBS/io2 или RDS.
+
+## Как это работает
+
+Создаю filesystem в VPC, mount targets в каждой AZ private subnet. Инстансы монтируют DNS имя вида `fs-xxxx.efs.region.amazonaws.com`.
+
+```bash
+sudo yum install -y amazon-efs-utils
+
+sudo mkdir -p /mnt/shared
+
+sudo mount -t efs -o tls,iam fs-0abc1234def567890:/ /mnt/shared
+
+echo 'fs-0abc1234def567890:/ /mnt/shared efs _netdev,tls,iam 0 0' | sudo tee -a /etc/fstab
+```
+
+Access Point задаёт POSIX user/group и root path для multi-tenant изоляции без отдельных filesystems.
+
+## Подводные камни
+
+- **NFS latency.** Высокий metadata load (миллионы мелких файлов) тормозит; иногда FSx Lustre или S3.
+- **Root squashing.** Права на файлах ломаются при несовпадении UID/GID; фиксирую через access points.
+- **Bursting throughput.** Small filesystems упираются в burst credits; включаю provisioned throughput при необходимости.
+- **Backup RPO.** AWS Backup для EFS настраиваю отдельно; snapshot policy не встроена как у EBS.
+- **Монтирование в public subnet.** EFS без TLS и открытый 2049 в интернет недопустимы; только private + security groups.

@@ -1,0 +1,54 @@
+---
+id: 4177
+title: "Как TLS сочетает симметричное и асимметричное шифрование?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как TLS сочетает симметричное и асимметричное шифрование?
+
+## Суть
+
+На handshake TLS использует асимметрию (RSA или ECDHE) для аутентификации сервера и согласования premaster/session secret. После Switch keys весь HTTP-трафик шифруется симметричным AEAD (AES-GCM, ChaCha20-Poly1305), потому что symmetric быстрее на больших объёмах.
+
+## Что ответить на собесе
+
+- Разделяю фазы: handshake (public-key math) vs record layer (bulk symmetric).
+- В TLS 1.3 forward secrecy: ephemeral ECDHE, компромисс long-term key не расшифровывает прошлые сессии.
+- Называю типичные cipher suites и что `HIGH` в nginx уже устаревший подход.
+- Честно добавляю: термин «SSL» на собесе обычно значит TLS 1.2+; SSLv3 не использую.
+
+## Как это работает
+
+ClientHello/ServerHello выбирают версию и группы. Сервер присылает cert chain; клиент проверяет trust store. ECDHE даёт общий secret без передачи его по сети в открытом виде. KDF выводит ключи для client/server write.
+
+Просмотр negotiated cipher:
+
+```bash
+openssl s_client -connect gateway.example.com:443 -tls1_2 </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject
+
+echo | openssl s_client -connect gateway.example.com:443 -tls1_3 2>/dev/null \
+  | grep -E 'Protocol|Cipher|Server Temp Key'
+```
+
+Для hardening отключаю static RSA key transport (нет FS) и legacy 3DES:
+
+```bash
+grep ssl_protocols /etc/nginx/nginx.conf
+grep ssl_ciphers /etc/nginx/nginx.conf
+nginx -T 2>/dev/null | grep -i ssl_protocols
+```
+
+TLS 1.3 сужает выбор шифров; сервер и клиент согласуют один AEAD suite. Session resumption (tickets) ускоряет повторные handshakes без повторной полной asymmetric math.
+
+## Подводные камни
+
+- **RSA key exchange без ECDHE.** Нет forward secrecy; компромисс private key раскрывает архив трафика.
+- **Mixed TLS versions.** Клиент fallback на 1.0 открывает BEAST/POODLE класс уязвимостей.
+- **Self-signed в prod.** Internal mesh без private CA ломает mTLS automation.
+- **Reused session tickets.** Неправильная ротация ticket key = риск decrypt resumed sessions.
+- **Termination logging.** Reverse proxy с SSL inspection требует явной политики и audit.

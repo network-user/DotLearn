@@ -1,0 +1,65 @@
+---
+id: 2583
+title: "Cookies in web testing: what the browser stores and how to verify it"
+category: qa-web-testirovanie-devtools-i-hranilischa
+categoryLabel: "Web-тестирование, DevTools и хранилища"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Cookies in web testing: what the browser stores and how to verify it
+
+## In short
+
+A cookie is a small name-value pair the server sets via Set-Cookie and the browser sends back in Cookie on later requests to a matching domain and path. They are used for sessions, locale, A/B tests, and sometimes tracking. QA checks attributes (Secure, HttpOnly, SameSite, Expires/Max-Age), scope, and behavior after logout.
+
+## How to answer in an interview
+
+- Session cookies live until the browser closes (no Expires); persistent cookies have Max-Age or Expires and survive restarts.
+- HttpOnly blocks access from document.cookie (XSS theft mitigation); Secure sends the cookie only over HTTPS.
+- SameSite=Lax/Strict limits cross-site requests; OAuth and embedded iframes often break here.
+- Honestly: cookies are not a substitute for server-side authorization; tampering in DevTools should yield 401, not privilege escalation.
+
+## How it works
+
+The server responds:
+
+```
+Set-Cookie: sid=abc123; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+```
+
+On the next GET `/account` the browser adds `Cookie: sid=abc123` if domain and path match.
+
+Gherkin for auth and logout:
+
+```gherkin
+Feature: Session cookie and security
+
+  Scenario: Login sets a session cookie with protective flags
+    When the user logs in with valid credentials
+    Then the response includes Set-Cookie "sid"
+    And cookie "sid" has HttpOnly and Secure flags
+    And SameSite is Lax or Strict
+
+  Scenario: Logout invalidates the client cookie
+    Given the user is authenticated with cookie "sid"
+    When the user clicks Logout
+    Then cookie "sid" is removed or Max-Age is 0
+    And a request to "/account" without a new login returns 401 or redirects to login
+
+  Scenario: Tampering with the cookie does not hijack a session
+    Given user A is authenticated
+    When sid is replaced with a random string in DevTools
+    Then a request to a protected API returns 401
+```
+
+In Application → Cookies DevTools shows domain, path, size, and expiration. For GDPR/consent regression I check marketing cookies are not set before consent while essential cookies remain.
+
+## Pitfalls
+
+- **Cookie on the wrong domain.** `.example.com` leaks to all subdomains including staging.
+- **Missing Secure in production.** Sessions can be captured on public Wi‑Fi if downgrade is possible.
+- **SameSite=None without Secure.** The browser drops the cookie; SSO "works in Chrome, fails in Safari".
+- **Oversized cookies.** ~4 KB per cookie and header limits; 413 on the API with no clear UI error.
+- **Testing only via document.cookie.** HttpOnly cookies are invisible to JS; use DevTools or network capture.

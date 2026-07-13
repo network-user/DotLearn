@@ -1,0 +1,66 @@
+---
+id: 4603
+title: "Зачем mutable в const-методе?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем mutable в const-методе?
+
+## Суть
+
+`mutable` помечает поле, которое можно менять даже в `const` методах. Это разделяет логическую константность (интерфейс объекта для клиента) и физическую (байты в памяти). Типичные случаи: lazy cache, mutex, счётчики профилирования.
+
+## Что ответить на собесе
+
+- Объясняю logical const vs physical const.
+- Привожу примеры: memoization, `std::mutex` в const method, hit counter.
+- Подчёркиваю, что `mutable` не делает объект потокобезопасным само по себе.
+- Упоминаю, что злоупотребление ломает инвариант «const == без побочных эффектов».
+- Честно добавляю: в C++17+ иногда лучше вынести cache наружу или использовать `atomic` с явной документацией.
+
+## Как это работает
+
+Компилятор снимает const-ограничение с `mutable` членов внутри const member function. Остальные поля остаются read-only для этого метода.
+
+```cpp
+#include <iostream>
+#include <string>
+
+class Label {
+    std::string text;
+    mutable std::size_t hash_cache = 0;
+    mutable bool hash_ready = false;
+
+public:
+    explicit Label(std::string value) : text(std::move(value)) {}
+
+    const std::string& value() const { return text; }
+
+    std::size_t cached_hash() const {
+        if (!hash_ready) {
+            hash_cache = std::hash<std::string>{}(text);
+            hash_ready = true;
+        }
+        return hash_cache;
+    }
+};
+
+int main() {
+    const Label tag("sensor");
+    std::cout << tag.cached_hash() << '\n';
+}
+```
+
+Внешний код видит `cached_hash` как const операцию, хотя внутри обновляется кэш.
+
+## Подводные камни
+
+- **Скрытая мутация.** const метод с mutable может удивить читателя API.
+- **Потоки.** Lazy cache без mutex гоняет data race.
+- **Инвалидация кэша.** При изменении `text` нужно сбрасывать `hash_ready` в non-const методах.
+- **Не замена синхронизации.** `mutable mutex` защищает только если lock берётся правильно.
+- **const correctness.** Слишком много mutable обычно признак неверного разбиения класса.

@@ -1,0 +1,69 @@
+---
+id: 1776
+title: "How optimistic locking works in 1C"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How optimistic locking works in 1C
+
+## In short
+
+The optimistic model does not lock a row while editing. A conflict is detected on write: the platform compares the data version at read time with the current one in the database and rejects the save if another session already changed the object.
+
+## How to answer in an interview
+
+- I contrast the optimistic approach with pessimistic `БлокировкаДанных` when collisions are rare.
+- In an interview I mention the object version mechanism and the message "data was changed or deleted by another user".
+- I stress that a form in view/edit mode by default relies on optimistic check on `Записать()`.
+- I honestly say that for high contention on one document you need explicit locks or a processing queue.
+- For directories with frequent shared editing I design short transactions and write retries.
+
+## How it works
+
+The user opens an object and the platform stores the version. Local changes do not hold an SQL lock until write time.
+
+```bsl
+Процедура СохранитьКонтрагента(Форма) Экспорт
+    ОбъектДанных = Форма.РеквизитФормыВЗначение("Объект");
+    Попытка
+        ОбъектДанных.Записать();
+    Исключение
+        Если ЭтоКонфликтВерсий(ИнформацияОбОшибке()) Тогда
+            ПоказатьПредупреждение(, "Карточка уже изменена. Обновите данные и повторите.");
+            Форма.Прочитать();
+        Иначе
+            ВызватьИсключение;
+        КонецЕсли;
+    КонецПопытки;
+КонецПроцедуры
+```
+
+On write the platform runs a version check (internal counter or timestamp). If another session saved the object in between, the operation stops without overwriting foreign changes.
+
+A programmatic analogue for an information register without a form:
+
+```bsl
+МенеджерЗаписи = РегистрыСведений.КурсыВалют.СоздатьМенеджерЗаписи();
+МенеджерЗаписи.Период = ДатаКурса;
+МенеджерЗаписи.Валюта = ВалютаUSD;
+МенеджерЗаписи.Прочитать();
+СтараяВерсия = МенеджерЗаписи.ВерсияДанных;
+МенеджерЗаписи.Курс = НовыйКурс;
+МенеджерЗаписи.Записать();
+```
+
+If a scheduled job updated the row between `Прочитать()` and `Записать()`, the platform signals a conflict. Handling strategy: reread, merge fields, or retry the operation.
+
+Optimistic mode scales well under read-heavy load. Pessimistic locks fit document posting and balance reservation.
+
+## Pitfalls
+
+- **Long editing on a form.** The version goes stale and the user loses input on save.
+- **Scheduled auto-write without notice.** The conflict looks like a random platform error.
+- **Retrying Записать() without reread.** The second call fails on the same version again.
+- **Expecting a lock where there is none.** The optimistic model does not wait; it rejects immediately.
+- **Mixing with managed locking.** Explicit lock and version check solve different problems.

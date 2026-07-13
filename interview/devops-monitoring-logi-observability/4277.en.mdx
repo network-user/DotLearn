@@ -1,0 +1,92 @@
+---
+id: 4277
+title: "Fluentd or Logstash: which to pick?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Fluentd or Logstash: which to pick?
+
+## In short
+
+Both agents collect, parse, and route logs, but they target different stacks. Fluentd is lighter and often sits next to Kubernetes and cloud sinks. Logstash sits deeper in the Elastic ecosystem and handles heavier transformation before Elasticsearch. The choice depends on where you ship data and how complex the pipeline is.
+
+## How to answer in an interview
+
+- Fluentd: Ruby/C core, plugin model `source → filter → match`, common as a DaemonSet sidecar in k8s.
+- Logstash: JVM, input/filter/output, grok and enrich are convenient for ELK.
+- In k8s I usually deploy Fluent Bit/Fluentd; for on-prem ELK with heavy grok I pick Logstash.
+- Both ship to Elasticsearch, S3, Kafka; I compare latency, memory footprint, and ops overhead.
+- Honestly: two full pipelines on one log stream is rarely justified; I pick one choke point.
+
+## How it works
+
+Fluentd tails an nginx file and pushes to Elasticsearch:
+
+```bash
+cat <<'EOF' > /etc/fluent/fluent.conf
+<source>
+  @type tail
+  path /var/log/nginx/access.log
+  pos_file /var/log/fluentd/nginx.pos
+  tag web.nginx
+  <parse>
+    @type nginx
+  </parse>
+</source>
+
+<match web.nginx>
+  @type elasticsearch
+  host es.internal
+  port 9200
+  logstash_format true
+</match>
+EOF
+```
+
+Logstash equivalent with grok before indexing:
+
+```bash
+cat <<'EOF' > /etc/logstash/conf.d/nginx.conf
+input {
+  file {
+    path => "/var/log/nginx/access.log"
+    start_position => "beginning"
+    sincedb_path => "/var/lib/logstash/nginx.sincedb"
+  }
+}
+
+filter {
+  grok {
+    match => { "message" => "%{COMBINEDAPACHELOG}" }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["http://es.internal:9200"]
+    index => "nginx-access-%{+YYYY.MM.dd}"
+  }
+}
+EOF
+```
+
+Operational comparison:
+
+| Criterion | Fluentd | Logstash |
+|----------|---------|----------|
+| Runtime | Ruby + C extension | JVM |
+| Typical footprint | lower | higher, stronger filters |
+| Sweet spot | k8s, multi-cloud routing | Elastic Stack, heavy ETL |
+| HA | multiple collectors + shared buffer | multiple LS behind LB + persistent queue |
+
+## Pitfalls
+
+- **Double pipeline.** Running Fluentd and Logstash on the same host without clear ownership duplicates CPU and can reorder events.
+- **JVM tuning.** Logstash without heap limits and persistent queue loses events on restart under burst load.
+- **Plugin drift.** Fluentd community plugins vary in quality; I pin versions and test backpressure behavior.
+- **Grok cost.** Complex grok in Logstash at high EPS needs filter workers and sometimes pre-parsing at the app.
+- **Vendor lock-in.** Deep Logstash + Kibana coupling makes migration harder than Fluentd with neutral sinks.

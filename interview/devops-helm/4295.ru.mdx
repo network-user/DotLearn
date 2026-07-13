@@ -1,0 +1,63 @@
+---
+id: 4295
+title: "Плюсы и минусы helm upgrade"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Плюсы и минусы helm upgrade
+
+## Суть
+
+`helm upgrade` применяет новый chart или values к существующему release, создавая новую revision в history. Плюсы: декларативный drift fix, atomic hook'и, rollback path. Минусы: неожиданный diff из template change, subchart version skew, CRD upgrade race, и `--wait` timeout на медленных rolling update.
+
+## Что ответить на собесе
+
+- Плюс: одна команда обновляет весь chart (Deployment, Service, Ingress, ConfigMap).
+- Плюс: revision history + `helm rollback` для быстрого отката.
+- Минус: `helm upgrade` без `helm diff` слепо меняет cluster state.
+- Минус: зависимости `Chart.lock` могут подтянуть major bump subchart.
+- Честно: в prod сначала `helm upgrade --install --dry-run=server` или diff plugin, потом `--atomic --wait`.
+
+## Как это работает
+
+Безопасный upgrade с wait и atomic:
+
+```bash
+helm diff upgrade payments ./charts/payments \
+  -n prod -f values-prod.yaml --set image.tag=3.2.0
+
+helm upgrade payments ./charts/payments \
+  -n prod \
+  -f values-prod.yaml \
+  --set image.tag=3.2.0 \
+  --atomic \
+  --wait \
+  --timeout 10m
+```
+
+Проверка revision после upgrade:
+
+```bash
+helm history payments -n prod
+kubectl rollout status deployment/payments -n prod
+```
+
+Upgrade только values без смены chart version:
+
+```bash
+helm upgrade payments ./charts/payments -n prod \
+  --reuse-values \
+  --set resources.limits.memory=1Gi
+```
+
+## Подводные камни
+
+- **Immutable field change.** Прямая смена `spec.selector` в Deployment ломает upgrade; нужен recreate strategy.
+- **Hook job fail.** Pre-upgrade hook с миграцией БД падает и `--atomic` откатывает всё, включая рабочий образ.
+- **CRD not established.** Upgrade chart с новым CRD до ready API ломает dependent resources; ставлю CRD отдельным шагом.
+- **Secret regenerate.** Template с random password меняет Secret и рестартит все pod без плана.
+- **--wait false по умолчанию.** CI считает upgrade успешным, пока pod CrashLoop; всегда `--wait` в prod pipeline.

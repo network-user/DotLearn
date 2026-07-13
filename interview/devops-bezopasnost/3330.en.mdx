@@ -1,0 +1,59 @@
+---
+id: 3330
+title: "What does SSL/TLS do at the transport layer?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does SSL/TLS do at the transport layer?
+
+## In short
+
+SSL (legacy name) and modern TLS encrypt traffic between client and server, verify server identity via X.509 certificates, and protect record integrity. The handshake negotiates protocol version, cipher suite, and a symmetric session key for bulk encryption.
+
+## How to answer in an interview
+
+- I separate goals: confidentiality, integrity, server authentication (mutual TLS adds client auth).
+- I explain that today TLS means TLS 1.2/1.3; SSLv3 and below are disabled.
+- I mention the trust chain: leaf cert, intermediate, root CA in the client trust store.
+- I add honestly: TLS does not replace application auth and does not encrypt data at rest; it protects the channel in transit only.
+
+## How it works
+
+The client sends ClientHello with SNI (hostname). The server replies with ServerHello, certificate, and (in 1.2) key exchange. After CN/SAN and expiry checks, both sides derive a shared symmetric key; HTTP or other protocols then ride inside encrypted records.
+
+Minimal certificate check with openssl:
+
+```bash
+openssl s_client -connect api.example.com:443 -servername api.example.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+nginx snippet for TLS 1.2+ with modern ciphers:
+
+```bash
+cat >> /etc/nginx/conf.d/tls-api.conf <<'EOF'
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+}
+EOF
+nginx -t && systemctl reload nginx
+```
+
+`fullchain.pem` includes leaf plus intermediate for proper client validation. Automate renewal via certbot/cron with reload for zero downtime.
+
+## Pitfalls
+
+- **Expired cert without monitoring.** Browsers and SDKs fail together; alert at 30/7 days.
+- **Incomplete chain.** Missing intermediate often breaks Android/Java clients while desktop may tolerate it.
+- **Weak ciphers and TLS 1.0.** PCI and modern scanners flag legacy; test with ssllabs or testssl.sh.
+- **SNI mismatch.** A cert for `*.example.com` will not cover another hostname on the same IP.
+- **Termination at edge only.** HTTP between ingress and pod without mTLS stays plaintext inside the cluster.

@@ -1,0 +1,79 @@
+---
+id: 2049
+title: "Блок finally: гарантированная очистка ресурсов"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Блок finally: гарантированная очистка ресурсов
+
+## Суть
+
+`finally` выполняется после `try` и всех подходящих `catch`, независимо от того, было исключение или нормальный return. Исторически использовался для закрытия файлов и соединений. С Java 7 предпочтительнее try-with-resources, но `finally` остаётся важен для освобождения не-`AutoCloseable` ресурсов и сброса состояния.
+
+## Что ответить на собесе
+
+- Порядок: try → catch (если есть match) → finally → проброс исключения дальше.
+- `return` в try не отменяет finally, но `return` в finally перезаписывает возвращаемое значение.
+- try-with-resources генерирует implicit finally с `close()` в правильном порядке.
+- В finally не бросаю новые исключения без крайней нужды: они маскируют исходное.
+- Честно: дублирование close-логики в catch и finally до try-with-resources было источником багов.
+
+## Как это работает
+
+Классический паттерн (до Java 7):
+
+```java
+Connection connection = null;
+try {
+    connection = dataSource.getConnection();
+    runMigration(connection);
+} catch (SQLException ex) {
+    log.warn("Migration failed", ex);
+    throw ex;
+} finally {
+    if (connection != null) {
+        try {
+            connection.close();
+        } catch (SQLException closeEx) {
+            log.warn("Failed to close connection", closeEx);
+        }
+    }
+}
+```
+
+Современный вариант:
+
+```java
+try (Connection connection = dataSource.getConnection();
+     PreparedStatement stmt = connection.prepareStatement(sql)) {
+    stmt.executeUpdate();
+}
+```
+
+Компилятор вставляет finally-подобный блок: `close()` вызывается даже при исключении в try; если и try, и close бросают, primary exception сохраняется, close добавляется как suppressed.
+
+`return` и finally:
+
+```java
+int compute() {
+    try {
+        return 1;
+    } finally {
+        System.out.println("cleanup");
+    }
+}
+```
+
+Печатает `cleanup`, возвращает 1. Если `return 2` внутри finally, вернётся 2.
+
+## Подводные камни
+
+- **return в finally.** Скрывает исключение из try и ломает контракт метода.
+- **Исключение в finally.** Маскирует root cause из try/catch.
+- **Долгий finally.** Блокирует shutdown path, timeout на HTTP handler.
+- **null-safe забыли.** NPE в finally при неинициализированном ресурсе.
+- **Считают finally абсолютным.** `System.exit`, kill -9, JVM crash обходят finally.

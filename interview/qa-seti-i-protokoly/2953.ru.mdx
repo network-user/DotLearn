@@ -1,0 +1,66 @@
+---
+id: 2953
+title: "Proxy-сервер: как QA тестирует через Charles и корпоративный прокси?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Proxy-сервер: как QA тестирует через Charles и корпоративный прокси?
+
+## Суть
+
+Proxy стоит между клиентом и origin: терминирует соединение, может кэшировать, фильтровать, подменять заголовки, балансировать. Forward proxy (корпоративный, Charles) обслуживает исходящие запросы клиента; reverse proxy (nginx, CDN) стоит перед сервером. QA использует forward proxy для перехвата HTTPS и reverse для проверки заголовков X-Forwarded-For и sticky sessions.
+
+## Что ответить на собесе
+
+- Анонимность: наружу виден IP прокси, не клиента; важно для geo и rate limit тестов.
+- Кэш прокси может отдать stale контент; после деплоя проверяю bypass Cache-Control или hard refresh через прокси.
+- MITM прокси (Charles) требует доверенный CA на устройстве; только тестовые стенды.
+- Честно: приложение «работает без прокси, падает в офисе» часто из-за PAC/WPAD или SSL inspection; воспроизвожу системный proxy QA машины.
+
+## Как это работает
+
+Forward proxy в автотестах (конфиг):
+
+```
+HTTP_PROXY=http://proxy.corp:8080
+HTTPS_PROXY=http://proxy.corp:8080
+NO_PROXY=localhost,127.0.0.1,.internal
+```
+
+Gherkin сценарии:
+
+```gherkin
+Feature: Поведение за forward proxy
+
+  Scenario: API доступен через корпоративный прокси
+    Given переменные HTTP_PROXY и HTTPS_PROXY указывают на "proxy.corp:8080"
+    When QA выполняет GET "https://api.example.com/health"
+    Then статус 200
+    And тело содержит status "ok"
+
+  Scenario: Charles перехватывает и показывает расшифрованный JSON login
+    Given на устройстве установлен корневой сертификат Charles
+    And браузер направлен через proxy 127.0.0.1:8888
+    When пользователь логинится
+    Then в Charles виден POST /auth с телом JSON
+    And пароль не дублируется в query string
+
+  Scenario: Reverse proxy передаёт реальный client IP
+    When клиент без proxy обращается к "https://shop.example.com/"
+    Then upstream получает заголовок X-Forwarded-For с IP клиента
+    And rate limit применяется к client IP, а не только к IP балансировщика
+```
+
+Reverse proxy кэш: GET /static/app.js может вернуть 304; QA сверяет ETag после релиза.
+
+## Подводные камни
+
+- **Забытый NO_PROXY.** Локальный mock уходит в corp proxy и 502.
+- **SSL inspection ломает pinning.** Мобильное приложение не доверяет corp CA.
+- **Кэш прокси маскирует баг.** Прод без прокси уже с новым JS, офис видит старый.
+- **CONNECT tunnel не логируется.** «Пустой» Charles при неправильной настройке HTTPS.
+- **X-Forwarded-Proto http behind TLS.** Редиректы ломают absolute URL в приложении.

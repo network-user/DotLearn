@@ -16,6 +16,8 @@ import { Surface } from '@/components/ui/Surface';
 import { useForcedContentLanguage } from '@/lib/forced-language';
 import { getCurrentLanguage } from '@/lib/i18n';
 import {
+  directionOf,
+  filterByDirection,
   getInterviewComponentForLocale,
   getInterviewIndex,
   getInterviewQuestion,
@@ -24,6 +26,7 @@ import {
   relatedInterviewQuestions,
   relatedTopicsForQuestion,
 } from '@/lib/interview';
+import { directionLabel } from '@/lib/interview-directions';
 import { db, INTERVIEW_TOPIC_SLUG, setInterviewStudied } from '@/lib/progress-db';
 import { Seo } from '@/lib/seo';
 import { topicTitleOf } from '@/lib/topics';
@@ -79,6 +82,13 @@ export const InterviewQuestionPage = () => {
     }
   }, [question, studied, exercises, passedRecords]);
 
+  const questions = useMemo(() => {
+    if (!question) return getInterviewIndex();
+    const itemDirection = directionOf(question);
+    if (!itemDirection) return getInterviewIndex();
+    return filterByDirection(getInterviewIndex(), itemDirection);
+  }, [question]);
+
   if (!question) {
     return (
       <Surface rule="left" className="border-l-err">
@@ -106,7 +116,6 @@ export const InterviewQuestionPage = () => {
     .filter(
       (entry): entry is { slug: string; conceptId?: string; title: string } => entry !== undefined,
     );
-  const questions = getInterviewIndex();
   const position = questions.findIndex((item) => item.id === question.id);
   const previous = position > 0 ? questions[position - 1] : undefined;
   const next =
@@ -115,6 +124,8 @@ export const InterviewQuestionPage = () => {
   const toggleStudied = (): void => {
     void setInterviewStudied(question.id, !studied);
   };
+
+  const questionDirection = directionOf(question);
 
   return (
     <div className="space-y-8">
@@ -150,6 +161,11 @@ export const InterviewQuestionPage = () => {
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {questionDirection && (
+          <Badge tone="accent" variant="outline">
+            {directionLabel(questionDirection, locale)}
+          </Badge>
+        )}
         <Badge tone="neutral">{question.categoryLabel}</Badge>
         <Badge tone={stageTone[question.stage]} variant="outline">
           {question.stageLabel}

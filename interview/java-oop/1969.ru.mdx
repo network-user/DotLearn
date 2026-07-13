@@ -1,0 +1,69 @@
+---
+id: 1969
+title: "Когда потоку нужен Object.wait()?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда потоку нужен Object.wait()?
+
+## Суть
+
+`wait()` переводит текущий поток в ожидание и **освобождает монитор** объекта, на котором вызван. Поток проснётся, когда другой поток вызовет `notify`/`notifyAll` на том же объекте или истечёт timeout. Метод работает только внутри synchronized-блока на этом же объекте.
+
+## Что ответить на собесе
+
+- Подчёркиваю: `wait` это не sleep; монитор отдаётся, другие потоки могут войти в synchronized.
+- Объясняю паттерн producer-consumer с `while`, а не `if`, из-за spurious wakeup.
+- Упоминаю overloads: `wait(timeout)`, `wait(timeout, nanos)`.
+- Связываю с `InterruptedException`: при прерывании нужно восстановить interrupt flag.
+- Честно добавляю: в новом коде чаще беру `java.util.concurrent` (`BlockingQueue`, `Condition`), а не raw wait/notify.
+
+## Как это работает
+
+```java
+final class HandoffBuffer {
+    private String payload;
+    private boolean ready;
+
+    synchronized void publish(String value) {
+        while (ready) {
+            awaitSafely();
+        }
+        payload = value;
+        ready = true;
+        notifyAll();
+    }
+
+    synchronized String consume() {
+        while (!ready) {
+            awaitSafely();
+        }
+        String taken = payload;
+        ready = false;
+        notifyAll();
+        return taken;
+    }
+
+    private void awaitSafely() {
+        try {
+            wait();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+```
+
+Producer ждёт, пока буфер пуст (`ready == false`), consumer ждёт, пока данные готовы. `while` защищает от ложных пробуждений и от ситуации, когда другой поток успел изменить состояние до re-acquire монитора.
+
+## Подводные камни
+
+- **wait без synchronized.** Бросает `IllegalMonitorStateException`.
+- **if вместо while.** Классическая гонка после spurious wakeup.
+- **notify вместо notifyAll.** Можно не разбудить нужный поток при нескольких waiters.
+- **Потеря interrupt.** Пустой catch без `Thread.currentThread().interrupt()`.
+- **Держать монитор долго.** Логика после `wait` должна быть короткой, иначе starvation.

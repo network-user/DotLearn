@@ -1,0 +1,68 @@
+---
+id: 2076
+title: "Где JVM хранит static методы и поля"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Где JVM хранит static методы и поля
+
+## Суть
+
+Bytecode static методов и метаданные класса (Method/Field structures, constant pool) живут в Metaspace. Значения static полей примитивов и ссылки на объекты хранятся в Java heap в объекте `java.lang.Class` (mirror), не в metaspace. Вызов static method резолвится через klass structure; JIT может inline без virtual dispatch.
+
+## Что ответить на собесе
+
+- Metaspace: class metadata, bytecode, static method descriptors.
+- Heap: actual static field values (`static int count`, `static List cache`).
+- PermGen до Java 7 хранил и metadata и statics; Java 8+ split.
+- Class unloading возможен когда loader collectible и нет live references.
+- Честно: «static в metaspace» частично верно только для metadata, не для object refs.
+
+## Как это работает
+
+```java
+public final class RateLimiter {
+
+    private static final int MAX = 1000;
+    private static int issued;
+    private static final List<String> audit = new ArrayList<>();
+
+    public static boolean tryAcquire() {
+        if (issued >= MAX) {
+            return false;
+        }
+        issued++;
+        audit.add("token-" + issued);
+        return true;
+    }
+}
+```
+
+Layout:
+
+- `RateLimiter` klass + `tryAcquire` bytecode → **metaspace**
+- `MAX` (int constant) → embedded in constant pool / compile time
+- `issued` int value → **heap** inside Class object
+- `audit` reference → **heap** (List object separately in heap)
+
+Invocation:
+
+```java
+RateLimiter.tryAcquire();
+```
+
+bytecode `invokestatic` → link time resolution → direct call or inlined hot path in code cache.
+
+Unload: если custom ClassLoader и класс больше не referenced, metaspace entry может быть reclaimed при GC metaspace cycle.
+
+## Подводные камни
+
+- **Static collection leak.** Metadata маленькая, heap object graph огромная.
+- **Metaspace OOM vs heap OOM.** Different flags and fixes.
+- **Reflection inflate.** First reflective call generates accessor classes → metaspace bump.
+- **Interface static methods Java 8+.** Same storage rules as class statics.
+- **Native static JNI.** Native code side effects unrelated to Java static storage.

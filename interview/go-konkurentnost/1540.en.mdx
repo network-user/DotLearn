@@ -1,0 +1,66 @@
+---
+id: 1540
+title: "How many goroutines can you create on N cores?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How many goroutines can you create on N cores?
+
+## In short
+
+Goroutine count is not capped by core count: you can create millions. Only up to GOMAXPROCS (usually core count) goroutines run CPU-bound work in parallel; the rest wait in run queues or blocking.
+
+## How to answer in an interview
+
+- Spawning is not tied to cores; limits are RAM, scheduler overhead, and app design.
+- An I/O-bound service keeps a goroutine per connection without a "one conn = one core" rule.
+- Size CPU-bound pools around GOMAXPROCS or use a semaphore-limited worker set.
+- Honestly: millions of goroutines are possible, but without backpressure that is an operational risk, not a feature.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	fmt.Println("cores:", runtime.NumCPU(), "gomaxprocs:", runtime.GOMAXPROCS(0))
+	const workers = 10_000
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			_ = id * id
+			<-sem
+		}(i)
+	}
+	wg.Wait()
+	fmt.Println("finished", workers)
+}
+```
+
+10k goroutines start quickly; the semaphore caps concurrent CPU-bound sections at GOMAXPROCS. Without it all 10k would fight for the same P set.
+
+## Pitfalls
+
+**Goroutine leak.** No core-based cap; a forgotten listener goroutine grows without bound.
+
+**GOMAXPROCS=NumCPU is not magic.** Container CPU quotas may expose fewer effective cores; runtime may miss cgroup limits.
+
+**Scheduler latency.** Hundreds of thousands of runnable G increase tail latency even on 64 cores.
+
+**Memory sum.** 2 KiB stack × 1M goroutines is already gigabytes before heap objects.
+
+**Versus thread pools.** CPU thread pools stay near core count; I/O goroutine pools can be orders of magnitude larger.

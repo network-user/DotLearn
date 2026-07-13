@@ -1,0 +1,67 @@
+---
+id: 2006
+title: "Access token vs refresh token: what's the difference?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Access token vs refresh token: what's the difference?
+
+## In short
+
+An access token is presented to the resource server on every API call; its lifetime is short. A refresh token renews access without logging in again and is stored with stricter protection because compromise grants long-lived access.
+
+## How to answer in an interview
+
+- Access: Bearer in `Authorization`, TTL in minutes, scope and claims inside.
+- Refresh: only at the token endpoint, rotated on each renewal.
+- On 401 with `invalid_token` I try refresh first, then redirect to login.
+- I never send refresh tokens to third-party APIs, only to my auth backend.
+- Honestly: without rotation and a revoke list, a stolen refresh lives until TTL.
+
+## How it works
+
+The client keeps access in memory and refresh in an HttpOnly Secure cookie or server-side session. API request:
+
+```java
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.shop.local/v1/cart"))
+    .header("Authorization", "Bearer " + accessToken)
+    .GET()
+    .build();
+
+HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
+if (response.statusCode() == 401) {
+    accessToken = renewAccessToken(refreshToken);
+}
+```
+
+Renewing access:
+
+```java
+private String renewAccessToken(String refreshToken) throws IOException {
+    String body = "grant_type=refresh_token&refresh_token=" + URLEncoder.encode(refreshToken, UTF_8);
+    HttpRequest tokenRequest = HttpRequest.newBuilder()
+        .uri(URI.create("https://auth.shop.local/oauth/token"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .POST(BodyPublishers.ofString(body))
+        .build();
+    HttpResponse<String> tokenResponse = httpClient.send(tokenRequest, BodyHandlers.ofString());
+    TokenPayload payload = mapper.readValue(tokenResponse.body(), TokenPayload.class);
+    persistRotatedRefresh(payload.refreshToken());
+    return payload.accessToken();
+}
+```
+
+The resource server validates only access (signature, `exp`, audience). The authorization server accepts refresh and can invalidate a token family on reuse detection.
+
+## Pitfalls
+
+- **Refresh in mobile plaintext storage.** Root/backup exfiltrates the key.
+- **Non-rotating refresh.** Steal once, access forever.
+- **Access in URL query.** Lands in logs and Referer.
+- **One refresh for all devices.** No per-device revoke.
+- **Ignoring clock skew.** Checking `exp` without leeway causes false 401s in distributed setups.

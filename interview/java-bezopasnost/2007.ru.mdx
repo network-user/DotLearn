@@ -1,0 +1,60 @@
+---
+id: 2007
+title: "Что такое SQL Injection и как её закрыть в Java?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое SQL Injection и как её закрыть в Java?
+
+## Суть
+
+SQL Injection возникает, когда пользовательский ввод конкатенируется в SQL и меняет логику запроса. Атакующий может обойти аутентификацию, прочитать или изменить чужие данные. Защита: параметризованные запросы, ORM с binding, минимальные DB-привилегии.
+
+## Что ответить на собесе
+
+- Уязвимость в слое доступа к данным, не «ошибка базы».
+- В Java использую `PreparedStatement`, JPA `@Query` с `:param`, никогда string concat.
+- Валидация формата дополняет, но не заменяет binding.
+- DB user приложения без `DROP`, `FILE`, лишних schema.
+- Честно: second-order SQLi возможен, если сохранённый payload позже попадает в динамический SQL.
+
+## Как это работает
+
+Уязвимый код склеивает login:
+
+```java
+String sql = "SELECT id FROM accounts WHERE login='" + login + "' AND secret='" + secret + "'";
+Statement stmt = connection.createStatement();
+ResultSet rs = stmt.executeQuery(sql);
+```
+
+Ввод `' OR '1'='1` превращает условие в тавтологию. Безопасный вариант:
+
+```java
+String sql = "SELECT id FROM accounts WHERE login = ? AND secret_hash = ?";
+PreparedStatement ps = connection.prepareStatement(sql);
+ps.setString(1, login);
+ps.setString(2, hashSecret(secret));
+ResultSet rs = ps.executeQuery();
+```
+
+Параметры передаются отдельно от текста запроса; СУБД не интерпретирует их как SQL. В Spring Data:
+
+```java
+@Query("select u from AppUser u where u.email = :email")
+Optional<AppUser> findByEmail(@Param("email") String email);
+```
+
+Hibernate генерирует bind variables. Для динамических имён колонок whitelist enum, не конкатенация `orderBy` из request.
+
+## Подводные камни
+
+- **Экранирование вместо binding.** `replace("'", "''")` ломается на encoding и dialect tricks.
+- **LIKE с wildcard injection.** `%` и `_` в параметре расширяют выборку; экранируй или ограничивай паттерн.
+- **Stored procedures с concat внутри.** Java чистый, PL/SQL уязвим.
+- **ORM native query.** `createNativeQuery("... " + sort)` возвращает SQLi.
+- **Overprivileged DB account.** Injection + `FILE` privilege = чтение файлов сервера.

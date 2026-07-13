@@ -1,0 +1,67 @@
+---
+id: 4582
+title: "How do you forbid heap allocation for a type?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you forbid heap allocation for a type?
+
+## In short
+
+In C++, stack objects come from variable declarations and heap objects from `new`. To keep a class stack-only, block `new`: make it private or mark it `= delete`. Then external `new MyType()` fails to compile while normal stack creation still works.
+
+## How to answer in an interview
+
+- I explain the difference: the stack frees automatically, the heap needs explicit `delete` or a smart pointer.
+- I name two techniques: private `operator new` and deleted `operator new(size_t) = delete` (C++11+).
+- I note that with private `new`, friends or member functions can still allocate.
+- I show that `operator new[]` should be removed too, or callers bypass via arrays.
+- I add honestly: a full heap ban does not block placement new and does not stop heap copies inside alloc-heavy containers without extra constraints.
+
+## How it works
+
+When the compiler sees `new Widget()`, it looks for a matching `operator new`. If access is closed, you get a compile error before link time. Stack `Widget w;` does not call `new`, so the restriction does not trigger.
+
+```cpp
+class StackOnly {
+public:
+    StackOnly() = default;
+    ~StackOnly() = default;
+
+    void* operator new(std::size_t) = delete;
+    void* operator new[](std::size_t) = delete;
+};
+
+class LegacyStackOnly {
+public:
+    LegacyStackOnly() = default;
+    ~LegacyStackOnly() = default;
+
+private:
+    static void* operator new(std::size_t sz) {
+        return ::operator new(sz);
+    }
+    static void* operator new[](std::size_t sz) {
+        return ::operator new[](sz);
+    }
+};
+
+int main() {
+    StackOnly ok;              // stack
+    // StackOnly* bad = new StackOnly();  // compile error
+}
+```
+
+Teams use this for small RAII helpers, counters tied to a scope, or objects bound to stack context. The standard library uses similar ideas where ownership must stay explicit (`std::scoped_lock`, and similar types).
+
+## Pitfalls
+
+- **Array form.** Without `operator new[] = delete`, callers bypass via `new T[n]`.
+- **Placement new.** Banning global `new` does not cancel placement into a prepared buffer.
+- **Private new.** Members and friends can still hit the heap; it is not an absolute barrier.
+- **Copy into vector.** `std::vector` may reallocate elements on the heap; a stack-only type behaves oddly there.
+- **Inheritance.** A derived class can declare its own public `operator new` if the base did not delete it fully.

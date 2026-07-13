@@ -1,0 +1,66 @@
+---
+id: 4597
+title: "Что такое сериализация в C++?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое сериализация в C++?
+
+## Суть
+
+Сериализация переводит состояние объекта в поток байтов (файл, сеть, буфер) для хранения или передачи. Десериализация восстанавливает объект из потока. В C++ нет единого стандарта: пишут свой бинарный/текстовый формат или берут библиотеку (Protobuf, Boost.Serialization, JSON).
+
+## Что ответить на собесе
+
+- Разделяю сериализацию (encode) и десериализацию (decode).
+- Называю сценарии: persistence, IPC, кэш снапшотов, message queue.
+- Подчёркиваю версионирование схемы и endianness для бинарных форматов.
+- Упоминаю, что `reinterpret_cast` write struct целиком ломается на padding/архитектуре.
+- Честно добавляю: для публичных API чаще выбирают JSON/Protobuf, а не самодельный бинарник.
+
+## Как это работает
+
+Явный формат: сначала метаданные (длина строки), затем payload. Чтение в обратном порядке. Для вложенных структур рекурсивно сериализуют поля.
+
+```cpp
+#include <fstream>
+#include <string>
+
+struct Profile {
+    std::string name;
+    int age = 0;
+
+    void save(const std::string& path) const {
+        std::ofstream out(path, std::ios::binary);
+        auto len = name.size();
+        out.write(reinterpret_cast<const char*>(&len), sizeof(len));
+        out.write(name.data(), static_cast<std::streamsize>(len));
+        out.write(reinterpret_cast<const char*>(&age), sizeof(age));
+    }
+
+    static Profile load(const std::string& path) {
+        std::ifstream in(path, std::ios::binary);
+        std::size_t len = 0;
+        in.read(reinterpret_cast<char*>(&len), sizeof(len));
+        Profile p;
+        p.name.resize(len);
+        in.read(p.name.data(), static_cast<std::streamsize>(len));
+        in.read(reinterpret_cast<char*>(&p.age), sizeof(p.age));
+        return p;
+    }
+};
+```
+
+Порядок полей и размеры типов становятся контрактом между версиями программы.
+
+## Подводные камни
+
+- **Padding и alignment.** Бинарный dump struct не переносим между компиляторами.
+- **Endianness.** `int` на wire без `htonl` ломается между архитектурами.
+- **Версии схемы.** Добавление поля без version tag ломает старые файлы.
+- **Безопасность.** Десериализация недоверенных данных: overflow длины, zip bomb.
+- **Указатели и ресурсы.** Сериализуют данные, не адреса; графы объектов требуют id/ref.

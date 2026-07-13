@@ -1,0 +1,61 @@
+---
+id: 1560
+title: "What does sync.Map store internally?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What does sync.Map store internally?
+
+## In short
+
+`sync.Map` holds key/value pairs for concurrent access without an external mutex. Inside are two maps: a read-only atomic snapshot for fast Load and a dirty map under mutex for Store/Delete; misses promote entries into the read map. Tuned for many reads, rare writes, stable keys.
+
+## How to answer in an interview
+
+- API: Store, Load, Delete, LoadOrStore, Range.
+- Not a drop-in map replacement; typed map + RWMutex is often clearer.
+- Range is not a consistent snapshot under concurrent Store.
+- Honestly: benchmark against mutex map on every hot path.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	var cache sync.Map
+	cache.Store("region", "eu-west")
+	if v, ok := cache.Load("region"); ok {
+		fmt.Println(v)
+	}
+	actual, loaded := cache.LoadOrStore("region", "us-east")
+	fmt.Println(actual, loaded)
+	cache.Range(func(k, v any) bool {
+		fmt.Println(k, v)
+		return true
+	})
+}
+```
+
+Load hits the read map without lock in the common case. Store on a new key may lock dirty and eventually copy to read.
+
+## Pitfalls
+
+**Write-heavy.** sync.Map loses to mutex map under frequent Store.
+
+**Typed keys.** interface{} loses compile-time types; wrap with a typed facade.
+
+**Range and modify.** Callback must not block long; Store inside Range had deadlock risk on older impl.
+
+**Delete does not shrink.** Memory may linger until read map rebuild.
+
+**Assume linearizable Range.** No; iteration is best-effort under concurrency.

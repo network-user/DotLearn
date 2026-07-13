@@ -1,0 +1,71 @@
+---
+id: 4637
+title: "How does a mutex differ from a semaphore?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a mutex differ from a semaphore?
+
+## In short
+
+A mutex provides mutual exclusion: one owner at a time. A semaphore tracks a permit count and can admit several threads up to a configured limit. A binary semaphore resembles a mutex, but ownership and re-lock semantics differ.
+
+## How to answer in an interview
+
+- I use a mutex for a critical section with one logical owner; a semaphore caps a resource pool (N slots).
+- `std::mutex` is non-recursive by default; `std::recursive_mutex` when the same thread must lock again.
+- C++20 offers `std::counting_semaphore` and `std::binary_semaphore` for counted admission.
+- I guard `std::cout` with a mutex; I limit a three-connection DB pool with a counting semaphore.
+- Honestly: a semaphore need not be released by the thread that acquired it; with a mutex that is forbidden.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <semaphore>
+#include <thread>
+
+std::mutex logGuard;
+
+void emit(const char* tag) {
+    std::lock_guard lock(logGuard);
+    std::cout << tag << '\n';
+}
+
+std::counting_semaphore<2> slot{2};
+
+void useSlot(int id) {
+    slot.acquire();
+    std::cout << "worker " << id << " in slot\n";
+    slot.release();
+}
+
+int main() {
+    std::thread t1(emit, "A");
+    std::thread t2(emit, "B");
+    t1.join();
+    t2.join();
+
+    std::thread w1(useSlot, 1);
+    std::thread w2(useSlot, 2);
+    std::thread w3(useSlot, 3);
+    w1.join();
+    w2.join();
+    w3.join();
+}
+```
+
+`logGuard` serializes printing so only one thread writes at a time. `slot` with limit 2 admits two workers; the third waits for `release()`. A mutex does not count how many threads are inside; a semaphore tracks remaining permits.
+
+## Pitfalls
+
+- **Forgotten unlock.** Manual `lock`/`unlock` on exceptions causes deadlock; prefer RAII (`lock_guard`, `unique_lock`).
+- **Priority inversion.** A mutex without priority inheritance can stall a high-priority thread behind a low-priority owner.
+- **Spin vs block.** `std::mutex` blocks the thread; busy-wait belongs in special primitives (`atomic` + pause).
+- **Binary semaphore ≠ mutex.** Extra `release` without `acquire` inflates the count and breaks invariants.
+- **Missing before C++17.** Pre-C++20 semaphores meant POSIX/WinAPI or condition_variable plus a counter.

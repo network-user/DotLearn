@@ -1,0 +1,73 @@
+---
+id: 2968
+title: "VPN and Proxy: what does QA verify in network scenarios?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# VPN and Proxy: what does QA verify in network scenarios?
+
+## In short
+
+A VPN builds an encrypted tunnel at the OS level and carries all traffic (or a split-tunnel subset). An HTTP proxy redirects individual app requests, usually without encrypting HTTP itself before TLS. For geo, corporate access, and MITM tests QA picks the right tool: VPN to "be on another network", proxy to intercept requests.
+
+## How to answer in an interview
+
+- VPN changes routing and visible egress IP for all sockets; I check geo content and IP whitelist after connect.
+- Forward proxy (Charles) sees HTTP(S) with decryption on a trusted CA; VPN does not unless a separate proxy is used.
+- Split-tunnel VPN: only corp CIDR through the tunnel, rest direct; "API only on VPN" bugs.
+- Honestly: consumer VPN on a test machine masks the real region; I record egress IP in the report.
+
+## How it works
+
+Two paths for one GET:
+
+```
+[VPN path]
+App → encrypted tunnel → VPN server → Internet → origin
+
+[Proxy path]
+App → HTTP CONNECT proxy → TLS → origin
+         ↑ Charles sees plaintext inside TLS with MITM
+```
+
+Gherkin geo and access:
+
+```gherkin
+Feature: Access to regional content
+
+  Scenario: Content available only from EU VPN
+    Given user without VPN in US
+    When GET /stream/eu-live
+    Then status is 403 with code GEO_BLOCKED
+    When VPN egress in Frankfurt
+    And repeat GET /stream/eu-live
+    Then status is 200
+
+  Scenario: Corporate API only through VPN
+    Given api.corp.internal resolves to 10.50.0.0/16
+    And split-tunnel includes 10.50.0.0/16
+    When VPN disconnected
+    Then GET https://api.corp.internal/health fails
+    When VPN connected
+    Then status is 200
+
+  Scenario: Proxy does not encrypt body without TLS
+    Given plain HTTP through proxy
+    When QA inspects capture
+    Then password in body is visible
+    And a critical bug is filed on the legacy endpoint
+```
+
+I check `whatismyip` before/after VPN; in Charles I enable SSL proxying only for needed hosts.
+
+## Pitfalls
+
+- **VPN connected, DNS leak.** Geo by DNS differs from geo by IP.
+- **System proxy ignored by native app.** Only VPN helps.
+- **MTU in VPN tunnel.** Large uploads drop, small ones OK.
+- **Corporate SSL inspection + pinning.** Mobile client won't start.
+- **Confusing CDN reverse proxy and forward proxy.** Different headers and TLS termination.

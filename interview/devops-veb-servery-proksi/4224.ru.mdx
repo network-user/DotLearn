@@ -1,0 +1,62 @@
+---
+id: 4224
+title: "Что такое default_server в Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое default_server в Nginx?
+
+## Суть
+
+`default_server` это server block, который принимает запросы на данный `listen` socket, если Host/SNI не совпал ни с одним `server_name`. Нужен как catch-all: 444/404, редирект, заглушка для сканеров. На одном IP:port может быть только один default на listen directive.
+
+## Что ответить на собесе
+
+- Помечаю `listen 80 default_server;` на блоке с `server_name _;` или пустым именем.
+- Для HTTPS default важен при неизвестном SNI; иначе клиент попадёт на первый ssl server block.
+- На default отдаю 444 (закрыть) или статичную 404, не проксирую в прод-приложение.
+- Проверяю `nginx -T | grep default_server`, что default один на порт.
+- Честно: без default Nginx берёт первый server block в конфиге, это неявно и опасно при рефакторинге.
+
+## Как это работает
+
+При выборе server name Nginx сравнивает Host header (HTTP) или SNI (TLS). Без match срабатывает блок с флагом `default_server` на совпадающем listen.
+
+```nginx
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    return 444;
+}
+
+server {
+    listen 80;
+    server_name app.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+Проверка после reload:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+curl -sI -H 'Host: unknown.scanner' http://127.0.0.1/ | head -1
+```
+
+## Подводные камни
+
+- **Два default на порту.** `nginx -t` может не поймать; побеждает последний загруженный, поведение плавает.
+- **Первый блок как implicit default.** Добавление нового server сверху меняет catch-all без явного флага.
+- **TLS wildcard confusion.** Default ssl block отдаёт неверный сертификат при wrong SNI; мониторю handshake errors.
+- **Прокси на default.** Случайный Host уходит в backend; риск host header attacks.
+- **IPv4/IPv6 рассинхрон.** Нужен default_server на обоих `listen` если dual-stack.

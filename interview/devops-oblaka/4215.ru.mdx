@@ -1,0 +1,66 @@
+---
+id: 4215
+title: "Какие средства кэширования доступны в AWS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие средства кэширования доступны в AWS?
+
+## Суть
+
+AWS закрывает кэш на трёх уровнях: ElastiCache (Redis/Memcached в памяти рядом с приложением), CloudFront (CDN на edge для статики и API), DAX (ускорение DynamoDB). Плюс встроенные механизмы: API Gateway caching, S3 transfer acceleration. Слой выбираю по типу данных и допустимой устаревшости.
+
+## Что ответить на собесе
+
+- ElastiCache Redis для сессий, rate limits, pub/sub; Memcached для простого key-value без персистентности.
+- CloudFront перед S3/ALB/API Gateway снижает latency и разгружает origin.
+- DAX ставлю только при read-heavy DynamoDB с терпимой eventual consistency на кэше.
+- TTL и cache invalidation проектирую заранее; иначе пользователи видят старые данные.
+- Честно: CDN не кэширует персонализированный контент без продуманных cache keys и vary headers.
+
+## Как это работает
+
+ElastiCache разворачивается в subnet group внутри VPC; приложение ходит по endpoint кластера. Redis поддерживает replication group, snapshots, cluster mode; Memcached шардится горизонтально без сложных структур.
+
+Проверка записи в Redis через CLI с bastion:
+
+```bash
+redis-cli -h prod-cache.abc123.ng.0001.euc1.cache.amazonaws.com -p 6379 \
+  SET session:u42 "$(date -Iseconds)" EX 3600
+
+redis-cli -h prod-cache.abc123.ng.0001.euc1.cache.amazonaws.com GET session:u42
+```
+
+CloudFront тянет объект с origin при cache miss, кладёт на PoP, отдаёт по TTL. Invalidation или versioned object keys сбрасывают устаревшее.
+
+Фрагмент CloudFormation для distribution:
+
+```yaml
+Resources:
+  StaticCdn:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - Id: S3Origin
+            DomainName: assets-prod.s3.eu-central-1.amazonaws.com
+            S3OriginConfig:
+              OriginAccessIdentity: origin-access-identity/cloudfront/E1234
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        Enabled: true
+```
+
+## Подводные камни
+
+- **Cache stampede.** Массовый miss бьёт в БД; использую probabilistic early expiration или request coalescing.
+- **Redis memory pressure.** Без maxmemory-policy ключи вытесняются непредсказуемо; мониторю evictions и hit ratio.
+- **CloudFront auth.** Приватный S3 требует OAC/OAI; иначе origin отдаёт 403 или утекает.
+- **DAX consistency.** Запись в DynamoDB не сразу видна через DAX; критичные read-after-write обхожу мимо DAX.
+- **TTL слишком длинный.** Долгий TTL на API ломает rollout; комбинирую короткий default TTL с selective invalidation.

@@ -1,0 +1,73 @@
+---
+id: 4660
+title: "Can you deadlock on a single mutex?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can you deadlock on a single mutex?
+
+## In short
+
+Classic deadlock between threads on one `std::mutex` is impossible: you need a wait cycle over at least two resources. One mutex only causes blocking or livelock/starvation, not mutual hold of two locks.
+
+## How to answer in an interview
+
+- Coffman conditions for deadlock require circular waiting on multiple resources.
+- With one mutex the second thread simply waits for release; there is no closed ring.
+- Exception: `std::recursive_mutex` or self-deadlock from calling `lock()` twice on a plain mutex in the same thread.
+- Two threads on one mutex may starve, but that is not classic deadlock.
+- Honestly: hanging on one mutex is contention, not deadlock; keep the terms separate in an interview.
+
+## How it works
+
+Deadlock needs mutual exclusion, hold-and-wait, no preemption, and circular wait. With one mutex the wait-for graph cannot close: thread A holds the mutex, thread B waits on A, but B holds nothing A waits for.
+
+```cpp
+#include <chrono>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate;
+
+void contender() {
+    gate.lock();
+    std::cout << "tid " << std::this_thread::get_id() << " entered\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    gate.unlock();
+    std::cout << "tid " << std::this_thread::get_id() << " left\n";
+}
+
+int main() {
+    std::thread first(contender);
+    std::thread second(contender);
+    first.join();
+    second.join();
+}
+```
+
+One thread acquires `gate` first; the other blocks on `lock()` and proceeds after `unlock()`. The program finishes.
+
+Self-deadlock on a plain mutex:
+
+```cpp
+void trap() {
+    std::mutex solo;
+    solo.lock();
+    solo.lock(); // UB: thread waits on itself
+}
+```
+
+That is not inter-thread deadlock but double locking.
+
+## Pitfalls
+
+- **Deadlock vs hang.** Long waits on one mutex are often mislabeled deadlock.
+- **Recursive mutex.** Avoids self-deadlock but hides reentrant critical-section design smells.
+- **try_lock spin.** Infinite spinning without progress is closer to livelock.
+- **Priority inversion.** One mutex can interact with semaphores/condvars, but not circular wait across two mutexes.
+- **Second mutex.** Different lock order on two resources brings deadlock back immediately.

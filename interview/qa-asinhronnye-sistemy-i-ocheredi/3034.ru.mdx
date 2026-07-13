@@ -1,0 +1,61 @@
+---
+id: 3034
+title: "Что такое Kafka consumer и как QA проверяет чтение событий?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое Kafka consumer и как QA проверяет чтение событий?
+
+## Суть
+
+Consumer подписывается на topic, poll-ит batch записей, обрабатывает и commit-ит offset в group coordinator. Consumer group делит partition между инстансами: каждая partition назначена одному member. QA проверяет lag, порядок в partition, поведение при rebalance и идемпотентность handler при повторном чтении.
+
+## Что ответить на собесе
+
+- `group_id` определяет совместное потребление; без него каждый reader независим.
+- `auto_offset_reset=earliest` для нового group читает историю retention.
+- Commit после успешной бизнес-операции, не до неё.
+- При добавлении consumer rebalance перераспределяет partition.
+- Честно: слишком долгий poll без heartbeat выкидывает consumer из group.
+
+## Как это работает
+
+```gherkin
+Feature: Kafka consumer QA
+
+  Scenario: New group reads from earliest
+    Given topic audit.events retention 3 days
+    When consumer group qa-audit-new starts auto_offset_reset earliest
+    Then all retained messages processed once per group
+
+  Scenario: Lag under load
+    Given publish rate 500 per sec
+    When consumer processes 300 per sec
+    Then lag metric grows QA files capacity ticket
+
+  Scenario: Rebalance idempotency
+    Given handler uses idempotency key evt-id
+    When partition reassigned mid-batch
+    Then duplicate evt-id skipped second time
+```
+
+```gherkin
+Feature: Consumer poll loop
+
+  Scenario: Process billing topic
+    Given KafkaConsumer subscribes billing-events group invoice-workers
+    When poll returns record value invoice paid
+    Then downstream DB status PAID and offset committed
+```
+
+## Подводные камни
+
+- **enable.auto.commit=true по умолчанию.** Потеря при crash после poll.
+- **Один consumer в тесте, десять в prod.** Другое распределение partition.
+- **Чтение без проверки side effect.** Offset двигается, данных нет.
+- **Игнор max.poll.records.** OOM на жирном payload.
+- **Разные group_id staging/prod.** Сравниваю несопоставимые lag.

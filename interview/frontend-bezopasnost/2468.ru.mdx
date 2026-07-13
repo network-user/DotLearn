@@ -1,0 +1,55 @@
+---
+id: 2468
+title: "Почему секреты нельзя передавать через GET"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему секреты нельзя передавать через GET
+
+## Суть
+
+GET кладёт параметры в URL, который попадает в history, server access logs, Referer при переходе на third-party, analytics и прокси. Пароли, tokens и PII должны идти в теле POST/PUT через HTTPS, а чувствительные операции не должны быть idempotent GET.
+
+## Что ответить на собесе
+
+- Credentials только POST + TLS; query string логируется по умолчанию.
+- Не кладу tokens в shareable links (`?token=` anti-pattern).
+- Для download иногда GET неизбежен, но одноразовый signed URL с коротким TTL.
+- Честно: POST body тоже логируют некоторые WAF если misconfigured; но риск ниже чем URL.
+- Prefetch/prerender CDN может случайно дернуть GET с secrets из href.
+
+## Как это работает
+
+Плохо:
+
+```ts
+await fetch(`https://api.example/login?user=${user}&pass=${pass}`);
+```
+
+URL окажется в DevTools history, nginx log, browser sync.
+
+Хорошо:
+
+```ts
+await fetch('https://api.example/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ user, pass }),
+});
+```
+
+Referer leak: если после login пользователь кликнет external `<img src="http://evil...">`, старые GET URLs с query могли бы утечь через Referer header (mitigation: Referrer-Policy: no-referrer).
+
+GET также кэшируется (browser/CDN) и попадает в bookmark/share. RFC семантика: GET safe и idempotent, поэтому crawlers и prefetchers могут повторить запрос без спроса.
+
+## Подводные камни
+
+- **OAuth implicit flow legacy.** Access token в fragment/query исторически; prefer PKCE authorization code.
+- **Email magic links.** Token в URL неизбежен; делаю one-time + short TTL + POST confirm.
+- **Server-side rendering logs.** SSR frameworks логируют request URL с query.
+- **Browser extensions.** Читают address bar и history.
+- **Length limits.** Длинный secret в query обрежется (<2k) и сломает auth молча.

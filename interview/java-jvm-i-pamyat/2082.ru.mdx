@@ -1,0 +1,55 @@
+---
+id: 2082
+title: "Альтернативы G1 для Java-сервисов"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Альтернативы G1 для Java-сервисов
+
+## Суть
+
+G1 (default с Java 9+) балансирует throughput и controllable pauses через region-based mixed GC. Альтернативы: Serial/Parallel (throughput, long STW), CMS (deprecated, concurrent old), ZGC и Shenandoah (sub-ms pauses, large heaps), Epsilon (no-op для benchmarks). Выбор зависит от SLA latency, heap size и CPU budget.
+
+## Что ответить на собесе
+
+- Parallel GC: batch jobs, `-XX:+UseParallelGC`, max throughput.
+- ZGC: `-XX:+UseZGC`, low latency heaps до TB scale (Java 15+ prod ready).
+- Shenandoah: Red Hat low-pause, concurrent compaction, similar niche.
+- Serial: single core embedded, `-XX:+UseSerialGC`.
+- Честно: CMS removed Java 14; миграция на G1/ZGC, не новый CMS deploy.
+
+## Как это работает
+
+Selection matrix:
+
+| Collector | Flag | Pause profile | Typical use |
+|-----------|------|---------------|-------------|
+| G1 | `-XX:+UseG1GC` | tens ms target | general Spring services |
+| Parallel | `-XX:+UseParallelGC` | longer STW | offline ETL |
+| ZGC | `-XX:+UseZGC` | <1ms goal | trading, gaming backend |
+| Shenandoah | `-XX:+UseShenandoahGC` | low ms | latency sensitive |
+| Serial | `-XX:+UseSerialGC` | STW single thread | tiny footprint |
+
+Example low-latency launch:
+
+```bash
+java -XX:+UseZGC -Xms4g -Xmx4g \
+  -XX:+AlwaysPreTouch \
+  -jar order-router.jar
+```
+
+G1 tuning knobs: `-XX:MaxGCPauseMillis=200`, `-XX:InitiatingHeapOccupancyPercent=45`.
+
+ZGC uses colored pointers + load barriers; most work concurrent with mutator. Trade-off: extra CPU for barrier checks vs Parallel's stop-the-world simplicity.
+
+## Подводные камни
+
+- **ZGC on small heap.** Overhead may exceed benefit under 4GB.
+- **Parallel on interactive API.** P99 spikes during Full GC unacceptable.
+- **Copy-paste flags.** `-XX:+UseConcMarkSweepGC` fails on modern JDK.
+- **Ignoring container limits.** GC choice irrelevant if `-Xmx` > cgroup memory.
+- **Benchmark without load.** Epsilon looks fast until OOM kills process.

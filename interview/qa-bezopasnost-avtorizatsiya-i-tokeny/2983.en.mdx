@@ -1,0 +1,68 @@
+---
+id: 2983
+title: "Refresh token in JWT: what does QA verify during rotation?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Refresh token in JWT: what does QA verify during rotation?
+
+## In short
+
+The access token lives minutes and carries API claims; the refresh token lives longer and only fetches a new pair without re-login. QA checks lifetimes, refresh storage (HttpOnly cookie vs body), rotation, revoke, and reuse-attack behavior.
+
+## How to answer in an interview
+
+- After login the client gets a short access and long refresh; the API accepts only access.
+- On 401 expiry the client POSTs /token/refresh; the server issues a new pair.
+- I store refresh in HttpOnly cookie, access in memory; localStorage for refresh is unacceptable.
+- Honestly: without a server-side denylist refresh lives until exp even after logout unless revoked.
+
+## How it works
+
+Typical flow:
+
+1. `POST /auth/login` → `{ access_token, refresh_token, expires_in }`
+2. `GET /api/profile` with `Authorization: Bearer <access>`
+3. Access expired → `POST /auth/refresh` with refresh
+4. Server validates refresh (signature, exp, not revoked), returns new tokens
+
+Gherkin:
+
+```gherkin
+Feature: Refresh token rotation
+
+  Scenario: Successful access refresh
+    Given user with valid refresh_token in HttpOnly cookie
+    When POST /auth/refresh
+    Then status is 200
+    And body contains new access_token
+    And Set-Cookie updates refresh_token
+
+  Scenario: Expired access is rejected
+    When GET /api/orders with access exp in the past
+    Then status is 401
+
+  Scenario: Reuse old refresh after rotation
+    Given refresh_token R1 already used and R2 issued
+    When POST /auth/refresh with R1 again
+    Then status is 401
+    And all user refresh sessions are revoked
+
+  Scenario: Logout invalidates refresh
+    When POST /auth/logout
+    Then subsequent POST /auth/refresh returns 401
+```
+
+Rotation: each refresh is single-use; resending the old token triggers fraud detection and revokes the token family.
+
+## Pitfalls
+
+- **Refresh in SPA localStorage.** XSS steals the long-lived secret.
+- **No rotation.** Stolen refresh works for months.
+- **Same refresh for all devices.** Revoking one does not cut the rest.
+- **Clock skew.** exp checked without leeway, flaky 401 at boundary.
+- **Refresh in URL query.** Lands in access logs and Referer.

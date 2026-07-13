@@ -1,0 +1,79 @@
+---
+id: 3043
+title: "OpenAPI и Swagger UI в работе AQA"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# OpenAPI и Swagger UI в работе AQA
+
+## Суть
+
+OpenAPI (ранее Swagger Specification) описывает REST API машиночитаемо: paths, схемы, коды ответов. Swagger UI визуализирует spec и даёт «try it out», а codegen генерирует клиенты. Для автотестов spec становится контрактом для генерации данных, негативов и contract tests.
+
+## Что ответить на собесе
+
+- Разделяю термины: OpenAPI spec как формат, Swagger как экосистема инструментов (Editor, UI, Codegen).
+- Объясняю, что храню spec в git и сравниваю версии в PR: breaking change в schema ловится до деплоя.
+- Рассказываю про schemathesis/Dredd/prance: прогон pytest против live API по openapi.yaml.
+- Упоминаю ручную проверку через Swagger UI на staging для exploratory перед автоматизацией.
+- Честно добавляю: UI не заменяет CI; spec может расходиться с реальностью, если не генерируется из кода.
+
+## Как это работает
+
+Файл `openapi.yaml` описывает `/users` GET/POST, components/schemas, securitySchemes. Swagger UI поднимается рядом с сервисом и читает тот же файл. В pytest загружаю spec через openapi-spec-validator и parametrizую тест по каждому path+method.
+
+```python
+import yaml
+import httpx
+import pytest
+
+SPEC_PATH = "openapi/v1.yaml"
+
+
+@pytest.fixture(scope="module")
+def openapi_doc():
+    with open(SPEC_PATH, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def iter_operations(doc):
+    for path, methods in doc.get("paths", {}).items():
+        for method, operation in methods.items():
+            if method.startswith("x-"):
+                continue
+            yield path, method.upper(), operation
+
+
+def test_spec_lists_healthcheck(openapi_doc):
+    assert "/health" in openapi_doc["paths"]
+    get_op = openapi_doc["paths"]["/health"]["get"]
+    assert "200" in get_op["responses"]
+
+
+@pytest.mark.parametrize("path, method, operation", [])
+def test_live_responses_match_spec(openapi_doc, path, method, operation):
+    pytest.skip("wire base_url and parametrization from iter_operations")
+    base = "https://staging.example.com"
+    with httpx.Client(base_url=base, timeout=5.0) as client:
+        response = client.request(method, path)
+    allowed = {int(code) for code in operation["responses"]}
+    assert response.status_code in allowed
+```
+
+При изменении required field в schema обновляю factory/fixture и snapshot тесты.
+
+## Подводные камни
+
+**Spec вручную и код расходятся.** Тесты green, prod клиенты ломаются; нужен генератор из аннотаций или contract test в CI.
+
+**Примеры в UI без assert.** Клик «Execute» не сохраняется в регрессию.
+
+**Скрытые headers (trace, auth).** Spec не документирует обязательный header, автотест получает 401.
+
+**oneOf/anyOf сложные.** Генератор данных даёт невалидные комбинации.
+
+**Версия openapi 2 vs 3.** Инструменты и поля security отличаются, смешение ломает pipeline.

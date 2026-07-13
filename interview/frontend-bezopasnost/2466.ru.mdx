@@ -1,0 +1,72 @@
+---
+id: 2466
+title: "Нужно ли слать refresh token с каждым запросом"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Нужно ли слать refresh token с каждым запросом
+
+## Суть
+
+Refresh token используют только на dedicated endpoint для получения нового access token. На обычные API-запросы клиент прикрепляет короткоживущий access token (Bearer). Так снижается exposure refresh при перехвате логов и XSS.
+
+## Что ответить на собесе
+
+- Access token в Authorization header на каждый protected request.
+- Refresh отправляю POST на `/auth/refresh` только при 401 или проактивно до exp access.
+- Refresh храню httpOnly Secure SameSite cookie, не в JS-доступном storage.
+- Честно: silent refresh в фоне нужен mutex, иначе race из нескольких вкладок.
+- При компрометации refresh делаю rotation + reuse detection на сервере.
+
+## Как это работает
+
+```ts
+let accessToken: string | null = null;
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = fetch('/auth/refresh', {
+    method: 'POST',
+    credentials: 'include',
+  })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('refresh failed');
+      const body = (await res.json()) as { accessToken: string };
+      accessToken = body.accessToken;
+      return body.accessToken;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
+async function authorizedFetch(input: RequestInfo, init: RequestInit = {}) {
+  const token = accessToken ?? (await refreshAccessToken());
+  const res = await fetch(input, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${token}` },
+  });
+  if (res.status !== 401) return res;
+  const next = await refreshAccessToken();
+  return fetch(input, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${next}` },
+  });
+}
+```
+
+Access живёт 5–15 минут, refresh дни/недели. Каждый лишний транспорт refresh увеличивает шанс утечки через proxy logs или browser extensions.
+
+## Подводные камни
+
+- **Refresh in body every call.** Mobile SDKs иногда так делают; на web это anti-pattern.
+- **Parallel 401 storm.** Ten requests → ten refresh; dedupe через shared promise обязателен.
+- **Logout.** Нужно чистить in-memory access и revoke refresh server-side.
+- **SSR.** Cookie refresh не доступен Node SSR fetch без forwarding cookie header.
+- **Long-lived SPA tabs.** Proactive refresh за минуту до exp лучше UX чем fail mid-action.

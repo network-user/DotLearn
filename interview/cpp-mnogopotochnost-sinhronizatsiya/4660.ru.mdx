@@ -1,0 +1,73 @@
+---
+id: 4660
+title: "Возможен ли deadlock на одном mutex?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Возможен ли deadlock на одном mutex?
+
+## Суть
+
+Классический deadlock между потоками на одном `std::mutex` невозможен: нужен цикл ожидания минимум из двух ресурсов. Один mutex даёт лишь блокировку или livelock/starvation, но не взаимное удержание двух блокировок.
+
+## Что ответить на собесе
+
+- Deadlock по Коффману требует циклического ожидания нескольких ресурсов.
+- С одним mutex второй поток просто ждёт освобождения, без замкнутого кольца.
+- Исключение: рекурсивный `std::recursive_mutex` или self-deadlock при повторном `lock()` в том же потоке на обычном mutex.
+- Два потока на одном mutex могут starvation, но не deadlock в классическом смысле.
+- Честно: зависание на одном mutex это contention, а не deadlock; термины на собесе лучше не смешивать.
+
+## Как это работает
+
+Условия deadlock: mutual exclusion, hold-and-wait, no preemption, circular wait. При одном mutex цикл wait-for graph не замыкается: поток A держит mutex, поток B ждёт A, но B ничего не держит, что ждал бы A.
+
+```cpp
+#include <chrono>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate;
+
+void contender() {
+    gate.lock();
+    std::cout << "tid " << std::this_thread::get_id() << " entered\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    gate.unlock();
+    std::cout << "tid " << std::this_thread::get_id() << " left\n";
+}
+
+int main() {
+    std::thread first(contender);
+    std::thread second(contender);
+    first.join();
+    second.join();
+}
+```
+
+Один из потоков захватит `gate` первым, второй заблокируется на `lock()` и продолжит после `unlock()`. Программа завершится.
+
+Self-deadlock на обычном mutex:
+
+```cpp
+void trap() {
+    std::mutex solo;
+    solo.lock();
+    solo.lock(); // UB: поток ждёт сам себя
+}
+```
+
+Здесь проблема не межпоточная, а ошибка повторного захвата.
+
+## Подводные камни
+
+- **Путаница deadlock vs hang.** Долгое ожидание одного mutex часто называют deadlock ошибочно.
+- **Recursive mutex.** Снимает self-deadlock, но маскирует дизайн с reentrant critical sections.
+- **try_lock spin.** Бесконечный spin без прогресса ближе к livelock, чем к deadlock.
+- **Priority inversion.** Один mutex может вызвать inversion с семафорами/condvar, но не circular wait между двумя mutex.
+- **Два mutex.** Как только появляется второй ресурс и разный порядок захвата, deadlock снова реален.

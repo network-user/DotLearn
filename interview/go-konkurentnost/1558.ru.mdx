@@ -1,0 +1,58 @@
+---
+id: 1558
+title: "Что происходит с OS thread при block goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что происходит с OS thread при block goroutine?
+
+## Суть
+
+Когда G блокируется на chan/mutex/sleep, M может продолжить выполнять другую runnable G на том же P. При blocking syscall M часто отсоединяется от P; P ищет idle M или создаёт новый thread, чтобы не терять параллелизм.
+
+## Что ответить на собесе
+
+- Block G ≠ block thread обязательно; M:N ключевая идея.
+- Netpoller: G waiting, M свободен без роста threads.
+- Syscall block: handoff P to another M типичен.
+- Честно: «поток» в вопросе = M; goroutine не equals thread.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	ch := make(chan int)
+	go func() {
+		fmt.Println("waiting")
+		fmt.Println("got", <-ch)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	ch <- 10
+	time.Sleep(50 * time.Millisecond)
+}
+```
+
+Reader G блокируется на recv; M выполняет main G. После send обе G runnable; scheduler чередует их на доступных M.
+
+## Подводные камни
+
+**Думать thread stuck forever.** M moves on unless cgo/syscall holds it.
+
+**Thread count explosion.** Много blocking syscalls без netpoller растит threads.
+
+**GOMAXPROCS и idle M.** Extra M могут sleep в thread pool runtime.
+
+**LockOSThread block.** G pinned, M tied; другие G не reuse этот M casually.
+
+**Profile «thread blocked».** pprof goroutine vs OS thread view различаются.

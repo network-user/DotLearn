@@ -1,0 +1,59 @@
+---
+id: 1970
+title: "Чем Object.notify() отличается от notifyAll()?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чем Object.notify() отличается от notifyAll()?
+
+## Суть
+
+`notify()` будит **один** произвольный поток, ожидающий на мониторе этого объекта. `notifyAll()` будит всех waiters, но только один захватит монитор, когда текущий holder выйдет из synchronized. Оба вызова требуют, чтобы вызывающий поток уже держал монитор объекта.
+
+## Что ответить на собесе
+
+- Объясняю связку wait/notify как condition variable на intrinsic lock.
+- Уточняю: пробуждённый поток не бежит сразу, он конкурирует за монитор.
+- Рекомендую `notifyAll` по умолчанию, `notify` только при доказуемо одном waiter и одном condition.
+- Связываю с fairness: `notify` может годами не будить нужный поток при ошибочном выборе.
+- Честно добавляю: в production предпочитаю `ReentrantLock` + `Condition` для явных очередей ожидания.
+
+## Как это работает
+
+```java
+final class TicketWindow {
+    private int ticketsLeft;
+
+    synchronized boolean tryBuy() {
+        while (ticketsLeft == 0) {
+            try {
+                wait();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        ticketsLeft--;
+        return true;
+    }
+
+    synchronized void restock(int amount) {
+        ticketsLeft += amount;
+        notifyAll();
+    }
+}
+```
+
+После `restock` все ожидающие покупатели просыпаются, перепроверяют `while (ticketsLeft == 0)` и один за другим забирают билеты. Если бы restock вызывал только `notify`, часть потоков могла бы остаться спать, хотя билеты уже есть.
+
+## Подводные камни
+
+- **notify без изменения condition.** Waiters проснутся, снова уйдут в wait, возможен live lock.
+- **notifyAll thundering herd.** Много потоков просыпаются и снова засыпают; на высокой нагрузке лучше `Condition` или `Semaphore`.
+- **Вызов вне synchronized.** `IllegalMonitorStateException`.
+- **Забытый while у waiter.** После notify состояние может быть ещё не подходящим.
+- **Смешение нескольких condition на одном lock.** `notify` будит не тот waiter; нужны отдельные locks или `Condition`.

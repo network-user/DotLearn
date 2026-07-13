@@ -1,0 +1,76 @@
+---
+id: 2044
+title: "Как указать этап сборки для библиотеки в Maven"
+category: java-sborka-i-ci-cd
+categoryLabel: "Сборка и CI/CD"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как указать этап сборки для библиотеки в Maven
+
+## Суть
+
+Этап использования библиотеки задаётся атрибутом `<scope>` внутри `<dependency>` в `pom.xml`. Scope определяет, попадёт ли jar на compile classpath, test classpath, runtime и в production артефакт. Без scope Maven считает зависимость `compile` и упаковывает её.
+
+## Что ответить на собесе
+
+- `<scope>test</scope>` для JUnit/Mockito: видны только при `mvn test`.
+- `<scope>provided</scope>` для servlet API: compile есть, в WAR не кладём.
+- `<scope>runtime</scope>` для JDBC driver: main код компилируется без драйвера, на prod он нужен.
+- Проверяю факт через `mvn dependency:tree` и `dependency:analyze`.
+- Честно: неправильный scope часто виден только после deploy, не на `mvn compile`.
+
+## Как это работает
+
+Тестовая зависимость:
+
+```xml
+<dependency>
+  <groupId>org.mockito</groupId>
+  <artifactId>mockito-core</artifactId>
+  <version>5.12.0</version>
+  <scope>test</scope>
+</dependency>
+```
+
+При `mvn package` mockito не попадёт в `target/myapp.jar`, но Surefire увидит его на test classpath.
+
+Production + runtime driver:
+
+```xml
+<dependency>
+  <groupId>com.zaxxer</groupId>
+  <artifactId>HikariCP</artifactId>
+  <version>5.1.0</version>
+</dependency>
+<dependency>
+  <groupId>org.postgresql</groupId>
+  <artifactId>postgresql</artifactId>
+  <version>42.7.3</version>
+  <scope>runtime</scope>
+</dependency>
+```
+
+`HikariCP` (compile) попадёт в fat jar; `postgresql` тоже, потому что runtime scope упаковывается.
+
+Для WAR на внешний Tomcat:
+
+```xml
+<dependency>
+  <groupId>jakarta.servlet</groupId>
+  <artifactId>jakarta.servlet-api</artifactId>
+  <scope>provided</scope>
+</dependency>
+```
+
+Maven compiler видит API при сборке, Tomcat поставит реализацию в runtime.
+
+## Подводные камни
+
+- **Scope не наследуется из BOM автоматически.** В child POM нужно явно указать test/provided.
+- **Fat jar plugin.** `maven-shade-plugin` может затянуть test scope при неверной конфигурации.
+- **Optional vs scope.** `optional=true` режет transitive, scope режет classpath stages.
+- **systemPath.** Обходит репозиторий, CI без локального jar падает.
+- **import scope в dependencies.** Только в `dependencyManagement`, иначе invalid POM.

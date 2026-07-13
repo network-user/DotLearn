@@ -1,0 +1,63 @@
+---
+id: 2066
+title: "Анатомия Docker-образа: слои и кэш"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Анатомия Docker-образа: слои и кэш
+
+## Суть
+
+Docker image это read-only stack слоёв Union FS: каждый RUN, COPY, ADD добавляет diff поверх предыдущего. Image ID и tag указывают на manifest; при `docker run` поверх накладывается writable container layer. Общие базовые слои (temurin JRE) переиспользуются между образами и экономят disk и pull time.
+
+## Что ответить на собесе
+
+- Слой = immutable filesystem diff + metadata (parent pointer).
+- Инструкции без FS change (WORKDIR, EXPOSE, CMD) не создают слой (кроме legacy).
+- Build cache invalidates от изменённой строки Dockerfile вниз.
+- `docker history` показывает размер каждого слоя.
+- Честно: слишком много мелких RUN увеличивает metadata overhead; лучше объединять apt шаги.
+
+## Как это работает
+
+```dockerfile
+FROM eclipse-temurin:21-jre-alpine
+RUN addgroup -S app && adduser -S app -G app
+WORKDIR /opt/reporting
+COPY build/reporting.jar app.jar
+USER app
+CMD ["java", "-jar", "app.jar"]
+```
+
+Структура после build:
+
+```
+Layer 4: CMD + USER metadata
+Layer 3: reporting.jar bytes
+Layer 2: /opt/reporting dir + user/group
+Layer 1: temurin 21 JRE alpine (shared)
+Layer 0: alpine base (shared)
+```
+
+При изменении только JAR пересобираются слои 3-4; слои 0-2 берутся из cache.
+
+Inspect:
+
+```bash
+docker image inspect reporting:1.0 --format '{{.RootFS.Layers}}'
+docker history reporting:1.0
+```
+
+Container runtime монтирует все слои read-only и добавляет thin R/W layer для `/tmp`, logs, heap dumps. Удаление container удаляет R/W layer; image layers остаются до `docker rmi`.
+
+## Подводные камни
+
+- **Secrets в слое.** COPY .env попадает в history навсегда, даже если файл потом удалён RUN.
+- **Dangling layers.** Частые rebuild без prune забивают disk на CI runner.
+- **Cache miss от timestamp.** COPY всего repo invalidates при любом git commit.
+- **Whiteout files.** Удаление файла в верхнем слое не уменьшает суммарный pull size базы.
+- **Platform mismatch.** arm64 layer на amd64 node = ImagePullBackOff без manifest list.

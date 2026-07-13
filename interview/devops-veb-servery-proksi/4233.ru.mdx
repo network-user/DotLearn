@@ -1,0 +1,52 @@
+---
+id: 4233
+title: "Как tail помогает при диагностике Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как tail помогает при диагностике Nginx?
+
+## Суть
+
+`tail` показывает хвост лог-файла; с `-f` следит за новыми строками в реальном времени. Для nginx смотрю `/var/log/nginx/access.log` (запросы, коды, upstream timing) и `error.log` (bind failures, upstream connect, rewrite loops). Это первый инструмент при деплое, 502 spike или подозрении на сканирование.
+
+## Что ответить на собесе
+
+- `tail -f access.log error.log` через `tail -F` если logrotate переименовывает файл.
+- Фильтрую on the fly: `tail -f access.log | grep ' 502 '`.
+- Коррелирую timestamp деплоя с всплеском 4xx/5xx в access и `upstream timed out` в error.
+- Для JSON access log парсю `jq` в pipe вместо grep по сырому тексту.
+- Честно: tail на проде только с RBAC и без PII в терминал; для объёма ухожу в Loki/ELK.
+
+## Как это работает
+
+Live follow обоих логов:
+
+```bash
+sudo tail -F /var/log/nginx/access.log /var/log/nginx/error.log
+```
+
+502 только за последнюю минуту (если log включает time):
+
+```bash
+sudo grep ' 502 ' /var/log/nginx/access.log | tail -20
+```
+
+Во время инцидента параллельно проверяю конфиг:
+
+```bash
+sudo nginx -t
+curl -sI -H 'Host: app.example.com' http://127.0.0.1/healthz
+```
+
+## Подводные камни
+
+- **Logrotate без -F.** Обычный `-f` молчит после rotate; `-F` переоткрывает файл.
+- **Буферизация при pipe.** `stdbuf -oL` если downstream grep задерживает вывод.
+- **PII и секреты.** access.log может содержать токены в query string; не сливаю в публичные тикеты.
+- **Часовой пояс.** `$time_local` vs UTC; сверяю с метриками Prometheus.
+- **Несколько vhost в один файл.** Без `$host` в format не понять какой server block виноват; кастомный log_format обязателен.

@@ -1,0 +1,90 @@
+---
+id: 3466
+title: "Promise.resolve/reject и throw внутри async"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Promise.resolve/reject и throw внутри async
+
+## Суть
+
+Любая `async` функция оборачивает возвращаемое значение в Promise. `return Promise.resolve(x)` и `return x` дают fulfilled с тем же значением. `return Promise.reject(err)` и `throw err` дают rejected Promise. Разница в стеке и синтаксисе: `throw` ближе к try/catch, явный `reject` удобен при пробросе готового Promise.
+
+## Что ответить на собесе
+
+- В API client wrapper ловлю HTTP 4xx через `throw new ApiError(...)`, тест ждёт rejected Promise.
+- `Promise.reject` использую, когда уже есть rejected chain и не хочу лишний try.
+- Assert в тесте: `await expect(fn()).rejects.toThrow("timeout")`.
+- Для sync throw до первого await Jest всё равно видит rejection.
+- Честно: двойной wrap `return Promise.resolve(await p)` лишний, достаточно `return p`.
+
+## Как это работает
+
+Успех:
+
+```
+async function loadConfig() {
+  return Promise.resolve({ retries: 3 });
+}
+```
+
+Явный reject:
+
+```
+async function fetchStale() {
+  return Promise.reject(new Error("cache miss"));
+}
+```
+
+Throw:
+
+```
+async function fetchStrict(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+```
+
+Модель в pytest:
+
+```python
+import pytest
+
+
+async def resolve_value() -> int:
+    return 42
+
+
+async def reject_explicit() -> int:
+    raise RuntimeError("explicit")
+
+
+async def reject_via_throw() -> int:
+    raise ValueError("thrown")
+
+
+@pytest.mark.asyncio
+async def test_async_rejection_paths():
+    assert await resolve_value() == 42
+    with pytest.raises(RuntimeError):
+        await reject_explicit()
+    with pytest.raises(ValueError):
+        await reject_via_throw()
+```
+
+## Подводные камни
+
+**return без await на reject.** `return failingPromise` и `throw` эквivalent, но забытый await в non-async тесте.
+
+**try/catch после return reject.** Unreachable code, линтер молчит.
+
+**Non-Error reject reason.** Строка в `.catch` без stack, сложно дебажить в CI.
+
+**throw в .then внутри async.** Два разных microtask queue, порядок assert flaky.
+
+**Promise.reject в sync функции.** Не async, тест должен return Promise, не await throw.

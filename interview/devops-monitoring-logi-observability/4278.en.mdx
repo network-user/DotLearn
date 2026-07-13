@@ -1,0 +1,84 @@
+---
+id: 4278
+title: "Why does a DevOps engineer need Elasticsearch?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does a DevOps engineer need Elasticsearch?
+
+## In short
+
+Elasticsearch is a distributed search and analytics engine on Lucene: it indexes JSON documents and answers full-text and aggregation queries with low latency. In DevOps it is most often the backend for centralized logs and trace-like events where you need fast search across millions of records and dashboards in Kibana.
+
+## How to answer in an interview
+
+- I store application and infrastructure logs in time-based indexes (`logs-2026.07.13`).
+- I search by fields `level`, `trace_id`, `kubernetes.pod_name` via Kibana or API.
+- I scale the cluster with sharding and more data nodes; hot/warm tiers for cost control.
+- I feed ES from Beats, Fluent Bit, Logstash; retention via ILM.
+- Honestly: ES is not a replacement metrics TSDB for long series; it shines for logs and ad-hoc search, while cardinality-heavy metrics belong on Prometheus/Mimir.
+
+## How it works
+
+Typical ingest: Logstash parses files and writes to a daily index:
+
+```bash
+cat <<'EOF' > /etc/logstash/conf.d/app-logs.conf
+input {
+  file {
+    path => "/var/log/checkout/*.log"
+    start_position => "beginning"
+    codec => json
+  }
+}
+
+filter {
+  mutate {
+    add_field => { "service" => "checkout-api" }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["https://es.internal:9200"]
+    index => "checkout-%{+YYYY.MM.dd}"
+    user => "ingest"
+    password => "${ES_INGEST_PASSWORD}"
+  }
+}
+EOF
+```
+
+Search 5xx in the last hour via API:
+
+```bash
+curl -s -u reader:$ES_READER_PASS \
+  -H 'Content-Type: application/json' \
+  -X POST 'https://es.internal:9200/checkout-*/_search' \
+  -d '{
+    "size": 50,
+    "query": {
+      "bool": {
+        "filter": [
+          { "range": { "@timestamp": { "gte": "now-1h" } } },
+          { "range": { "status": { "gte": 500 } } }
+        ]
+      }
+    },
+    "sort": [{ "@timestamp": "desc" }]
+  }' | jq '.hits.hits[]._source'
+```
+
+Cluster layout: master-eligible nodes coordinate, data nodes hold shards, ingest nodes accept bulk. Near real-time: a document is searchable after the refresh interval (often 1s).
+
+## Pitfalls
+
+- **Split brain.** An odd count of master-eligible nodes and proper `discovery.seed_hosts` are required; losing quorum breaks writes.
+- **Mapping explosion.** Dynamic mapping on high-cardinality fields bloats the index; I define mapping templates early.
+- **Hot shards.** Oversized shards (>50 GB) slow recovery; I plan rollover by size or time.
+- **Security off by default.** Older installs ship without xpack security; I enable TLS and RBAC before prod traffic.
+- **Retention cost.** Without ILM, logs grow forever; warm/delete phases save disk but need delete-lag monitoring.

@@ -1,0 +1,86 @@
+---
+id: 4620
+title: "Что такое move-семантика в C++?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое move-семантика в C++?
+
+## Суть
+
+Move-семантика передаёт владение ресурсами (heap, handle, fd) из источника в приёмник через rvalue references, move constructor и move assignment, избегая deep copy. Источник после move valid, но ресурс часто пуст.
+
+## Что ответить на собесе
+
+- Rvalue ref `T&&`, `std::move`, move ctor/assign помечаю `noexcept` где возможно.
+- Rule of five/zero: если есть custom dtor/copy, часто нужны move ops.
+- STL containers reallocate with move if `noexcept` move exists.
+- Perfect forwarding `T&&` + `std::forward` это related, но не то же самое.
+- Честно: trivial types move = copy по стоимости; выигрыш на owning типах.
+
+## Как это работает
+
+Move ctor крадёт pointer, donor обнуляет. Move assign освобождает текущий ресурс, затем переносит.
+
+```cpp
+#include <iostream>
+#include <utility>
+
+class Blob {
+    int* cells;
+    std::size_t count;
+
+public:
+    explicit Blob(std::size_t n) : cells(new int[n]{}), count(n) {
+        std::cout << "alloc\n";
+    }
+
+    ~Blob() {
+        delete[] cells;
+        std::cout << "free\n";
+    }
+
+    Blob(Blob&& donor) noexcept : cells(donor.cells), count(donor.count) {
+        donor.cells = nullptr;
+        donor.count = 0;
+        std::cout << "move ctor\n";
+    }
+
+    Blob& operator=(Blob&& donor) noexcept {
+        if (this != &donor) {
+            delete[] cells;
+            cells = donor.cells;
+            count = donor.count;
+            donor.cells = nullptr;
+            donor.count = 0;
+            std::cout << "move assign\n";
+        }
+        return *this;
+    }
+
+    Blob(const Blob&) = delete;
+    Blob& operator=(const Blob&) = delete;
+};
+
+int main() {
+    Blob a(8);
+    Blob b = std::move(a);
+    Blob c(4);
+    c = std::move(b);
+    return 0;
+}
+```
+
+Один heap блок переезжает без второго `new[]/memcpy/delete[]`.
+
+## Подводные камни
+
+- **Self move assignment.** Должен быть no-op или guarded (`this != &other`).
+- **Moved-from invariant.** Документирую, что можно делать с пустым donor.
+- ** noexcept false.** `vector` growth может copy all elements.
+- **Implicit moves.** Компилятор генерирует defaulted move; custom dtor может suppress.
+- **Use after move.** Логическая ошибка, не compile error.

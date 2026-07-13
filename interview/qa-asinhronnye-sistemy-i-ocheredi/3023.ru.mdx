@@ -1,0 +1,54 @@
+---
+id: 3023
+title: "Kafka и RabbitMQ: в чём разница для тестировщика?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Kafka и RabbitMQ: в чём разница для тестировщика?
+
+## Суть
+
+Kafka это распределённый commit log с долгим хранением и replay; сильна в stream analytics и высокой пропускной способности. RabbitMQ это классический AMQP-брокер с гибкой маршрутизацией через exchange и акцентом на task queue и подтверждение доставки. QA меняет ожидания: в Kafka сообщение может быть прочитано многими consumer group, в Rabbit после ack сообщение уходит из очереди.
+
+## Что ответить на собесе
+
+- Kafka: topic/partition, offset, consumer group, retention, ordering по ключу в partition.
+- RabbitMQ: exchange, binding, routing key, queue, manual ack, DLX.
+- Kafka для event streaming и audit trail; Rabbit для job queue и RPC-over-mq паттернов.
+- Тестирую lag и replay в Kafka; в Rabbit depth, redelivery, prefetch.
+- Честно: выбор стека не «кто лучше», а какой контракт доставки нужен продукту.
+
+## Как это работает
+
+```gherkin
+Feature: Broker comparison for QA
+
+  Scenario: Kafka multiple consumers same event
+    Given topic user-clicks retention 7 days
+    When AnalyticsGroup and FraudGroup both consume
+    Then each group receives full stream independently
+
+  Scenario: Rabbit work queue one consumer
+    Given queue render-jobs single active consumer
+    When job acked after processing
+    Then message removed from queue not visible to others
+
+  Scenario: Routing complexity
+    Given Rabbit topic exchange orders.region.*
+    When message key orders.region.eu
+    Then only eu-fulfillment queue receives
+```
+
+При миграции между брокерами QA переписывает чеклисты: offset commit vs manual ack, идемпотентность при replay.
+
+## Подводные камни
+
+- **Одинаковые тест-кейсы для обоих.** Разная семантика доставки.
+- **Kafka как очередь с удалением.** Ожидаю исчезновение после read.
+- **Rabbit без durable.** Потеря при рестарте кажется багом приложения.
+- **Игнор prefetch и fair dispatch.** Неравномерная нагрузка на consumers.
+- **Replay Kafka на prod без sandbox.** Дубли в downstream.

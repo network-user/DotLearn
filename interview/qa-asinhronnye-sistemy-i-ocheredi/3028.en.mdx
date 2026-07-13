@@ -1,0 +1,56 @@
+---
+id: 3028
+title: "How does Kafka deliver and read messages during testing?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does Kafka deliver and read messages during testing?
+
+## In short
+
+A producer appends to the partition leader; replicas sync the write; ack level (`all`, `1`, `0`) sets durability. A consumer group reads from committed offsets; order within a partition holds. QA simulates broker failure and consumer lag and checks that after offset commit reprocessing does not duplicate effects unnecessarily.
+
+## How to answer in an interview
+
+- `acks=all`: write confirmed by all ISR replicas.
+- Consumer polls batches, processes, commits offset sync or async.
+- `auto_offset_reset=earliest` on a new group reads from retention start.
+- On rebalance partitions move; in-flight messages may redeliver.
+- Honestly: commit before business transaction completes causes loss or duplicates.
+
+## How it works
+
+```gherkin
+Feature: Kafka delivery and read
+
+  Scenario: Producer ack all replicas
+    Given replication factor 3 min.insync.replicas 2
+    When broker B dies
+    And producer acks all
+    Then message still readable from surviving replicas
+
+  Scenario: Consumer offset commit
+    Given consumer group billing-workers
+    When process message offset 1042
+    And commit sync after DB insert
+    Then restart consumer resumes at 1043
+
+  Scenario: Rebalance duplicate window
+    Given consumer slow processing offset 500
+    When rebalance triggers
+    Then another consumer may reprocess 500 QA expects idempotent handler
+```
+
+Test flow: publish `test-evt-1`, find in `kafka-console-consumer`, match handler log and downstream row.
+
+## Pitfalls
+
+- **acks=0 in test, all in prod.** False durability sense.
+- **enable.auto.commit=true before handler.** Silent loss.
+- **Read without group id.** Every run reads everything again.
+- **max.poll.interval ignored.** Consumer dropped mid-batch.
+- **ISR not checked.** Under-replicated partition under cluster stress.

@@ -1,0 +1,73 @@
+---
+id: 2058
+title: "Java exceptions: the error-handling mechanism"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Java exceptions: the error-handling mechanism
+
+## In short
+
+An exception in Java is a `Throwable` object that interrupts normal flow and searches for a matching `catch` up the stack. If no handler is found, the thread terminates with a stack trace. The mechanism separates main logic from recovery: try for risky code, catch for handling, finally for cleanup, throws for delegating checked exceptions.
+
+## How to answer in an interview
+
+- throw creates an exception object; the JVM unwinds the stack to a matching catch.
+- Checked exceptions force explicit failure planning (I/O, DB).
+- Unchecked signals bugs; tests should catch them before prod.
+- try-with-resources and suppressed exceptions (Java 7+) for resource safety.
+- Honestly: exceptions for control flow (on every parse fail) are slower and less readable than a Result type.
+
+## How it works
+
+```java
+public final class InvoiceImporter {
+
+    public void importFrom(Path csvPath) {
+        try (var lines = Files.lines(csvPath)) {
+            lines.skip(1)
+                .map(this::parseRow)
+                .forEach(repository::save);
+        } catch (IOException ex) {
+            throw new ImportFailedException("Cannot read " + csvPath, ex);
+        } catch (DateTimeParseException ex) {
+            throw new ImportFailedException("Invalid date in CSV", ex);
+        }
+    }
+
+    private InvoiceRow parseRow(String line) {
+        var parts = line.split(",");
+        return new InvoiceRow(parts[0], LocalDate.parse(parts[1]));
+    }
+}
+```
+
+`FileNotFoundException` (checked) surfaces as `IOException`. `DateTimeParseException` is unchecked but mapped here to domain `ImportFailedException`.
+
+Unwinding:
+
+1. `throw` in `parseRow` → no local catch → method completes abruptly.
+2. Stream pipeline stops; `Files.lines` closes in implicit finally.
+3. `importFrom` catch picks a handler by type.
+
+Logging:
+
+```java
+catch (ImportFailedException ex) {
+    log.error("Import failed", ex);
+    metrics.increment("import.failure");
+    throw ex;
+}
+```
+
+## Pitfalls
+
+- **Empty catch.** Silent data loss.
+- **catch (Exception) at the top.** Hides programming bugs.
+- **Exceptions in a hot loop.** Stack trace allocations are costly.
+- **No chained cause.** `new Ex("msg")` without `initCause` loses the root.
+- **finally return.** Suppresses throw from try.

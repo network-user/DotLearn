@@ -1,0 +1,51 @@
+---
+id: 4193
+title: "Что такое topic в Kafka и зачем он нужен?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое topic в Kafka и зачем он нужен?
+
+## Суть
+
+Topic это именованный лог событий, разбитый на partitions и реплицированный между брокерами. Producer пишет append-only, consumer читает по offset; retention и compaction настраиваются per topic.
+
+## Что ответить на собесе
+
+- Именую по домену: `payments.events`, `inventory.updates`; ACL и quota вешаю на topic.
+- Partitions задают parallelism; replication factor задаёт fault tolerance.
+- Retention по времени или размеру; compacted topic хранит последний ключ для changelog.
+- Честно: тысячи мелких topics увеличивают metadata overhead; группирую по bounded context, не по каждому микросервисному методу.
+
+## Как это работает
+
+Создание topic с тремя partitions и RF=3:
+
+```bash
+kafka-topics.sh --bootstrap-server kafka.internal:9092 \
+  --create --topic orders.events \
+  --partitions 3 --replication-factor 3 \
+  --config retention.ms=604800000 \
+  --config min.insync.replicas=2
+```
+
+Публикация и чтение:
+
+```bash
+kafka-console-producer.sh --bootstrap-server kafka.internal:9092 --topic orders.events
+kafka-console-consumer.sh --bootstrap-server kafka.internal:9092 --topic orders.events --from-beginning
+```
+
+Describe показывает leader/replica ISR. Tiered storage (если включён) offloads cold segments в S3. MirrorMaker 2 реплицирует topic между кластерами для DR.
+
+## Подводные камни
+
+- **RF выше числа брокеров.** Create topic падает или under-replicated навсегда.
+- **Одна partition на hot topic.** Producer throughput упирается в один disk append path.
+- **Delete topic без `delete.topic.enable`.** Marked for deletion, но диск не чистится.
+- **Compaction без key.** Tombstone не работает, диск растёт бесконечно.
+- **Auto-create в проде.** Случайное имя создаёт default RF=1 и дыру в DR.

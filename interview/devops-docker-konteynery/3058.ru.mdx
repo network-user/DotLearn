@@ -1,0 +1,61 @@
+---
+id: 3058
+title: "Зачем нужен Dockerfile и из чего он состоит?"
+category: devops-docker-konteynery
+categoryLabel: "Docker / Контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужен Dockerfile и из чего он состоит?
+
+## Суть
+
+Dockerfile описывает пошаговую сборку образа: базовый слой, установку зависимостей, копирование артефактов и команду старта. Это декларативный рецепт, который `docker build` превращает в неизменяемый image для одинакового запуска локально, в CI и на проде.
+
+## Что ответить на собесе
+
+- Объясняю Dockerfile как version-controlled инструкцию сборки контейнера, а не ручной «золотой» сервер.
+- Перечисляю ключевые директивы: `FROM`, `WORKDIR`, `COPY`, `RUN`, `EXPOSE`, `CMD`/`ENTRYPOINT`, `USER`.
+- Подчёркиваю кэш слоёв: сначала манифесты зависимостей, потом исходники, чтобы ускорить CI.
+- Честно добавляю: плохой Dockerfile раздувает образ и тащит root; в проде почти всегда multi-stage и non-root user.
+
+## Как это работает
+
+Каждая строка Dockerfile создаёт слой в образе. BuildKit кэширует слой, пока не меняются входные файлы и команда. Типичный пайплайн: выбрать минимальный базовый image, зафиксировать рабочую директорию, установить зависимости отдельным `RUN`, скопировать код, объявить порт и процесс PID 1.
+
+Пример двухстадийной сборки Node-сервиса:
+
+```bash
+cat > Dockerfile <<'EOF'
+FROM node:20-alpine AS deps
+WORKDIR /srv/app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+FROM node:20-alpine AS runtime
+WORKDIR /srv/app
+ENV NODE_ENV=production
+COPY --from=deps /srv/app/node_modules ./node_modules
+COPY src ./src
+USER node
+EXPOSE 8080
+CMD ["node", "src/server.js"]
+EOF
+
+docker build -t api-service:1.4.2 .
+docker run --rm -p 8080:8080 api-service:1.4.2
+```
+
+`FROM` задаёт родительский слой, `COPY` переносит файлы с хоста в контекст сборки, `RUN` выполняет команды и фиксирует результат в новом слое. `CMD` определяет дефолтный процесс контейнера; его можно переопределить аргументами `docker run`. `EXPOSE` документирует порт, но не публикует его без `-p`.
+
+Multi-stage убирает toolchain из финального образа: в runtime остаются только runtime-зависимости и бинарь/код приложения.
+
+## Подводные камни
+
+- **COPY . . до install.** Любое изменение кода сбрасывает кэш установки зависимостей.
+- **Root по умолчанию.** Процесс в контейнере с uid 0 расширяет blast radius при escape.
+- **ADD вместо COPY.** `ADD` тянет распаковку архивов и remote URL; для файлов проекта предпочитаю `COPY`.
+- **Один RUN с apt без cleanup.** Каждый слой хранит удалённые пакеты; объединяю установку и `rm -rf /var/lib/apt/lists/*`.
+- **Плавающий тег base.** `FROM node:latest` ломает воспроизводимость; фиксирую digest или minor tag.

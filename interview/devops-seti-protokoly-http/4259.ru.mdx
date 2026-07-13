@@ -1,0 +1,49 @@
+---
+id: 4259
+title: "Как эволюционировали версии HTTP?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как эволюционировали версии HTTP?
+
+## Суть
+
+HTTP прошёл путь от HTTP/0.9 (только GET, без headers) через 1.0 (headers, POST) и 1.1 (keep-alive, Host, chunked) к HTTP/2 (binary framing, multiplexing, HPACK) и HTTP/3 (QUIC over UDP, 0-RTT resumption). Каждая версия бьёт по latency и head-of-line blocking.
+
+## Что ответить на собесе
+
+- 1.1: один TCP connection, несколько sequential requests без pipelining pain solved in 2.
+- HTTP/2: streams в одном connection; server push редко использую.
+- HTTP/3: QUIC переносит congestion control в userspace, быстрее recovery при packet loss.
+- Termination: CDN/ingress часто HTTP/2 к client, HTTP/1.1 или gRPC к backend.
+- Честно: не все clients support HTTP/3; graceful fallback через Alt-Svc.
+
+## Как это работает
+
+Check negotiated protocol:
+
+```bash
+curl -sI --http2 https://app.example.com | grep -i HTTP
+curl -sI --http3-only https://cloudflare.com 2>/dev/null | head -3
+openssl s_client -connect app.example.com:443 -alpn h2 -servername app.example.com </dev/null 2>/dev/null | grep ALPN
+```
+
+Nginx enable http2:
+
+```bash
+grep -E 'listen.*http2' /etc/nginx/sites-enabled/app.conf
+```
+
+Typical upgrade path: TLS everywhere, then enable h2 on edge, measure TTFB and connection count.
+
+## Подводные камни
+
+- **HTTP/2 without TLS.** Browser limits; prod always HTTPS.
+- **Large cookies inflate HPACK.** Header table churn; monitor request header bytes.
+- **Backend HTTP/1.1 only.** Edge h2 does not fix slow origin; connection pool tuning still needed.
+- **0-RTT replay risk.** HTTP/3 early data unsafe for non-idempotent POST.
+- **Version mismatch debug.** `curl --http1.1` vs default hides issue; always test explicit ALPN.

@@ -1,0 +1,62 @@
+---
+id: 1600
+title: "Нехватка ресурсов у microservice"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Нехватка ресурсов у microservice
+
+## Суть
+
+Если один сервис упирается в CPU/RAM/latency: profile (pprof), optimize hot path, scale horizontally with HPA, tune limits/requests, add cache, rate limit upstream, split heavy workload. Measure before buying bigger machines.
+
+## Что ответить на собесе
+
+- pprof CPU/heap, trace slow queries.
+- Scale replicas if CPU bound and stateless.
+- Vertical bump if GC or memory bound short term.
+- Честно: иногда проблема N+1 RPC, не «мало pods».
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+	_ "net/http/pprof"
+)
+
+func main() {
+	go func() { log.Println(http.ListenAndServe(":6060", nil)) }()
+	http.HandleFunc("/", handler)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Profile under load, fix allocation churn or DB calls, then k8s:
+
+```
+resources:
+  requests: { cpu: "500m", memory: "256Mi" }
+  limits:   { cpu: "2", memory: "512Mi" }
+```
+
+HPA on CPU 70% adds pods.
+
+## Подводные камни
+
+**Scale before optimize.** Waste money, same p99.
+
+**No limits.** Noisy neighbor kills node.
+
+**Shared DB bottleneck.** More pods multiply connections.
+
+**Ignore OOMKilled.** Need memory limit + fix leak.
+
+**Cache without TTL.** Stale or unbounded memory.

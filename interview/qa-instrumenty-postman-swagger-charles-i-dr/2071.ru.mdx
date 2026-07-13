@@ -1,0 +1,68 @@
+---
+id: 2071
+title: "Kubernetes для QA: что проверять в контейнерном окружении?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Kubernetes для QA: что проверять в контейнерном окружении?
+
+## Суть
+
+Kubernetes (K8s) автоматизирует запуск, масштабирование и восстановление контейнерных приложений в кластере. Control plane распределяет Pod'ы по узлам, Service даёт стабильный доступ, а Deployment управляет репликами и rolling update. Для ручного QA K8s это среда, где баг может быть в образе, конфиге, probes или сетевых политиках, а не только в коде фичи.
+
+## Что ответить на собесе
+
+- K8s для меня оркестратор контейнеров: минимальная единица деплоя Pod, наружу сервис выходит через Service/Ingress.
+- На стейджинге проверяю не только функционал приложения, но readiness/liveness: Pod не должен принимать трафик, пока не готов.
+- Rolling update тестирую сценарием «деплой новой версии без даунтайма для пользователя» и откатом при failed rollout.
+- Честно: без доступа к kubectl или дашборду QA опирается на CI/CD и DevOps, но понимание Pod/Deployment помогает читать инциденты.
+
+## Как это работает
+
+Кластер делится на control plane (API server, scheduler, controllers) и worker nodes с kubelet. Манифест описывает желаемое состояние; контроллеры сводят факт к spec.
+
+**Pod** группирует один или более контейнера с общей сетью и томами. **Deployment** держит нужное число реплик Pod и обновляет их по стратегии RollingUpdate. **Service** даёт DNS-имя и балансирует на Pod'ы по label selector, даже когда IP меняются. **ConfigMap/Secret** прокидывают конфиг и секреты без пересборки образа.
+
+Сценарии проверки для QA оформляю так:
+
+```gherkin
+Feature: Доступность веб-приложения после деплоя в Kubernetes
+
+  Background:
+    Given Deployment "storefront" с 3 репликами в namespace staging
+    And Ingress маршрутизирует host "shop.test" на Service "storefront"
+
+  Scenario: Readiness блокирует трафик на неготовый Pod
+    Given новый Pod стартует дольше 60 секунд
+    When пользователь открывает https://shop.test/health
+    Then ответ 200 приходит только от Pod с успешным readinessProbe
+    And Pod без readiness не получает запросы через Service
+
+  Scenario: Rolling update без обрыва сессий
+    When выкатывается образ storefront:v2
+    Then минимум 2 реплики всегда в статусе Ready
+    And пользователь завершает checkout без ошибки 502
+```
+
+Пример фрагмента манифеста (что QA сверяет с фактическим поведением):
+
+```gherkin
+# Deployment storefront: replicas=3, image tag из CI
+# containerPort 8080, readinessProbe GET /health каждые 5s
+# livenessProbe GET /live каждые 10s
+# env из ConfigMap app-config, секреты из Secret db-credentials
+```
+
+При регрессии смотрю логи Pod (`kubectl logs`), события (`kubectl describe pod`) и метрики restart count. Если приложение «флапает», часто виноват слишком агрессивный livenessProbe или долгий старт JVM.
+
+## Подводные камни
+
+- **Путаница Docker и K8s.** Образ собран локально, но в кластере другой tag или pull policy Never на ноде без образа.
+- **Config drift.** ConfigMap обновили, Pod не перезапустили: env внутри контейнера старый, UI уже тестируют «новую» версию.
+- **Probes проверяют не то.** Readiness бьёт в `/`, который всегда 200, пока БД недоступна; трафик идёт на мёртвый инстанс.
+- **Ingress vs Service.** Тест бьёт напрямую в NodePort, минуя TLS и правила Ingress; баг воспроизводится только «снаружи».
+- **Нагрузка на минимальные реplicas.** HPA включили только в проде; на staging один Pod и ложные выводы о производительности.

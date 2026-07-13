@@ -1,0 +1,52 @@
+---
+id: 4233
+title: "How does tail help when debugging Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does tail help when debugging Nginx?
+
+## In short
+
+`tail` prints the end of a log file; with `-f` it streams new lines in real time. For nginx I watch `/var/log/nginx/access.log` (requests, status codes, upstream timing) and `error.log` (bind failures, upstream connect errors, rewrite loops). It is the first tool during deploys, 502 spikes, or suspected scanning.
+
+## How to answer in an interview
+
+- `tail -f access.log error.log` or `tail -F` when logrotate renames files.
+- I filter live: `tail -f access.log | grep ' 502 '`.
+- I correlate deploy timestamps with 4xx/5xx spikes in access and `upstream timed out` in error.
+- For JSON access logs I pipe through `jq` instead of grepping raw text.
+- Honestly: tail on production needs RBAC and no PII in the terminal; at scale I move to Loki/ELK.
+
+## How it works
+
+Follow both logs live:
+
+```bash
+sudo tail -F /var/log/nginx/access.log /var/log/nginx/error.log
+```
+
+Recent 502 responses:
+
+```bash
+sudo grep ' 502 ' /var/log/nginx/access.log | tail -20
+```
+
+During an incident I also verify config:
+
+```bash
+sudo nginx -t
+curl -sI -H 'Host: app.example.com' http://127.0.0.1/healthz
+```
+
+## Pitfalls
+
+- **Logrotate without -F.** Plain `-f` stops after rotate; `-F` reopens the file.
+- **Pipe buffering.** Use `stdbuf -oL` if downstream grep delays output.
+- **PII and secrets.** access.log may carry tokens in query strings; do not paste into public tickets.
+- **Time zones.** `$time_local` vs UTC; align with Prometheus metrics.
+- **Many vhosts one file.** Without `$host` in the format you cannot tell which server block failed; customize log_format.

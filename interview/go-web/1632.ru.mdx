@@ -1,0 +1,72 @@
+---
+id: 1632
+title: "Структура HTTP-сообщения"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Структура HTTP-сообщения
+
+## Суть
+
+HTTP сообщение это стартовая строка, блок заголовков, пустая строка-разделитель и опциональное тело. В запросе стартовая строка: метод, path, версия. В ответе: версия, статус-код, reason phrase. HTTP/2 упаковывает то же семантически в HEADERS и DATA frames.
+
+## Что ответить на собесе
+
+- Request line vs status line.
+- Заголовки `Host`, `Content-Type`, `Content-Length` или `Transfer-Encoding: chunked`.
+- Тело отделено пустой CRLF строкой в HTTP/1.1.
+- `net/http` парсит автоматически в `*http.Request` / `ResponseWriter`.
+- Честно: в HTTP/2 нет «текстового» сообщения на проводе, но модель та же.
+
+## Как это работает
+
+Запрос:
+
+```http
+POST /api/v1/orders HTTP/1.1
+Host: shop.example
+Content-Type: application/json
+Content-Length: 38
+Authorization: Bearer token
+
+{"sku":"A12","qty":2,"currency":"RUB"}
+```
+
+Ответ:
+
+```http
+HTTP/1.1 201 Created
+Content-Type: application/json
+Location: /api/v1/orders/881
+Content-Length: 20
+
+{"id":881,"status":"new"}
+```
+
+```go
+func createOrder(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.Method, r.URL.Path, r.Proto)
+	log.Println("Content-Type:", r.Header.Get("Content-Type"))
+	var payload Order
+	json.NewDecoder(r.Body).Decode(&payload)
+	w.Header().Set("Location", "/api/v1/orders/881")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{"id": 881, "status": "new"})
+}
+```
+
+## Подводные камни
+
+**Читать `r.Body` дважды без TeeReader.** Второй consumer получает пустой stream.
+
+**Писать тело до заголовков ответа неявно.** `Write` до `WriteHeader` фиксирует 200.
+
+**Смешать `Content-Length` и chunked.** RFC запрещает оба одновременно.
+
+**Парсить HTTP вручную.** Ошибки smuggling; использовать stdlib или проверенный parser.
+
+**Игнорировать `Expect: 100-continue`.** Некоторые клиенты ждут промежуточный ответ.

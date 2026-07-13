@@ -1,0 +1,61 @@
+---
+id: 2470
+title: "CSRF: как работает и как закрываю на фронте"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# CSRF: как работает и как закрываю на фронте
+
+## Суть
+
+Cross-Site Request Forgery заставляет браузер жертвы отправить authenticated request на ваш site с cookies пользователя, пока тот залогинен. Атакующий site инициирует POST/form/img без ведома пользователя. Защита: CSRF token, SameSite cookies, проверка Origin/Referer.
+
+## Что ответить на собесе
+
+- Mutations только POST/PUT/PATCH/DELETE с custom header (`X-Requested-With` или CSRF header).
+- Cookie session с SameSite=Lax/Strict; для cross-site embed нужен explicit token.
+- Double-submit: token в cookie + matching header/body field.
+- Честно: pure JWT in Authorization без cookie снижает classic CSRF, но login endpoint всё равно уязвим.
+- CORS не защищает от CSRF: simple requests идут без preflight.
+
+## Как это работает
+
+Атакующая страница:
+
+```html
+<form action="https://bank.example/transfer" method="POST">
+  <input type="hidden" name="amount" value="1000" />
+  <input type="hidden" name="to" value="attacker" />
+</form>
+<script>document.forms[0].submit()</script>
+```
+
+Защита на клиенте SPA:
+
+```ts
+const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+await fetch('/api/transfer', {
+  method: 'POST',
+  credentials: 'include',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-CSRF-Token': csrf ?? '',
+  },
+  body: JSON.stringify({ amount: 100, to: 'friend' }),
+});
+```
+
+Server генерирует token per session, клиент читает из meta или cookie и дублирует в header. SameSite=Lax блокирует cross-site POST navigation cookies в modern browsers, но не заменяет token для defense in depth.
+
+## Подводные камни
+
+- **GET mutations.** `GET /delete?id=1` выполняется через `<img src>` без JS.
+- **Content-Type text/plain.** Simple request обходит CORS preflight но CSRF token всё равно нужен.
+- **Subdomain XSS.** `.example.com` cookie виден всем subdomains.
+- **Mobile WebView.** Custom URL schemes могут обходить SameSite.
+- **GraphQL POST.** Один endpoint, batch mutations; CSRF token на все operations.

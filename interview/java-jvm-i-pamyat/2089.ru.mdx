@@ -1,0 +1,70 @@
+---
+id: 2089
+title: "Heap JVM: что хранится и как управляется"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Heap JVM: что хранится и как управляется
+
+## Суть
+
+Java heap это shared arena для всех object instances, arrays и static field values (references + boxed primitives). Stack держит только references и scalars; `new` всегда heap (или TLAB slice). GC manages lifecycle; `-Xms/-Xmx` bound size; OutOfMemoryError when allocation fails after full collection attempt.
+
+## Что ответить на собесе
+
+- Objects, arrays, Class mirrors (static fields) live on heap.
+- Primitives in fields inside objects; local int on stack.
+- String literals intern pool (Java 7+ in heap, not PermGen).
+- Heap split generational or regional depending on GC.
+- Честно: native memory (direct buffers, thread stacks) not counted in `-Xmx`.
+
+## Как это работает
+
+```java
+public final class HeapContentsDemo {
+
+    private static final List<String> TAGS = List.of("paid", "pending");
+
+    public static void main(String[] args) {
+        var order = new Order(42, TAGS);
+        inspect(order);
+    }
+
+    private static void inspect(Order order) {
+        int idCopy = order.id();
+        System.out.println(idCopy);
+    }
+
+    record Order(int id, List<String> tags) {}
+}
+```
+
+Memory map:
+
+- `Order` instance + backing `List` impl → heap
+- `"paid"`, `"pending"` strings → heap (intern may dedupe)
+- `TAGS` static ref → heap object; ref itself in Class mirror
+- `order` reference variable in `main` frame → stack
+- `idCopy` int → stack (primitive copy)
+
+Allocation fast path: thread TLAB bump pointer in Eden; on TLAB full slow path + possible minor GC.
+
+OOM:
+
+```
+java.lang.OutOfMemoryError: Java heap space
+```
+
+after GC cannot free enough contiguous space for new object.
+
+## Подводные камни
+
+- **Equating RSS with heap.** Process memory includes metaspace, code cache, threads.
+- **Huge single object.** Array size Integer.MAX_VALUE impossible; OOM earlier.
+- **Memory leak vs needed cache.** Heap full may be legitimate working set.
+- **Autoboxing churn.** Many Integer objects where int stack/local enough.
+- **Ignoring container limit.** `-Xmx2g` in 1g cgroup → immediate OOMKilled.

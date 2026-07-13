@@ -1,0 +1,80 @@
+---
+id: 1537
+title: "Why is a goroutine cheaper than an OS thread?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why is a goroutine cheaper than an OS thread?
+
+## In short
+
+A goroutine starts with a small stack (kilobytes) that the runtime grows and shrinks, while an OS thread carries megabytes of stack and costly context switches. Go's M:N scheduler multiplexes thousands of G onto a bounded set of threads, cutting RAM and creation cost.
+
+## How to answer in an interview
+
+- Starting a goroutine is cheaper than a thread: no per-spawn syscall, stack grows on demand.
+- Scale: tens of thousands of goroutines on a typical server vs hundreds of threads.
+- Sync via channels and sync instead of hand-rolled pthread APIs.
+- Honestly: CPU-bound work without blocking still caps at GOMAXPROCS cores; goroutines are not free parallelism.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func worker(id int, jobs <-chan int, out chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for job := range jobs {
+		out <- fmt.Sprintf("worker %d handled %d", id, job)
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func main() {
+	const poolSize = 64
+	jobs := make(chan int, 128)
+	results := make(chan string, 128)
+	var wg sync.WaitGroup
+	for w := 0; w < poolSize; w++ {
+		wg.Add(1)
+		go worker(w, jobs, results, &wg)
+	}
+	go func() {
+		for i := 0; i < 200; i++ {
+			jobs <- i
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+	count := 0
+	for range results {
+		count++
+	}
+	fmt.Println("done:", count)
+}
+```
+
+64 goroutines on a few OS threads handle 200 jobs; blocking on Sleep yields M to other G. The pthread equivalent would spend more RAM on stacks and OS scheduling overhead.
+
+## Pitfalls
+
+**Goroutine leak.** Cheap spawn invites "go everywhere"; without cancel/context they pile up.
+
+**GOMAXPROCS=1 and CPU-bound work.** Thousands of goroutines in a compute loop do not speed up code on one P.
+
+**Stack growth copies.** Deep recursion or large frames trigger stack realloc; hidden cost of a "small stack".
+
+**CGO and threads.** A CGO call may pin a dedicated OS thread; mixing heavy CGO with millions of goroutines needs care.
+
+**Versus async/await elsewhere.** Goroutine blocking is explicit in code, but blocking still yields the thread only through the runtime, not by magic.

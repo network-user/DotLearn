@@ -1,0 +1,63 @@
+---
+id: 4643
+title: "How do processes exchange data?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do processes exchange data?
+
+## In short
+
+Inter-process communication (IPC) links isolated address spaces: pipes, named pipes, message queues, shared memory, OS semaphores, sockets, and files. The choice depends on data volume, synchronization needs, and whether you need network delivery.
+
+## How to answer in an interview
+
+- Pipe/FIFO: simple byte streams between related or local processes.
+- Shared memory: fastest exchange, but separate synchronization is required (semaphore, mutex in shm).
+- Message queue: structured messages with a kernel buffer.
+- Sockets: universal, including TCP/UDP across hosts.
+- Honestly: plain C++ STL has no IPC; I use POSIX/WinAPI or wrappers (Boost.Interprocess).
+
+## How it works
+
+An anonymous pipe after `fork` gives a one-way parent ↔ child channel.
+
+```cpp
+#include <cstring>
+#include <iostream>
+#include <unistd.h>
+
+int main() {
+    int fds[2];
+    pipe(fds);
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        close(fds[1]);
+        char buf[64]{};
+        read(fds[0], buf, sizeof(buf));
+        std::cout << "child: " << buf << '\n';
+        close(fds[0]);
+    } else {
+        close(fds[0]);
+        const char msg[] = "ping";
+        write(fds[1], msg, sizeof(msg));
+        close(fds[1]);
+    }
+    return 0;
+}
+```
+
+The parent writes to `fds[1]`, the child reads from `fds[0]`. Separate processes do not see each other's ordinary pointers; the kernel copies the buffer. Two-way talk needs two pipes or a socket.
+
+## Pitfalls
+
+- **Pipe capacity.** Writes block if the reader lags; you need a backpressure protocol.
+- **Shared memory races.** Without a mutex/semaphore in the segment you get the same data races as between threads.
+- **Zombies and descriptors.** Unclean fd handling after fork leaks and blocks EOF.
+- **Portability.** `fork`/`pipe` are POSIX; Windows uses different primitives (named pipe, etc.).
+- **Serialization.** Complex objects do not go into shm raw; pick a format (protobuf, flatbuffers).

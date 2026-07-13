@@ -1,0 +1,71 @@
+---
+id: 4299
+title: "appVersion и version в Chart.yaml: в чём разница?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# appVersion и version в Chart.yaml: в чём разница?
+
+## Суть
+
+`version` в `Chart.yaml` это semver самого chart (шаблоны, values defaults, dependencies). `appVersion` это маркетинговая/релизная версия приложения (часто default image tag), не обязана следовать semver chart. Можно bump chart без смены app и наоборот; путают их при CI tagging и rollback.
+
+## Что ответить на собесе
+
+- `version` меняю при любом изменении templates или default values (packaging).
+- `appVersion` отражает бинарь/образ, который деплоим (`2.4.1`).
+- В template: `{{ .Chart.Version }}` vs `{{ .Chart.AppVersion }}` или `.Values.image.tag`.
+- `helm list` показывает chart version; image tag смотрю в rendered manifest.
+- Честно: полагаюсь на explicit `image.tag` в values, а не только на appVersion default.
+
+## Как это работает
+
+Пример `Chart.yaml`:
+
+```yaml
+apiVersion: v2
+name: checkout-api
+description: Checkout service chart
+type: application
+version: 1.8.2
+appVersion: "3.1.0"
+```
+
+Template использует оба поля:
+
+```yaml
+labels:
+  chart.version: {{ .Chart.Version | quote }}
+  app.version: {{ .Chart.AppVersion | quote }}
+spec:
+  containers:
+    - image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+```
+
+Проверка после render:
+
+```bash
+helm template checkout ./charts/checkout --show-only templates/deployment.yaml \
+  | grep -E 'image:|app.version|chart.version'
+```
+
+Сценарий: новый образ, chart без изменений:
+
+```bash
+helm upgrade checkout ./charts/checkout -n prod \
+  --reuse-values \
+  --set image.tag=3.2.0
+# Chart.yaml version остаётся 1.8.2, appVersion в metadata можно обновить отдельным commit
+```
+
+## Подводные камни
+
+- **appVersion без кавычек.** YAML 2.1.0 читается как float; всегда quote semver с точками.
+- **Chart bump без changelog.** Patch chart version при typo в template всё равно требует traceability для rollback.
+- **Дрейф image.tag.** Values override appVersion silently; dashboard «version» из label врёт.
+- **appVersion как единственный tag.** Пин на `latest` logic через default ломает reproducible deploy.
+- **Dependency version mix.** Parent chart `version` не синхронизирует subchart `appVersion`; проверяю каждый artifact.

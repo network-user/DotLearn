@@ -1,0 +1,76 @@
+---
+id: 1772
+title: "Why long transactions are dangerous in 1C"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why long transactions are dangerous in 1C
+
+## In short
+
+An open transaction holds locks and the change log until commit or rollback. The longer it lives, the higher the risk of deadlocks, tempdb growth, and users stuck on write and posting.
+
+## How to answer in an interview
+
+- I tie transaction duration to managed and SQL locks on affected objects.
+- In an interview I give an example: a write loop inside one `НачатьТранзакцию()` without intermediate commits.
+- I stress that a user dialog or HTTP call inside a transaction is unacceptable.
+- I honestly say that splitting into short transactions reduces batch isolation but removes queues on registers.
+- For diagnosis I check the lock monitor, session duration, and active transactions in the DBMS.
+
+## How it works
+
+A typical anti-pattern: open a transaction, update hundreds of rows, then run a heavy calculation or wait for the user. Until the transaction closes, other sessions wait on the same register or document keys.
+
+```bsl
+Процедура МассовоеПерераспределение(ТаблицаСтрок) Экспорт
+    НачатьТранзакцию();
+    Попытка
+        Для Каждого Строка Из ТаблицаСтрок Цикл
+            ДокОбъект = Строка.Ссылка.ПолучитьОбъект();
+            ДокОбъект.Склад = Строка.НовыйСклад;
+            ДокОбъект.Записать(РежимЗаписиДокумента.Проведение);
+        КонецЦикла;
+        ВыполнитьДолгийПересчетСтатистики();
+        ЗафиксироватьТранзакцию();
+    Исключение
+        ОтменитьТранзакцию();
+        ВызватьИсключение;
+    КонецПопытки;
+КонецПроцедуры
+```
+
+Better to move the calculation outside the transaction and commit in batches:
+
+```bsl
+РазмерПакета = 50;
+Счетчик = 0;
+НачатьТранзакцию();
+Для Каждого Строка Из ТаблицаСтрок Цикл
+    ОбновитьСкладДокумента(Строка);
+    Счетчик = Счетчик + 1;
+    Если Счетчик >= РазмерПакета Тогда
+        ЗафиксироватьТранзакцию();
+        НачатьТранзакцию();
+        Счетчик = 0;
+    КонецЕсли;
+КонецЦикла;
+Если ТранзакцияАктивна() Тогда
+    ЗафиксироватьТранзакцию();
+КонецЕсли;
+ВыполнитьДолгийПересчетСтатистики();
+```
+
+A long transaction inflates the version store in MS SQL and holds autovacuum-related pressure in PostgreSQL. On accumulation registers this shows up as waits during posting and totals recalculation.
+
+## Pitfalls
+
+- **Form dialog inside a transaction.** The user thinks for minutes while locks stay held.
+- **External HTTP inside a transaction.** A network timeout keeps an open lock on a register.
+- **One batch for the whole scheduled job.** Overnight processing blocks daytime work.
+- **Illusion of a quick rollback.** Rolling back a long transaction is itself expensive for the DBMS.
+- **Mixing with background jobs.** Parallel scheduled tasks on the same tables increase deadlocks.

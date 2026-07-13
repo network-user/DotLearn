@@ -1,0 +1,50 @@
+---
+id: 4191
+title: "Какую роль ZooKeeper играл в Kafka?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какую роль ZooKeeper играл в Kafka?
+
+## Суть
+
+В классических кластерах Kafka ZooKeeper хранил метаданные: список брокеров, назначение partition leader, ACL и controller election. С Kafka 3.x metadata переехала в KRaft (Raft quorum внутри брокеров), ZooKeeper считается legacy путём.
+
+## Что ответить на собесе
+
+- Ephemeral znodes регистрировали живые брокеры; пропажа узла триггерила failover leader.
+- Controller broker читал ZK и распределял partition leadership.
+- Consumer offset раньше мог жить в ZK (`dual.write` эпохи); сейчас стандарт `__consumer_offsets` topic.
+- Честно: на greenfield 3.5+ ставлю KRaft без ZK; миграция ZK→KRaft требует планового maintenance window.
+
+## Как это работает
+
+Legacy broker.conf указывал ensemble:
+
+```bash
+grep zookeeper.connect /etc/kafka/server.properties
+# zookeeper.connect=zk-1:2181,zk-2:2181,zk-3:2181
+
+echo stat | nc zk-1 2181
+echo ls /brokers/ids | nc zk-1 2181
+```
+
+При падении broker-2 его ephemeral `/brokers/ids/2` исчезает, controller переназначает leader partitions. KRaft заменяет это metadata log на dedicated controller quorum:
+
+```bash
+kafka-metadata.sh --snapshot /var/lib/kraft/metadata.log --print
+```
+
+Мониторю `UnderReplicatedPartitions` и controller failover latency. В hybrid migration сначала dual-mode, потом отключаю `zookeeper.connect`.
+
+## Подводные камни
+
+- **ZK ensemble undersized.** Три узла без dedicated disk дают latency spikes и split-brain риск при network partition.
+- **Старые клиенты на ZK offsets.** После отключения ZK consumer group ломается без миграции offset.
+- **Session timeout mismatch.** Слишком агрессивный timeout вызывает false positive broker drop.
+- **Backup ZK data dir.** Потеря snapshot без quorum rebuild останавливает весь кластер.
+- **Смешение KRaft и ZK версий.** Несовместимые image tags Kafka ломают rolling upgrade.

@@ -1,0 +1,53 @@
+---
+id: 4205
+title: "CLB, ALB и NLB в AWS: когда что выбрать?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# CLB, ALB и NLB в AWS: когда что выбрать?
+
+## Суть
+
+AWS Elastic Load Balancing: CLB (legacy, L4/L7), ALB (L7 HTTP/HTTPS, path/host routing), NLB (L4 TCP/UDP, ultra-low latency, static IP). Новые проекты почти всегда ALB или NLB; CLB только для legacy.
+
+## Что ответить на собесе
+
+- ALB: микросервисы, host/path rules, OIDC, WebSocket, Lambda target.
+- NLB: TCP passthrough, gaming, TLS на instance, millions RPS, preserve client IP.
+- CLB: устаревший, нет advanced routing; мигрирую на ALB/NLB.
+- Честно: ALB дороже на мелком трафике; для internal gRPC иногда NLB + TLS termination на sidecar.
+
+## Как это работает
+
+ALB listener rule:
+
+```bash
+aws elbv2 create-load-balancer --name public-api --type application \
+  --subnets subnet-pub-a subnet-pub-b --security-groups sg-alb
+
+aws elbv2 create-rule --listener-arn arn:aws:elasticloadbalancing:... \
+  --priority 10 \
+  --conditions Field=path-pattern,Values='/api/v2/*' \
+  --actions Type=forward,TargetGroupArn=arn:aws:elasticloadbalancing:.../v2-tg
+```
+
+NLB для TCP:
+
+```bash
+aws elbv2 create-load-balancer --name game-tcp --type network \
+  --subnet-mappings SubnetId=subnet-pub-a,AllocationId=eipalloc-aaa
+```
+
+Health check: ALB HTTP `/healthz`; NLB TCP port или HTTP/HTTPS target group. Cross-zone on NLB имеет cost implication на больших объёмах.
+
+## Подводные камни
+
+- **CLB для нового сервиса.** Нет WAF integration как у ALB.
+- **ALB idle timeout < long poll.** 60s default рвёт SSE/WebSocket без настройки.
+- **NLB + security group.** SG on NLB относительно новая фича; старые шаблоны без SG.
+- **Target type IP в EKS.** Pod IP меняется; нужен правильный health check grace.
+- **Sticky session на NLB.** Нет cookie stickiness; только client IP affinity.

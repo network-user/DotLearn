@@ -1,0 +1,68 @@
+---
+id: 2983
+title: "Refresh token в JWT: что проверяет QA при rotation?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Refresh token в JWT: что проверяет QA при rotation?
+
+## Суть
+
+Access token живёт минуты и несёт claims для API; refresh token живёт дольше и служит только для получения новой пары без повторного login. QA проверяет сроки, хранение refresh (HttpOnly cookie vs body), rotation, revoke и поведение при reuse attack.
+
+## Что ответить на собесе
+
+- После login клиент получает короткий access и длинный refresh; API принимает только access.
+- При 401 по expiry клиент POST /token/refresh; сервер выдаёт новую пару.
+- Refresh храню в HttpOnly cookie, access в memory; localStorage для refresh не приемлем.
+- Честно: без server-side denylist refresh живёт до exp даже после logout, если не revoke.
+
+## Как это работает
+
+Типичный flow:
+
+1. `POST /auth/login` → `{ access_token, refresh_token, expires_in }`
+2. `GET /api/profile` с `Authorization: Bearer <access>`
+3. Access истёк → `POST /auth/refresh` с refresh
+4. Сервер валидирует refresh (signature, exp, not revoked), возвращает новые токены
+
+Gherkin:
+
+```gherkin
+Feature: Refresh token rotation
+
+  Scenario: Успешное обновление access
+    Given пользователь с валидным refresh_token в HttpOnly cookie
+    When POST /auth/refresh
+    Then статус 200
+    And тело содержит новый access_token
+    And Set-Cookie обновляет refresh_token
+
+  Scenario: Истёкший access отклоняется
+    When GET /api/orders с access exp в прошлом
+    Then статус 401
+
+  Scenario: Reuse старого refresh после rotation
+    Given refresh_token R1 уже использован и выдан R2
+    When POST /auth/refresh с R1 повторно
+    Then статус 401
+    And все refresh сессии пользователя revoked
+
+  Scenario: Logout инвалидирует refresh
+    When POST /auth/logout
+    Then последующий POST /auth/refresh возвращает 401
+```
+
+Rotation: каждый refresh одноразовый; повторная отправка старого токена триггерит fraud detection и отзыв семейства токенов.
+
+## Подводные камни
+
+- **Refresh в localStorage SPA.** XSS крадёт долгоживущий секрет.
+- **Без rotation.** Украденный refresh работает месяцами.
+- **Same refresh для всех devices.** Revoke одного не режет остальные.
+- **Clock skew.** exp проверяется без leeway, flaky 401 на границе.
+- **Refresh в URL query.** Попадает в access logs и Referer.

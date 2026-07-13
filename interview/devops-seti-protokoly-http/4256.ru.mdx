@@ -1,0 +1,56 @@
+---
+id: 4256
+title: "Какие HTTP status codes важны для DevOps?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие HTTP status codes важны для DevOps?
+
+## Суть
+
+HTTP status code это трёхзначный результат обработки запроса. Первая цифра класс: 1xx info, 2xx success, 3xx redirect, 4xx client error, 5xx server error. В мониторинге и SLO алертах смотрю распределение 2xx/4xx/5xx и latency по path.
+
+## Что ответить на собесе
+
+- 200 OK, 201 Created, 204 No Content для happy path API.
+- 301/308 permanent redirect, 302/307 temporary; важно для SEO и ingress rules.
+- 400 validation, 401 unauthenticated, 403 forbidden, 404 routing, 429 rate limit.
+- 500 generic, 502 bad gateway, 503 overload/maintenance, 504 upstream timeout.
+- Честно: алерт только на 5xx rate; 404 spike может быть scan, не всегда incident.
+
+## Как это работает
+
+Probe и headers:
+
+```bash
+curl -sI https://app.example.com/health | head -5
+curl -s -o /dev/null -w '%{http_code} %{time_total}\n' https://app.example.com/api/v1/ping
+```
+
+Пример ответа:
+
+```http
+HTTP/1.1 503 Service Unavailable
+Retry-After: 120
+Content-Type: application/json
+
+{"status":"degraded","reason":"database failover"}
+```
+
+Ingress/nginx access log парсинг:
+
+```bash
+awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head
+```
+
+## Подводные камни
+
+- **502 vs 504.** 502 upstream invalid response; 504 timeout to upstream; разный root cause.
+- **Custom 404 page masked.** Health check hits wrong path, always 200 HTML; use explicit endpoint.
+- **301 chain.** Redirect loop breaks clients; curl -L trace.
+- **429 without Retry-After.** Clients hammer API; document backoff.
+- **Cache 5xx.** CDN caches error page; purge or Cache-Control: no-store on errors.

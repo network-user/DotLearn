@@ -1,0 +1,60 @@
+---
+id: 1576
+title: "Когда goroutine уступает CPU другим"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда goroutine уступает CPU другим
+
+## Суть
+
+Goroutine добровольно или принудительно снимается с P при syscall, блокировке на chan/mutex, GC safepoint, `runtime.Gosched()` или завершении. Cooperative scheduling: без preemption на чистом CPU цикл может monopolize thread до ~10 ms (Go 1.14+ async preemption смягчает).
+
+## Что ответить на собесе
+
+- Блокирующие операции (I/O, chan, sync) отдают M другим G.
+- `Gosched()` явный yield без sleep.
+- Завершившаяся G освобождает слот на P.
+- Честно: tight loop без syscall может долго не yield на старых версиях; на современных Go preemption по сигналу.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	var mu sync.Mutex
+	mu.Lock()
+	go func() {
+		mu.Lock()
+		fmt.Println("second acquired")
+		mu.Unlock()
+	}()
+	runtime.Gosched()
+	mu.Unlock()
+}
+```
+
+Первая G держит mutex, вторая park на Lock. Unlock + scheduler передаёт P ожидающей. `Gosched()` подсказывает runtime переключиться без блокирующего примитива.
+
+## Подводные камни
+
+**CPU-bound без preemption awareness.** Долгий compute без checkpoints.
+
+**Spin mutex в user code.** Не yield, грузит CPU.
+
+**Gosched не fairness guarantee.** Только hint.
+
+**Cgo блокирует OS thread.** Меньше M для Go G.
+
+**Assumption «каждый Sleep yield».** Sleep park на timer, не то же что Gosched.

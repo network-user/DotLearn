@@ -1,0 +1,62 @@
+---
+id: 2980
+title: "HttpOnly cookie: how does QA verify session protection from XSS?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HttpOnly cookie: how does QA verify session protection from XSS?
+
+## In short
+
+The HttpOnly flag blocks JavaScript from reading the cookie; the browser still attaches it to HTTP(S) requests. Together with Secure and SameSite this reduces session id theft via XSS. QA checks Set-Cookie flags on login and that `document.cookie` does not contain the session cookie name.
+
+## How to answer in an interview
+
+- Session id in HttpOnly cookie is preferred over localStorage for browser apps.
+- Secure ensures send only over HTTPS; on staging without TLS I do not sign off cookie as "OK".
+- SameSite=Lax/Strict cuts CSRF; None requires Secure.
+- Honestly: HttpOnly does not stop XSS actions on behalf of the user (requests still carry cookie); CSP and sanitization are required.
+
+## How it works
+
+Login response:
+
+```http
+Set-Cookie: sid=7a9f...; Path=/; HttpOnly; Secure; SameSite=Lax
+```
+
+Gherkin:
+
+```gherkin
+Feature: Session cookie flags
+
+  Scenario: Login sets HttpOnly Secure
+    When POST /auth/login succeeds
+    Then Set-Cookie sid includes HttpOnly
+    And Set-Cookie sid includes Secure on HTTPS
+
+  Scenario: document.cookie does not see sid
+    Given user logged in
+    When QA runs document.cookie in console
+    Then the string does not contain sid=
+
+  Scenario: XSS inject cannot read HttpOnly cookie
+    Given controlled XSS in comment field on staging
+    When payload sends document.cookie to collector
+    Then collector does not receive sid
+    And page requests stay authenticated
+```
+
+In Application → Cookies I verify flags; in proxy I check refresh is HttpOnly too when cookie-based.
+
+## Pitfalls
+
+- **Duplicate session in localStorage "for SPA".** XSS steals access from there.
+- **HttpOnly without Secure on HTTP staging.** Cookie sent in clear text.
+- **Subdomain wildcard Domain=.example.com.** Compromised subdomain steals cookie.
+- **Confusing HttpOnly with encryption.** Cookie visible in DevTools, just not in JS.
+- **Chrome-only test.** Safari ITP changes lifetime in third-party context.

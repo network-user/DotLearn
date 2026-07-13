@@ -1,0 +1,79 @@
+---
+id: 2413
+title: "Отладка CSS Modules в production: source maps и DevTools"
+category: frontend-css
+categoryLabel: "CSS"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Отладка CSS Modules в production: source maps и DevTools
+
+## Суть
+
+В production CSS Modules хешируют имена классов (`Button_primary_x7k2`). Source maps связывают минифицированный CSS с исходными `.module.css`, чтобы в DevTools видеть настоящие селекторы и файлы.
+
+## Что ответить на собесе
+
+- Включаю `devtool: 'source-map'` (или `hidden-source-map` для публичного деплоя) в конфиге сборщика.
+- Для css-loader/modules: `sourceMap: true` на этапе extract CSS.
+- В Chrome DevTools на вкладке Styles клик по правилу ведёт в исходный модуль, не в `app.[hash].css`.
+- Для Vite: `build.sourcemap: true` и проверка, что `.map` доступны только внутренней команде.
+- Честно добавляю: публичные source maps раскрывают структуру проекта; на проде часто использую hidden maps, доступные только при авторизованном дебаге.
+
+## Как это работает
+
+CSS Modules компилируют импорт:
+
+```ts
+import styles from "./Card.module.css";
+
+export function Card() {
+  return <article className={styles.root}>...</article>;
+}
+```
+
+В бандле класс становится уникальным хешем. **Source map** хранит таблицу соответствий: `Card_root_a1b2` → `Card.module.css`, строка 3.
+
+Фрагмент конфигурации Webpack:
+
+```ts
+export default {
+  mode: "production",
+  devtool: "hidden-source-map",
+  module: {
+    rules: [
+      {
+        test: /\.module\.css$/,
+        use: [
+          MiniCssExtractPlugin.loader,
+          {
+            loader: "css-loader",
+            options: {
+              modules: { localIdentName: "[name]__[local]___[hash:base64:5]" },
+              sourceMap: true,
+            },
+          },
+        ],
+      },
+    ],
+  },
+};
+```
+
+Браузер подгружает `.css.map` только когда открыты DevTools (для hidden). Инспектор показывает `Card.module.css` и оригинальный `.root`.
+
+Альтернатива без maps: временно включить `localIdentName: '[local]'` на staging или искать класс через вкладку Computed и сопоставлять с grep по репозиторию.
+
+## Подводные камни
+
+**Maps не задеплоены.** CI копирует только `.css`; DevTools показывает одну длинную строку без привязки к файлам.
+
+**Публичные maps и секреты.** Даже без API-ключей maps облегчают reverse engineering UI.
+
+**SSR + extracted CSS.** Нужны maps и для server chunk, иначе стили гидрации не сходятся с клиентскими именами.
+
+**PostCSS pipeline.** Если map рвётся на этапе autoprefixer, проверяю `sourceMap: true` на каждом лоадере.
+
+**Только JS source maps.** CSS maps отдельны; включение `sourcemap` для TS не покрывает стили автоматически.

@@ -1,0 +1,52 @@
+---
+id: 4220
+title: "Can one EBS volume attach to two servers?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can one EBS volume attach to two servers?
+
+## In short
+
+A standard EBS volume attaches to one EC2 instance at a time. Concurrent writes from two hosts without a cluster filesystem cause corruption. For shared storage I use EFS, FSx, or S3. io2 Multi-Attach exists but only with clustered filesystems (Oracle RAC and similar), not plain ext4 on two Linux boxes.
+
+## How to answer in an interview
+
+- One volume, one instance; for HA I snapshot/re-attach on failover (RTO in minutes).
+- EFS NFS for POSIX shared read/write across autoscaling web nodes.
+- FSx for Windows when SMB is required; FSx Lustre for HPC throughput.
+- io2 Multi-Attach only with proven DB/cluster support, not generic Linux.
+- Honestly: NFS-exporting an EBS volume to a second host is an anti-pattern; latency and locking are not production-grade.
+
+## How it works
+
+Attach/detach via API; the old instance must release the device on detach. Failover flow: stop the app, detach, attach to standby, mount the filesystem.
+
+```bash
+aws ec2 detach-volume --volume-id vol-0a1b2c3d4e5f67890 --force
+
+aws ec2 attach-volume \
+  --volume-id vol-0a1b2c3d4e5f67890 \
+  --instance-id i-standby0001 \
+  --device /dev/xvdf
+
+sudo mount /dev/xvdf /var/lib/app-data
+```
+
+For concurrent access I move to EFS:
+
+```bash
+sudo mount -t efs -o tls fs-prod1234:/ /var/www/uploads
+```
+
+## Pitfalls
+
+- **Force detach.** Risks partial writes and journal recovery; prefer graceful umount and service stop first.
+- **AZ mismatch.** Volume and instance must share an AZ (except restore from snapshot into another AZ).
+- **Device rename.** After attach the device name may change (/dev/sdf vs /dev/xvdf); use UUID in fstab.
+- **Split brain on Multi-Attach.** Two nodes without GFS/OCFS2 destroy ext4 in seconds.
+- **Attach RTO.** ASG plus EFS failover is faster than scripting EBS detach/attach.

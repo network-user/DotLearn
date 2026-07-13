@@ -1,0 +1,87 @@
+---
+id: 3453
+title: "Prototype inheritance in JavaScript for AQA"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Prototype inheritance in JavaScript for AQA
+
+## In short
+
+JS objects delegate property lookup along the `[[Prototype]]` chain. A constructor function defines shared methods on `Constructor.prototype`. Inheritance is built with `Object.create` or `class extends`, but underneath it is the same linkage. In tests this affects monkey patches and spies on prototype methods.
+
+## How to answer in an interview
+
+- Lookup: own property, then prototype, until `null`.
+- `Dog.prototype = Object.create(Animal.prototype)` links the chain without calling Animal’s constructor.
+- `class UiPage extends BasePage` is syntactic sugar over prototype linkage.
+- A spy on `BasePage.prototype.click` intercepts all instances, not one object.
+- Honestly: patching `Array.prototype` in a helper leaks to every test in the process.
+
+## How it works
+
+Constructors and the chain:
+
+```
+function Animal(name) {
+    this.name = name;
+}
+Animal.prototype.describe = function () {
+    return this.name;
+};
+
+function Runner(name, pace) {
+    Animal.call(this, name);
+    this.pace = pace;
+}
+Runner.prototype = Object.create(Animal.prototype);
+Runner.prototype.constructor = Runner;
+Runner.prototype.describe = function () {
+    return `${this.name}@${this.pace}`;
+};
+```
+
+ES class equivalent for a page-object layer:
+
+```
+class BasePage {
+    constructor(root) { this.root = root; }
+    title() { return this.root.locator("h1"); }
+}
+class LoginPage extends BasePage {
+    submit() { return this.root.getByRole("button", { name: "Sign in" }); }
+}
+```
+
+In pytest I verify subclass extends without erasing the base:
+
+```python
+class BasePage:
+    def actions(self):
+        return ["open"]
+
+
+class LoginPage(BasePage):
+    def actions(self):
+        return super().actions() + ["submit"]
+
+
+def test_inheritance_extends_base_actions():
+    assert LoginPage().actions() == ["open", "submit"]
+```
+
+## Pitfalls
+
+**Direct prototype assignment.** `Runner.prototype = {}` breaks the link to Animal.
+
+**Method on instance vs prototype.** Spies attach to the wrong place; the patch never runs.
+
+**hasOwnProperty in asserts.** Inherited fields are not own; tests confuse the source.
+
+**Object.create(null).** No `Object.prototype`; generic serializers break.
+
+**Mixin Object.assign on prototype.** Method name collisions between mixins.

@@ -1,0 +1,62 @@
+---
+id: 1616
+title: "How certificate exchange works in HTTPS"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How certificate exchange works in HTTPS
+
+## In short
+
+During the TLS handshake the server sends an X.509 certificate chain: the leaf with the public key and intermediates up to a trusted root. The client verifies the signature, validity, revocation, and hostname match, then negotiates a symmetric session key. After Finished, all HTTP traffic is encrypted with that key.
+
+## How to answer in an interview
+
+- ClientHello with TLS version and cipher suites, ServerHello + Certificate + ServerKeyExchange.
+- The client validates the chain against the OS trust store or a custom pool.
+- mTLS: the server requests a client certificate via CertificateRequest.
+- In Go I configure `tls.Config` with `RootCAs`, `Certificates`, `MinVersion`.
+- Honestly: termination on a load balancer hides handshake details from the application.
+
+## How it works
+
+```go
+pool, _ := x509.SystemCertPool()
+cfg := &tls.Config{
+	RootCAs:            pool,
+	MinVersion:         tls.VersionTLS12,
+	InsecureSkipVerify: false,
+}
+transport := &http.Transport{TLSClientConfig: cfg}
+client := &http.Client{Transport: transport}
+
+resp, err := client.Get("https://api.example.com/health")
+```
+
+Sequence: DNS resolves the host (visible to observers), TCP connect, TLS ClientHello with SNI. The server returns the certificate; the client builds a chain of trust. Key exchange (ECDHE) yields a shared secret, from which session keys are derived. Application data: encrypted HTTP headers and body.
+
+<figure aria-label="TLS handshake · certificate · session key">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 48" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="12" width="72" height="24" rx="4"/><text x="40" y="28" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Client</text>
+  <rect x="244" y="12" width="72" height="24" rx="4"/><text x="280" y="28" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Server</text>
+  <path d="M76 20h168"/><path d="M244 32H76"/>
+  <text x="160" y="18" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Certificate chain</text>
+  <text x="160" y="38" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Session keys</text>
+</svg>
+</figure>
+
+## Pitfalls
+
+**Self-signed without pin in prod.** Any MITM can substitute a cert if `InsecureSkipVerify: true`.
+
+**Expired or wrong SAN.** A cert for `*.example.com` will not cover an internal hostname.
+
+**Incomplete chain on the server.** Clients without the intermediate CA fail with unknown authority.
+
+**TLS 1.0/1.1 enabled.** Vulnerabilities and rejection by browsers.
+
+**SNI visible externally.** The virtual host name leaks before application data is encrypted.

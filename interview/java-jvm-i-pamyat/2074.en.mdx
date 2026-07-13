@@ -1,0 +1,72 @@
+---
+id: 2074
+title: "JVM memory regions beyond the heap"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JVM memory regions beyond the heap
+
+## In short
+
+The JVM splits native and managed memory: heap for objects, stack frames per thread, metaspace for class metadata, code cache for JIT native code, TLAB as a thread-local bump allocator inside Eden. Direct buffers and JNI live in native memory outside the heap. Tuning and OOM diagnosis require knowing which region is exhausted.
+
+## How to answer in an interview
+
+- Heap: young (Eden+S0+S1) + old generation; all `new` objects (except stack scalar refs).
+- Stack: local variables, operand stack, frame metadata; `-Xss` per thread.
+- Metaspace: class definitions, method metadata; `-XX:MaxMetaspaceSize`.
+- Code cache: C1/C2 compiled methods; `-XX:ReservedCodeCacheSize`.
+- Honestly: "Java memory = heap" is a simplification; direct ByteBuffer OOM happens with a full-looking heap.
+
+## How it works
+
+```java
+public final class MemoryLayoutDemo {
+
+    private static long counter;
+
+    public static void main(String[] args) {
+        var buffer = java.nio.ByteBuffer.allocateDirect(64 * 1024);
+        process(new OrderId("ORD-42"));
+        counter++;
+    }
+
+    private static void process(OrderId id) {
+        var label = id.value();
+        System.out.println(label);
+    }
+
+    record OrderId(String value) {}
+}
+```
+
+Placement:
+
+| What | Where |
+|------|-------|
+| `OrderId` instance | Eden heap |
+| `label` reference | stack frame `process` |
+| `OrderId` class metadata | metaspace |
+| Hot `process` native code | code cache |
+| `allocateDirect` block | native (tracked separately) |
+| `counter` static field | heap (class mirror in metaspace) |
+
+TLAB: thread allocates in its Eden slice without global lock; refill on exhaustion.
+
+Flags snapshot:
+
+```
+-Xms512m -Xmx512m -Xss1m -XX:MaxMetaspaceSize=256m
+```
+
+## Pitfalls
+
+- **Metaspace OOM on hot reload.** DevTools/classloader leak fills metaspace while heap looks fine.
+- **Thousands of threads × 1MB stack.** Native OOM with modest heap.
+- **Code cache full.** Deoptimization storm, sudden perf cliff.
+- **Compressed Oops off.** Heap >32GB on 64-bit doubles reference size.
+- **NMT blind spot.** Without `-XX:NativeMemoryTracking=summary` native leaks are hard to see.

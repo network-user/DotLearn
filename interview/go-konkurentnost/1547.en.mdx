@@ -1,0 +1,78 @@
+---
+id: 1547
+title: "How do you avoid deadlock with goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you avoid deadlock with goroutines?
+
+## In short
+
+Deadlock in Go means every goroutine is blocked with no progress (channels, mutexes, WaitGroup misuse). Prevention: fixed lock ordering, bounded channels, context timeouts, never hold a lock while waiting on a channel, never double Lock.
+
+## How to answer in an interview
+
+- Lock ordering: always muA before muB on every code path.
+- Unbuffered channel handshake: two goroutines wait on each other and deadlock.
+- WaitGroup: Add before go, Done in defer, do not Wait inside a worker without an exit path.
+- Honestly: the runtime does not catch all deadlocks until a fatal error; go-deadlock helps in dev.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+)
+
+var muA, muB sync.Mutex
+
+func ordered() {
+	muA.Lock()
+	defer muA.Unlock()
+	muB.Lock()
+	defer muB.Unlock()
+}
+
+func withTimeout(ch <-chan struct{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func main() {
+	ordered()
+	ch := make(chan struct{})
+	go func() {
+		close(ch)
+	}()
+	fmt.Println(withTimeout(ch))
+}
+```
+
+Same mutex order everywhere; select with timeout avoids waiting forever on a channel.
+
+## Pitfalls
+
+**Circular wait on channels.** g1 waits on ch1, g2 on ch2, each sender blocked on the other channel.
+
+**Lock while sending unbuffered.** Holding mu and sending unbuffered needs a receiver that also wants mu.
+
+**Main exits early.** Unbuffered send from main without a receiver deadlocks until fatal.
+
+**Nested mutex reverse order.** Classic AB/BA deadlock across packages.
+
+**WaitGroup counter mismatch.** Add without Done blocks Wait forever.

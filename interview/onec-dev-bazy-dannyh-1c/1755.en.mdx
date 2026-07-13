@@ -1,0 +1,77 @@
+---
+id: 1755
+title: "What the DBMS does in SQL when a 1C document is posted"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What the DBMS does in SQL when a 1C document is posted
+
+## In short
+
+Posting a document in 1C becomes a batch of SQL operations: writing the header and tabular sections, inserting register movements, updating service status fields. All of this runs in a transaction so the database returns to a consistent state on error.
+
+## How to answer in an interview
+
+- I describe posting as a chain: validation in the object module, building movements, writing to platform tables, committing the transaction.
+- In an interview I stress that accumulation and accounting registers live in separate platform-prefixed tables, not inside the document.
+- I mention that unposting generates reversing movements or deletes register rows by recorder, depending on the configuration design.
+- I am honest that extra queries in `ОбработкаПроведения` can double load when called per line without batching.
+- For incident investigation I read the technological log with SQL enabled and correlate timing with DBMS locks.
+
+## How it works
+
+When the user clicks Post, the platform runs document handlers. The manager and object modules build register movements. The write mechanism then maps them to INSERT and UPDATE against `_AccumReg*`, `_InfoReg*`, `_AccReg*`, and the document table.
+
+A typical data-level sequence:
+
+1. Update the `Проведен` attribute and service fields in the document table.
+2. Write register movements with the recorder field filled (reference to the document).
+3. Recalculate dependent totals when the configuration uses aggregates or deferred update.
+4. Write to the event log and service information registers when required.
+
+A fragment of application posting logic:
+
+```bsl
+Процедура ОбработкаПроведения(Отказ, РежимПроведения) Экспорт
+    Движения.ТоварыНаСкладах.Записывать = Истина;
+    Для Каждого СтрокаТовара Из Товары Цикл
+        Движение = Движения.ТоварыНаСкладах.Добавить();
+        Движение.ВидДвижения = ВидДвиженияНакопления.Расход;
+        Движение.Период = Дата;
+        Движение.Склад = СкладОтгрузки;
+        Движение.Номенклатура = СтрокаТовара.Номенклатура;
+        Движение.Количество = СтрокаТовара.Количество;
+    КонецЦикла;
+
+    Если РежимПроведения = РежимПроведенияДокумента.Оперативный Тогда
+        ЗапросОстатка = Новый Запрос;
+        ЗапросОстатка.Текст =
+        "ВЫБРАТЬ
+        |    Остатки.КоличествоОстаток КАК Остаток
+        |ИЗ
+        |    РегистрНакопления.ТоварыНаСкладах.Остатки(
+        |        &Момент,
+        |        Склад = &Склад
+        |        И Номенклатура = &Номенклатура) КАК Остатки";
+        ЗапросОстатка.УстановитьПараметр("Момент", МоментВремени());
+        ЗапросОстатка.УстановитьПараметр("Склад", СкладОтгрузки);
+        ЗапросОстатка.УстановитьПараметр("Номенклатура", СтрокаТовара.Номенклатура);
+    КонецЕсли;
+КонецПроцедуры
+```
+
+On the DBMS side the virtual table `Остатки` becomes an aggregating subquery over the movement table. Each tabular row adds at least one insert into the register. With operational posting, balance control runs in the same session, so competing documents queue on locks for the same dimensions.
+
+DBMS-level triggers are uncommon in pure 1C: business logic lives in BSL. Exceptions are maintenance jobs and external ETL that must not duplicate document movements.
+
+## Pitfalls
+
+- **Posting in a loop over references.** A batch of hundreds of documents opens hundreds of transactions and multiplies locks; prefer grouped manager methods.
+- **Queries inside the tabular row loop.** N+1 calls to virtual balance tables sharply increase posting time.
+- **Reposting without unposting.** Reposting without correct reversal duplicates movements and drifts balances.
+- **Wrong point in time.** Shifting `Период` or `МоментВремени` changes movement order and breaks operational control.
+- **Long event subscription handlers.** Handlers on register write events run in the same transaction and can roll back posting because of an unrelated error.

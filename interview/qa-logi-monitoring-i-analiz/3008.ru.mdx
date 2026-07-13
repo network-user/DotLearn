@@ -1,0 +1,53 @@
+---
+id: 3008
+title: "Поиск запроса в логах: grep, Kibana и correlation id"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Поиск запроса в логах: grep, Kibana и correlation id
+
+## Суть
+
+На одном сервере ищешь через grep/tail/journalctl по request id, path или userId. В distributed stack фильтруешь centralized index (Kibana, Loki) по trace_id. Без unique id комбинируешь narrow time window + endpoint + status code.
+
+## Что ответить на собесе
+
+- `grep -n "trace_id=abc" /var/log/app/*.log` на VM.
+- `kubectl logs pod -f | grep abc` в k8s.
+- Kibana: `http.path:"/api/pay" AND correlation_id:"abc"`.
+- Сохраняю query как saved search для regression incidents.
+- Честно: grep по «error» alone даёт thousands; всегда сужаю окно времени.
+
+## Как это работает
+
+```gherkin
+Feature: Найти один HTTP request
+
+  Scenario: По correlation id из браузера
+    Given DevTools response header X-Request-Id rid-55
+    When Kibana query correlation_id:rid-55 last 15m
+    Then single chain of log lines across services
+
+  Scenario: Grep на staging VM
+    When ssh staging grep rid-55 /var/log/nginx/access.log
+    Then upstream status and latency visible
+
+  Scenario: Fallback narrow window
+    Given no correlation id
+    When filter POST /checkout status 500 user_id hash between 14:02-14:04
+    Then candidate lines under 20 hits
+```
+
+PowerShell: `Select-String -Pattern "rid-55"`. `tail -f` для live repro во время manual test.
+
+## Подводные камни
+
+- **Log rotation.** File archived, grep empty on current only.
+- **Multiple pods.** Must search all replicas or use aggregator.
+- **Case sensitive grep.** Miss Correlation-ID variant.
+- **Regex catastrophic on huge file.** Slow incident response.
+- **Timezone mismatch in filter.** Empty Kibana results.

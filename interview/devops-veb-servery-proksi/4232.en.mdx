@@ -1,0 +1,66 @@
+---
+id: 4232
+title: "What limits can you configure in Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What limits can you configure in Nginx?
+
+## In short
+
+Nginx throttles load via `limit_req` (request rate), `limit_conn` (concurrent connections), `limit_rate` (client response speed), `client_max_body_size`, timeouts (`client_body_timeout`, `proxy_read_timeout`), `worker_connections`, and queues. Zones (`limit_req_zone`, `limit_conn_zone`) store counters in shared memory keyed by $binary_remote_addr, JWT, or API keys.
+
+## How to answer in an interview
+
+- `limit_req_zone` plus `limit_req burst=` for API rate limits and brute-force protection.
+- `limit_conn` mitigates slowloris and parallel upload spikes from one IP.
+- `limit_rate` after the first bytes enforces fair bandwidth on large downloads.
+- `client_max_body_size` rejects oversized uploads before proxying to the app.
+- Honestly: IP limits fail behind carrier-grade NAT; for APIs I key zones on headers or JWT claims.
+
+## How it works
+
+```nginx
+limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+limit_conn_zone $binary_remote_addr zone=addr:10m;
+
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+
+    client_max_body_size 2m;
+
+    location /auth/login {
+        limit_req zone=login burst=3 nodelay;
+        limit_conn addr 20;
+        proxy_pass http://auth_backend;
+    }
+
+    location /export/ {
+        limit_rate 500k;
+        proxy_pass http://files_backend;
+    }
+}
+```
+
+Rate limit test:
+
+```bash
+for i in $(seq 1 8); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.example.com/auth/login
+done
+```
+
+Expect 503/429 after exceeding burst.
+
+## Pitfalls
+
+- **Zone outside http context.** `limit_req_zone` belongs in `http {}`; include order can break startup.
+- **nodelay vs burst.** Without `nodelay` requests queue and inflate latency instead of fast 503s.
+- **Proxy behind CDN.** `$binary_remote_addr` is the CDN IP, not the client; use `X-Forwarded-For` only from trusted proxies.
+- **limit_rate for whole response.** Slow readers hold workers; pair with `send_timeout`.
+- **False security.** Rate limits do not replace WAF and auth; they are one defense-in-depth layer.

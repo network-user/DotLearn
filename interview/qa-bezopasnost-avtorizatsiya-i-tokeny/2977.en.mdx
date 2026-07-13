@@ -1,0 +1,69 @@
+---
+id: 2977
+title: "JWT claims: what should QA allow in the payload?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JWT claims: what should QA allow in the payload?
+
+## In short
+
+JWT payload holds claims: `sub` (identifier), `roles`/`scope`, `exp`/`iat`, sometimes `aud` and `iss`. Data is not encrypted, only signed. QA checks the app does not trust dangerous client-side claims and that extra PII does not enter tokens copied into logs.
+
+## How to answer in an interview
+
+- Minimum in access: `sub`, `exp`, scopes; roles better as a short list or server-side policy reference.
+- Forbidden: password, card number, full email in clear if UI does not need it.
+- Standard reserved fields (`exp`, `nbf`) must be validated strictly on the server.
+- Honestly: if JWT has 50 claims and 4KB, I watch latency and 413 on gateway, not only security.
+
+## How it works
+
+Lean payload example:
+
+```json
+{
+  "sub": "usr_9k2",
+  "scope": "orders:read profile:read",
+  "iat": 1710000000,
+  "exp": 1710003600,
+  "aud": "api.example.com"
+}
+```
+
+Gherkin:
+
+```gherkin
+Feature: JWT claim content
+
+  Scenario: API rejects token without required aud
+    Given JWT without aud claim
+    When GET /api/v1/orders
+    Then status is 401 invalid_audience
+
+  Scenario: Escalation via forged role claim
+    Given viewer token
+    When QA locally changes role to admin in payload
+    And sends request without valid signature
+    Then status is 401
+
+  Scenario: UI does not show sensitive claims
+    Given JWT contains tax_id in payload
+    When user opens /account/debug
+    Then tax_id is not in the DOM
+    And it does not appear in analytics events
+```
+
+I compare auth service docs with actual decode on staging login.
+
+## Pitfalls
+
+- **Trusting client-only claim.** SPA reads `isAdmin` from JWT without server check.
+- **PII in APM logs.** Trace includes Authorization decode.
+- **Overlong exp.** "Forever" session on leak.
+- **Custom claim without namespace.** `role` vs `roles` collisions.
+- **Unicode in name claim.** Breaks display, not security, but regression.

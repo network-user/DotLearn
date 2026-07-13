@@ -1,0 +1,74 @@
+---
+id: 2473
+title: "OAuth 2.0 с точки зрения фронтенда"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# OAuth 2.0 с точки зрения фронтенда
+
+## Суть
+
+OAuth 2.0 делегирует доступ к ресурсам без передачи пароля пользователя клиенту. Роли: resource owner, client, authorization server, resource server. SPA используют Authorization Code + PKCE, не implicit flow.
+
+## Что ответить на собесе
+
+- Redirect user на authorize URL с `code_challenge` (S256) и `state` anti-CSRF.
+- Exchange code на token только с backend или PKCE public client без secret.
+- Scopes минимальные; refresh rotation если provider поддерживает.
+- Честно: OAuth это authorization, не authentication; OpenID Connect добавляет id_token.
+- Никогда не кладу client_secret в browser bundle.
+
+## Как это работает
+
+```ts
+function buildAuthorizeUrl(config: {
+  clientId: string;
+  redirectUri: string;
+  scope: string;
+  state: string;
+  codeChallenge: string;
+}) {
+  const q = new URLSearchParams({
+    response_type: 'code',
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    scope: config.scope,
+    state: config.state,
+    code_challenge: config.codeChallenge,
+    code_challenge_method: 'S256',
+  });
+  return `https://auth.example/authorize?${q}`;
+}
+
+async function exchangeCode(code: string, verifier: string) {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: 'https://app.example/callback',
+    client_id: 'spa-client',
+    code_verifier: verifier,
+  });
+  const res = await fetch('https://auth.example/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  return res.json();
+}
+```
+
+Flow: redirect → user consent → callback `?code=&state=` → validate state → POST token endpoint → access (+ refresh). Resource API calls с Bearer access token.
+
+PKCE заменяет client_secret для public clients (SPA, mobile). `state` bind'ит callback к исходной tab/session.
+
+## Подводные камни
+
+- **Implicit/hybrid legacy.** Access token в URL fragment утекает через Referer/history.
+- **Open redirect on redirect_uri.** Must exact-match registered URIs.
+- **CSRF on callback.** Missing `state` allows login CSRF.
+- **Third-party cookie blocking.** Silent refresh iframe ломается в Safari; use BFF.
+- **Scope creep.** UI просит `email profile admin` «на будущее».

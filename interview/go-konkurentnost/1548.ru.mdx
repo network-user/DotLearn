@@ -1,0 +1,74 @@
+---
+id: 1548
+title: "Канал или closure: что передать в goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Канал или closure: что передать в goroutine?
+
+## Суть
+
+Аргументы функции и захват по значению в closure безопасны для read-only snapshot на старт goroutine. Shared mutable variable требует sync. Каналы дают typed handoff и backpressure; для pipeline и ownership transfer предпочитаю channels, для fan-out с immutable input достаточно параметров.
+
+## Что ответить на собесе
+
+- Передаю данные как параметры `go worker(job Job)`, не читаю mutating global.
+- Closure захватывает переменные по reference; loop index передаю аргументом.
+- Channels для stream, cancel, load balancing между stages.
+- Честно: «channels vs shared mem» не binary; hybrid (chan commands + local state) типичен.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type Task struct {
+	ID   int
+	Payload string
+}
+
+func runTask(t Task, out chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	out <- fmt.Sprintf("done %d: %s", t.ID, t.Payload)
+}
+
+func main() {
+	results := make(chan string, 4)
+	var wg sync.WaitGroup
+	tasks := []Task{{1, "a"}, {2, "b"}}
+	for _, t := range tasks {
+		wg.Add(1)
+		go runTask(t, results, &wg)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	for msg := range results {
+		fmt.Println(msg)
+	}
+}
+```
+
+Каждая goroutine получает копию Task; results chan собирает output без shared map.
+
+## Подводные камни
+
+**Pointer to loop variable.** `go func(){ use(&t) }()` до Go 1.22 ловушка; передаю t by value.
+
+**Shared slice append.** Parallel append одного slice race; один writer или mutex.
+
+**Unbuffered result chan без consumer.** Workers block, WaitGroup never completes.
+
+**Closure over err variable.** В errgroup loop reuse err без `:=` затирает ошибку.
+
+**Over-channel small data.** Million int через chan дороже atomic counter; выбираю по профилю.

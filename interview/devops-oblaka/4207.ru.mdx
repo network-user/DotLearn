@@ -1,0 +1,57 @@
+---
+id: 4207
+title: "IAM role и IAM policy: что к чему?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# IAM role и IAM policy: что к чему?
+
+## Суть
+
+IAM policy это JSON-документ Allow/Deny на actions и resources. IAM role это identity, которую может принять principal (EC2, Lambda, user) и получить temporary credentials через STS. Policies attach к role, user или group.
+
+## Что ответить на собесе
+
+- Role = trust policy (кто может AssumeRole) + permission policies (что можно делать).
+- Instance profile оборачивает role для EC2; kube2iam/IRSA для pods.
+- Managed vs inline policies: reuse AWS managed, кастом least privilege inline.
+- Честно: role без boundary policy может эскалировать через PassRole; ограничиваю PassRole и использую permission boundaries на CI roles.
+
+## Как это работает
+
+Trust + attach managed policy:
+
+```bash
+aws iam create-role --role-name EKSNodeRole \
+  --assume-role-policy-document '{
+    "Version":"2012-10-17",
+    "Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]
+  }'
+
+aws iam attach-role-policy --role-name EKSNodeRole \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+```
+
+Pod через IRSA:
+
+```bash
+aws iam create-role --role-name payments-sa \
+  --assume-role-policy-document file://trust-oidc.json
+
+aws iam put-role-policy --role-name payments-sa --policy-name s3-read \
+  --policy-document file://allow-s3-read.json
+```
+
+`aws sts assume-role` выдаёт AccessKeyId/Secret/Token на 15 мин до 12h. CloudTrail логирует AssumeRole и API calls role session.
+
+## Подводные камни
+
+- **`*` на Resource.** Overprivileged policy проходит review «на потом».
+- **Trust policy Principal `*`.** Cross-account assume без ExternalId.
+- **Role chaining лимит 1h.** Длинный pipeline может истечь mid-job.
+- **Instance profile не обновился.** Новая policy не видна без recycle EC2 metadata (обычно быстро, но не мгновенно).
+- **Confuse user policy vs role.** Human user не должен ходить в prod через long-lived keys вместо SSO role.

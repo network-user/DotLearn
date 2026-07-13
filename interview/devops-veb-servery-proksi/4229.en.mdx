@@ -1,0 +1,70 @@
+---
+id: 4229
+title: "When do you pick Nginx vs HAProxy?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When do you pick Nginx vs HAProxy?
+
+## In short
+
+Nginx is a full edge stack: static, TLS, reverse proxy, cache, WAF modules. HAProxy is a specialized L4/L7 load balancer with advanced health checks, ACLs, and observability for high-throughput TCP/HTTP. Teams often pair them: Nginx at the edge for static/TLS, HAProxy behind for backend pools. Choose by protocol needs, static serving, and L7 routing depth.
+
+## How to answer in an interview
+
+- Nginx when I need a static origin, SPA hosting, rate limits, simple `proxy_pass`, or an ingress controller.
+- HAProxy when TCP passthrough, advanced failover, stick tables, and detailed backend stats matter.
+- HAProxy health checks are richer out of the box; in nginx I rely on `max_fails` or external health.
+- Both terminate TLS; for mTLS and L7 ACLs HAProxy is more flexible in enterprise setups.
+- Honestly: one nginx ingress is often enough until tens of kRPS; I add HAProxy when LB metrics/failover hurt.
+
+## How it works
+
+Nginx upstream:
+
+```nginx
+upstream app_pool {
+    least_conn;
+    server 10.0.2.10:8080 max_fails=3 fail_timeout=15s;
+    server 10.0.2.11:8080 max_fails=3 fail_timeout=15s;
+}
+
+server {
+    listen 443 ssl;
+    location / {
+        proxy_pass http://app_pool;
+    }
+}
+```
+
+HAProxy equivalent:
+
+```haproxy
+frontend web_in
+    bind *:443 ssl crt /etc/haproxy/certs/web.pem
+    default_backend app_pool
+
+backend app_pool
+    balance leastconn
+    option httpchk GET /healthz
+    server app_a 10.0.2.10:8080 check inter 3s fall 3 rise 2
+    server app_b 10.0.2.11:8080 check inter 3s fall 3 rise 2
+```
+
+Inspect HAProxy stats:
+
+```bash
+echo "show stat" | sudo socat stdio /run/haproxy/admin.sock | head
+```
+
+## Pitfalls
+
+- **Two LBs in series without reason.** Extra hop latency; document why each layer exists.
+- **Timeout chain mismatch.** nginx client timeout vs HAProxy server timeout causes 502 on long poll.
+- **Sticky semantics.** nginx cookie hash vs HAProxy stick tables do not port cleanly on migration.
+- **HAProxy TCP mode.** HTTP logs and headers vanish; debugging is harder.
+- **Config reload.** HAProxy graceful drain excels at zero-downtime backend swaps; nginx reload works but verify worker state.

@@ -1,0 +1,68 @@
+---
+id: 2965
+title: "Резолв домена: где QA ловит кэш и stale DNS?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Резолв домена: где QA ловит кэш и stale DNS?
+
+## Суть
+
+Преобразование имени в IP идёт слоями: кэш браузера, кэш ОС, рекурсивный резолвер провайдера, затем authoritative серверы зоны. Каждый уровень уважает TTL из ответа. После смены IP или cutover QA часто видит старое поведение не из-за приложения, а из-за неистёкшего кэша на одном из слоёв.
+
+## Что ответить на собесе
+
+- Первый шаг при «после деплоя не открывается»: инкогнито, `ipconfig /flushdns` или `sudo dscacheutil -flushcache`, другой резолвер (1.1.1.1).
+- Рекурсивный резолвер кэширует даже при низком TTL у authoritative; жду 2×TTL или принудительно сбрасываю.
+- CNAME на CDN добавляет ещё один кэш у edge; меняю origin, пользователи ещё на старом POP.
+- Честно: если баг только у одного тестера, начинаю с его DNS, а не с rollback релиза.
+
+## Как это работает
+
+Порядок lookup для `shop.example.com`:
+
+1. Browser DNS cache (Chrome `chrome://net-internals/#dns`)
+2. OS resolver (Windows `Get-DnsClientCache`)
+3. Recursive resolver ISP / corporate
+4. Root → `.com` TLD → NS `example.com` → A record
+
+Gherkin после миграции:
+
+```gherkin
+Feature: Резолв после смены A-записи
+
+  Given старая A 203.0.113.10
+  And новая A 198.51.100.20
+  And TTL 300 секунд
+
+  Scenario: Пользователь с пустым кэшем попадает на новый IP
+    When QA открывает shop.example.com в новом профиле браузера
+    Then TCP соединение к 198.51.100.20
+    And сертификат валиден
+
+  Scenario: Stale cache отдаёт старый IP до истечения TTL
+    Given кэш ОС содержит 203.0.113.10
+    And прошло 120 секунд после смены
+    When QA открывает shop.example.com без flush
+    Then соединение всё ещё к 203.0.113.10
+    And это ожидаемое поведение, не дефект приложения
+
+  Scenario: NXDOMAIN после удаления записи
+    When QA запрашивает deleted.shop.example.com
+    Then ответ SERVFAIL или NXDOMAIN
+    And UI показывает сетевую ошибку без white screen
+```
+
+Для автотестов фиксирую `/etc/hosts` или dnsmasq на CI runner, чтобы не зависеть от публичного TTL.
+
+## Подводные камни
+
+- **Negative caching.** NXDOMAIN живёт в кэше, новая запись «не появляется» час.
+- **Split DNS.** VPN вкл/выкл меняет ответ резолвера.
+- **Hosts file приоритетнее.** Локальная правка маскирует прод баг.
+- **DoH в браузере, системный dig другой.** Споры в команде без общего инструмента.
+- **Нулевой TTL всё равно кэшируется.** Некоторые резолверы минимум 30s.

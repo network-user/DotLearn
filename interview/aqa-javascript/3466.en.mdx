@@ -1,0 +1,90 @@
+---
+id: 3466
+title: "Promise.resolve/reject and throw inside async"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Promise.resolve/reject and throw inside async
+
+## In short
+
+Any `async` function wraps its return value in a Promise. `return Promise.resolve(x)` and `return x` both yield a fulfilled Promise with the same value. `return Promise.reject(err)` and `throw err` both yield a rejected Promise. The difference is stack and syntax: `throw` fits try/catch; explicit `reject` helps when forwarding an existing Promise chain.
+
+## How to answer in an interview
+
+- In an API client wrapper I map HTTP 4xx to `throw new ApiError(...)`, and the test expects a rejected Promise.
+- I use `Promise.reject` when the chain is already rejected and I want to avoid an extra try block.
+- In tests: `await expect(fn()).rejects.toThrow("timeout")`.
+- A sync throw before the first await still surfaces as rejection to Jest.
+- Honestly: double wrap `return Promise.resolve(await p)` is redundant; `return p` is enough.
+
+## How it works
+
+Success:
+
+```
+async function loadConfig() {
+  return Promise.resolve({ retries: 3 });
+}
+```
+
+Explicit reject:
+
+```
+async function fetchStale() {
+  return Promise.reject(new Error("cache miss"));
+}
+```
+
+Throw:
+
+```
+async function fetchStrict(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+```
+
+Model in pytest:
+
+```python
+import pytest
+
+
+async def resolve_value() -> int:
+    return 42
+
+
+async def reject_explicit() -> int:
+    raise RuntimeError("explicit")
+
+
+async def reject_via_throw() -> int:
+    raise ValueError("thrown")
+
+
+@pytest.mark.asyncio
+async def test_async_rejection_paths():
+    assert await resolve_value() == 42
+    with pytest.raises(RuntimeError):
+        await reject_explicit()
+    with pytest.raises(ValueError):
+        await reject_via_throw()
+```
+
+## Pitfalls
+
+**return without await on reject.** `return failingPromise` matches `throw`, but a non-async test may forget await.
+
+**try/catch after return reject.** Unreachable code; linters stay quiet.
+
+**Non-Error reject reason.** A string in `.catch` lacks stack, hard to debug in CI.
+
+**throw inside .then within async.** Different microtask ordering makes asserts flaky.
+
+**Promise.reject in a sync function.** Not async; the test must return the Promise, not await throw.

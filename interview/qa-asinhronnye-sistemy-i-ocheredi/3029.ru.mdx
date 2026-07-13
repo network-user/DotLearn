@@ -1,0 +1,56 @@
+---
+id: 3029
+title: "Как QA тестирует retry и повторную доставку сообщений?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как QA тестирует retry и повторную доставку сообщений?
+
+## Суть
+
+Retry это повторная попытка после временного сбоя: HTTP 503, timeout consumer, nack с requeue. QA моделирует отказ, считает число попыток, интервалы backoff и финальный исход: успех, DLQ или alert. Критично убедиться, что retry не создаёт дубликат side effect и не превышает лимит.
+
+## Что ответить на собесе
+
+- Задаю maxAttempts=3, exponential backoff 1s 2s 4s в конфиге и проверяю логи.
+- Симулирую 503 на mock downstream первые два раза, третий 200.
+- Для очереди: nack requeue=true, считаю delivery_count header в RabbitMQ.
+- После исчерпания retry сообщение в DLQ, алерт в PagerDuty.
+- Честно: бесконечный retry на poison message блокирует всю обработку.
+
+## Как это работает
+
+```gherkin
+Feature: Retry and redelivery testing
+
+  Scenario: HTTP client retry on 503
+    Given downstream returns 503 twice then 200
+    When worker calls invoice API
+    Then three attempts logged
+    And single invoice row created
+
+  Scenario: Exponential backoff timing
+    Given backoff base 1 second factor 2
+    When attempt 1 fails at T0
+    Then attempt 2 not before T0 plus 1 second
+    And attempt 3 not before T0 plus 3 seconds total wait
+
+  Scenario: DLQ after max retries
+    Given max retries 5 poison payload
+    When all attempts throw parse error
+    Then message in dead letter queue ops alert fired
+```
+
+Chaos: iptables drop, toxiproxy latency, kill pod после receive до ack. Метрики `retry_total`, `dlq_depth`.
+
+## Подводные камни
+
+- **Retry без jitter.** Thundering herd при массовом сбое.
+- **Идемпотентность не проверена.** Три попытки, три списания.
+- **Тест только happy retry.** Не проверяю DLQ path.
+- **Clock на CI слишком быстрый.** Backoff не соблюдён в логах.
+- **Смешиваю producer retry и consumer retry.** Двойной умноженный эффект.

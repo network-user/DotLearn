@@ -1,0 +1,74 @@
+---
+id: 4209
+title: "RDS Single-AZ vs Multi-AZ: what is the difference?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# RDS Single-AZ vs Multi-AZ: what is the difference?
+
+## In short
+
+Single-AZ RDS lives in one availability zone: if that AZ fails, the database stays down until manual recovery. Multi-AZ keeps a synchronous standby copy in another AZ of the same region; when the primary fails, AWS switches the DNS endpoint to the standby without losing committed transactions.
+
+## How to answer in an interview
+
+- Single-AZ: dev/stage, non-critical services where RTO is measured in hours.
+- Multi-AZ: production where you need automatic failover in minutes and RPO ≈ 0.
+- The Multi-AZ standby is not for read traffic; read scaling uses separate Read Replicas.
+- Honestly: Multi-AZ costs nearly double for compute; for read-heavy workloads, Replica + Single-AZ beats Multi-AZ if you only wanted read scaling.
+
+## How it works
+
+Create Multi-AZ MySQL via CLI:
+
+```bash
+aws rds create-db-instance \
+  --db-instance-identifier app-db-prod \
+  --db-instance-class db.m7g.large \
+  --engine mysql \
+  --engine-version 8.0.36 \
+  --master-username dbadmin \
+  --master-user-password "$(openssl rand -base64 24)" \
+  --allocated-storage 100 \
+  --storage-type gp3 \
+  --multi-az \
+  --backup-retention-period 14
+```
+
+Enable Multi-AZ on an existing instance:
+
+```bash
+aws rds modify-db-instance \
+  --db-instance-identifier app-db-prod \
+  --multi-az \
+  --apply-immediately
+```
+
+During failover the endpoint `app-db-prod.xxxx.region.rds.amazonaws.com` does not change; the application reconnects to the same hostname. Replication is synchronous: a transaction commits only after the standby has it. Downtime is typically 60–120 seconds.
+
+<figure aria-label="Single-AZ vs Multi-AZ">
+<svg viewBox="0 0 320 80" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="10" y="20" width="60" height="40" rx="4"/>
+  <text x="40" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">AZ-a</text>
+  <rect x="130" y="20" width="60" height="40" rx="4"/>
+  <text x="160" y="38" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">AZ-a</text>
+  <text x="160" y="52" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">primary</text>
+  <rect x="250" y="20" width="60" height="40" rx="4"/>
+  <text x="280" y="38" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">AZ-b</text>
+  <text x="280" y="52" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">standby</text>
+  <text x="40" y="72" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Single</text>
+  <text x="205" y="72" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Multi-AZ sync</text>
+</svg>
+</figure>
+
+## Pitfalls
+
+- **Confusing Multi-AZ with Read Replica.** The standby does not serve SELECT; read scale needs a separate replica.
+- **Failover without a connection pool strategy.** Pools with long-lived connections hang; you need retry and a short idle timeout.
+- **Maintenance window and failover.** A planned Multi-AZ reboot also switches AZ; bake that into your SLO.
+- **Cross-region DR.** Multi-AZ protects against AZ failure, not an entire region outage; use cross-region backup or replica for that.
+- **Storage cost.** Both instances pay for disks; gp3/io2 on Multi-AZ doubles the storage bill.

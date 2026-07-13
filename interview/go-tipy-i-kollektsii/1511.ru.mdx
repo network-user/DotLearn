@@ -1,0 +1,51 @@
+---
+id: 1511
+title: "Как runtime считает capacity slice?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как runtime считает capacity slice?
+
+## Суть
+
+`cap(s)` это максимум элементов от первого элемента slice до конца backing array. При срезе `arr[low:high]` capacity равна `len(arr) - low`, даже если `len(slice) = high - low` меньше. `append` увеличивает cap при реаллокации по правилам роста runtime.
+
+## Что ответить на собесе
+
+- Срез с offset уменьшает cap: `arr[2:4]` на массиве длины 5 даёт `len=2`, `cap=3`.
+- `make([]T, len, cap)` задаёт cap явно; при `append` в пределах cap реаллокации нет.
+- Удвоение cap при росте типично, но точная формула implementation-defined.
+- Честно говорю: оптимизирую hot path, предварительно задавая cap, если знаю верхнюю границу размера.
+
+## Как это работает
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	arr := [6]int{1, 2, 3, 4, 5, 6}
+	part := arr[2:4]
+
+	fmt.Println("len:", len(part)) // 2  (3,4)
+	fmt.Println("cap:", cap(part)) // 4  (3,4,5,6)
+
+	grown := append(part, 7, 8)
+	fmt.Println(grown, len(grown), cap(grown))
+}
+```
+
+До `append` `part` ссылается на `arr[2]` и может расшириться до `arr[5]` без нового массива. Когда `append` выходит за `cap`, выделяется новый массив с большим cap, указатель slice обновляется, старые subslices остаются на прежнем backing store.
+
+## Подводные камни
+
+- **Скрытая ёмкость после усечения.** Короткий `len` не означает маленький cap; `append` может писать в невидимый хвост.
+- **Реаллокация ломает алиасы.** После роста один slice может указывать на новый массив, sibling subslice на старый.
+- **make(len) без cap.** `cap` по умолчанию равен `len`; нельзя `append` без реаллокации сверх `len`, пока `len < cap`.
+- **copy и cap приёмника.** `copy` ограничен `min(len(dst), len(src))`, cap dst не расширяет.
+- **Огромный prealloc.** Слишком большой cap резервирует память, которую GC не отдаст, пока жив slice.

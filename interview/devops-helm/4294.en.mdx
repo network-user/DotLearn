@@ -1,0 +1,67 @@
+---
+id: 4294
+title: "Which template engine does Helm use?"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which template engine does Helm use?
+
+## In short
+
+Helm renders Kubernetes YAML with Go `text/template` plus Sprig helpers and Helm objects `.Values`, `.Release`, `.Chart`, `.Capabilities`. Files under `templates/` are not valid manifests until `helm template` or `install`: braces substitute values and produce final resources.
+
+## How to answer in an interview
+
+- Syntax `{{ .Values.replicaCount }}`, functions `default`, `nindent`, `include`.
+- `values.yaml` defaults, overrides via `-f` or `--set`.
+- `tpl` for nested rendering of strings from values.
+- `_helpers.tpl` holds named partials with `define`/`include`.
+- Honestly: template logic gets unreadable fast; I move complex bits to notes or external generators (Kustomize overlays).
+
+## How it works
+
+Deployment template fragment:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "checkout.fullname" . }}
+  labels:
+    {{- include "checkout.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 2 }}
+  template:
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+```
+
+Render without cluster install:
+
+```bash
+helm template checkout ./charts/checkout \
+  -f values-prod.yaml \
+  --set image.tag=2.4.1 \
+  --namespace prod > /tmp/rendered.yaml
+```
+
+Chart syntax checks:
+
+```bash
+helm lint ./charts/checkout
+helm template checkout ./charts/checkout --debug 2>&1 | less
+```
+
+## Pitfalls
+
+- **YAML indentation.** `{{-` eats newlines and breaks indentation; run `helm template` in CI.
+- **Type coercion.** `.Values.port` as string `"8080"` vs int 8080 breaks probes; use values schema (Helm 3).
+- **randAlpha each upgrade.** Random suffixes in names change immutable fields; prefer stable names.
+- **Capabilities drift.** `.Capabilities.KubeVersion` in old charts hides API version mismatch on new clusters.
+- **Secrets in templates.** Manifest secrets land in the helm release Secret; prefer SealedSecrets/ESO.

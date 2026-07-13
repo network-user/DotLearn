@@ -1,0 +1,43 @@
+---
+id: 4184
+title: "Why is symmetric encryption needed?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why is symmetric encryption needed?
+
+## In short
+
+One secret key encrypts and decrypts data. AES-GCM and ChaCha20-Poly1305 deliver speed and authenticated encryption for bulk traffic. Key distribution is solved via asymmetric wrap or pre-shared keys from a vault.
+
+## How to answer in an interview
+
+- I use it after TLS handshake, for disk encryption (LUKS), secrets at rest in etcd with KMS.
+- AES-256-GCM is standard; unique nonce/IV per message is mandatory.
+- Key rotation via envelope encryption: DEK per object, KEK in KMS.
+- I add honestly: symmetric without auth (AES-CBC alone) is padding-oracle prone; AEAD only.
+
+## How it works
+
+```bash
+KEY=$(openssl rand -hex 32)
+IV=$(openssl rand -hex 12)
+PLAINTEXT='backup chunk 42'
+
+echo -n "$PLAINTEXT" | openssl enc -aes-256-gcm -K "$KEY" -iv "$IV" -out payload.bin
+openssl enc -d -aes-256-gcm -K "$KEY" -iv "$IV" -in payload.bin
+```
+
+GCM provides confidentiality plus integrity tag. IV is 96-bit unique per encryption under the same key. KEK lives in Vault/KMS; DEK `$KEY` is asymmetric-wrapped beside the blob.
+
+## Pitfalls
+
+- **Nonce reuse.** Two messages with one IV under one key breaks GCM.
+- **Key in env var.** Process dump and `/proc` leak; prefer tmpfs + mode 0600 or KMS API.
+- **ECB mode.** Plaintext patterns visible; never in prod.
+- **Static PSK everywhere.** One service compromise decrypts all backups.
+- **No rotation plan.** Old backups unreadable after rotate without re-encrypt strategy.

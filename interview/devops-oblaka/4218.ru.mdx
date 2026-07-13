@@ -1,0 +1,62 @@
+---
+id: 4218
+title: "Как классифицируются типы EC2-инстансов?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как классифицируются типы EC2-инстансов?
+
+## Суть
+
+Семейства EC2 именуются по букве: T/M (general purpose), C (compute), R/X (memory), I/D (storage), P/G (GPU/ML), F (FPGA). Цифра поколения и суффикс (a, g для Graviton, n для network) задают поколение CPU и опции. Подбор идёт по профилю нагрузки: CPU-bound, RAM-bound, disk I/O или ускорители.
+
+## Что ответить на собесе
+
+- T3/T4g для burstable dev и low-traffic; следжу за CPU credits.
+- M7i/M7g сбалансированные web/app серверы; Graviton дешевле при совместимости ARM.
+- C7 для batch, transcode, компиляции; R7 для in-memory DB и кэшей.
+- I4 для NVMe local storage и высокого random I/O; P5 для GPU training/inference.
+- Честно: правильный размер находлю через benchmark + Compute Optimizer, не по таблице наизусть.
+
+## Как это работает
+
+Instance type задаёт vCPU, RAM, network bandwidth, EBS limits и иногда local NVMe. Spot и Reserved/Savings Plans меняют экономику, не характеристики.
+
+Запуск через CLI с явным типом:
+
+```bash
+aws ec2 run-instances \
+  --image-id ami-0c55b159cbfafe1f0 \
+  --instance-type m7g.large \
+  --key-name deploy-key \
+  --subnet-id subnet-private-app \
+  --security-group-ids sg-app-tier \
+  --iam-instance-profile Name=AppInstanceProfile \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=web-01}]'
+```
+
+CloudFormation фиксирует тип в IaC:
+
+```yaml
+Resources:
+  AppHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: m7g.large
+      ImageId: ami-0c55b159cbfafe1f0
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
+```
+
+## Подводные камни
+
+- **CPU credits на T.** Постоянная 100% загрузка на T3 без unlimited mode деградирует.
+- **ARM совместимость.** Graviton требует arm64 образов и бинарников; проверяю CI matrix.
+- **EBS vs instance store.** Local NVMe исчезает при stop/terminate; данные только ephemeral или с репликацией.
+- **Placement groups.** Cluster даёт low latency, но ограничивает AZ capacity при scale-out.
+- **Overprovisioning.** Слишком крупный инстанс блокирует capacity; right-sizing по метрикам CloudWatch.

@@ -1,0 +1,75 @@
+---
+id: 1544
+title: "Как остановить goroutine, если данных нет?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как остановить goroutine, если данных нет?
+
+## Суть
+
+В worker loop использую `select` между receive, `context.Done()` и опционально `time.After`. Внешнее условие (cancel, close done chan, deadline) прерывает ожидание, даже если data chan молчит. Без select goroutine зависнет на блокирующем receive.
+
+## Что ответить на собесе
+
+- Стандарт: `context.Context` для cancel и timeout; done chan как legacy pattern.
+- `select` с default не заменяет cancel; нужна явная ветка `<-ctx.Done()`.
+- После cancel выхожу из loop и освобождаю ресурсы (defer close, wg.Done).
+- Честно: `time.After` в hot loop аллоцирует timer; для частых tick лучше `time.NewTimer` с Reset.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func awaitPayload(ctx context.Context, inbox <-chan int) error {
+	for {
+		select {
+		case v, ok := <-inbox:
+			if !ok {
+				return nil
+			}
+			fmt.Println("got:", v)
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	inbox := make(chan int)
+	go func() {
+		time.Sleep(2 * time.Second)
+		inbox <- 7
+	}()
+	err := awaitPayload(ctx, inbox)
+	fmt.Println("exit:", err)
+}
+```
+
+Timeout через context завершит worker раньше, чем придёт 7. Production паттерн: parent cancel при shutdown сервера.
+
+## Подводные камни
+
+**Leak после return из select.** Goroutine sender может остаться blocked на send; нужен cancel sender или buffered chan.
+
+**Close data chan как cancel.** Закрытие data chan смешивает «нет данных» и «shutdown»; часто отдельный done.
+
+**Only time.After once per iteration.** Утечка timers при tight loop до Go 1.23 fixes; предпочитаю context deadline.
+
+**select без drain.** При cancel оставить pending value в chan → логическая потеря или повторная обработка позже.
+
+**Forget wg.Done on early exit.** Worker вышел по timeout, WaitGroup висит.

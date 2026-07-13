@@ -1,0 +1,71 @@
+---
+id: 1619
+title: "Связь HTTP, gRPC и Protobuf"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Связь HTTP, gRPC и Protobuf
+
+## Суть
+
+Protobuf задаёт контракт данных и сериализацию в компактный бинарный формат. gRPC использует его как IDL и payload, а HTTP/2 как транспорт: мультиплексирование потоков, сжатие заголовков, bidirectional streams. HTTP в классическом REST несёт JSON/XML в текстовом виде поверх HTTP/1.1 или HTTP/2 без единого codegen контракта.
+
+## Что ответить на собесе
+
+- Proto файл → `protoc` → stubs; wire format protobuf, framing gRPC, transport HTTP/2.
+- REST: ресурсы + verbs + статус коды; gRPC: методы сервиса + status codes в trailers.
+- HTTP/2 общий для браузерного HTTPS и для gRPC, но семантика слоя разная.
+- Для публичного API часто REST/JSON; внутри кластера gRPC за производительность и строгий контракт.
+- Честно: grpc-web и gateway добавляют прослойку, теряется часть преимуществ чистого gRPC.
+
+## Как это работает
+
+```protobuf
+syntax = "proto3";
+package orders.v1;
+
+service OrderService {
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+}
+
+message PlaceOrderRequest {
+  string item_id = 1;
+  int32 quantity = 2;
+}
+```
+
+Клиентский вызов:
+
+```go
+resp, err := client.PlaceOrder(ctx, &pb.PlaceOrderRequest{
+	ItemId: "sku-42", Quantity: 2,
+})
+```
+
+На проводе: HTTP/2 POST к `/orders.v1.OrderService/PlaceOrder`, заголовки `content-type: application/grpc`, тело: compressed protobuf frames. REST эквивалент был бы `POST /orders` с `{"item_id":"sku-42","quantity":2}` и ручной валидацией JSON schema.
+
+<figure aria-label="Protobuf · gRPC · HTTP/2">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 56" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="8" y="8" width="64" height="20" rx="3"/><text x="40" y="22" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">Protobuf</text>
+  <rect x="108" y="8" width="64" height="20" rx="3"/><text x="140" y="22" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">gRPC</text>
+  <rect x="208" y="8" width="64" height="20" rx="3"/><text x="240" y="22" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">HTTP/2</text>
+  <path d="M72 18h36M172 18h36"/>
+  <text x="140" y="48" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">TCP / TLS</text>
+</svg>
+</figure>
+
+## Подводные камни
+
+**Путать HTTP API с gRPC только из-за HTTP/2.** Инструменты мониторинга без gRPC awareness показывают нечитаемые пути.
+
+**JSON в proto через `google.protobuf.Struct`.** Теряется типизация, ради которой брали protobuf.
+
+**L7 LB без поддержки gRPC.** Нужен HTTP/2 end-to-end или proxy с gRPC routing.
+
+**Огромные shared proto repo.** Coupling версий всех сервисов при каждом breaking change.
+
+**Отсутствие versioning в package path.** `v1`/`v2` в import path обязателен для Go module hygiene.

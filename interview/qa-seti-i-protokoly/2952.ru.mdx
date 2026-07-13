@@ -1,0 +1,65 @@
+---
+id: 2952
+title: "Диагностика сети: ping, traceroute, dig и curl в арсенале QA"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Диагностика сети: ping, traceroute, dig и curl в арсенале QA
+
+## Суть
+
+Сетевые утилиты закрывают разные слои: ping (ICMP) проверяет reachability и RTT, traceroute показывает hops и задержки, dig/nslookup резолвят DNS, curl проверяет HTTP/HTTPS контракт. QA комбинирует их в минимальный triage до UI: сначала DNS, потом TCP/HTTP, потом маршрут.
+
+## Что ответить на собесе
+
+- ping: быстрый «хост жив»; может быть заблокирован firewall при живом HTTPS.
+- traceroute/tracert: где растёт latency; * на hop не всегда баг (ICMP rate limit).
+- dig +trace или nslookup: A/AAAA/CNAME, TTL, authoritative NS; ловлю stale DNS после деплоя.
+- curl -I/-v: статус, заголовки, TLS, редиректы; основной smoke API без браузера.
+- Честно: успешный ping не доказывает работу приложения на 443; всегда довожу до curl на нужный URL.
+
+## Как это работает
+
+Типовой порядок при «сайт не открывается»:
+
+```
+dig +short api.example.com A
+curl -sS -o /dev/null -w "%{http_code} %{time_connect}\n" https://api.example.com/health
+traceroute api.example.com
+ping -c 4 api.example.com
+```
+
+Gherkin чек-лист smoke окружения:
+
+```gherkin
+Feature: Сетевая диагностика стенда
+
+  Scenario: DNS резолвит production host
+    When QA выполняет dig A для "app.example.com"
+    Then возвращается непустой IP адрес
+    And TTL больше 0
+
+  Scenario: HTTP health доступен
+    When QA выполняет curl HEAD "https://app.example.com/health"
+    Then HTTP статус 200
+    And время connect меньше 2 секунд
+
+  Scenario: Маршрут без аномальной задержки на последних hop
+    When QA запускает traceroute к IP из DNS
+    Then последний hop отвечает
+    And суммарный RTT в пределах SLA стенда
+```
+
+В CI автотестах curl заменяет ручной ping; dig полезен при cutover DNS между blue/green.
+
+## Подводные камни
+
+- **ping OK, curl fail.** Блок ICMP, но 443 открыт (или наоборот).
+- **Кэш DNS на ноутбуке QA.** dig @8.8.8.8 vs системный resolver дают разные ответы.
+- **curl без -L.** 301 на https не следуется, ложный «down».
+- **traceroute из VPN.** Путь не совпадает с пользовательским ISP.
+- **Игнор IPv6.** AAAA битый, браузер уходит в v6 первым и таймаутит.

@@ -1,0 +1,60 @@
+---
+id: 1582
+title: "Is a G struct allocated per go statement"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Is a G struct allocated per go statement
+
+## In short
+
+The runtime allocates a G (descriptor plus stack) only when `go` actually runs. Dead code with `go` creates zero Gs. After exit, G returns to a pool and may be reused for the next `go`.
+
+## How to answer in an interview
+
+- `go fn()` on an unreachable branch: zero Gs.
+- Each successful spawn: a new or recycled G from a freelist.
+- The stack is separate from the OS thread stack.
+- Honestly: the «struct» is the runtime-internal G, not a user struct.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	if false {
+		go fmt.Println("never")
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fmt.Println("runs")
+	}()
+	wg.Wait()
+}
+```
+
+The second `go` creates a G and a scheduler entry. The first is unreachable. After Wait the G is recycled.
+
+## Pitfalls
+
+**Spawn in a loop without exit.** G count grows to millions.
+
+**Assuming 1 G = 1 MB.** Stacks start small.
+
+**Cgo thread is not a G struct.** Different accounting.
+
+**Race detector overhead.** Inflates G metadata in tests.
+
+**go on nil func value.** Panic at spawn; G may be partially allocated.

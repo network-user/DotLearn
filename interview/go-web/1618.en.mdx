@@ -1,0 +1,61 @@
+---
+id: 1618
+title: "Backward compatibility in gRPC and protobuf"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Backward compatibility in gRPC and protobuf
+
+## In short
+
+Protobuf is designed for schema evolution: fields are identified by number, not name, on the wire. Old code ignores unknown fields; new optional/repeated fields can be added without recompiling clients. New RPC methods in a service also do not break old consumers until they call them.
+
+## How to answer in an interview
+
+- I add fields with new numbers and never reuse a number.
+- Removal: `reserved` for numbers and names, or `deprecated = true`.
+- You cannot change a field type; use a new field `email_v2` instead.
+- I version the package as `api.v2` for incompatible shifts.
+- Honestly: required in proto2 and semantic changes without a version bump still break the contract.
+
+## How it works
+
+```protobuf
+syntax = "proto3";
+
+package catalog.v1;
+
+message Product {
+  int64 id = 1;
+  string title = 2;
+  string sku = 3;
+  string description = 4;
+  reserved 5;
+  reserved "legacy_code";
+}
+
+service CatalogService {
+  rpc GetProduct(GetProductRequest) returns (Product);
+  rpc ListProducts(ListProductsRequest) returns (stream Product);
+}
+```
+
+An old v1 client receives `description` and skips unknown wire fields. A new server responds to an old client without `description`: the field is simply absent in the decoded struct (zero value). Adding `ListProducts` does not affect clients that only call `GetProduct`.
+
+In CI I check breaking changes with `buf breaking` or similar against a git baseline.
+
+## Pitfalls
+
+**Reuse field number.** Silent data corruption: an old client reads bytes as another type.
+
+**Remove field without reserved.** A new field with the same number causes silent corruption.
+
+**Change `oneof` or `map` semantics.** Often breaking; needs a new message type.
+
+**JSON over gRPC gateway.** Proto compatibility does not save HTTP JSON clients from extra/missing keys.
+
+**Simultaneous deploy of all services.** In practice, rolling updates require strict additive-only discipline.

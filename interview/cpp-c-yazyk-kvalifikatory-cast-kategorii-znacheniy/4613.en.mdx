@@ -1,0 +1,65 @@
+---
+id: 4613
+title: "When should you use dynamic_cast?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When should you use dynamic_cast?
+
+## In short
+
+`dynamic_cast` performs a runtime-checked downcast or crosscast in a polymorphic hierarchy: pointers yield `nullptr` on failure, references throw. Use it when a base static type hides the real derived type and you need its API without UB.
+
+## How to answer in an interview
+
+- I use it when the object is seen as `Base*`/`Base&` but I need a `Derived`-only method.
+- I require at least one virtual function in the base (usually a virtual dtor).
+- For pointers I always check the result; for references I catch `std::bad_cast` or avoid casts in the API.
+- Better alternatives: visitor, `std::variant`, type tags, or double dispatch instead of RTTI in hot paths.
+- Honestly: frequent `dynamic_cast` is often a design smell; refactors toward `std::variant` or a virtual interface are preferable.
+
+## How it works
+
+RTTI stores dynamic type information. `dynamic_cast<Derived*>(base)` consults the vtable; on success it returns the correct address accounting for multiple inheritance.
+
+```cpp
+#include <iostream>
+#include <memory>
+
+struct Widget {
+    virtual ~Widget() = default;
+    virtual void describe() const { std::cout << "widget\n"; }
+};
+
+struct Knob : Widget {
+    void tune() const { std::cout << "tuned\n"; }
+};
+
+void maybe_tune(Widget* item) {
+    if (auto* knob = dynamic_cast<Knob*>(item)) {
+        knob->tune();
+    } else {
+        item->describe();
+    }
+}
+
+int main() {
+    auto knob = std::make_unique<Knob>();
+    maybe_tune(knob.get());
+    return 0;
+}
+```
+
+If `item` is not a `Knob`, the tune branch is skipped without UB. Cross-casts between siblings through a common virtual base are possible but costlier and rare.
+
+## Pitfalls
+
+- **Non-polymorphic base.** `dynamic_cast` does not apply; only risky `static_cast` remains.
+- **References without try/catch.** Failed casts on `Base&` throw, they do not yield `nullptr`.
+- **Performance.** RTTI lookup in tight loops; cache results or change design.
+- **Multiple inheritance.** The address after cast may differ from the original pointer.
+- **`-fno-rtti`.** Embedded/portable builds drop `dynamic_cast`; pick another pattern.

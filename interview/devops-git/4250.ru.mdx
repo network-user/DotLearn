@@ -1,0 +1,75 @@
+---
+id: 4250
+title: "Какой инструмент чаще берут для GitOps в Kubernetes?"
+category: devops-git
+categoryLabel: "Git"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какой инструмент чаще берут для GitOps в Kubernetes?
+
+## Суть
+
+Argo CD и Flux CD доминируют среди GitOps-контроллеров для Kubernetes. Argo CD даёт UI, multi-cluster и ApplicationSet; Flux нативно интегрирован с CNCF ecosystem и Helm/Kustomize controllers. Оба следят за Git и reconciliate cluster state.
+
+## Что ответить на собесе
+
+- Argo CD: Application CRD, sync policy, health checks, RBAC через SSO.
+- Flux: GitRepository + Kustomization/HelmRelease; часто в связке с Flagger для canary.
+- Выбор зависит от UI requirement, multi-tenancy и existing platform (OpenShift vs vanilla k8s).
+- Secrets через SOPS/External Secrets, не plain в Git, независимо от инструмента.
+- Честно: «самый популярный» зависит от опроса; в enterprise часто Argo CD, в platform teams Flux растёт.
+
+## Как это работает
+
+Минимальный Argo CD Application:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: storefront
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/org/k8s-manifests.git
+    targetRevision: main
+    path: apps/storefront
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: storefront
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+EOF
+
+argocd app get storefront
+argocd app sync storefront
+```
+
+Flux GitRepository + Kustomization:
+
+```bash
+flux create source git platform \
+  --url=https://github.com/org/k8s-manifests \
+  --branch=main
+
+flux create kustomization storefront \
+  --source=platform \
+  --path=./apps/storefront \
+  --prune=true \
+  --interval=1m
+```
+
+## Подводные камни
+
+- **Auto-sync in prod.** selfHeal откатывает ручной debug patch без warning.
+- **Helm chart drift.** Git pin chart version, а values override в UI Argo.
+- **CRD race.** Application sync до установки CRD operator; ordering через sync waves.
+- **Multi-cluster credentials.** Argo CD cluster secret rotation без downtime.
+- **Observability gap.** Sync OK, но pods CrashLoop; health checks и alerts обязательны.

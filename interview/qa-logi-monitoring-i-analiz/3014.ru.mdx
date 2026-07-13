@@ -1,0 +1,54 @@
+---
+id: 3014
+title: "Как QA читает логи на удалённом сервере через SSH?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как QA читает логи на удалённом сервере через SSH?
+
+## Суть
+
+Доступ к staging или test-серверу идёт по SSH с read-only учёткой. Для live-слежения использую `tail -f`, для расследования `less` или `grep` по окну времени бага. В docker/k8s сначала нахожу контейнер или pod, затем `docker logs` или `kubectl logs`.
+
+## Что ответить на собесе
+
+- Подключаюсь: `ssh qa-readonly@staging-host`, ключи без пароля по политике команды.
+- Live: `tail -f /var/log/app/app.log` или одной командой `ssh host 'tail -f ...'`.
+- Исторический поиск: `grep 'request-id-7' /var/log/app/*.log` с `--since` в docker.
+- Фиксирую timezone UTC и correlation id в тикете.
+- Честно: на prod часто нет shell-доступа; тогда только централизованный ELK/Loki.
+
+## Как это работает
+
+```gherkin
+Feature: Remote log access
+
+  Scenario: Follow app log during manual test
+    Given SSH session to staging as qa-readonly
+    When run tail -f /var/log/checkout/service.log
+    And reproduce POST /pay at 14:32 UTC
+    Then new ERROR line appears with trace checkout-91
+
+  Scenario: One-shot remote tail
+    When ssh staging 'tail -n 200 /var/log/nginx/access.log'
+    Then last lines include my test IP and 500 status
+
+  Scenario: Docker service on staging
+    Given container name api-checkout-1
+    When docker logs api-checkout-1 --since 10m | grep ERROR
+    Then output matches HAR timestamp window
+```
+
+`less +F` совмещает follow и паузу для копирования stack trace. `journalctl -u myapp -f` на systemd-хостах.
+
+## Подводные камни
+
+- **Локальное время SSH.** Промах по окну grep на час.
+- **Ротация logrotate.** Старый инцидент уже в `.gz`, нужен `zgrep`.
+- **Нет прав на /var/log.** Запросить роль или central logging.
+- **tail на огромном файле без фильтра.** Теряю signal в noise.
+- **Логи в stdout контейнера.** Ищу не в volume, а через kubectl.

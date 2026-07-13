@@ -1,0 +1,62 @@
+---
+id: 4669
+title: "Чтение файла и удаление другим процессом: что будет?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Чтение файла и удаление другим процессом: что будет?
+
+## Суть
+
+Поведение зависит от ОС. В Unix открытый fd продолжает читать данные после `unlink` имени; в Windows открытый файл обычно нельзя удалить, пока его держит другой процесс.
+
+## Что ответить на собесе
+
+- Linux: unlink убирает directory entry, inode живёт, пока есть open descriptors.
+- Windows: sharing flags блокируют delete/rename при активном handle.
+- Это межпроцессная синхронизация через kernel, не C++ mutex.
+- Для portable кода: не полагаться на unlink во время чтения; координация через lock file или API.
+- Честно: один процесс с двумя потоками это другая модель; вопрос про процессы A и B.
+
+## Как это работает
+
+Unix-подобные системы:
+
+```cpp
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <unistd.h>
+
+int demo_unix() {
+    std::ifstream reader("payload.txt");
+    if (!reader) return 1;
+
+    unlink("payload.txt");
+
+    std::string row;
+    while (std::getline(reader, row)) {
+        std::cout << row << '\n';
+    }
+    reader.close();
+    return 0;
+}
+```
+
+После `unlink` имя исчезает из каталога, но `reader` читает через сохранённый inode до `close`.
+
+Windows другой контракт: `DeleteFile` вернёт ошибку sharing violation, пока процесс A держит handle. Нужны совместимые share modes при `CreateFile`.
+
+Для temp files часто используют `O_TMPFILE` или unlink сразу после create (anonymous file), чтобы избежать гонки имён.
+
+## Подводные камни
+
+- **Disk space.** Unix unlink не освобождает блоки, пока последний fd не закрыт.
+- **NFS semantics.** Сетевые FS могут вести себя иначе, чем local ext4.
+- **Windows share modes.** READ vs DELETE sharing нужно планировать при open.
+- **Race на create.** Между open и lock другой процесс может подменить файл (TOCTOU).
+- **Логи и rotate.** logrotate + reopen сигнал это отдельный паттерн, не raw unlink.

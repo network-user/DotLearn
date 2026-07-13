@@ -1,0 +1,65 @@
+---
+id: 2976
+title: "Где QA находит токен: заголовки, storage и DevTools?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Где QA находит токен: заголовки, storage и DevTools?
+
+## Суть
+
+Bearer access token обычно уходит в заголовке `Authorization`; refresh может жить в HttpOnly cookie или secure storage. SPA часто кладёт access в memory или sessionStorage. QA трассирует полный путь: login response → storage → исходящие запросы → logout purge.
+
+## Что ответить на собесе
+
+- Network tab: выбрать XHR/fetch, Request Headers → `Authorization: Bearer ...`.
+- Application tab: Local/Session Storage, Cookies (HttpOnly видны, но не читаются из JS).
+- После logout не должно остаться токена ни в storage, ни в памяти (проверяю повторный заход без пароля).
+- Честно: скриншоты багов блюрю token; в Jira только «present/absent», не значение.
+
+## Как это работает
+
+Типичный SPA путь:
+
+```
+POST /login → Set-Cookie refresh HttpOnly
+           → access в memory
+GET /api → Authorization: Bearer <access>
+```
+
+Gherkin:
+
+```gherkin
+Feature: Жизненный цикл токена в браузере
+
+  Scenario: Access уходит в Authorization
+    Given пользователь залогинен
+    When GET /api/v1/profile в Network
+    Then request headers содержат Authorization Bearer
+    And токен не дублируется в query string
+
+  Scenario: Refresh недоступен из console
+    Given session cookie HttpOnly
+    When QA выполняет document.cookie в console
+    Then refresh cookie не виден в строке
+    And запросы с cookie всё ещё authenticated
+
+  Scenario: Logout очищает клиентское состояние
+    When пользователь Logout
+    Then sessionStorage пуст
+    And следующий GET /api/v1/me без login возвращает 401
+```
+
+Postman Tests tab сохраняю `pm.environment.set` только на локальной машине; в shared workspace не коммичу.
+
+## Подводные камни
+
+- **Токен в WebSocket subprotocol/query.** Network tab легко пропустить.
+- **Service Worker кэширует запрос с старым Authorization.** Flaky после refresh.
+- **Два таба logout в одном.** Второй tab ещё шлёт старый access.
+- **Mobile: Keychain недоступен QA без jailbreak.** Использую proxy capture.
+- **Copy as cURL утекает в Slack.** Санитизирую перед отправкой.

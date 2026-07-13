@@ -1,0 +1,60 @@
+---
+id: 1629
+title: "How HTTP/2 works"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How HTTP/2 works
+
+## In short
+
+HTTP/2 multiplexes many streams on one TCP connection, encodes frames in binary, and compresses headers with HPACK. It removes HTTP/1.1 head-of-line blocking at the request level while keeping one connection per origin. ALPN in TLS negotiates h2 over HTTPS.
+
+## How to answer in an interview
+
+- Frames: DATA, HEADERS, SETTINGS, WINDOW_UPDATE, RST_STREAM.
+- Stream ID for parallel request/response without a queue.
+- HPACK table for repeated cookie and auth headers.
+- Server push is rarely used; stream priorities depend on implementation.
+- Honestly: TCP HOL blocking remains at the packet level; HTTP/3 (QUIC) solves it differently.
+
+## How it works
+
+```go
+srv := &http.Server{
+	Addr:    ":443",
+	Handler: mux,
+}
+log.Fatal(srv.ListenAndServeTLS("fullchain.pem", "key.pem"))
+```
+
+Client and server exchange SETTINGS (window size, max concurrent streams). Requests `GET /static/app.js` and `GET /api/me` go on streams 1 and 3 over one TLS socket. Headers split into HEADERS frames; body into DATA frames with flow control.
+
+<figure aria-label="TCP · streams · frames">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 52" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="16" width="292" height="20" rx="4"/>
+  <text x="150" y="30" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Single TCP connection</text>
+  <line x1="60" y1="8" x2="60" y2="16"/><line x1="150" y1="8" x2="150" y2="16"/><line x1="240" y1="8" x2="240" y2="16"/>
+  <text x="60" y="6" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">stream 1</text>
+  <text x="150" y="6" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">stream 3</text>
+  <text x="240" y="6" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">stream 5</text>
+</svg>
+</figure>
+
+Go `net/http` enables HTTP/2 server with TLS; the client tries h2 via ALPN by default.
+
+## Pitfalls
+
+**L7 proxy to backend over HTTP/1.1.** Multiplex gains lost on the last mile.
+
+**Huge cookie on every stream.** HPACK helps but the table overflows.
+
+**Misunderstanding flow control.** A slow consumer blocks a stream, not the whole connection.
+
+**Debug with curl without `--http2`.** Server looks "slow" due to sequential requests.
+
+**Server push without cache policy.** Extra traffic instead of speedup.

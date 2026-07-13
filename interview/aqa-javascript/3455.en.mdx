@@ -1,0 +1,79 @@
+---
+id: 3455
+title: "HTTP mocking in JS tests: nock and MSW"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTP mocking in JS tests: nock and MSW
+
+## In short
+
+HTTP mocking replaces network responses with fixtures, isolating tests from a real API. Nock intercepts at the Node http/https layer. MSW uses a Service Worker in the browser and a request interceptor in Node, one handler set for UI and API suites. Goals: speed, determinism, and 4xx/5xx scenarios.
+
+## How to answer in an interview
+
+- Nock fits Jest/Vitest node environments for axios/fetch polyfills.
+- MSW provides shared handlers for Playwright component tests and backend contract tests.
+- After each test: `nock.cleanAll()` or `server.resetHandlers()`.
+- I verify no pending mocks remain (`nock.isDone()`).
+- Honestly: MSW does not intercept native fetch in old Jest without a node polyfill; setup must be explicit.
+
+## How it works
+
+A nock scenario:
+
+```
+const nock = require("nock");
+
+nock("https://billing.test")
+    .get("/invoices/9")
+    .reply(200, { id: 9, total: 120 });
+```
+
+An MSW handler:
+
+```
+import { http, HttpResponse } from "msw";
+
+export const handlers = [
+    http.get("https://billing.test/invoices/9", () =>
+        HttpResponse.json({ id: 9, total: 120 })
+    ),
+];
+```
+
+In pytest orchestration I verify a status matrix:
+
+```python
+import pytest
+
+CASES = [
+    (200, {"id": 9, "total": 120}),
+    (404, {"error": "not_found"}),
+    (500, {"error": "upstream"}),
+]
+
+
+@pytest.mark.parametrize("status, body", CASES)
+def test_contract_matrix(status, body):
+    assert status in {200, 404, 500}
+    assert "error" in body or "id" in body
+```
+
+For UI tests MSW starts before `page.goto`, otherwise the first fetch hits the network.
+
+## Pitfalls
+
+**Forgotten cleanAll.** The next test gets someone else’s stub.
+
+**Wrong host alias.** `localhost` vs `127.0.0.1` does not match nock.
+
+**MSW handler order.** A broader pattern shadows a specific one.
+
+**Recording HAR and mocking together.** Duplicate responses cause flaky passes.
+
+**TLS/agent reuse.** Keep-alive bypasses nock without `disableNetConnect`.

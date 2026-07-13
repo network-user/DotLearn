@@ -1,0 +1,70 @@
+---
+id: 4657
+title: "Как атомарно захватить сразу два mutex?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как атомарно захватить сразу два mutex?
+
+## Суть
+
+Когда двум потокам нужны одновременно два mutex, порядок ручной блокировки легко приводит к взаимной блокировке. В стандартной библиотеке C++ для этого есть `std::lock`, который захватывает все переданные mutex без deadlock.
+
+## Что ответить на собесе
+
+- Использую `std::lock(m1, m2, ...)` для атомарного захвата нескольких mutex.
+- После `std::lock` оборачиваю каждый mutex в `std::lock_guard` с `std::adopt_lock`, чтобы RAII гарантировал unlock при выходе.
+- Альтернатива: `std::scoped_lock lock(m1, m2)` в C++17 делает то же в одной строке.
+- Всегда держу единый порядок захвата, если блокирую mutex вручную без `std::lock`.
+- Честно: `std::lock` не ускоряет работу, он только снижает риск deadlock при захвате нескольких ресурсов.
+
+## Как это работает
+
+`std::lock` применяет алгоритм, который пробует захватить все mutex и при конфликте откатывает уже взятые блокировки, повторяя попытку. Так два потока не могут навечно ждать друг друга из‑за разного порядка `lock()`.
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex gate_a;
+std::mutex gate_b;
+
+void worker(int tag) {
+    std::lock(gate_a, gate_b);
+    std::lock_guard<std::mutex> hold_a(gate_a, std::adopt_lock);
+    std::lock_guard<std::mutex> hold_b(gate_b, std::adopt_lock);
+
+    std::cout << "worker " << tag << " owns both gates\n";
+}
+
+int main() {
+    std::thread t1(worker, 1);
+    std::thread t2(worker, 2);
+    t1.join();
+    t2.join();
+}
+```
+
+В C++17 эквивалент короче:
+
+```cpp
+void worker_modern(int tag) {
+    std::scoped_lock guard(gate_a, gate_b);
+    std::cout << "worker " << tag << " owns both gates\n";
+}
+```
+
+Оба потока могут вызывать функцию в любом порядке: механизм сам подберёт безопасную последовательность захвата. При исключении в критической секции `lock_guard`/`scoped_lock` освобождают mutex в деструкторе.
+
+## Подводные камни
+
+- **Ручной порядок.** Если один поток делает `lock(m1); lock(m2);`, а другой `lock(m2); lock(m1);`, deadlock возможен без `std::lock`.
+- **Повторный lock.** `std::mutex` не реентерабелен; повторный захват в том же потоке приведёт к UB или зависанию.
+- **Забытый adopt_lock.** После `std::lock` нельзя снова вызывать `lock()` на тех же mutex через обычный `lock_guard` без `adopt_lock`.
+- **Долгие критические секции.** Даже без deadlock удержание двух mutex увеличивает contention и latency.
+- **Не замена архитектуре.** Иногда лучше один mutex, lock ordering policy или fine-grained структуры данных, чем постоянно захватывать пару блокировок.

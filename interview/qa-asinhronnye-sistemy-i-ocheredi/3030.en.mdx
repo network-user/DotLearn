@@ -1,0 +1,55 @@
+---
+id: 3030
+title: "How does QA verify that a queue message was not lost?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does QA verify that a queue message was not lost?
+
+## In short
+
+Message loss is a gap between publish ack and confirmed consumer processing. QA runs an end-to-end test: unique message id from producer to a final DB row or external effect. Tools: durable queues, publisher confirms, manual consumer ack, unacked and DLQ monitoring, publish vs processed counters.
+
+## How to answer in an interview
+
+- After publish I check broker confirm or Kafka offset ack.
+- Before consumer ack I verify side effect: order, webhook, email log.
+- On broker failure durable plus persistent messages survive restart.
+- I compare metrics: messages published minus processed ≈ depth.
+- Honestly: at-most-once configs accept loss for speed; know this from the contract.
+
+## How it works
+
+```gherkin
+Feature: Message loss prevention check
+
+  Scenario: End to end trace id
+    Given producer sets header trace msg-901
+    When event flows through broker to consumer
+    Then billing table row contains trace msg-901
+    And Kibana shows single processing span
+
+  Scenario: Broker restart survival
+    Given queue durable delivery_mode persistent
+    When RabbitMQ service restarted during backlog
+    Then after up consumer processes all without gap in sequence
+
+  Scenario: Publish without consumer
+    Given no active consumer 10 minutes
+    When depth metric equals publish count
+    Then no silent drop start consumer and verify drain
+```
+
+RabbitMQ: `delivery_mode=2`, `publisher confirms`. Kafka: `acks=all`, min ISR. Release checklist: zero unexplained gap in reconciliation job.
+
+## Pitfalls
+
+- **Ack before DB commit.** Message “done”, data missing.
+- **Non-durable queue in test.** False loss on deploy.
+- **UI check only.** Backend event lost unnoticed.
+- **Prefetch unacked ignored.** Messages hang, look lost.
+- **No reconcile batch job.** Gap visible only after a day.

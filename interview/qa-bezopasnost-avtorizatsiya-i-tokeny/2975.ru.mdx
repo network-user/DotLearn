@@ -1,0 +1,64 @@
+---
+id: 2975
+title: "JWT в API: зачем QA понимает структуру токена?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# JWT в API: зачем QA понимает структуру токена?
+
+## Суть
+
+JWT это подписанный JSON в три сегмента (header.payload.signature), передаваемый чаще в `Authorization: Bearer`. Сервер проверяет подпись и claims (`exp`, `aud`, `sub`) без серверной сессии. QA использует знание структуры для негативных тестов: tamper payload, wrong alg, expired `exp`, missing `aud`.
+
+## Что ответить на собесе
+
+- Payload base64url декодируется без секрета; не кладу пароли и PII в claims.
+- Алгоритм в header должен быть allowlist (RS256/ES256); `alg:none` атака проверяю в security suite.
+- Короткий TTL access JWT; долгая сессия через refresh, не через годовой JWT.
+- Честно: подмена подписи без private key должна давать 401; если проходит, это blocker.
+
+## Как это работает
+
+Сегменты:
+
+```
+eyJhbGciOiJIUzI1NiJ9 . eyJzdWIiOiIxMjMifQ . SflKxwRJ...
+     header               payload           signature
+```
+
+Gherkin негативов:
+
+```gherkin
+Feature: Валидация JWT на API
+
+  Scenario: Валидный токен проходит
+    Given JWT signed HS256 с exp в будущем
+    When GET /api/v1/account с Bearer
+    Then статус 200
+
+  Scenario: Tampered payload отклоняется
+    Given валидный JWT
+    When QA меняет claim role на admin в payload без переподписи
+    And GET /api/v1/admin/users
+    Then статус 401 invalid_signature
+
+  Scenario: Истёкший exp
+    Given JWT exp в прошлом
+    When GET /api/v1/account
+    Then статус 401 token_expired
+    And тело не раскрывает внутренний stack trace
+```
+
+Для отладки использую jwt.io только на фикстурах; production tokens в тикеты не вставляю.
+
+## Подводные камни
+
+- **Путают JWT и opaque token.** Нельзя читать payload у opaque.
+- **Clock skew на exp.** Граница ±60s даёт flaky.
+- **JWT в query string.** Утечка через logs и Referer.
+- **Huge claims.** Header overflow 431/413 на gateway.
+- **JWK rotation без kid.** Все запросы 401 после ротации ключей.

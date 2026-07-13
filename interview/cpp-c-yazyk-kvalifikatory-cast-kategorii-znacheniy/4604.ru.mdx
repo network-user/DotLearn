@@ -1,0 +1,61 @@
+---
+id: 4604
+title: "Зачем нужен std::move?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужен std::move?
+
+## Суть
+
+`std::move` не перемещает данные сам: он приводит выражение к rvalue-ссылке, чтобы вызвать move constructor или move assignment вместо копирования. После move источник остаётся в валидном, но неопределённом состоянии; его обычно не используют, кроме присваивания или destroy.
+
+## Что ответить на собесе
+
+- Объясняю: cast to rvalue, enable move semantics.
+- Показываю на `std::vector`, `std::string`, уникальные ресурсы.
+- Подчёркиваю: `std::move` на const объекте вызывает copy (move deleted).
+- Упоминаю NRVO/RVO: не всегда нужен явный move при return local.
+- Честно добавляю: premature `std::move` ломает NRVO и иногда замедляет код.
+
+## Как это работает
+
+Move constructor перехватывает указатель/буфер у источника и обнуляет его. `std::move(x)` даёт компилятору право выбрать эту перегрузку.
+
+```cpp
+#include <iostream>
+#include <utility>
+#include <vector>
+
+struct Buffer {
+    std::vector<int> data;
+    explicit Buffer(std::size_t n) : data(n) {}
+    Buffer(Buffer&& other) noexcept : data(std::move(other.data)) {}
+    Buffer& operator=(Buffer&& other) noexcept {
+        data = std::move(other.data);
+        return *this;
+    }
+};
+
+int main() {
+    Buffer a(1000);
+    Buffer b = std::move(a);
+    std::vector<Buffer> stash;
+    stash.push_back(std::move(b));
+    std::cout << stash[0].data.size() << '\n';
+}
+```
+
+После move `a.data` пуст, но `a` можно уничтожить или переназначить.
+
+## Подводные камни
+
+- **move const.** `std::move(const T&)` не даёт настоящего move.
+- **Использование после move.** Только assign или destroy безопасны.
+- **NRVO.** `return std::move(local)` может отключить RVO.
+- **Мелкие типы.** Move int не быстрее copy.
+- **self move assignment.** Редко, но нужна защита `if (this != &other)`.

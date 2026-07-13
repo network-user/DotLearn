@@ -1,0 +1,79 @@
+---
+id: 4667
+title: "Можно ли перезапустить тот же std::thread?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Можно ли перезапустить тот же std::thread?
+
+## Суть
+
+Объект `std::thread` одноразовый: после `join` или `detach` его нельзя «перезапустить» с тем же handle. Чтобы снова выполнить код, создают новый `std::thread` или используют thread pool.
+
+## Что ответить на собесе
+
+- Завершённый поток не restartable; OS освобождает его стек и TCB.
+- Повторный запуск: новый `std::thread worker(fn);` или переиспользование pool worker.
+- После `join` объект `std::thread` остаётся без associated thread; assign нового потока возможен через move-assign.
+- `std::jthread` ведёт себя так же по restart semantics.
+- Честно: «перезапуск себя» изнутри того же потока это просто цикл в функции, а не reuse OS thread handle.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <thread>
+
+void pulse() {
+    std::cout << "pulse\n";
+}
+
+int main() {
+    std::thread once(pulse);
+    once.join();
+
+    std::thread again(pulse);
+    again.join();
+}
+```
+
+`once` и `again` это разные OS threads, даже если callable один.
+
+Цикл с новым потоком на итерацию:
+
+```cpp
+for (int i = 0; i < 3; ++i) {
+    std::thread tick(pulse);
+    tick.join();
+}
+```
+
+Move-assign после join:
+
+```cpp
+std::thread slot;
+slot = std::thread(pulse);
+slot.join();
+```
+
+Self-restart внутри функции это обычный loop, не recreation thread object:
+
+```cpp
+void loop_body(volatile bool* stop) {
+    while (!*stop) {
+        // work
+    }
+}
+```
+
+## Подводные камни
+
+- **joinable destructor.** Уничтожение joinable `std::thread` вызывает `std::terminate`.
+- **Detach без контроля.** Detached thread нельзя join; lifetime shared data должен пережить worker.
+- **Thread pool illusion.** Pool переиспользует workers, но это новые task dispatch, не restart finished `std::thread`.
+- **Exception before join.** RAII wrapper или `jthread` снижает риск terminate.
+- **Platform thread limits.** Частое create/destroy дороже pool; для hot path использую executor.

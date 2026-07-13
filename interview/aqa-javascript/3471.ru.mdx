@@ -1,0 +1,83 @@
+---
+id: 3471
+title: "Unhandled promise rejection: причины и перехват"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Unhandled promise rejection: причины и перехват
+
+## Суть
+
+Unhandled rejection возникает, когда Promise переходит в rejected и до конца microtask tick никто не повесил `catch` или второй колбэк `then`. В Node 15+ и современных браузерах это часто валит процесс или пишет error в CI. В тестах Jest ловит через `process.on('unhandledRejection')` или fail-fast на `--detectUnhandledRejections`.
+
+## Что ответить на собесе
+
+- Каждый `return promise` в тесте сопровождаю `await` или `.catch(fail)`.
+- В setup suite вешаю listener, который падает тест при stray rejection.
+- Для fire-and-forget background job в prod добавляю `.catch(log)` явно.
+- `unhandledrejection` на window для e2e smoke в браузере.
+- Честно: async test без await и без return даёт false green, потом flaky nightly.
+
+## Как это работает
+
+Проблема:
+
+```
+new Promise((_, reject) => reject(new Error("boom")));
+```
+
+Локальный catch:
+
+```
+runJob()
+  .catch((err) => reporter.fail(err.message));
+```
+
+Node guard в jest.setup:
+
+```
+process.on("unhandledRejection", (reason) => {
+  throw reason;
+});
+```
+
+Browser:
+
+```
+window.addEventListener("unhandledrejection", (event) => {
+  console.error(event.reason);
+});
+```
+
+Pytest asyncio guard:
+
+```python
+import asyncio
+
+import pytest
+
+
+async def flaky_task():
+    raise RuntimeError("boom")
+
+
+def test_catches_rejection():
+    with pytest.raises(RuntimeError):
+        asyncio.run(flaky_task())
+```
+
+## Подводные камни
+
+**Catch только log.** Promise считается handled, но тест не краснеет.
+
+**Promise.all без catch.** Один reject валит aggregate, стек указывает на all, не на root.
+
+**setTimeout async IIFE.** Rejection вне test async scope.
+
+**jest fake timers.** Rejection отложена, listener снят раньше.
+
+**AggregateError в Promise.any.** Reason вложен, message неочевиден в CI log.

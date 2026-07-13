@@ -1,0 +1,63 @@
+---
+id: 1574
+title: "Two goroutines sending to one channel at once"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Two goroutines sending to one channel at once?
+
+## In short
+
+The runtime serializes sends: one proceeds, the second blocks until a buffer slot or receiver is ready. No data race on the channel; for buffered channels delivery order may not match send start order under contention. Unbuffered: one value per rendezvous.
+
+## How to answer in an interview
+
+- Concurrent send is safe; no mutex on the channel needed.
+- Close plus concurrent send races to panic.
+- Select among multiple sends: pseudo-random if several are ready.
+- Honestly: "at once" means serialized by the runtime, not parallel buffer writes.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	ch := make(chan int, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ch <- 1
+	}()
+	go func() {
+		defer wg.Done()
+		ch <- 2
+	}()
+	wg.Wait()
+	fmt.Println(<-ch, <-ch)
+}
+```
+
+Buffer size 1: first send wins, second blocks until recv drains. Both complete after two recvs with a consumer; this shows serialization.
+
+## Pitfalls
+
+**Assume FIFO writers.** Not guaranteed under the scheduler.
+
+**Send after close.** Panic regardless of other senders.
+
+**Unbuffered without receiver.** Both senders block forever.
+
+**Large struct send copy cost.** Each send copies the value.
+
+**Select default with send.** Non-blocking try send only when buffer is free.

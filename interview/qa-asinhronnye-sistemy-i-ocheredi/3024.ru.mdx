@@ -1,0 +1,54 @@
+---
+id: 3024
+title: "Зачем QA понимать назначение Apache Kafka в продукте?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем QA понимать назначение Apache Kafka в продукте?
+
+## Суть
+
+Kafka собирает потоки событий из многих источников, хранит их как упорядоченный лог и отдаёт нескольким подписчикам в реальном времени. В продукте это шина доменных событий, интеграция микросервисов, CDC из БД, аналитика и мониторинг. QA проверяет, что события доходят, не теряются при сбоях брокера и обрабатываются с приемлемым lag.
+
+## Что ответить на собесе
+
+- Producer пишет в topic; broker реплицирует partition на кластер.
+- Несколько consumer group читают один поток для billing, CRM, DWH.
+- Retention позволяет replay после бага или деплоя нового consumer.
+- Тестирую ecommerce: клик, корзина, оплата как цепочка событий в topic.
+- Честно: Kafka избыточна для простой task queue из десяти job в час.
+
+## Как это работает
+
+```gherkin
+Feature: Kafka product usage
+
+  Scenario: Real-time analytics pipeline
+    Given web shop publishes UserViewedProduct to topic catalog.events
+    When recommendation service consumes within 5 seconds
+    Then related products block updates on product page
+
+  Scenario: Broker failover
+    Given replication factor 3 one broker down
+    When producer acks all replicas
+    Then QA sees no message loss in consumer output
+
+  Scenario: Replay after bug fix
+    Given consumer bug skipped 2 hours of events
+    When reset offset to start of window
+    Then downstream warehouse reconciles missing rows
+```
+
+Компоненты: producers (API, connectors), brokers, ZooKeeper/KRaft metadata, consumers. QA артефакты: offset lag dashboard, sample event JSON, expected side effect per topic.
+
+## Подводные камни
+
+- **Тест без проверки всех подписчиков.** Один consumer OK, DWH пустой.
+- **Игнор schema registry.** Невалидный Avro ломает цепочку.
+- **Слишком короткий retention.** Replay невозможен для RCA.
+- **Нагрузка только на producer.** Consumer bottleneck в prod.
+- **Путаю log compaction с полным журналом.** Старые события недоступны.

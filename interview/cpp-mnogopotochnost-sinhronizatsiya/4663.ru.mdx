@@ -1,0 +1,72 @@
+---
+id: 4663
+title: "Сколько mutex нужно для deadlock?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сколько mutex нужно для deadlock?
+
+## Суть
+
+Для классического deadlock между потоками нужно минимум два ресурса (часто два mutex) и минимум два потока, которые захватывают их в разном порядке. Один mutex и один поток circular wait не образуют.
+
+## Что ответить на собесе
+
+- Минимум два mutex (или два разных ресурса) плюс два потока.
+- Circular wait требует замкнутого графа «кто кого ждёт».
+- С одним mutex возможен только self-deadlock при повторном lock в том же потоке.
+- Больше mutex означает больше комбинаций порядка и выше риск.
+- Честно: формально deadlock может быть и на semaphores/condvar, не только на mutex; вопрос на собесе обычно про mutex.
+
+## Как это работает
+
+Два потока и два mutex в противоположном порядке:
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex alpha;
+std::mutex beta;
+
+void worker_first() {
+    alpha.lock();
+    beta.lock();
+    std::cout << "first done\n";
+    beta.unlock();
+    alpha.unlock();
+}
+
+void worker_second() {
+    beta.lock();
+    alpha.lock();
+    std::cout << "second done\n";
+    alpha.unlock();
+    beta.unlock();
+}
+```
+
+Если `worker_first` держит `alpha`, а `worker_second` держит `beta`, оба блокируются на втором mutex навсегда.
+
+Теоретически deadlock возможен и с N>2 ресурсами: цикл A→B→C→A. Но нижняя граница для межпоточного deadlock это два ресурса и два участника цикла.
+
+С одним mutex:
+
+```cpp
+std::mutex solo;
+solo.lock();
+solo.lock(); // не межпоточный deadlock, а ошибка повторного захвата
+```
+
+## Подводные камни
+
+- **Дублирующие вопросы.** «Сколько mutex» и «можно ли на одном» часто идут парой; ответы согласованы: минимум два для классики.
+- **Разные типы ресурсов.** Mutex + file lock + DB row lock тоже образуют цикл.
+- **try_lock стратегии.** С `try_lock` deadlock может не случиться, но появится retry storm.
+- **Lock hierarchy.** Даже с двумя mutex иерархия адресов объектов снимает риск.
+- **Detection vs prevention.** В production иногда включают watchdog, но профилактика дешевле.

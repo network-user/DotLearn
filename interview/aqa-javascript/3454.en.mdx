@@ -1,0 +1,74 @@
+---
+id: 3454
+title: "prototype vs __proto__ for test engineers"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# prototype vs __proto__ for test engineers
+
+## In short
+
+`prototype` exists only on constructor functions: the method template for `new` instances. `__proto__` (prefer `Object.getPrototypeOf(obj)`) is the instance link to that template. On method call the engine walks `__proto__` when there is no own property.
+
+## How to answer in an interview
+
+- `alice.__proto__ === Person.prototype` after `new Person()`.
+- Methods save memory: one prototype object for all instances.
+- For introspection in tests I use `Object.getPrototypeOf`, not legacy `__proto__`.
+- Changing `Constructor.prototype` affects already created objects.
+- Honestly: a prototype monkey patch in one test without restore poisons the next spec in the same worker.
+
+## How it works
+
+Constructor and instance:
+
+```
+function Session(id) {
+    this.id = id;
+}
+Session.prototype.revoke = function () {
+    return `revoked:${this.id}`;
+};
+
+const active = new Session("s-42");
+```
+
+The link:
+
+```
+Object.getPrototypeOf(active) === Session.prototype;
+```
+
+Patch and rollback in a harness:
+
+```python
+class Session:
+    def __init__(self, sid: str):
+        self.id = sid
+
+    def revoke(self):
+        return f"revoked:{self.id}"
+
+
+def test_prototype_style_method_on_instance():
+    s = Session("s-42")
+    assert s.revoke() == "revoked:s-42"
+```
+
+In a JS suite I call `mockRestore()` in `afterEach` after a spy.
+
+## Pitfalls
+
+**Confusing prototype on a plain object.** An object literal has no own `prototype` property.
+
+**Writing __proto__ twice.** Deprecated accessor; lint complains but legacy code still has it.
+
+**Object.setPrototypeOf on a hot path.** Slow; breaks JIT optimizations in stress tests.
+
+**instanceof after setPrototypeOf.** May return false for the previous class.
+
+**Spread copy of an object.** `__proto__` is not copied; methods still delegate.

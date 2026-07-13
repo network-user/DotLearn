@@ -1,0 +1,67 @@
+---
+id: 4590
+title: "Какое время доступа к элементу хеш-таблицы?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какое время доступа к элементу хеш-таблицы?
+
+## Суть
+
+Доступ по ключу в хеш-таблице (find, at, count) в среднем константный: O(1) амортизированно при низкой загрузке. В худшем случае, когда коллизии сконцентрированы, время растёт линейно до O(n) относительно числа элементов в таблице.
+
+## Что ответить на собесе
+
+- Даю ту же рамку, что для поиска/чтения: average O(1), worst O(n), плюс редкие пики rehash при росте.
+- Показываю идиоматичный доступ через `std::unordered_map` и разницу `find` vs `operator[]`.
+- Упоминаю `std::unordered_map::bucket_count` и `load_factor` как диагностику деградации.
+- Сравниваю с `std::map`: хеш даёт средний константный доступ, дерево гарантирует O(log n).
+- Честно добавляю: «константа» скрывает стоимость аллокаций и хеша строк; для hot path иногда выбирают flat_hash_map или sorted vector при малом n.
+
+## Как это работает
+
+Клиент вычисляет хеш ключа, попадает в корзину, сравнивает ключи. Стандартный контейнер инкапсулирует rehash: при росте `size` таблица расширяется, чтобы удерживать короткие цепочки.
+
+```cpp
+#include <iostream>
+#include <string>
+#include <unordered_map>
+
+int main() {
+    std::unordered_map<std::string, int> stock;
+    stock.reserve(32);
+
+    stock.emplace("apple", 120);
+    stock.emplace("banana", 95);
+    stock["orange"] = 110;
+
+    const std::string key = "banana";
+    auto pos = stock.find(key);
+    if (pos != stock.end()) {
+        std::cout << key << ": " << pos->second << '\n';
+    }
+
+    try {
+        std::cout << "orange via at: " << stock.at("orange") << '\n';
+    } catch (const std::out_of_range&) {
+        std::cout << "missing\n";
+    }
+
+    std::cout << "buckets=" << stock.bucket_count()
+              << " load=" << stock.load_factor() << '\n';
+}
+```
+
+При равномерном hash доступ к `banana` ограничен одной корзиной и коротким сравнением строк. Если все ключи коллидируют, `find` превращается в линейный обход. Периодический rehash возвращает среднее время к константе, пока hash остаётся качественным.
+
+## Подводные камни
+
+- **Путаница access vs mutate.** `operator[]` может вставлять и менять `size` даже при «чтении».
+- **Итератор после rehash.** Инвалидируется; ссылка на элемент обычно сохраняется.
+- **Сравнение с map.** Для упорядоченного обхода нужен `map`; hash не даёт сортировку ключей.
+- **Стабильность latency.** Среднее O(1) не гарантирует верхнюю границу; для realtime смотрят worst case и размер цепочек.
+- **Малый n.** При десятках элементов `std::vector` + sort может быть быстрее из-за locality.

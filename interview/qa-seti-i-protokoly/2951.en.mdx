@@ -1,0 +1,77 @@
+---
+id: 2951
+title: "TCP handshake and HTTP keep-alive: what does QA see in Network?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# TCP handshake and HTTP keep-alive: what does QA see in Network?
+
+## In short
+
+TCP builds a reliable channel with a three-way handshake SYN, SYN-ACK, ACK; only after ACK can HTTP flow. HTTP keep-alive (Connection: keep-alive, default in HTTP/1.1) reuses the same TCP for multiple requests, cutting latency. In DevTools you see one Connect for a burst to one host; without keep-alive each request pays a new handshake.
+
+## How to answer in an interview
+
+- The 3-way handshake syncs sequence numbers; half-open connections and SYN floods are SRE territory, but QA sees long Connect or timeout.
+- Keep-alive saves RTT on static assets; HTTP/2 and HTTP/3 multiplex over one connection even more efficiently.
+- I check the Connection header, Connect timing in the waterfall, and behavior after load balancer idle timeout (502 on first request after a pause).
+- Honestly: client keep-alive does not help if the server sends Connection: close or the LB cuts idle at 60s with no retry logic.
+
+## How it works
+
+TCP sequence:
+
+```
+Client -> Server: SYN
+Server -> Client: SYN-ACK
+Client -> Server: ACK
+[HTTP data]
+```
+
+HTTP/1.1 with keep-alive:
+
+```
+GET /index.html HTTP/1.1
+Host: app.example.com
+Connection: keep-alive
+
+GET /style.css HTTP/1.1
+Host: app.example.com
+Connection: keep-alive
+```
+
+(one TCP, two back-to-back requests)
+
+Gherkin for latency regression:
+
+```gherkin
+Feature: TCP handshake and connection reuse
+
+  Scenario: First request includes TCP setup time
+    When the browser cold-opens "https://app.example.com/"
+    Then timing for the first document includes a Connect phase
+
+  Scenario: Later assets reuse the connection
+    Given the home page loaded with keep-alive
+    When the browser requests 5 CSS files from the same origin
+    Then at most one new Connect occurs for those 5 requests
+
+  Scenario: Load balancer idle timeout is handled gracefully
+    Given the user idles for 120 seconds
+    When the next API request is sent
+    Then the client retries on a new TCP without a blank screen
+```
+
+TCP keepalive (socket option, not HTTP) sends probes on idle connections; people often confuse it with HTTP keep-alive in interviews.
+
+## Pitfalls
+
+- **Mixing TCP keepalive and HTTP keep-alive.** Different layers and headers.
+- **Proxy closes idle.** First request after lunch fails without SPA retry.
+- **Measuring TTFB only.** Long Connect hides if you watch waiting alone.
+- **TLS on every new TCP.** Without session resumption handshake cost grows.
+- **HTTP/2 as one connection in DevTools.** Old "6 parallel connections" checklists do not apply.

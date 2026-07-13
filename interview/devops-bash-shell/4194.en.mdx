@@ -1,0 +1,60 @@
+---
+id: 4194
+title: "How do you write bash errors to a log?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you write bash errors to a log?
+
+## In short
+
+In bash stderr is fd 2; redirecting with `2>` or `2>>` writes errors to a file without mixing with stdout. For screen and file at once I use `tee` via process substitution.
+
+## How to answer in an interview
+
+- `command 2>>/var/log/deploy.err` appends errors to the end of a file.
+- `command &>>/var/log/deploy.log` merges stdout and stderr (bash 4+).
+- In scripts I add timestamps via `ts` or `logger` for syslog.
+- Honestly: redirecting stderr does not capture the exit code; I check `$?` or `set -o pipefail` separately.
+
+## How it works
+
+Deploy hook with separate logs:
+
+```bash
+#!/usr/bin/env bash
+LOG_DIR=/var/log/app-deploy
+mkdir -p "$LOG_DIR"
+
+run_step() {
+  "$@" >>"$LOG_DIR/stdout.log" 2>>"$LOG_DIR/stderr.log"
+}
+
+run_step kubectl apply -f manifests/
+```
+
+Screen and file together:
+
+```bash
+kubectl rollout status deploy/api 2> >(tee -a "$LOG_DIR/stderr.log" >&2)
+```
+
+System journal:
+
+```bash
+logger -t deploy-hook -p user.err "Rollout failed for deploy/api"
+```
+
+I rotate with logrotate by `size` or `daily`, not unbounded append.
+
+## Pitfalls
+
+- **Overwrite with `2>`.** A single arrow wipes the prior log on every run.
+- **Pipe without pipefail.** An error mid-pipeline is lost if I only check the last `$?`.
+- **Closed fd in cron.** Empty MAILTO and no tty: stderr goes to void without an explicit file.
+- **Tee buffering.** On crash the last lines may not hit disk without `stdbuf -oL`.
+- **Log dir permissions.** A root-run script writes root-only files; the service cannot read without ACL.

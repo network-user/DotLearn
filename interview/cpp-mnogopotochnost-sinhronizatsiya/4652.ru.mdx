@@ -1,0 +1,61 @@
+---
+id: 4652
+title: "Как создать поток средствами STL?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как создать поток средствами STL?
+
+## Суть
+
+Стандарт даёт `std::thread` (и с C++20 `std::jthread` с автоматическим join/stop_token), а также высокоуровневый `std::async` с `std::future`. Конструктор `std::thread` принимает callable и аргументы и сразу стартует выполнение.
+
+## Что ответить на собесе
+
+- `std::thread t(func, args...)` для явного потока.
+- Лямбда, функтор с `operator()`, свободная функция или метод + объект.
+- `std::async(std::launch::async, task)` когда нужен результат через `future`.
+- `std::jthread` предпочитаю в C++20: RAII join и cooperative stop.
+- Честно: `async` без `launch::async` может отложить до `get()` (deferred), это не фоновый поток.
+
+## Как это работает
+
+```cpp
+#include <future>
+#include <iostream>
+#include <thread>
+
+int square(int x) { return x * x; }
+
+struct Doubler {
+    void operator()(int& v) const { v *= 2; }
+};
+
+int main() {
+    std::thread raw(square, 6);
+
+    int value = 3;
+    Doubler d;
+    std::thread mutator(d, std::ref(value));
+
+    auto fut = std::async(std::launch::async, square, 9);
+
+    raw.join();
+    mutator.join();
+    std::cout << value << ' ' << fut.get() << '\n';
+}
+```
+
+`raw` запускает `square` в отдельном потоке. `mutator` вызывает функтор с ссылкой через `std::ref`. `async` возвращает `future` с результатом 81. Каждый путь требует синхронизации завершения (`join` или `get`).
+
+## Подводные камни
+
+- **Копирование вместо ref.** Без `std::ref` mutator получит копию `value`.
+- **detach по умолчанию нет.** Забытый join → `terminate`.
+- **async thread pool не гарантирован.** Реализация может создавать поток на каждый вызов.
+- **Exception в thread.** Пробрасывается в `future::get`, в raw thread завершает процесс при join в старых правилах.
+- **Перегрузка callable.** Шаблонный конструктор `thread` может выбрать не ту перегрузку для overloaded `operator()`.

@@ -1,0 +1,65 @@
+---
+id: 2963
+title: "IPv6: что меняется для тестирования веб-приложений?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# IPv6: что меняется для тестирования веб-приложений?
+
+## Суть
+
+IPv6 расширяет адрес до 128 бит (восемь hextet групп), снимая дефицит публичных адресов IPv4. Запись сокращается через `::` один раз. Dual-stack хосты часто имеют и A, и AAAA; браузер по Happy Eyeballs выбирает быстрее отвечающий стек. QA проверяет, что продукт живёт при v6-only, v4-only и обоих.
+
+## Что ответить на собесе
+
+- SLAAC и DHCPv6 выдают адрес без NAT в классическом виде; firewall правила другие, чем для 192.168.x.
+- Путь `2001:db8::1` в URL требует квадратных скобок: `https://[2001:db8::1]/`.
+- Мобильные операторы уже v6-first; баг «только Wi-Fi» часто про отсутствие AAAA на CDN.
+- Честно: полный v6 lab редок; минимум гоняю curl `-6` и `-4` на staging с dual-stack.
+
+## Как это работает
+
+Сравнение стеков на одном хосте:
+
+```
+dig A     api.example.com  → 203.0.113.10
+dig AAAA  api.example.com  → 2001:db8:85a3::7334
+```
+
+Gherkin dual-stack smoke:
+
+```gherkin
+Feature: Доступность API по IPv4 и IPv6
+
+  Background:
+    Given endpoint "/health" возвращает 200
+
+  Scenario: Запрос по IPv4
+    When QA curl -4 https://api.example.com/health
+    Then статус 200
+    And время ответа в пределах SLO
+
+  Scenario: Запрос по IPv6
+    When QA curl -6 https://api.example.com/health
+    Then статус 200
+    And тело идентично v4 ответу по схеме
+
+  Scenario: Отсутствие AAAA не ломает v4 клиентов
+    Given DNS только A запись
+    When пользователь в v4-only сети открывает сайт
+    Then страница загружается без задержки fallback
+```
+
+На Linux `ip -6 addr` показывает scope link/global; в Charles смотрю, не уходит ли трафик на link-local вместо global.
+
+## Подводные камни
+
+- **NAT64/DNS64.** MacOS/iOS прозрачно транслируют; баг только на cellular.
+- **Firewall открыт на v4, закрыт на v6.** Половина пользователей «не заходит».
+- **Литерал IPv6 без скобок в конфиге.** Парсер URL ломается.
+- **Ротация privacy extension.** Корреляция логов по IP сложнее, не баг продукта.
+- **MTU и фрагментация.** Большие UDP на v6 через туннель дают black hole.

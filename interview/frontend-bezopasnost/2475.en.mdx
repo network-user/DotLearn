@@ -1,0 +1,61 @@
+---
+id: 2475
+title: "Session-based authorization in web apps"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Session-based authorization in web apps
+
+## In short
+
+After login the server creates a session record and sends the client an opaque session id (usually a cookie). Each request carries the id; the server looks up the session store and decides access. Logout means server-side invalidation plus clearing the cookie.
+
+## How to answer in an interview
+
+- Session cookie: HttpOnly, Secure, SameSite=Lax/Strict, short idle timeout.
+- Regenerate session id after login against fixation.
+- SPAs use same-site BFF cookie auth; pure APIs may use session cookie plus CSRF token.
+- Honestly: sticky sessions vs centralized Redis affects logout propagation.
+- I do not duplicate session id in localStorage.
+
+## How it works
+
+Client:
+
+```ts
+async function login(email: string, password: string) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error('login failed');
+}
+
+async function loadDashboard() {
+  const res = await fetch('/api/dashboard', { credentials: 'include' });
+  if (res.status === 401) location.assign('/login');
+  return res.json();
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+}
+```
+
+Server stores `{ sessionId → userId, roles, expires }`. Cookie is only a pointer, not a JWT with claims. Rolling sessions extend idle on activity. Destroy on logout/password change/compromise.
+
+Compared to JWT sessions: instant revoke is possible, but storage and horizontal scale are harder.
+
+## Pitfalls
+
+- **Session fixation.** Login without id rotation lets attackers preset cookies.
+- **Concurrent logout.** Other tabs keep UI until next 401; sync with BroadcastChannel.
+- **Subdomain scope.** Domain=.app.com shares cookies across microfrontends unintentionally.
+- **CSRF on cookie auth.** Mutations need tokens despite SameSite.
+- **Mobile WebView cookies.** Third-party cookie rules differ from desktop Safari/Chrome.

@@ -1,0 +1,49 @@
+---
+id: 4176
+title: "How does OpenPGP encryption work?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does OpenPGP encryption work?
+
+## In short
+
+OpenPGP (PGP's successor) combines symmetric payload encryption, asymmetric session-key wrapping, and digital signatures for authenticity. Public keys ship via keyservers or WKD; private keys stay offline or on hardware tokens.
+
+## How to answer in an interview
+
+- I describe the hybrid model: AES/ChaCha for data, RSA/Ed25519 for key wrap and signing.
+- I mention web of trust vs corporate CA policy; in prod we often use minisign plus internal key ceremony.
+- For CI secrets I GPG-decrypt files or use SOPS with age, not plaintext in the repo.
+- I add honestly: email PGP is rare in enterprise; I more often use it for backup artifacts, release signing, and deploy secrets.
+
+## How it works
+
+The sender generates a one-time symmetric key, encrypts the file, then encrypts the session key with the recipient's public key. Signing hashes data and signs with the sender's private key; the recipient verifies fingerprint and signature before decrypt.
+
+```bash
+gpg --quick-generate-key "release-bot@corp.example" ed25519 sign 2y
+gpg --armor --export release-bot@corp.example > release-bot.pub
+
+gpg --encrypt --recipient ops@corp.example --sign --local-user release-bot@corp.example \
+  --output backup.sql.gz.pgp backup.sql.gz
+
+gpg --decrypt --local-user ops@corp.example --output backup.sql.gz backup.sql.gz.pgp
+gpg --verify backup.sql.gz.pgp
+```
+
+Early commands create a release signing key and export the public part. `--encrypt --sign` wraps ciphertext and signature in ASCII armor. Decrypt needs the recipient private key; verify confirms integrity and a trusted signer.
+
+Rotation: new subkey, revoke old via CRL/revocation certificate, refresh pubkey on the keyserver.
+
+## Pitfalls
+
+- **Private key on CI without HSM.** Leaked GPG key decrypts all past backups.
+- **Short key IDs.** Fingerprint collisions; always match full 40-char fingerprint.
+- **Missing revocation cert.** Compromise without revocation blocks trust recovery.
+- **Armor in git.** `.pgp` in repo is fine; private key never.
+- **Clock skew.** Signatures with expired keys or bad timezone break batch verify jobs.

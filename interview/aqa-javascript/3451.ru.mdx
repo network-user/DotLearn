@@ -1,0 +1,71 @@
+---
+id: 3451
+title: "Примитивы и ссылки: что ломает equality в тестах"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Примитивы и ссылки: что ломает equality в тестах
+
+## Суть
+
+Примитивы (`undefined`, `null`, `boolean`, `number`, `string`, `bigint`, `symbol`) неизменяемы и копируются по значению. Ссылочные типы (объекты, массивы, функции) хранят указатель: присваивание копирует ссылку. В snapshot и deep equal важно понимать, мутирует ли тест общий fixture.
+
+## Что ответить на собесе
+
+- `let a = 5; let b = a; b = 10` не меняет `a`.
+- `const cfg = defaults; cfg.timeout = 1` меняет и `defaults`, если не clone.
+- Для изоляции использую structuredClone/spread на верхнем уровне, глубокий clone для nested.
+- `Object.is` отличает `+0` и `-0`, `===` нет.
+- Честно: shallow copy массива объектов всё ещё шарит вложенные ссылки между тестами.
+
+## Как это работает
+
+Примитив:
+
+```
+let retries = 2;
+let copy = retries;
+copy = 5;
+```
+
+Ссылка:
+
+```
+const base = { headers: { auth: "token" } };
+const local = base;
+local.headers.auth = "expired";
+```
+
+Глубокое копирование перед mutate в hook:
+
+```python
+import copy
+
+
+def isolated_fixture(shared: dict) -> dict:
+    return copy.deepcopy(shared)
+
+
+def test_mutation_does_not_leak(shared_defaults):
+    local = isolated_fixture(shared_defaults)
+    local["headers"]["auth"] = "expired"
+    assert shared_defaults["headers"]["auth"] != "expired"
+```
+
+В JS тестах `expect(result).not.toBe(fixture)` для объектов, `toEqual` для структуры.
+
+## Подводные камни
+
+**Frozen object не deep.** `Object.freeze` не рекурсивен, nested мутируется.
+
+**Сравнение функций.** Две lambda с одинаковым телом не equal по ссылке.
+
+**Wrap примитива.** `new String("a")` object wrapper, не примитив.
+
+**Массив из одного объекта.** Два теста пушат в один элемент.
+
+**JSON clone теряет типы.** Date, Map, undefined пропадают при round-trip.

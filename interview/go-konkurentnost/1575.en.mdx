@@ -1,0 +1,64 @@
+---
+id: 1575
+title: "Sending into a full channel buffer"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Sending into a full channel buffer
+
+## In short
+
+A send on a full buffered channel blocks the goroutine until a receive frees a slot. The runtime does not drop the value: the goroutine parks until a consumer reads. This is backpressure without busy-waiting.
+
+## How to answer in an interview
+
+- The send blocks; no panic and no drop.
+- Buffer size is set with `make(chan T, n)`.
+- Unbuffered (cap 0) blocks immediately without a receiver.
+- Honestly: without a consumer the send can wait forever; that is a logical issue, not a runtime deadlock.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {
+	queue := make(chan int, 2)
+	queue <- 10
+	queue <- 20
+
+	go func() {
+		fmt.Println("writer blocked")
+		queue <- 30
+		fmt.Println("writer done")
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	fmt.Println(<-queue)
+	fmt.Println(<-queue)
+	fmt.Println(<-queue)
+}
+```
+
+The first two sends fill cap=2. The third in the goroutine parks until `<-queue`. After draining, the writer unblocks. The scheduler runs other goroutines meanwhile.
+
+## Pitfalls
+
+**No consumer.** The writer waits forever.
+
+**Oversized buffer.** Hides a slow reader and adds latency.
+
+**Select with default on send.** Non-blocking only when the buffer is full; otherwise behaves like a normal send.
+
+**Close with blocked senders.** Requires a shutdown discipline.
+
+**Misreading a block as a hang.** Blocking is normal; the issue is a missing receive path.

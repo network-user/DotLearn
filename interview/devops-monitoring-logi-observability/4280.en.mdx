@@ -1,0 +1,71 @@
+---
+id: 4280
+title: "How do you make Prometheus highly available?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you make Prometheus highly available?
+
+## In short
+
+A single Prometheus instance does not cluster natively: its local TSDB is tied to the pod. HA is built with duplicated scrape (two Prometheus servers with identical targets), federation, or a Thanos/Mimir/Cortex layer for long-term storage and dedup. Alertmanager, by contrast, supports a gossip cluster for alert deduplication.
+
+## How to answer in an interview
+
+- I run two independent Prometheus servers with identical `scrape_configs`; Grafana queries both or Thanos Query merges them.
+- For long-term storage I attach a Thanos sidecar plus object storage (S3/MinIO).
+- I run Alertmanager as a 3-node cluster with `--cluster.peer`.
+- I back up TSDB volumes via snapshots or `promtool tsdb create-blocks-from openmetrics`.
+- Honestly: dual scrape doubles load on exporters; at thousands of targets I prefer remote write to Mimir/VictoriaMetrics.
+
+## How it works
+
+Alertmanager cluster (3 peers):
+
+```bash
+docker run -d --name am-1 --network monitoring \
+  -p 9093:9093 \
+  prom/alertmanager:v0.27.0 \
+  --config.file=/etc/alertmanager/alertmanager.yml \
+  --cluster.listen-address=0.0.0.0:9094 \
+  --cluster.peer=am-2:9094 \
+  --cluster.peer=am-3:9094
+```
+
+TSDB snapshot script before upgrade:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+DATA_DIR="/var/lib/prometheus"
+BACKUP_ROOT="/backup/prometheus"
+STAMP=$(date +%Y%m%d-%H%M%S)
+DEST="${BACKUP_ROOT}/${STAMP}"
+
+mkdir -p "$DEST"
+curl -s -X POST http://127.0.0.1:9090/api/v1/admin/tsdb/snapshot
+SNAP=$(ls -td "${DATA_DIR}/snapshots/"* | head -1)
+tar -C "$(dirname "$SNAP")" -czf "${DEST}/tsdb.tar.gz" "$(basename "$SNAP")"
+echo "saved ${DEST}/tsdb.tar.gz"
+```
+
+Thanos sidecar next to Prometheus uploads blocks to S3:
+
+```bash
+thanos sidecar \
+  --prometheus.url=http://127.0.0.1:9090 \
+  --tsdb.path=/var/lib/prometheus \
+  --objstore.config-file=/etc/thanos/bucket.yml
+```
+
+## Pitfalls
+
+- **False sense of HA.** Two Prometheus servers without Thanos diverge on missed scrapes; alerts may flap.
+- **WAL corruption.** Hard-killing a pod without graceful shutdown corrupts the WAL; use a `preStop` hook with the quit endpoint.
+- **Alertmanager split.** An even peer count without proper timeouts splits notifications; keep an odd-sized cluster.
+- **Cardinality blast.** HA does not prevent OOM from bad metric labels; enforce relabel and drop rules.
+- **Backup size.** Full TSDB tar on long retention takes hours; prefer object storage replication.

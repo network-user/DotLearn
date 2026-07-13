@@ -1,0 +1,62 @@
+---
+id: 2980
+title: "HttpOnly cookie: как QA проверяет защиту сессии от XSS?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HttpOnly cookie: как QA проверяет защиту сессии от XSS?
+
+## Суть
+
+Флаг HttpOnly запрещает JavaScript читать cookie; браузер всё равно прикрепляет её к HTTP(S) запросам. Вместе с Secure и SameSite это снижает кражу session id через XSS. QA проверяет Set-Cookie флаги на login и что `document.cookie` не содержит имя session cookie.
+
+## Что ответить на собесе
+
+- Session id в HttpOnly cookie предпочтительнее localStorage для browser apps.
+- Secure гарантирует отправку только по HTTPS; на staging без TLS cookie не ставлю как «OK».
+- SameSite=Lax/Strict режет CSRF; None требует Secure.
+- Честно: HttpOnly не спасает от XSS actions от имени пользователя (запросы с cookie уходят); нужен CSP и sanitization.
+
+## Как это работает
+
+Ответ login:
+
+```http
+Set-Cookie: sid=7a9f...; Path=/; HttpOnly; Secure; SameSite=Lax
+```
+
+Gherkin:
+
+```gherkin
+Feature: Флаги session cookie
+
+  Scenario: Login выставляет HttpOnly Secure
+    When POST /auth/login успешен
+    Then Set-Cookie sid содержит HttpOnly
+    And Set-Cookie sid содержит Secure на HTTPS
+
+  Scenario: document.cookie не видит sid
+    Given пользователь залогинен
+    When QA выполняет document.cookie в console
+    Then строка не содержит sid=
+
+  Scenario: XSS inject не читает HttpOnly cookie
+    Given controlled XSS в поле comment на staging
+    When payload document.cookie отправлен на collector
+    Then collector не получает sid
+    And запросы с страницы всё ещё authenticated
+```
+
+В Application → Cookies сверяю флаги; в proxy смотрю, что refresh тоже HttpOnly если cookie-based.
+
+## Подводные камни
+
+- **Дубль session в localStorage «для SPA».** XSS крадёт access оттуда.
+- **HttpOnly без Secure на HTTP staging.** Cookie уходит в открытом виде.
+- **Subdomain wildcard Domain=.example.com.** Компромисс subdomain крадёт cookie.
+- **Путают HttpOnly и шифрование.** Cookie видна в DevTools, просто не в JS.
+- **Тест только в Chrome.** Safari ITP меняет lifetime third-party context.

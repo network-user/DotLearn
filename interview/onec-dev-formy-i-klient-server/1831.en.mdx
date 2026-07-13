@@ -1,0 +1,74 @@
+---
+id: 1831
+title: "Why the Server flag is set on form module methods"
+category: onec-dev-formy-i-klient-server
+categoryLabel: "Формы и клиент-сервер"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why the Server flag is set on form module methods
+
+## In short
+
+The "Server" flag on a procedure or function in a form module (or common module) tells the platform to run the method on the application server, not on the user's workstation. That is required for infobase access, transactions, and heavy computation without shipping large arrays to the client.
+
+## How to answer in an interview
+
+- I explain that `&НаСервере` and `&НаСервереБезКонтекста` pin execution to the DB and 1C server side.
+- I show a typical flow: a client button handler calls a server procedure for a query or write.
+- I mention security: business rules and permission checks are more reliable where data already lives.
+- I honestly add that extra server calls from every field `OnChange` slow the form; balance beats abstract "everything on server".
+- I distinguish `&НаСервере` (form context available) from `&НаСервереБезКонтекста` (easier reuse, but form attributes are not directly touchable).
+
+## How it works
+
+The user clicks "Fill from balances" on a document form. The client cannot run a register query, so the handler delegates to the server:
+
+```bsl
+&НаКлиенте
+Процедура ЗаполнитьПоОстаткам(Команда)
+
+    ЗаполнитьТабличнуюЧастьНаСервере();
+    ОбновитьИтогиНаКлиенте();
+
+КонецПроцедуры
+
+&НаСервере
+Процедура ЗаполнитьТабличнуюЧастьНаСервере()
+
+    Запрос = Новый Запрос;
+    Запрос.Текст =
+        "ВЫБРАТЬ
+        |    Остатки.Номенклатура,
+        |    Остатки.КоличествоОстаток КАК Количество
+        |ИЗ
+        |    РегистрНакопления.ТоварыНаСкладах.Остатки(, Склад = &Склад) КАК Остатки";
+    Запрос.УстановитьПараметр("Склад", Объект.Склад);
+
+    Объект.Товары.Очистить();
+    Выборка = Запрос.Выполнить().Выбрать();
+    Пока Выборка.Следующий() Цикл
+        Строка = Объект.Товары.Добавить();
+        ЗаполнитьЗначенияСвойств(Строка, Выборка);
+    КонецЦикла;
+
+КонецПроцедуры
+```
+
+The query runs on the server, the form's `Объект` is filled, and the client receives a prepared model and refreshes the UI. Network traffic is bounded by serialized form state, not row-by-row full result sets.
+
+For work not tied to form attributes I use `&НаСервереБезКонтекста`, e.g. checking catalog code uniqueness from passed parameters.
+
+## Pitfalls
+
+**Frequent server calls.** Each call is a round-trip; autofill on every keystroke kills UX.
+
+**Heavy logic in contextual `&НаСервере`.** Long procedures hold context and block interaction; batch work fits background jobs better.
+
+**Mixed runtimes.** Calling client API from a server procedure without an explicit return to the client causes compile or runtime errors.
+
+**Data leakage.** Returning full query tables to the client "just in case" hurts performance and access control.
+
+**Extensions.** A server method in an extension may override the base product; document `&Перед` / `&После` order for the team.

@@ -1,0 +1,64 @@
+---
+id: 3060
+title: "Окружения dev, stage и prod: зачем QA их различает?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Окружения dev, stage и prod: зачем QA их различает?
+
+## Суть
+
+**Dev** нестабилен: свежий код, mock-сервисы, частые деплои, для developer и раннего QA smoke. **Stage (staging/preprod)** максимально близок к prod по конфигу, интеграциям и данным (обезличенным); здесь регресс и sign-off. **Prod** боевой трафик: только controlled checks, синтетика, read-only probes; exploratory на реальных пользователях запрещён без policy.
+
+## Что ответить на собесе
+
+- Dev: быстрые проверки фичи, broken build допустим, данные синтетические.
+- Stage: полный regression, perf smoke, migration dry-run, release candidate tag.
+- Prod: smoke после deploy, monitoring alerts, no destructive tests.
+- URL, tokens и feature flags разные; храню в Postman environments отдельно.
+- Честно: stage без parity (другой SKU catalog) даёт ложную уверенность; документируй gaps.
+
+## Как это работает
+
+```gherkin
+Feature: Dev stage prod for QA
+
+  Scenario: Feature tested on dev then regressed on stage
+    Given developer deploys branch to dev cluster
+    When QA smoke passes on dev
+    And same build promoted to stage with RC tag
+    Then full regression runs before prod deploy approval
+
+  Scenario: Prod smoke read-only
+    Given prod deploy completed
+    When synthetic monitor GET /health and /catalog?limit=1
+    Then alerts fire if non-200 within 2 minutes
+    And no POST test orders on prod accounts
+
+  Scenario: Wrong environment bug
+    Given tester used prod token in Postman collection
+    When accidental DELETE on prod resource
+    Then incident process triggered environment guardrails added
+```
+
+Сравнение (логическая таблица в prose):
+
+| | Dev | Stage | Prod |
+|---|-----|-------|------|
+| Data | fake/small | anonymized copy | real users |
+| Deploy freq | many/day | per RC | controlled |
+| QA scope | feature smoke | full regression | smoke/monitor |
+
+QA артефакты (cases, data) помечаю target env; в TMS поле Environment обязательно при заведении бага.
+
+## Подводные камни
+
+- **Stage без HTTPS parity.** Cookie flags Secure/SameSite ведут себя иначе только на prod.
+- **Shared staging одной командой.** Чужой deploy сбрасывает ваши test users.
+- **Prod-like load on stage.** Shared DB melt; perf на isolated perf env.
+- **Feature flag default off on prod on.** Stage always on скрывает flag dependency bug.
+- **Copy prod data to stage без mask.** GDPR incident; только sanitized subset.

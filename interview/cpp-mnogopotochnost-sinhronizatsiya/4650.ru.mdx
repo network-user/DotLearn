@@ -1,0 +1,56 @@
+---
+id: 4650
+title: "Какие примитивы синхронизации бывают?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие примитивы синхронизации бывают?
+
+## Суть
+
+Примитивы делятся на блокирующие (mutex, semaphore, condition variable), координационные (barrier, latch) и lock-free (atomic, CAS-очереди). Они решают взаимное исключение, ожидание условия, ограничение параллелизма и безмьютексный обмен.
+
+## Что ответить на собесе
+
+- Mutex и RW-lock для защиты инвариантов структур данных.
+- Condition variable для «ждать событие», semaphore для «не больше N одновременно».
+- Atomic + memory order для счётчиков, флагов, простых lock-free структур.
+- Barrier/latch для фазовой синхронизации в параллельных алгоритмах.
+- Честно: spinlock и futex ближе к OS/runtime; в app-коде чаще mutex или atomic.
+
+## Как это работает
+
+Комбинация mutex + condition variable для bounded queue:
+
+```cpp
+#include <condition_variable>
+#include <mutex>
+#include <queue>
+
+std::mutex m;
+std::condition_variable notFull;
+std::condition_variable notEmpty;
+std::queue<int> q;
+const std::size_t cap = 8;
+
+void push(int v) {
+    std::unique_lock lock(m);
+    notFull.wait(lock, [] { return q.size() < cap; });
+    q.push(v);
+    notEmpty.notify_one();
+}
+```
+
+Producer ждёт `notFull`, пока размер меньше `cap`, кладёт элемент и сигналит `notEmpty`. Consumer симметрично ждёт непустую очередь. Semaphore с лимитом `cap` дал бы похожий эффект с меньшим кода, но CV + mutex гибче для сложных условий.
+
+## Подводные камни
+
+- **Spinlock на user space.** Жжёт CPU; оправдан на очень коротких секциях в kernel/driver, не в бизнес-логике.
+- **Смешение уровней.** POSIX sem для процессов и `std::mutex` для потоков в одной схеме без аккуратного дизайна.
+- **Lock-free сложность.** ABA, reclamation, тестирование дороже mutex.
+- **Барьеры C++20.** На embedded toolchain может не быть; нужен fallback.
+- **Слишком много примитивов.** Каждый новый тип sync увеличивает риск deadlock; упрощаю архитектуру.

@@ -1,0 +1,63 @@
+---
+id: 4230
+title: "Как настроить балансировку в Nginx?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как настроить балансировку в Nginx?
+
+## Суть
+
+Балансировка в nginx строится на блоке `upstream` с перечнем backend и `proxy_pass http://upstream_name` в location. Алгоритмы: round-robin (default), `least_conn`, `ip_hash`, `hash $request_uri consistent`. Дополнительно: `weight`, `backup`, `down`, passive health через `max_fails`/`fail_timeout`, active checks через nginx plus или внешний controller.
+
+## Что ответить на собесе
+
+- `upstream` в http context; имя совпадает с аргументом proxy_pass без URI path.
+- `least_conn` для long-lived API; `ip_hash` для legacy session без centralized store.
+- `keepalive` connections к upstream снижают TCP handshake overhead.
+- `backup` сервер подхватывает трафик только когда primary pool мёртв.
+- Честно: nginx passive health медленнее active; для strict SLA добавляю health check endpoint и внешний LB.
+
+## Как это работает
+
+```nginx
+upstream api_nodes {
+    least_conn;
+    keepalive 32;
+
+    server 10.0.3.4:8080 weight=3 max_fails=2 fail_timeout=10s;
+    server 10.0.3.5:8080 weight=1 max_fails=2 fail_timeout=10s;
+    server 10.0.3.6:8080 backup;
+}
+
+server {
+    listen 80;
+    server_name api.internal;
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_pass http://api_nodes;
+    }
+}
+```
+
+Проверка распределения (если backend отдаёт hostname):
+
+```bash
+for i in $(seq 1 6); do
+  curl -s -H 'Host: api.internal' http://127.0.0.1/ | head -1
+done
+```
+
+## Подводные камни
+
+- **URI в proxy_pass.** `proxy_pass http://pool/api/` меняет path stripping; путаю с балансировкой без path.
+- **DNS upstream.** Имена резолвятся при старте; при смене IP нужен resolver + variable trick или IP literals.
+- **No keepalive by default.** Без `proxy_http_version 1.1` и Connection "" каждый запрос новый TCP.
+- **ip_hash и NAT.** Много клиентов за одним corporate NAT ломают fair balance.
+- **Sticky без shared state.** При падении node sticky clients получают 502 до cookie refresh.

@@ -1,0 +1,66 @@
+---
+id: 4212
+title: "Что в AWS отвечает за firewall EC2?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что в AWS отвечает за firewall EC2?
+
+## Суть
+
+На уровне инстанса EC2 трафик фильтрует Security Group: stateful firewall с правилами allow-only для inbound и outbound. Дополнительно на уровне подсети работает Network ACL (stateless). В ответе на собесе Security Group — основной «firewall EC2».
+
+## Что ответить на собесе
+
+- Security Group: привязываю к ENI/instance; разрешаю только явные порты и source SG/CIDR.
+- Правила только additive (allow); deny нет — закрыто всё, что не разрешено.
+- Stateful: ответ на исходящий запрос автоматически пропускается inbound.
+- Для subnet-level deny и guardrails добавляю NACL поверх SG.
+- Честно: `0.0.0.0/0` на SSH (22) в prod недопустим; bastion или SSM Session Manager.
+
+## Как это работает
+
+Создание SG и правил через CLI:
+
+```bash
+VPC_ID=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+  --query 'Vpcs[0].VpcId' --output text)
+
+SG_ID=$(aws ec2 create-security-group \
+  --group-name web-tier-sg \
+  --description "HTTP from ALB only" \
+  --vpc-id "$VPC_ID" \
+  --query GroupId --output text)
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
+  --protocol tcp --port 80 \
+  --source-group sg-alb123
+
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" \
+  --protocol tcp --port 22 \
+  --cidr 203.0.113.10/32
+```
+
+Привязка к инстансу:
+
+```bash
+aws ec2 modify-instance-attribute \
+  --instance-id i-0abc \
+  --groups "$SG_ID" sg-monitoring456
+```
+
+Можно ссылаться на другую SG как source (`--source-group`): типичный паттерн «app tier принимает 8080 только от ALB SG». Outbound по умолчанию allow all; в hardened среде ограничиваю egress до NAT и конкретных endpoint.
+
+## Подводные камни
+
+- **Путать SG и NACL.** SG stateful на ENI; NACL stateless на subnet, с deny rules.
+- **Изменение SG на лету.** Правило применяется сразу ко всем инстансам в группе; ошибка открывает весь fleet.
+- **Лимит 60 правил на SG.** Крупные CIDR-списки лучше через prefix list или отдельный WAF.
+- **IPv6 забыли.** Отдельные правила для ::/0; default SG может пустить v6 неожиданно.
+- **ALB и target SG.** Health check идёт с IP ALB subnet; если SG слишком узкий, target unhealthy.

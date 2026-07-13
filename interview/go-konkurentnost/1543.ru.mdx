@@ -1,0 +1,69 @@
+---
+id: 1543
+title: "Как несколько goroutines читают один канал?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как несколько goroutines читают один канал?
+
+## Суть
+
+Fan-out workers: N goroutines делают `for v := range ch` на одном канале; runtime раздаёт каждое значение ровно одному reader. Отправитель закрывает канал после всех send; `WaitGroup` или errgroup ждёт завершения workers.
+
+## Что ответить на собесе
+
+- Один receive на значение: две goroutines не получат duplicate из одного send.
+- Закрытие канала сигнализирует EOF всем readers в range.
+- Для graceful shutdown комбинирую close + WaitGroup или context cancel до drain.
+- Честно: порядок обработки между workers не guaranteed; нужен order → single consumer или seq id.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func consumer(id int, jobs <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for task := range jobs {
+		fmt.Printf("worker %d: task %d\n", id, task)
+	}
+}
+
+func main() {
+	const n = 4
+	jobs := make(chan int, 16)
+	var wg sync.WaitGroup
+	for w := 0; w < n; w++ {
+		wg.Add(1)
+		go consumer(w, jobs, &wg)
+	}
+	for t := 0; t < 12; t++ {
+		jobs <- t
+	}
+	close(jobs)
+	wg.Wait()
+}
+```
+
+Четыре workers конкурируют за receive; каждый из 12 tasks обработает ровно один worker. Buffered channel сглаживает burst send без блокировки producer.
+
+## Подводные камни
+
+**Close до WaitGroup Done.** Закрыть канал можно только когда sends завершены; иначе panic или потеря tasks.
+
+**Нет close.** Range блокирует вечно; workers не выйдут.
+
+**Shared mutable state в worker.** Параллельные workers требуют sync для общих counters/maps.
+
+**Unbuffered + slow worker.** Один медленный consumer тормозит producer и всю pipeline.
+
+**Duplicate processing requirement.** Если нужен broadcast, один chan не подходит; нужен pub/sub или fan-out на несколько chan.

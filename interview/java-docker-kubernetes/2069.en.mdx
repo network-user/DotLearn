@@ -1,0 +1,68 @@
+---
+id: 2069
+title: "Sidecar container in a Pod: pattern for Java"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Sidecar container in a Pod: pattern for Java
+
+## In short
+
+A sidecar is an extra container in the same Pod as the main JVM app. Containers share a network namespace (localhost) and can mount shared volumes. The sidecar handles cross-cutting tasks: log shipping, metrics export, TLS proxy, config sync, without bloating the main image.
+
+## How to answer in an interview
+
+- One Pod, multiple containers; lifecycle is tied (Pod restart kills all).
+- Sidecar often acts as loopback proxy: app → localhost:15001 → mesh egress.
+- Shared emptyDir volume for logs or a unix socket.
+- Service mesh (Istio/Linkerd) injects sidecars via mutating webhook.
+- Honestly: a sidecar doubles Pod CPU/memory requests; for tiny services the overhead may not pay off.
+
+## How it works
+
+Log shipper next to Spring Boot:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: audit-api
+spec:
+  containers:
+  - name: app
+    image: audit-api:2.0.0
+    volumeMounts:
+    - name: logs
+      mountPath: /var/log/audit
+  - name: fluent-bit
+    image: fluent/fluent-bit:2.2
+    args: ["-c", "/etc/fluent-bit/fluent-bit.conf"]
+    volumeMounts:
+    - name: logs
+      mountPath: /var/log/audit
+      readOnly: true
+    - name: fb-config
+      mountPath: /etc/fluent-bit
+  volumes:
+  - name: logs
+    emptyDir: {}
+  - name: fb-config
+    configMap:
+      name: fluent-bit-audit
+```
+
+The main container writes JSON logs to the shared volume; the sidecar tails and ships to Elasticsearch. Network: both share one Pod IP; Service targetPort points only at the app container port.
+
+An init container (related pattern) runs before app start: schema migration, truststore download.
+
+## Pitfalls
+
+- **Startup order.** Mesh sidecar must be ready before app traffic; need holdApplicationUntilProxyStarts or probes.
+- **Sidecar OOM.** Pod limit is shared; fluent-bit OOMKill kills the whole Pod including the JVM.
+- **Shared volume race.** App does not flush log buffer → sidecar reads partial lines.
+- **Security boundary.** Root sidecar can read main app heap dump volume.
+- **Manual sidecar drift.** Hand-written YAML diverges from mesh auto-inject version.

@@ -1,0 +1,64 @@
+---
+id: 3033
+title: "What is a Kafka producer and what does QA verify on publish?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is a Kafka producer and what does QA verify on publish?
+
+## In short
+
+A producer is a client that serializes and sends records to a Kafka topic. It picks a partition by key or round-robin, waits for broker acks, and may retry on transient errors. QA checks payload correctness, target topic/partition, `acks` level, and no silent drop on cluster failure.
+
+## How to answer in an interview
+
+- A producer does not store a queue for consumers; it appends to a partition log.
+- Key `orderId` keeps all order events in one partition for ordering.
+- Callback/metadata returns topic, partition, offset for test tracing.
+- `acks=all` for financial events; `acks=1` is a conscious telemetry tradeoff.
+- Honestly: without flush/close on shutdown buffered messages may never leave.
+
+## How it works
+
+```gherkin
+Feature: Kafka producer validation
+
+  Scenario: Publish with business key
+    Given producer sends to topic payments key ord-441
+    When metadata callback returns partition 2 offset 90821
+    Then consumer in same partition reads in order
+
+  Scenario: Ack all on broker loss
+    Given acks all min.insync.replicas 2
+    When one broker stops
+    And two replicas alive
+    Then publish still succeeds QA logs offset
+
+  Scenario: Invalid serialization
+    Given value serializer expects Avro
+    When plain string sent
+    Then publish fails before broker QA catches contract bug
+```
+
+Renamed Java smoke (idioms kept, names changed):
+
+```java
+Properties cfg = new Properties();
+cfg.put("bootstrap.servers", "kafka-staging:9092");
+cfg.put("acks", "all");
+KafkaProducer<String, String> writer = new KafkaProducer<>(cfg);
+writer.send(new ProducerRecord<>("billing-events", "inv-9", "{\"total\":120}"));
+writer.flush();
+```
+
+## Pitfalls
+
+- **Publish without key on ordered flow.** Events get shuffled.
+- **acks=0 in “critical” test.** False delivery confidence.
+- **No offset check in test.** Delivery not proven.
+- **max.in.flight ignored.** Reordering on retry.
+- **Staging topic typo.** Messages to empty topic look like consumer bug.

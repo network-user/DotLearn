@@ -1,0 +1,71 @@
+---
+id: 2070
+title: "ReplicaSet: поддержание числа Pod"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# ReplicaSet: поддержание числа Pod
+
+## Суть
+
+ReplicaSet controller следит, чтобы running Pod с заданными label matchLabels всегда было ровно `spec.replicas`. При падении node или crash container он создаёт замену; при лишних Pod удаляет. Deployment использует ReplicaSet как механизм масштабирования и rolling update, напрямую RS в prod почти не применяют.
+
+## Что ответить на собесе
+
+- Selector + template определяют, какие Pod «принадлежат» RS.
+- RS не умеет rolling update strategy; только ensure count.
+- Deployment создаёт новый RS при изменении template и постепенно снижает старый.
+- `kubectl scale deployment` меняет replicas underlying RS.
+- Честно: ручной ReplicaSet без Deployment лишает history rollback и controlled rollout.
+
+## Как это работает
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: gateway-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      tier: gateway
+  template:
+    metadata:
+      labels:
+        tier: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: gateway:5.1.0
+        ports:
+        - containerPort: 8443
+```
+
+Reconcile loop:
+
+1. List Pod с labels `tier=gateway`.
+2. diff = desired(3) - actual → create или delete Pod.
+3. Новый Pod получает уникальное имя `gateway-rs-xxxxx`.
+
+Deployment поверх RS:
+
+```
+Deployment gateway
+  ├── RS gateway-7d9f (rev 3, replicas 3)  ← current
+  └── RS gateway-4a2c (rev 2, replicas 0)  ← old, scaled down
+```
+
+При `kubectl set image deployment/gateway gateway=gateway:5.2.0` создаётся новый RS, maxSurge/maxUnavailable управляют переходом.
+
+## Подводные камни
+
+- **Immutable selector.** Изменение matchLabels требует нового RS/Deployment.
+- **Orphan Pod.** Pod без ownerReference не удаляется RS при scale down mismatch.
+- **Resource quota.** RS бесконечно retry create Pod при quota exceeded → CrashLoop events.
+- **Standalone RS edit.** Прямое изменение RS template не триггерит Deployment history.
+- **PodDisruptionBudget ignore.** RS не учитывает PDB при node maintenance без eviction API.

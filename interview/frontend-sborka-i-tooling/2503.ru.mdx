@@ -1,0 +1,59 @@
+---
+id: 2503
+title: "Динамический import и путь в runtime"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Динамический import и путь в runtime
+
+## Суть
+
+`import()` возвращает Promise модуля и позволяет вычислить specifier в runtime, в отличие от static `import`, который фиксируется на этапе parse. Bundler всё равно анализирует возможные targets (magic comments `webpackChunkName`, glob importers) и эмитит async chunks для code splitting.
+
+## Что ответить на собесе
+
+- `const mod = await import(\`./widgets/${name}.js\`)` lazy-load feature panel по route или permission.
+- Ошибки: try/catch вокруг import, fallback UI если chunk 404 после deploy mismatch.
+- Vite `import.meta.glob` генерит map допустимых путей compile-time.
+- Честно: полностью произвольные URL (`import(userSupplied)`) bundler не соберёт; нужен runtime loader или import maps.
+- Prefetch: `/* webpackPrefetch: true */` подсказка браузеру загрузить chunk заранее.
+
+## Как это работает
+
+```ts
+type PanelLoader = () => Promise<{ render(root: HTMLElement): void }>;
+
+const registry: Record<string, PanelLoader> = {
+  analytics: () => import('./panels/analytics-panel.js'),
+  billing: () => import('./panels/billing-panel.js'),
+};
+
+export async function mountPanel(name: string, root: HTMLElement) {
+  const loader = registry[name];
+  if (!loader) {
+    throw new Error(`Unknown panel: ${name}`);
+  }
+
+  try {
+    const module = await loader();
+    module.render(root);
+  } catch (cause) {
+    console.error('Panel chunk failed', cause);
+    root.textContent = 'Module unavailable';
+  }
+}
+```
+
+Webpack создаёт отдельные файлы `analytics-panel.[hash].js`. Browser грузит их только при вызове. React `lazy(() => import('./Page'))` + `Suspense` оборачивает тот же механизм. Dynamic path с переменной ограничен directory prefix, иначе static analyzer не знает полный set файлов.
+
+## Подводные камни
+
+- **Cache bust mismatch.** User на старой HTML shell после deploy, dynamic import 404 на старый hash.
+- **Waterfall.** Цепочка последовательных dynamic imports без prefetch удлиняет TTI.
+- **SSR.** `import()` в server component требует compatible bundler target; иначе split only client.
+- **Security.** Не подставляй raw user input в specifier без allowlist.
+- **Typing.** `ReturnType` dynamic module слабый; держи explicit interface exported из chunk.

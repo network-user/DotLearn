@@ -1,0 +1,93 @@
+---
+id: 4665
+title: "Which lock-guard wrappers does the STL provide?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which lock-guard wrappers does the STL provide?
+
+## In short
+
+C++ provides RAII mutex wrappers: `lock_guard` for simple scope locking, `unique_lock` for flexible control and waiting on condition variables, and `scoped_lock` for multiple mutexes without deadlock.
+
+## How to answer in an interview
+
+- `std::lock_guard`: minimal RAII, lock in ctor, unlock in dtor, no early unlock/move.
+- `std::unique_lock`: defer_lock, try_lock, unlock/relock, works with `condition_variable::wait`.
+- `std::scoped_lock` (C++17): variadic multi-mutex, uses `std::lock` internally.
+- `std::shared_lock` pairs with `shared_mutex` for readers-writer patterns.
+- Honestly: for one mutex, `lock_guard` or `scoped_lock` covers 90% of cases; `unique_lock` is for condvar waits.
+
+## How it works
+
+`lock_guard`:
+
+```cpp
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+std::mutex log_gate;
+
+void trace(const char* msg) {
+    std::lock_guard<std::mutex> hold(log_gate);
+    std::cout << msg << '\n';
+}
+```
+
+`unique_lock` with deferred acquisition:
+
+```cpp
+#include <mutex>
+
+std::mutex job_gate;
+
+void maybe_work(bool needed) {
+    std::unique_lock<std::mutex> hold(job_gate, std::defer_lock);
+    if (needed) {
+        hold.lock();
+        // critical section
+    }
+}
+```
+
+`scoped_lock` on a mutex pair:
+
+```cpp
+#include <mutex>
+
+std::mutex wallet;
+std::mutex ledger;
+
+void transfer() {
+    std::scoped_lock guard(wallet, ledger);
+    // both resources held atomically
+}
+```
+
+`shared_lock` for read-mostly data:
+
+```cpp
+#include <shared_mutex>
+
+std::shared_mutex config;
+
+void read_config() {
+    std::shared_lock lock(config);
+    // many readers
+}
+```
+
+All wrappers unlock on exceptions if the mutex was acquired.
+
+## Pitfalls
+
+- **adopt_lock without std::lock.** Do not adopt_lock after manual locking without clear ownership.
+- **unique_lock and condvar.** `condition_variable::wait` requires `unique_lock`, not `lock_guard`.
+- **Recursive mutex.** `lock_guard<recursive_mutex>` allows re-entry but complicates reasoning.
+- **Deadlock still possible.** `scoped_lock` only helps when grabbing a set in one operation.
+- **Performance.** `unique_lock` is slightly heavier due to owns_lock; count overhead on hot paths.

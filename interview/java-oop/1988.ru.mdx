@@ -1,0 +1,65 @@
+---
+id: 1988
+title: "Как спроектировать иммутабельный класс на практике?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как спроектировать иммутабельный класс на практике?
+
+## Суть
+
+Иммутабельный класс фиксирует состояние в момент создания и не предоставляет способов его изменить. Практическая реализация: `final` класс, `private final` поля, конструктор с defensive copy, геттеры без утечки mutable ссылок, отсутствие сеттеров. Обновление моделируется как создание нового экземпляра (with-methods или builder).
+
+## Что ответить на собесе
+
+- Показываю шаблон на примере value object с примитивами и коллекцией.
+- Объясняю `clone()` на входе и `List.copyOf` / `Collections.unmodifiableList` на выходе.
+- Упоминаю Java 16+ `record` для простых immutable DTO.
+- Связываю с concurrency: safe publication, использование как Map key.
+- Честно добавляю: immutability не заменяет валидацию; невалидное состояние можно зафиксировать навсегда в ctor.
+
+## Как это работает
+
+```java
+public final class GeoPoint {
+    private final int latitudeE6;
+    private final int longitudeE6;
+
+    public GeoPoint(int latitudeE6, int longitudeE6) {
+        if (latitudeE6 < -90_000_000 || latitudeE6 > 90_000_000) {
+            throw new IllegalArgumentException("latitude out of range");
+        }
+        if (longitudeE6 < -180_000_000 || longitudeE6 > 180_000_000) {
+            throw new IllegalArgumentException("longitude out of range");
+        }
+        this.latitudeE6 = latitudeE6;
+        this.longitudeE6 = longitudeE6;
+    }
+
+    public int latitudeE6() {
+        return latitudeE6;
+    }
+
+    public int longitudeE6() {
+        return longitudeE6;
+    }
+
+    public GeoPoint shift(int deltaLatE6, int deltaLonE6) {
+        return new GeoPoint(latitudeE6 + deltaLatE6, longitudeE6 + deltaLonE6);
+    }
+}
+```
+
+Все поля задаются один раз в конструкторе с проверкой диапазона. Метод `shift` не мутирует `this`, а возвращает новый `GeoPoint`. Внешний код не может присвоить полям новое значение: сеттеров нет, поля `final`. Для коллекций тот же принцип: копия при входе, неизменяемый view при чтении. `String` и boxed primitives уже immutable, их достаточно хранить по значению ссылки.
+
+## Подводные камни
+
+- **Забытый defensive copy.** Передали `byte[]` в ctor и отдали тот же массив из getter.
+- **With-method мутирует this.** «Иммутабельный» класс с `return this` после изменения поля.
+- **Reflection или serialization.** Внешний код может восстановить mutable graph после freeze.
+- **Наследование ломает гарантию.** Non-final класс с protected setter в потомке.
+- **Чрезмерные копии.** На больших структурах каждый getter клонирует весь граф без необходимости.

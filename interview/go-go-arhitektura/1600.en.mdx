@@ -1,0 +1,62 @@
+---
+id: 1600
+title: "When a microservice runs out of resources"
+category: go-go-arhitektura
+categoryLabel: "GO: Архитектура"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When a microservice runs out of resources
+
+## In short
+
+If one service hits CPU/RAM/latency limits: profile (pprof), optimize the hot path, scale horizontally with HPA, tune limits/requests, add cache, rate-limit upstream, split heavy workload. Measure before buying bigger machines.
+
+## How to answer in an interview
+
+- pprof CPU/heap, trace slow queries.
+- Scale replicas if CPU-bound and stateless.
+- Vertical bump if GC or memory bound short term.
+- Honestly: sometimes the issue is N+1 RPC, not «too few pods».
+
+## How it works
+
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+	_ "net/http/pprof"
+)
+
+func main() {
+	go func() { log.Println(http.ListenAndServe(":6060", nil)) }()
+	http.HandleFunc("/", handler)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Profile under load, fix allocation churn or DB calls, then k8s:
+
+```
+resources:
+  requests: { cpu: "500m", memory: "256Mi" }
+  limits:   { cpu: "2", memory: "512Mi" }
+```
+
+HPA at 70% CPU adds pods.
+
+## Pitfalls
+
+**Scale before optimize.** Wastes money, same p99.
+
+**No limits.** Noisy neighbor kills the node.
+
+**Shared DB bottleneck.** More pods multiply connections.
+
+**Ignore OOMKilled.** Need memory limit plus leak fix.
+
+**Cache without TTL.** Stale or unbounded memory.

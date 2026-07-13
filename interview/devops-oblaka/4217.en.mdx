@@ -1,0 +1,55 @@
+---
+id: 4217
+title: "What EBS volume types exist in AWS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What EBS volume types exist in AWS?
+
+## In short
+
+EBS volumes fall into general-purpose SSD (gp3/gp2), provisioned IOPS SSD (io2/io1), throughput HDD (st1), and cold HDD (sc1). gp3 is the default for most workloads; io2 for latency-sensitive databases; st1/sc1 for large sequential reads. Magnetic (standard) is legacy.
+
+## How to answer in an interview
+
+- gp3 is my baseline; IOPS and throughput scale independently of volume size.
+- io2 Block Express for critical OLTP with 99.999% durability SLA.
+- st1 for big data and logs with high sequential throughput; weak random IOPS.
+- sc1 for archives and rarely read data; cheaper but slower.
+- Honestly: gp2 still appears in legacy; for new volumes I move to gp3 for cost.
+
+## How it works
+
+A volume is created in an AZ and attached to one EC2 instance; size and type can change online (with caveats). gp3 provides 3000 IOPS and 125 MiB/s baseline, upgradable to 16,000 IOPS and 1000 MiB/s.
+
+Create and attach gp3:
+
+```bash
+VOL_ID=$(aws ec2 create-volume \
+  --availability-zone eu-central-1a \
+  --size 100 \
+  --volume-type gp3 \
+  --iops 6000 \
+  --throughput 250 \
+  --encrypted \
+  --query VolumeId --output text)
+
+aws ec2 attach-volume \
+  --volume-id "$VOL_ID" \
+  --instance-id i-0fedcba9876543210 \
+  --device /dev/sdf
+```
+
+Format once on the instance, then grow the filesystem when the volume expands. Multi-attach is limited to io2 on Nitro in narrow cases; shared filesystems are usually EFS/FSx.
+
+## Pitfalls
+
+- **AZ lock-in.** Volumes are AZ-bound; snapshot and restore to another AZ for DR.
+- **gp2 burst.** Small gp2 volumes hit burst balance; gp3 is more predictable in production.
+- **Wrong type for workload.** st1 on OLTP causes latency spikes; io2 on dev is budget overkill.
+- **Delete on termination.** Block device mapping can wipe data when the instance terminates.
+- **Instance IOPS ceiling.** Nitro caps max EBS bandwidth; a faster volume cannot outrun the instance.

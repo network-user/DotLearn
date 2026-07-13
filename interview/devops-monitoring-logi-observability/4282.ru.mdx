@@ -1,0 +1,64 @@
+---
+id: 4282
+title: "Как читать логи в Linux?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как читать логи в Linux?
+
+## Суть
+
+Системные и приложенческие события пишутся в текстовые файлы под `/var/log/` и в journald (systemd). Базовый triage: `journalctl` для unit'ов, `tail`/`less` для файлов, `grep` для фильтра. На современных дистрибутивах половина сервисов уже в journal, но legacy daemons всё ещё кладут plain files.
+
+## Что ответить на собесе
+
+- `journalctl -u nginx -f` для follow конкретного сервиса за последние события.
+- `tail -n 100 /var/log/syslog` и `grep -i error` для быстрого среза.
+- `less +G /var/log/auth.log` чтобы открыть файл с конца без загрузки целиком.
+- Знаю layout: `auth.log`, `kern.log`, `apt/`, application dirs в `/var/log/<app>/`.
+- Честно: на fleet из сотен VM ручной SSH tail не масштабируется; central logging обязателен для prod.
+
+## Как это работает
+
+Follow systemd unit с priority filter:
+
+```bash
+journalctl -u docker.service -p err..alert -f --no-pager
+```
+
+Поиск failed login за сегодня:
+
+```bash
+sudo grep -h "Failed password" /var/log/auth.log \
+  | awk -v d="$(date +%b\ %e)" '$0 ~ d { print }'
+```
+
+Комбинация journal + grep по kernel oops:
+
+```bash
+journalctl -k --since "1 hour ago" | grep -E 'Oops|BUG|panic'
+```
+
+Большой rotated log с zgrep:
+
+```bash
+zgrep -h "OutOfMemory" /var/log/syslog /var/log/syslog.*.gz | tail -n 20
+```
+
+Live watch нескольких файлов:
+
+```bash
+sudo tail -F /var/log/nginx/access.log /var/log/nginx/error.log
+```
+
+## Подводные камни
+
+- **UTC vs local.** Journal хранит UTC; при корреляции с app logs сверяю timezone (`timedatectl`).
+- **logrotate truncate.** `tail -F` после rotate без `copytruncate` молчит; перезапуск tail или shipper с inode tracking.
+- **Нет места на диске.** Забитый `/var` останавливает запись логов раньше, чем заметишь OOM; мониторю `node_filesystem_avail_bytes`.
+- **Слишком широкий grep.** `grep error` ловит noise из info строк; сужаю regex и поле severity.
+- **PII в auth.log.** Копирование логов в тикеты без редактирования IP/username нарушает policy; маскирую перед export.

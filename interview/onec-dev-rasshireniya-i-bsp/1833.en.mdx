@@ -1,0 +1,58 @@
+---
+id: 1833
+title: "Risks of misusing event subscriptions"
+category: onec-dev-rasshireniya-i-bsp
+categoryLabel: "Расширения и БСП"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Risks of misusing event subscriptions
+
+## In short
+
+Event subscriptions are a handy way to extend a base product without editing object modules, but each subscription runs synchronously in the platform event chain. Handler bugs, extra queries, and duplicated logic hurt performance, data integrity, and maintainability.
+
+## How to answer in an interview
+
+- I say a subscription is a hook on the hot path of save/post, not a place for arbitrary business logic.
+- I list risks: long transactions, hidden attribute changes, mutual `Cancel`, unclear call order.
+- I show debugging gets harder with a stack of several handlers on one event.
+- I honestly admit that sometimes a targeted object module extension is simpler than many subscriptions.
+- I mention a team rule: one responsibility per subscription, code review, measuring document save time.
+
+## How it works
+
+Typical anti-pattern: an `OnWrite` subscription runs a heavy register recalc and an HTTP call to an external system.
+
+```bsl
+Процедура ПриЗаписиРеализации(Источник, Отказ) Экспорт
+
+    Если Источник.ОбменДанными.Загрузка Тогда
+        Возврат;
+    КонецЕсли;
+
+    ПересчитатьСвязанныеОстатки(Источник);
+    ОтправитьСтатусВCRM(Источник);
+
+КонецПроцедуры
+```
+
+Until the external service responds, the user waits for save to finish. A second subscription on the same event may change `Источник.Статус` unaware of the first and create a logical race.
+
+Better: subscription only validates and enqueues a background job; integration and bulk recalc belong in scheduled jobs or exchange queues. For data exchange, check `ОбменДанными.Загрузка` or you get recursive writes and duplicate movements.
+
+With multiple extensions, handler order is not always obvious from the object module; documenting dependencies and integration tests reduce risk.
+
+## Pitfalls
+
+**Hidden network inside a transaction.** HTTP from `BeforeWrite` lengthens locks and raises deadlock risk.
+
+**Uncontrolled object mutation.** Assigning attributes in a subscription may override standard processing or re-enter events.
+
+**Ignoring load mode.** Without `ОбменДанными.Загрузка` the subscription breaks initial load and exchange.
+
+**Scattered logic.** Ten `BeforeWrite` subscriptions are harder to maintain than one module with explicit `#Область`.
+
+**Extension on top of base.** A duplicate subscription in extension and base product doubles side effects after an upgrade.

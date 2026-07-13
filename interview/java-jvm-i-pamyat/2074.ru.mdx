@@ -1,0 +1,72 @@
+---
+id: 2074
+title: "Области памяти JVM помимо heap"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Области памяти JVM помимо heap
+
+## Суть
+
+JVM делит native + managed память: heap для объектов, stack frame per thread, metaspace для class metadata, code cache для JIT native code, TLAB как thread-local bump allocator внутри Eden. Direct buffers и JNI живут в native memory вне heap. Tuning и OOM диагностика требуют понимания, какая область исчерпана.
+
+## Что ответить на собесе
+
+- Heap: young (Eden+S0+S1) + old generation; все `new` объекты (кроме stack scalar refs).
+- Stack: локальные переменные, operand stack, frame metadata; `-Xss` per thread.
+- Metaspace: class definitions, method metadata; `-XX:MaxMetaspaceSize`.
+- Code cache: C1/C2 compiled methods; `-XX:ReservedCodeCacheSize`.
+- Честно: «Java memory = heap» упрощение; direct ByteBuffer OOM при полном heap.
+
+## Как это работает
+
+```java
+public final class MemoryLayoutDemo {
+
+    private static long counter;
+
+    public static void main(String[] args) {
+        var buffer = java.nio.ByteBuffer.allocateDirect(64 * 1024);
+        process(new OrderId("ORD-42"));
+        counter++;
+    }
+
+    private static void process(OrderId id) {
+        var label = id.value();
+        System.out.println(label);
+    }
+
+    record OrderId(String value) {}
+}
+```
+
+Размещение:
+
+| Что | Где |
+|-----|-----|
+| `OrderId` instance | Eden heap |
+| `label` reference | stack frame `process` |
+| `OrderId` class metadata | metaspace |
+| Hot `process` native code | code cache |
+| `allocateDirect` block | native (tracked separately) |
+| `counter` static field | heap (class mirror in metaspace) |
+
+TLAB: поток аллоцирует в свой Eden slice без global lock; refill при exhaustion.
+
+Flags snapshot:
+
+```
+-Xms512m -Xmx512m -Xss1m -XX:MaxMetaspaceSize=256m
+```
+
+## Подводные камни
+
+- **Metaspace OOM при hot reload.** DevTools/classloader leak fills metaspace, heap green.
+- **Thousands threads × 1MB stack.** Native OOM при modest heap.
+- **Code cache full.** Deoptimization storm, sudden perf cliff.
+- **Compressed Oops off.** Heap >32GB на 64-bit удваивает reference size.
+- **NMT blind spot.** Without `-XX:NativeMemoryTracking=summary` native leak hard to see.

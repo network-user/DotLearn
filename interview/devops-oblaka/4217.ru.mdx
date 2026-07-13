@@ -1,0 +1,55 @@
+---
+id: 4217
+title: "Какие типы EBS-томов существуют в AWS?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие типы EBS-томов существуют в AWS?
+
+## Суть
+
+EBS тома делятся на SSD general purpose (gp3/gp2), provisioned IOPS (io2/io1), throughput HDD (st1) и cold HDD (sc1). gp3 по умолчанию для большинства workload; io2 для latency-sensitive БД; st1/sc1 для последовательного чтения больших объёмов. Magnetic (standard) устарел.
+
+## Что ответить на собесе
+
+- gp3: базовый выбор; IOPS и throughput настраиваются независимо от размера тома.
+- io2 Block Express для критичных OLTP с SLA по durability 99.999%.
+- st1 для big data и логов с высокой sequential throughput; random IOPS слабые.
+- sc1 для архивов и редко читаемых данных; дешевле, но медленнее.
+- Честно: gp2 ещё встречается в legacy; для новых томов мигрирую на gp3 ради цены.
+
+## Как это работает
+
+Том создаётся в AZ, attach к одному EC2; размер и тип меняются online (с оговорками). gp3 даёт 3000 IOPS и 125 MiB/s baseline, можно поднять до 16 000 IOPS и 1000 MiB/s.
+
+Создание и attach gp3:
+
+```bash
+VOL_ID=$(aws ec2 create-volume \
+  --availability-zone eu-central-1a \
+  --size 100 \
+  --volume-type gp3 \
+  --iops 6000 \
+  --throughput 250 \
+  --encrypted \
+  --query VolumeId --output text)
+
+aws ec2 attach-volume \
+  --volume-id "$VOL_ID" \
+  --instance-id i-0fedcba9876543210 \
+  --device /dev/sdf
+```
+
+На инстансе форматирую один раз, дальше resize filesystem при увеличении тома. Multi-attach доступен только для io2 на Nitro instances в ограниченных сценариях; shared filesystem обычно EFS/FSx.
+
+## Подводные камни
+
+- **AZ lock-in.** Том привязан к AZ; snapshot + restore в другую AZ при DR.
+- **Burst gp2.** Малые gp2 тома упираются в burst balance; на проде gp3 предсказуемее.
+- **Неправильный тип для workload.** st1 на OLTP даёт latency spikes; io2 на dev overkill по бюджету.
+- **Delete on termination.** Флаг на block device mapping стирает данные при terminate инстанса.
+- **IOPS ceiling instance.** Nitro лимитирует max EBS bandwidth; том быстрее, чем инстанс, не ускорит диск.

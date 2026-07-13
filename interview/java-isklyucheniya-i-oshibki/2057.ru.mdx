@@ -1,0 +1,74 @@
+---
+id: 2057
+title: "Generics в catch: почему нельзя"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Generics в catch: почему нельзя
+
+## Суть
+
+В Java нельзя писать `catch (MyException<String> ex)` или параметризовать тип в catch. Причина: type erasure стирает generic-параметры при компиляции; JVM в catch матчит только raw class. Исключения диспатчатся по runtime class объекта, а не по generic signature. Payload типа кладут в поле exception, не в generic catch.
+
+## Что ответить на собесе
+
+- Catch работает по классу после erasure: `MyException<T>` → `MyException`.
+- Компилятор отклонит `catch (ValidationException<User> e)`.
+- Для typed context использую поле `ErrorCode code` или `Class<?> entityType`.
+- Multi-catch тоже только по raw/nested concrete classes.
+- Честно: generic exception classes редко дают пользу, prefer composition внутри.
+
+## Как это работает
+
+Не компилируется:
+
+```java
+// catch (ApiException<PaymentError> ex) { }  // compile error
+```
+
+Рабочий паттерн:
+
+```java
+public final class ApiException extends RuntimeException {
+    private final ErrorCode code;
+    private final String entityId;
+
+    public ApiException(ErrorCode code, String entityId, String message) {
+        super(message);
+        this.code = code;
+        this.entityId = entityId;
+    }
+
+    public ErrorCode code() { return code; }
+    public String entityId() { return entityId; }
+}
+
+void handle(ApiException ex) {
+    switch (ex.code()) {
+        case PAYMENT_DECLINED -> retryWithBackoff(ex.entityId());
+        case VALIDATION_FAILED -> rejectRequest(ex.getMessage());
+    }
+}
+```
+
+Erasure demo:
+
+```java
+List<String> names = List.of("a");
+List<Integer> ids = List.of(1);
+// names.getClass() == ids.getClass() → true, оба List.class
+```
+
+Аналогично `MyException<String>` и `MyException<Integer>` один runtime class для catch.
+
+## Подводные камни
+
+- **Попытка обойти через wildcard catch.** `catch (MyException<?> e)` тоже illegal в Java.
+- **instanceof с generic (Java 16+).** Pattern matching по типу, не по generic param.
+- **Сериализация generic exception.** Поля с generic стираются, deserialization surprise.
+- **Дублирование exception per type.** `UserNotFoundException`, `OrderNotFoundException` вместо одного generic.
+- **Путаница с union types.** Java catch не поддерживает union как в некоторых языках.

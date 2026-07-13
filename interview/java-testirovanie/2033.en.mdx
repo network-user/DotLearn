@@ -1,0 +1,67 @@
+---
+id: 2033
+title: "JUnit lifecycle: @BeforeEach and @BeforeAll"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# JUnit lifecycle: @BeforeEach and @BeforeAll
+
+## In short
+
+JUnit 5 lifecycle hooks prepare and clean test fixtures. `@BeforeEach` / `@AfterEach` wrap each `@Test`. `@BeforeAll` / `@AfterAll` are static, once per class. Order: BeforeAll → (BeforeEach → Test → AfterEach)* → AfterAll.
+
+## How to answer in an interview
+
+- BeforeEach for fresh SUT/state; AfterEach closes resources.
+- BeforeAll for expensive setup: Testcontainers start, temp schema once.
+- `@TestInstance(Lifecycle.PER_CLASS)` allows non-static BeforeAll.
+- Spring `@DirtiesContext` resets context; do not confuse with JUnit hooks.
+- Honestly: heavy BeforeEach per test kills suite speed.
+
+## How it works
+
+```java
+class LedgerServiceTest {
+    static PostgreSQLContainer<?> postgres;
+    LedgerService service;
+
+    @BeforeAll
+    static void startDb() {
+        postgres = new PostgreSQLContainer<>("postgres:16");
+        postgres.start();
+    }
+
+    @BeforeEach
+    void initService() {
+        service = new LedgerService(dataSource(postgres));
+        service.clear();
+    }
+
+    @AfterEach
+    void rollbackOpenTransactions() {
+        service.rollbackPending();
+    }
+
+    @AfterAll
+    static void stopDb() {
+        postgres.stop();
+    }
+
+    @Test
+    void postsDebitAndCredit() { /* ... */ }
+}
+```
+
+`@BeforeEach` guarantees empty ledger between tests. `@BeforeAll` container reuse saves seconds. Nested class may add its own `@BeforeEach` on top of outer.
+
+## Pitfalls
+
+- **Non-static @BeforeAll without PER_CLASS.** JUnit startup failure.
+- **Shared mutable field without BeforeEach reset.** Flaky order dependence.
+- **AfterEach swallows exception.** Next test inherits bad state silently.
+- **BeforeAll failure skips all tests.** Hard to diagnose without logging.
+- **Nested + parallel execution.** Hook order surprises with `@Execution(CONCURRENT)`.

@@ -1,0 +1,61 @@
+---
+id: 2475
+title: "Сессионная авторизация в веб-приложении"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Сессионная авторизация в веб-приложении
+
+## Суть
+
+После login сервер создаёт session record и отдаёт клиенту opaque session id (обычно cookie). Каждый запрос несёт id; сервер lookup session store и решает access. Logout = invalidate server-side + clear cookie.
+
+## Что ответить на собесе
+
+- Session cookie: HttpOnly, Secure, SameSite=Lax/Strict, короткий idle timeout.
+- Regenerate session id после login против fixation.
+- На SPA cookie auth через same-site BFF; pure API может использовать session cookie + CSRF token.
+- Честно: sticky sessions vs centralized Redis store влияет на logout propagation.
+- Не храню session id в localStorage duplicate.
+
+## Как это работает
+
+Клиент:
+
+```ts
+async function login(email: string, password: string) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error('login failed');
+}
+
+async function loadDashboard() {
+  const res = await fetch('/api/dashboard', { credentials: 'include' });
+  if (res.status === 401) location.assign('/login');
+  return res.json();
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+}
+```
+
+Server хранит `{ sessionId → userId, roles, expires }`. Cookie только pointer, не JWT с claims. Rolling session extends idle on activity. Destroy on logout/password change/compromise.
+
+Compared to JWT session: instant revoke возможен, но store и horizontal scale сложнее.
+
+## Подводные камни
+
+- **Session fixation.** Login без rotation id позволяет attacker preset cookie.
+- **Concurrent logout.** Other tabs keep UI until next 401; sync via BroadcastChannel.
+- **Subdomain scope.** Domain=.app.com shares cookie across microfrontends unintentionally.
+- **CSRF on cookie auth.** Mutations need token despite SameSite.
+- **Mobile WebView cookies.** Third-party cookie rules differ from desktop Safari/Chrome.

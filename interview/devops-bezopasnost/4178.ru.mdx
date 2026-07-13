@@ -1,0 +1,50 @@
+---
+id: 4178
+title: "Как выпустить и установить TLS-сертификат?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как выпустить и установить TLS-сертификат?
+
+## Суть
+
+TLS-сертификат получают через генерацию key pair, CSR с CN/SAN и прохождение domain validation у CA (Let's Encrypt, DigiCert или internal PKI). Подписанный leaf + chain монтируют на reverse proxy или ingress; private key остаётся только на сервере или в secret store.
+
+## Что ответить на собесе
+
+- Описываю цепочку: key → CSR → CA challenge → cert + intermediate → reload nginx/ingress.
+- Для публичных сайтов: ACME HTTP-01 или DNS-01 через certbot/lego/caddy auto.
+- Для internal: step-ca/Vault PKI с short-lived cert и automation через CSI или cert-manager.
+- Честно добавляю: CSR без SAN для нескольких hostname уже не проходит; wildcard только через DNS-01.
+
+## Как это работает
+
+```bash
+openssl ecparam -genkey -name prime256v1 -noout -out svc.key
+openssl req -new -key svc.key -out svc.csr \
+  -subj "/CN=api.example.com" \
+  -addext "subjectAltName=DNS:api.example.com,DNS:*.api.example.com"
+
+certbot certonly --webroot -w /var/www/acme \
+  -d api.example.com --non-interactive --agree-tos -m ops@example.com
+
+install -m 0644 /etc/letsencrypt/live/api.example.com/fullchain.pem /etc/nginx/tls/
+install -m 0600 /etc/letsencrypt/live/api.example.com/privkey.pem /etc/nginx/tls/
+nginx -t && systemctl reload nginx
+```
+
+EC key быстрее RSA на handshake. CSR несёт SAN для всех имён в SNI. Certbot проходит HTTP-01 challenge на `/.well-known/acme-challenge/`. `fullchain.pem` включает intermediate для Android/Java trust.
+
+Renewal: cron/systemd timer `certbot renew --deploy-hook "systemctl reload nginx"`.
+
+## Подводные камни
+
+- **Private key в git.** Утечка = impersonation домена до revoke.
+- **Неполный chain.** Браузеры desktop терпят, mobile SDK падают.
+- **Forgotten reload.** Новый cert на disk, nginx держит старый in memory.
+- **HTTP-01 за CDN.** Challenge должен попасть на origin, не только edge cache.
+- **90-day LE без мониторинга.** Expiry alert обязателен даже с auto-renew.

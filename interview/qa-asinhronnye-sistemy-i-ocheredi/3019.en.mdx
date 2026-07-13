@@ -1,0 +1,54 @@
+---
+id: 3019
+title: "How does QA test message processing order?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does QA test message processing order?
+
+## In short
+
+Order matters when a later event changes the meaning of an earlier one: CREATE before ACTIVATE, debit before credit. In Kafka order holds within a partition for one producer key; in RabbitMQ with one consumer and prefetch=1. QA sends a labeled sequence, reads audit logs or APIs, and compares actual order to the contract.
+
+## How to answer in an interview
+
+- I build an event chain with explicit seq numbers in the payload.
+- I verify happy path: strict sequence in the downstream DB.
+- Load run: parallel keys, order preserved within each key.
+- Negative: deliberately break order on staging and check compensating action.
+- Honestly: global order across all users is usually neither required nor guaranteed.
+
+## How it works
+
+```gherkin
+Feature: Message order verification
+
+  Scenario: Strict sequence per user
+    Given publish to topic orders partition key user-12
+    When messages seq 1 CREATE seq 2 PAY seq 3 SHIP in order
+    Then order status timeline shows CREATED then PAID then SHIPPED
+
+  Scenario: Parallel keys independent order
+    Given user-12 and user-99 events interleaved on broker
+    When each key processed
+    Then per user timeline ordered globally interleaved allowed
+
+  Scenario: Out of order detection
+    Given consumer receives ACTIVATE before CREATE
+    When handler runs
+    Then message moves to DLQ or retries until CREATE exists
+```
+
+QA uses log timestamps, `sequence_id` in event tables, Kafka UI offset order. Poll APIs with backoff until final status.
+
+## Pitfalls
+
+- **One consumer in test, ten in prod.** Order breaks on scale-out without a key.
+- **First message only.** Middle of chain swapped unnoticed.
+- **Clock skew.** Timestamps lie about order.
+- **Kafka rebalance.** Brief reorder on partition reassignment.
+- **Idempotent reorder ignored.** Retry of seq 2 must not roll back seq 3.

@@ -1,0 +1,125 @@
+---
+id: 1462
+title: "Token bucket и leaky bucket: где какой лимитер уместен?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Token bucket и leaky bucket: где какой лимитер уместен?
+
+## Суть
+
+Оба алгоритма ограничивают интенсивность трафика, но по-разному: token bucket копит «разрешения» и допускает краткие всплески, leaky bucket выравнивает поток до почти постоянной скорости. Выбор зависит от того, важнее гибкость пиков или ровная нагрузка на downstream.
+
+## Что ответить на собесе
+
+- Token bucket: пополнение токенов со скоростью R, ёмкость C, запрос съедает токен; burst до C запросов сразу, потом средняя скорость R.
+- Leaky bucket: очередь фиксированного размера, обработка (утечка) с постоянной скоростью; входной burst сглаживается, переполнение отбрасывается.
+- Привожу применение: API gateway и клиентские квоты чаще token bucket; сетевые шейперы и стабилизация очереди сообщений ближе к leaky bucket.
+- Честно добавляю: на практике fixed window и sliding window тоже встречаются; `golang.org/x/time/rate` реализует token bucket, а не leaky.
+
+## Как это работает
+
+**Token bucket.** Ведро наполняется токенами с постоянной скоростью, но не выше capacity. Пришёл запрос: если токен есть, обрабатываем и уменьшаем счётчик; иначе ждём или отвечаем 429. Позволяет «нагулять» burst в тихий период и потратить его при всплеске.
+
+**Leaky bucket.** Запросы попадают в буфер; «кран» сливает их равномерно. Если буфер полон, новый запрос отклоняется. Выходной поток почти ровный, даже если вход дёрганый.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+type TokenBucket struct {
+	mu         sync.Mutex
+	capacity   float64
+	tokens     float64
+	refillRate float64
+	lastTick   time.Time
+}
+
+func NewTokenBucket(capacity, refillPerSec float64) *TokenBucket {
+	return &TokenBucket{
+		capacity:   capacity,
+		tokens:     capacity,
+		refillRate: refillPerSec,
+		lastTick:   time.Now(),
+	}
+}
+
+func (tb *TokenBucket) Allow() bool {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(tb.lastTick).Seconds()
+	tb.tokens += elapsed * tb.refillRate
+	if tb.tokens > tb.capacity {
+		tb.tokens = tb.capacity
+	}
+	tb.lastTick = now
+	if tb.tokens < 1 {
+		return false
+	}
+	tb.tokens--
+	return true
+}
+
+type LeakyBucket struct {
+	mu       sync.Mutex
+	capacity int
+	queued   int
+	leakRate int
+	lastLeak time.Time
+}
+
+func NewLeakyBucket(capacity, leakPerSec int) *LeakyBucket {
+	return &LeakyBucket{
+		capacity: capacity,
+		leakRate: leakPerSec,
+		lastLeak: time.Now(),
+	}
+}
+
+func (lb *LeakyBucket) Admit() bool {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	now := time.Now()
+	elapsed := int(now.Sub(lb.lastLeak).Seconds())
+	lb.queued -= elapsed * lb.leakRate
+	if lb.queued < 0 {
+		lb.queued = 0
+	}
+	lb.lastLeak = now
+	if lb.queued >= lb.capacity {
+		return false
+	}
+	lb.queued++
+	return true
+}
+
+func main() {
+	tb := NewTokenBucket(5, 2)
+	lb := NewLeakyBucket(3, 1)
+	for i := 0; i < 8; i++ {
+		fmt.Printf("req %d token=%v leaky=%v\n", i, tb.Allow(), lb.Admit())
+	}
+}
+```
+
+Упрощённые структуры показывают разницу: token bucket списывает накопленный запас, leaky bucket растёт очередь и «протекает» с фиксированной скоростью.
+
+В микросервисах token bucket защищает публичный REST от DDoS, сохраняя возможность короткого burst после простоя. Leaky bucket полезен перед воркером с фиксированной пропускной способностью (отправка SMS, печать в Kafka partition с лимитом).
+
+## Подводные камни
+
+- **Смешение терминов.** Многие называют token bucket leaky bucket; на собесе уточняю определения.
+- **Гонки без mutex.** Примеры из статей часто без синхронизации; в проде нужны atomic или `rate.Limiter`.
+- **Дискретное пополнение.** Обновление токенов только раз в секунду даёт ступеньки; считаю дробные токены по `time.Since`.
+- **Leaky как очередь без отбрасывания.** Если при переполнении ставить в unbounded queue, лимитер теряет смысл.
+- **Distributed burst.** Локальный token bucket на каждой реплике умножает допустимый burst на число инстансов.

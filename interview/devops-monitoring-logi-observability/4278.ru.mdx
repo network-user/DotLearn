@@ -1,0 +1,84 @@
+---
+id: 4278
+title: "Зачем DevOps-инженеру Elasticsearch?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем DevOps-инженеру Elasticsearch?
+
+## Суть
+
+Elasticsearch это распределённый поисковый и аналитический движок на Lucene: индексирует JSON-документы, отвечает на full-text и aggregation запросы с низкой задержкой. В DevOps он чаще всего backend для централизованных логов и метрик-трейсов, где нужен быстрый поиск по миллионам событий и дашборды в Kibana.
+
+## Что ответить на собесе
+
+- Храню логи приложений и инфраструктуры в time-based индексах (`logs-2026.07.13`).
+- Ищу по полям `level`, `trace_id`, `kubernetes.pod_name` через Kibana или API.
+- Масштабирую кластер шардированием и добавлением data nodes; hot/warm tier для cost control.
+- Питаю ES из Beats, Fluent Bit, Logstash; retention через ILM.
+- Честно: ES не замена metrics TSDB для долгих рядов; для логов и ad-hoc search он силён, для cardinality-heavy metrics смотрю Prometheus/Mimir.
+
+## Как это работает
+
+Типичный ingest: Logstash парсит файлы и пишет в daily index:
+
+```bash
+cat <<'EOF' > /etc/logstash/conf.d/app-logs.conf
+input {
+  file {
+    path => "/var/log/checkout/*.log"
+    start_position => "beginning"
+    codec => json
+  }
+}
+
+filter {
+  mutate {
+    add_field => { "service" => "checkout-api" }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["https://es.internal:9200"]
+    index => "checkout-%{+YYYY.MM.dd}"
+    user => "ingest"
+    password => "${ES_INGEST_PASSWORD}"
+  }
+}
+EOF
+```
+
+Поиск 5xx за последний час через API:
+
+```bash
+curl -s -u reader:$ES_READER_PASS \
+  -H 'Content-Type: application/json' \
+  -X POST 'https://es.internal:9200/checkout-*/_search' \
+  -d '{
+    "size": 50,
+    "query": {
+      "bool": {
+        "filter": [
+          { "range": { "@timestamp": { "gte": "now-1h" } } },
+          { "range": { "status": { "gte": 500 } } }
+        ]
+      }
+    },
+    "sort": [{ "@timestamp": "desc" }]
+  }' | jq '.hits.hits[]._source'
+```
+
+Кластер горизонтально: master-eligible nodes координируют, data nodes держат shards, ingest nodes принимают bulk. Near real-time: документ виден в search через refresh interval (обычно 1s).
+
+## Подводные камни
+
+- **Split brain.** Нечётное число master-eligible nodes и `discovery.seed_hosts` обязательны; иначе потеря кворума ломает запись.
+- **Mapping explosion.** Dynamic mapping на высококардинальных полях раздувает индекс; фиксирую mapping template заранее.
+- **Hot shards.** Слишком крупный shard (>50 GB) тормозит recovery; планирую rollover по размеру или времени.
+- **Security default off.** В старых установках xpack security выключен; включаю TLS и role-based access до prod traffic.
+- **Retention cost.** Без ILM логи копятся бесконечно; warm/delete phases спасают диск, но нужен мониторинг delete lag.

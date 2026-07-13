@@ -1,0 +1,67 @@
+---
+id: 3067
+title: "Что такое curl и как QA использует его для API?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое curl и как QA использует его для API?
+
+## Суть
+
+curl (client URL) CLI утилита для HTTP/FTP и других протоколов: отправка GET/POST, headers, body, cookies, TLS, proxy. QA копирует curl из Swagger/Charles/DevTools для repro в терминале, скриптов CI smoke и быстрой проверки endpoint без GUI.
+
+## Что ответить на собесе
+
+- `curl -sS -D -` показывает headers + body; `-o` save, `-w "%{http_code}"` только code.
+- POST JSON: `-H "Content-Type: application/json" -d '{"sku":"X"}'`.
+- Auth: `-H "Authorization: Bearer $TOKEN"` из env, не hardcode в ticket.
+- `-k` insecure skip verify только на local mock, не prod habit.
+- Честно: curl нет pretty assert; для suite используй Postman/Newman или pytest+requests.
+
+## Как это работает
+
+```gherkin
+Feature: curl for QA API checks
+
+  Scenario: Smoke health after deploy
+    Given staging URL https://api.stage.example/health
+    When curl returns 200 within 5 seconds
+    Then deploy gate passes before full regression
+
+  Scenario: Reproduce bug from Swagger copy
+    Given developer pasted curl in Jira SHOP-1001
+    When QA runs same curl against staging
+    Then identical 422 validation body confirms environment parity
+
+  Scenario: Script loop idempotency keys
+    Given bash script posts payment with unique Idempotency-Key header
+    When curl executed twice with same key
+    Then second response 409 or same 200 without double charge
+```
+
+Примеры (переименованный host):
+
+```
+curl -sS "https://api.stage.example/v2/catalog?limit=5" \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer $STAGE_TOKEN"
+
+curl -sS -X POST "https://api.stage.example/v2/cart/items" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $STAGE_TOKEN" \
+  -d '{"sku":"WB-991","qty":1}'
+```
+
+Флаги: `-v` verbose TLS/handshake debug, `-L` follow redirects, `-x http://127.0.0.1:8888` через Charles, `--compressed` gzip accept.
+
+## Подводные камни
+
+- **Secrets в history.** bash history с token; use env var и `set +o history` for demos.
+- **Windows quoting.** JSON `-d` ломается в cmd; Git Bash или файл `@body.json`.
+- **Redirect 302 без -L.** «404» в script при live 200 after redirect.
+- **Large response floods terminal.** `-o out.json` instead of pipe blind.
+- **curl only happy path.** Негативные matrix всё равно в automated tests.

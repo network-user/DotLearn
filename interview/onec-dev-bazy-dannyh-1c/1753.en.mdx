@@ -1,0 +1,76 @@
+---
+id: 1753
+title: "How 1C manages transactions at the DBMS level"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How 1C manages transactions at the DBMS level
+
+## In short
+
+The 1C platform wraps a batch of changes in a DBMS transaction through `НачатьТранзакцию`, `ЗафиксироватьТранзакцию`, and `ОтменитьТранзакцию`. That gives atomicity: either the whole write chain lands in the database or it rolls back entirely, keeping accounting data consistent.
+
+## How to answer in an interview
+
+- I explain that a 1C transaction is a thin wrapper over BEGIN/COMMIT/ROLLBACK of the specific DBMS, not a separate storage mechanism.
+- In practice I group related document writes, register movements, and service tables in one transaction so I never leave a half-posted object.
+- I always wrap risky code in `Попытка` with `ОтменитьТранзакцию()` in the exception branch; otherwise the session holds locks until timeout.
+- I honestly note that implicit transactions during document posting also hit the DBMS; explicit control is needed in non-standard batch procedures.
+- ACID at the DBMS level does not replace business checks in the object module: a transaction rolls back SQL but does not fix a logically wrong algorithm.
+
+## How it works
+
+When a developer calls `НачатьТранзакцию()`, the platform opens a transaction on the database connection. All subsequent write operations through `Запись` objects, register record sets, and direct modifying queries run inside that context.
+
+The DBMS provides ACID properties:
+
+- **Atomicity:** an error at any step leads to `ОтменитьТранзакцию()` and a full rollback of changes in the block.
+- **Consistency:** after commit, referential integrity and unique index constraints must hold.
+- **Isolation:** uncommitted movements stay invisible to other sessions in strict isolation modes.
+- **Durability:** after `ЗафиксироватьТранзакцию()` data survives an application crash when DBMS logging is configured correctly.
+
+A typical pattern in application code:
+
+```bsl
+Процедура ОбновитьКонтрагентаИДоговоры(КонтрагентСсылка) Экспорт
+    НачатьТранзакцию();
+    Попытка
+        ОбъектКонтрагента = КонтрагентСсылка.ПолучитьОбъект();
+        ОбъектКонтрагента.НаименованиеПолное = НовоеНаименование;
+        ОбъектКонтрагента.Записать();
+
+        Для Каждого СтрокаДоговора Из ТаблицаИзменений Цикл
+            ДоговорОбъект = СтрокаДоговора.Ссылка.ПолучитьОбъект();
+            ДоговорОбъект.Статус = СтрокаДоговора.НовыйСтатус;
+            ДоговорОбъект.Записать();
+        КонецЦикла;
+
+        ЗафиксироватьТранзакцию();
+    Исключение
+        ОтменитьТранзакцию();
+        ЗаписьЖурналаРегистрации(
+            "ОбновлениеКонтрагента",
+            УровеньЖурналаРегистрации.Ошибка,
+            ,
+            КонтрагентСсылка,
+            ПодробноеПредставлениеОшибки(ИнформацияОбОшибке()));
+        ВызватьИсключение;
+    КонецПопытки;
+КонецПроцедуры
+```
+
+Document posting in typical configurations often opens a transaction automatically: register movements, posted status, and service attributes are written as one step. Unposting builds reverse movements in the same logical block.
+
+Nested `НачатьТранзакцию()` calls in one session do not create independent savepoints for application code: rollback cancels the whole outer block. Library procedures must not commit if they are called from a larger operation.
+
+## Pitfalls
+
+- **Commit inside a nested procedure.** An early `ЗафиксироватьТранзакцию()` breaks the caller's atomicity and leaves orphan records on a later error.
+- **Missing rollback.** An exception without `ОтменитьТранзакцию()` holds resources and may hang until the session breaks.
+- **Long loops in a transaction.** A batch of thousands of objects in one block bloats the transaction log and raises deadlock risk.
+- **Mixing read and write.** Heavy report queries inside a write transaction hold locks and block other sessions.
+- **DBMS differences.** Default isolation level and deadlock behavior depend on MS SQL, PostgreSQL, and others; moving a configuration requires testing on the target database.

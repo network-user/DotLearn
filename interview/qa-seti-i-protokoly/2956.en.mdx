@@ -1,0 +1,64 @@
+---
+id: 2956
+title: "Localhost 127.0.0.1: how does QA test a loopback-only service?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Localhost 127.0.0.1: how does QA test a loopback-only service?
+
+## In short
+
+Localhost (name) and 127.0.0.1 (IPv4 loopback) route traffic to the same host's network stack without leaving LAN/internet. Range 127.0.0.0/8 is reserved for loopback; ::1 in IPv6. QA uses this for local mocks, Vite dev servers, WireMock, and verifying "not exposed externally".
+
+## How to answer in an interview
+
+- 127.0.0.1 is always "this machine"; unreachable from another host.
+- Binding 127.0.0.1 vs 0.0.0.0: first is local only, second accepts LAN/WAN (dev API leak risk).
+- hosts file can map custom.name to 127.0.0.1 for OAuth redirect tests.
+- Honestly: "works on localhost" is not prod; I recheck CORS, SameSite cookies, and HTTPS after deploy.
+
+## How it works
+
+Dev API on loopback:
+
+```
+Server bind: 127.0.0.1:3000
+Browser: http://localhost:5173 -> fetch http://127.0.0.1:3000/api
+```
+
+Security and reachability Gherkin:
+
+```gherkin
+Feature: Loopback and local stand
+
+  Scenario: Service on 127.0.0.1 is unreachable from another LAN host
+    Given API runs on "127.0.0.1:3000"
+    When QA from a neighbor VM curls "http://127.0.0.1:3000/health"
+    Then the connection does not reach the QA dev machine
+    And health is reachable only from the dev machine itself
+
+  Scenario: SPA on localhost calls local API
+    Given front at "http://localhost:5173"
+    And API at "http://127.0.0.1:3000"
+    When the user opens dashboard
+    Then GET /api/profile returns 200
+
+  Scenario: OAuth redirect localhost allowed only for dev client
+    When login redirect goes to "http://localhost:8080/callback"
+    Then auth server accepts redirect only for dev client id
+    And production client id with localhost redirect is rejected
+```
+
+IPv6 loopback ::1 is sometimes missing in apps; I force http://127.0.0.1 if flaky.
+
+## Pitfalls
+
+- **0.0.0.0 bind on dev.** A colleague on office Wi‑Fi sees your mock without auth.
+- **localhost vs 127.0.0.1 in cookies.** Different site for cookie in some browsers.
+- **Docker: localhost inside container.** That is the container, not the host; use host.docker.internal.
+- **HTTPS on localhost.** Self-signed cert; CI must trust or skip verify deliberately.
+- **Forgotten process on 8080.** Random server answers instead; check lsof/netstat.

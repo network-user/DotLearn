@@ -1,0 +1,67 @@
+---
+id: 1756
+title: "Which fields in a 1C database are worth indexing"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which fields in a 1C database are worth indexing
+
+## In short
+
+An index speeds lookup and sorting on chosen fields but slows writes. In 1C you index register dimensions, attributes in query filters, and join fields that actually appear in production workload, not just in case.
+
+## How to answer in an interview
+
+- I start with query analysis: technological log, DBMS execution plans, heavy DCS reports with expensive filters.
+- In an interview I name candidates: period and recorder in registers, organization and counterparty in typical filters, catalog code and tax ID for frequent search.
+- I stress that the platform already creates indexes on references and keys; application indexes are added in metadata deliberately.
+- I am honest that an extra index on a frequently changed field hurts posting more than it helps a rare report.
+- For temp tables and external sources, 1C-side indexing will not help; you need DBMS-level design or a data mart.
+
+## How it works
+
+1C platform tables in the DBMS hold service and application columns. An index is a separate structure that stores ordered values of selected fields and row pointers. When a query filters or sorts on an indexed field, the optimizer can walk the index instead of scanning the whole table.
+
+Priorities for an application developer:
+
+| Area | What to index | Why |
+|------|---------------|-----|
+| Accumulation register | Period, key dimensions in balance filters | Fast virtual tables `Остатки` |
+| Information register | Leading dimension, validity period | Slice lookup as of a date |
+| Catalog | Code, tax ID, external identifier | Search during load and integration |
+| Document | Date, organization, counterparty | Journals and lists with filters |
+
+In the Designer an index is defined in object metadata. The platform creates it in the DBMS when the structure is updated:
+
+```bsl
+Процедура ПроверитьИндексыРегистра() Экспорт
+    МетаРегистра = Метаданные.РегистрыСведений.СтатусыЗаказов;
+    Для Каждого Индекс Из МетаРегистра.Индексы Цикл
+        Сообщить("Индекс: " + Индекс.Имя + ", поля: " + СтрокаИндексируемыхПолей(Индекс));
+    КонецЦикла;
+КонецПроцедуры
+
+Функция СтрокаИндексируемыхПолей(ИндексМетаданных)
+    Имена = Новый Массив;
+    Для Каждого Поле Из ИндексМетаданных.Поля Цикл
+        Имена.Добавить(Поле.Имя);
+    КонецЦикла;
+    Возврат СтрСоединить(Имена, ", ");
+КонецФункции
+```
+
+A composite index helps when a query always filters by organization and date: field order in the index should match the most selective filter in real queries. A unique index fits natural keys in independent information registers so the DBMS rejects duplicates at the data level.
+
+Indexing does not replace a correct query. A virtual table without period parameters will scan millions of rows even with a period index if the plan picks another path.
+
+## Pitfalls
+
+- **An index on every field.** Document write updates every affected index and the transaction log grows.
+- **Wrong field order in a composite index.** An index on (Date, Organization) will not help a query filtered only by organization.
+- **Indexing calculated presentations.** Filtering on a reference string presentation does not use the reference field index.
+- **Ignoring DBMS statistics.** After a bulk load the plan may stop using an index until statistics are refreshed.
+- **Duplicating platform indexes.** Re-indexing a reference field gives no gain and increases write cost.

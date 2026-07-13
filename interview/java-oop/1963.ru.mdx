@@ -1,0 +1,67 @@
+---
+id: 1963
+title: "Runnable или Callable: что выбрать для задачи?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Runnable или Callable: что выбрать для задачи?
+
+## Суть
+
+`Runnable` описывает fire-and-forget задачу без возвращаемого значения; `Callable<V>` возвращает результат и может бросать checked exception. Оба запускают работу в отдельном потоке или пуле, но только `Callable` интегрируется с `Future` для получения значения и обработки ошибок.
+
+## Что ответить на собесе
+
+- Сравниваю сигнатуры: `void run()` против `V call() throws Exception`.
+- Объясняю, что `Thread` принимает `Runnable`, а `ExecutorService.submit(Callable)` отдаёт `Future`.
+- Уточняю про исключения: из `Runnable` checked exception наружу не выйдет без обёртки; `Callable` пробрасывает их через `ExecutionException`.
+- Показываю, что в современном коде часто используют лямбды и `ExecutorService` вместо ручного `new Thread`.
+- Честно добавляю: для простого фонового логирования достаточно `Runnable`; как только нужен результат или timeout, перехожу на `Callable`/`CompletableFuture`.
+
+## Как это работает
+
+`Runnable` подходит для side-effect без ответа:
+
+```java
+Runnable auditTrail = () -> System.out.println("audit: user logged in");
+
+Thread worker = new Thread(auditTrail);
+worker.start();
+```
+
+`Callable` возвращает значение и работает с пулом:
+
+```java
+import java.util.concurrent.*;
+
+public final class ReportJob {
+    public static void main(String[] args) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        Callable<Long> countRows = () -> {
+            Thread.sleep(50);
+            return 1280L;
+        };
+
+        Future<Long> pending = pool.submit(countRows);
+        long total = pending.get(2, TimeUnit.SECONDS);
+
+        System.out.println("rows=" + total);
+        pool.shutdown();
+    }
+}
+```
+
+`Future.get()` блокирует вызывающий поток до завершения или timeout. Ошибки из `call()` упаковываются в `ExecutionException`. Для цепочек задач удобнее `CompletableFuture.supplyAsync`, который по сути оборачивает supplier-подобную семантику `Callable`.
+
+## Подводные камни
+
+- **Потерянный stack trace в Runnable.** Checked exception внутри лямбды приходится ловить локально или терять диагностику.
+- **Блокирующий get без timeout.** `future.get()` может зависнуть навсегда при зависшей задаче.
+- **Shutdown без await.** `shutdown()` не ждёт завершения; нужен `awaitTermination` или try-with-resources для `ExecutorService`.
+- **Создание Thread на каждый Runnable.** Без пула теряется производительность на context switch.
+- **Игнорирование InterruptedException.** При отмене задачи нужно восстанавливать флаг прерывания потока.

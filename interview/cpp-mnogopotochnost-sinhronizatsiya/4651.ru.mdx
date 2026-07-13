@@ -1,0 +1,60 @@
+---
+id: 4651
+title: "Какие способы IPC вы знаете?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие способы IPC вы знаете?
+
+## Суть
+
+Межпроцессное взаимодействие строят на каналах, очередях сообщений, разделяемой памяти, семафорах ОС, сокетах, сигналах и иногда файлах/БД как посреднике. Выбор зависит от латентности, объёма данных, модели доверия и необходимости сети.
+
+## Что ответить на собесе
+
+- Pipe и named pipe (FIFO) для локального потока байтов.
+- Message queue (System V, POSIX mq) для сообщений фиксированного формата.
+- Shared memory + отдельный sync primitive для высокой пропускной способности.
+- TCP/UDP/Unix domain sockets когда нужен сетевой или унифицированный API.
+- Честно: сигналы только для control plane (SIGTERM, SIGCHLD), не для передачи payload.
+
+## Как это работает
+
+Unix domain socket для локального RPC без сетевого стека:
+
+```cpp
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <cstring>
+#include <iostream>
+
+int main() {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strcpy(addr.sun_path, "/tmp/dotlearn.sock");
+    bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    listen(fd, 1);
+    int client = accept(fd, nullptr, nullptr);
+    char buf[32]{};
+    read(client, buf, sizeof(buf));
+    std::cout << buf << '\n';
+    close(client);
+    close(fd);
+}
+```
+
+Процесс-сервер слушает путь в ФС, клиент подключается и шлёт байты как по TCP, но без выхода в сеть. Для двух процессов на одной машине это часто проще, чем shared memory с ручной синхронизацией.
+
+## Подводные камни
+
+- **Безопасность пути сокета.** Мировые права на `sun_path` дают чужим процессам доступ.
+- **Размер сообщений.** Pipe и сокет буферизуют; большие blob лучше shared memory или файл.
+- **Портируемость Windows.** `AF_UNIX` появился недавно; раньше named pipes.
+- **Очистка IPC объектов.** SysV shm/msg остаётся после crash без `IPC_RMID`.
+- **Сериализация версий.** Разные версии бинарника должны согласовать layout сообщений.

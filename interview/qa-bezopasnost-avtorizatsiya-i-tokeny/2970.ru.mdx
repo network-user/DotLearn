@@ -1,0 +1,69 @@
+---
+id: 2970
+title: "RBAC: как QA тестирует доступ по ролям?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# RBAC: как QA тестирует доступ по ролям?
+
+## Суть
+
+Role-Based Access Control назначает права на роль, а пользователю одну или несколько ролей. Проверка QA: позитивные действия для каждой роли, негативные попытки (UI, API, прямой URL), горизонтальная эскалация между аккаунтами одной роли. Критично тестировать server-side enforcement, а не только скрытие кнопок.
+
+## Что ответить на собесе
+
+- Матрица роль × permission × endpoint; минимум admin, manager, viewer плюс custom role из продакшена.
+- Прямой вызов API с токеном слабой роли: ожидаю 403, не редирект на login.
+- IDOR: user A не читает объект user B при одинаковой роли viewer.
+- Честно: без seed-аккаунтов на staging RBAC не закрываю; прошу DevOps завести фиксированные учётки.
+
+## Как это работает
+
+Пример матрицы:
+
+| Роль | GET /projects | DELETE /projects/{id} |
+|------|---------------|------------------------|
+| admin | 200 | 204 |
+| manager | 200 | 403 |
+| viewer | 200 read-only | 403 |
+
+Gherkin RBAC:
+
+```gherkin
+Feature: Доступ к админке по ролям
+
+  Scenario: Admin видит пункт меню Users и API разрешает
+    Given пользователь role admin
+    When GET /api/v1/users
+    Then статус 200
+    And в UI есть ссылка "Users"
+
+  Scenario: Viewer не удаляет проект ни через UI ни API
+    Given пользователь role viewer
+    And project_id 42
+    When DELETE /api/v1/projects/42 с токеном viewer
+    Then статус 403
+    When viewer открывает /projects/42
+    Then кнопка Delete отсутствует или disabled
+    And прямой POST delete через DevTools fetch возвращает 403
+
+  Scenario: Менеджер не назначает роль admin
+    Given пользователь role manager
+    When PATCH /api/v1/users/7 role admin
+    Then статус 403
+    And роль в БД не изменилась
+```
+
+Чеклист: logout/login смена роли, параллельные сессии, кэш SPA после revoke permission.
+
+## Подводные камни
+
+- **UI-only защита.** Кнопка скрыта, API открыт Postman.
+- **Роль в JWT устарела.** Revoke в БД, токен ещё admin 15 минут.
+- **Composite roles.** union permissions неочевиден, пропуск deny rule.
+- **Guest/default role.** Пустая роль даёт лишний read.
+- **Тестовые admin в staging.** Ложный green, в проде другая политика.

@@ -1,0 +1,78 @@
+---
+id: 2432
+title: "Что делает браузер при встрече CSS во время рендеринга"
+category: frontend-css
+categoryLabel: "CSS"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что делает браузер при встрече CSS во время рендеринга
+
+## Суть
+
+Парсер HTML строит DOM; встретив блокирующий CSS, браузер запрашивает файл, парсит правила, собирает CSSOM и только потом строит render tree. Синхронный CSS в `<head>` задерживает первый paint.
+
+## Что ответить на собесе
+
+- `<link rel="stylesheet">` в head блокирует рендер до загрузки и парсинга (render-blocking по умолчанию).
+- Цепочка: fetch → parse CSS → CSSOM → match с DOM → layout/paint.
+- `@import` внутри CSS добавляет последовательные round-trip и ухудшает critical path.
+- Critical CSS инлайню или preload для above-the-fold; остальное async через media trick или split.
+- Честно: `media="print" onload` ускоряет FCP, но без fallback возможен FOUC.
+
+## Как это работает
+
+Минимальная страница:
+
+```html
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="/assets/base.css" />
+    <title>Demo</title>
+  </head>
+  <body>
+    <h1 class="hero">Привет</h1>
+  </body>
+</html>
+```
+
+```css
+.hero {
+  color: #1e293b;
+  font-size: clamp(1.5rem, 2vw + 1rem, 2.25rem);
+  line-height: 1.2;
+}
+```
+
+```ts
+const sheet = [...document.styleSheets].find(
+  (s) => s.href?.includes("base.css")
+);
+
+console.log(sheet?.cssRules.length ?? 0);
+```
+
+Preload + обычный link снижает задержку discovery:
+
+```html
+<link rel="preload" href="/assets/base.css" as="style" />
+<link rel="stylesheet" href="/assets/base.css" />
+```
+
+Pipeline в одном абзаце: HTML tokenizer → DOM, параллельно CSS tokenizer → CSSOM, merge в render tree, затем layout и paint; JS с `document.write` или синхронным `<script>` без defer может снова блокировать парсинг.
+
+## Подводные камни
+
+**CSS в конце body.** Пользователь видит unstyled flash, хотя парсинг HTML не остановлен так рано.
+
+**Огромный один файл.** Блокируется весь first paint, даже если нужны 2 KB critical rules.
+
+**@import цепочка.** Каждый уровень ждёт предыдущий файл.
+
+**Неверный MIME.** `text/plain` может проигнорировать stylesheet.
+
+**Синхронный JS перед CSS.** Скрипт без defer/async отодвигает загрузку стилей ниже по документу.

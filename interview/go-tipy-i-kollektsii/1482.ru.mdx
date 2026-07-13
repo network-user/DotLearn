@@ -1,0 +1,70 @@
+---
+id: 1482
+title: "Как отсортировать слайс struct?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как отсортировать слайс struct?
+
+## Суть
+
+Использую пакет `sort`: либо реализую `sort.Interface` (Len/Less/Swap) для обёртки над `[]Struct`, либо с Go 1.21+ `slices.SortFunc` с cmp-функцией. Критерий сортировки задаётся в `Less` или в comparator.
+
+## Что ответить на собесе
+
+- Для legacy-кода показываю тип-обёртку `type ByAge []Person` с методами интерфейса.
+- В новом коде предпочитаю `slices.SortFunc(people, func(a, b Person) int { ... })` из `golang.org/x/exp/slices` или std slices в 1.21+.
+- Уточняю, что сортировка in-place меняет исходный slice.
+- Честно добавляю: для стабильной сортировки (равные элементы сохраняют порядок) нужен `sort.Stable` или `slices.SortStableFunc`.
+
+## Как это работает
+
+`sort.Sort` вызывает quicksort/introsort через ваш `Less`. Обёртка не копирует данные, только меняет местами элементы базового slice.
+
+```go
+package main
+
+import (
+	"cmp"
+	"fmt"
+	"slices"
+)
+
+type Member struct {
+	Name string
+	Age  int
+}
+
+func main() {
+	team := []Member{
+		{Name: "Ira", Age: 31},
+		{Name: "Bob", Age: 27},
+		{Name: "Cy", Age: 27},
+	}
+
+	slices.SortFunc(team, func(a, b Member) int {
+		if c := cmp.Compare(a.Age, b.Age); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Name, b.Name)
+	})
+
+	for _, m := range team {
+		fmt.Printf("%s %d\n", m.Name, m.Age)
+	}
+}
+```
+
+Сначала сравниваем возраст, при равенстве имя. `cmp.Compare` возвращает -1/0/1 для ints и strings.
+
+## Подводные камни
+
+- **Сортировка копии.** `sort.Sort(ByAge(people))` сортирует underlying slice, но если передать copy header без элементов, эффекта не будет.
+- **Нестабильность.** Обычный `sort.Sort` не гарантирует порядок равных ключей.
+- **Много полей.** Сложный `Less` быстро становится нечитаемым; выношу comparator в named function.
+- **Concurrent sort.** Параллельная сортировка одного slice без sync это data race.
+- **Locale-aware строки.** `cmp.Compare` для string это byte order, не Unicode collation.

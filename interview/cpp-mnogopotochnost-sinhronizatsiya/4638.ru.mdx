@@ -1,0 +1,73 @@
+---
+id: 4638
+title: "Видят ли потоки одну глобальную переменную?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Видят ли потоки одну глобальную переменную?
+
+## Суть
+
+Да: глобальные и статические переменные с единым определением лежат в общей памяти процесса, и все потоки читают один и тот же объект. Без синхронизации одновременная запись даёт data race и неопределённое поведение.
+
+## Что ответить на собесе
+
+- Все потоки процесса разделяют адресное пространство; глобалы и static storage duration общие.
+- Для счётчиков и флагов использую `std::mutex`, `std::atomic` или изоляцию через thread-local.
+- `thread_local` даёт отдельную копию на поток, если общее состояние не нужно.
+- Чтение без записи из нескольких потоков безопасно только если никто не пишет (или данные immutable после init).
+- Честно: «видят» не значит «безопасно менять»; видимость памяти без happens-before не гарантирует актуальное значение без atomics/mutex.
+
+## Как это работает
+
+```cpp
+#include <atomic>
+#include <iostream>
+#include <mutex>
+#include <thread>
+
+int legacyHits = 0;
+std::atomic<int> safeHits{0};
+std::mutex legacyGuard;
+
+void bumpLegacy() {
+    for (int i = 0; i < 1000; ++i) {
+        std::lock_guard lock(legacyGuard);
+        ++legacyHits;
+    }
+}
+
+void bumpAtomic() {
+    for (int i = 0; i < 1000; ++i) {
+        ++safeHits;
+    }
+}
+
+int main() {
+    std::thread t1(bumpLegacy);
+    std::thread t2(bumpLegacy);
+    t1.join();
+    t2.join();
+
+    std::thread a1(bumpAtomic);
+    std::thread a2(bumpAtomic);
+    a1.join();
+    a2.join();
+
+    std::cout << legacyHits << ' ' << safeHits.load() << '\n';
+}
+```
+
+`legacyHits` без mutex гонял бы; с `legacyGuard` итог 2000. `safeHits` инкрементируется атомарно без mutex. Оба варианта используют одну переменную на процесс, разница в гарантиях доступа.
+
+## Подводные камни
+
+- **Data race UB.** Даже «простой» `++` на `int` не атомарен; компилятор может векторизовать и сломать ожидания.
+- **Висячая инициализация.** Статик в разных единицах трансляции без `inline`/`constexpr` рискует ODR и порядком init.
+- **False sharing.** Разные atomics на одной cache line бьют производительность; padding помогает.
+- **const global после init.** Читать можно свободно только если публикация была синхронизирована (например, после join init thread).
+- **DLL границы.** На Windows отдельные копии данных в разных модулях без правильного export/import.

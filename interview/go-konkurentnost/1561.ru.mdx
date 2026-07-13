@@ -1,0 +1,68 @@
+---
+id: 1561
+title: "Потокобезопасны ли channel в Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Потокобезопасны ли channel в Go?
+
+## Суть
+
+Да: send/recv синхронизированы runtime'ом; несколько goroutines могут писать и читать один chan без внешнего mutex. Это copy by value handoff, не shared mutable buffer между goroutines (кроме internal hchan).
+
+## Что ответить на собесе
+
+- «Do not communicate by sharing memory»; chan establishes happens-before.
+- Close не thread-safe с concurrent send; один closer, no send after close.
+- nil chan в select disabled; в одиночной op blocks forever.
+- Честно: thread-safe transport, но логика вокруг shared state всё равно нуждается в sync.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	out := make(chan int, 4)
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(v int) {
+			defer wg.Done()
+			out <- v
+		}(i)
+	}
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	sum := 0
+	for v := range out {
+		sum += v
+	}
+	fmt.Println(sum)
+}
+```
+
+Три senders пишут в buffered chan без data race; runtime serializes internal buffer updates.
+
+## Подводные камни
+
+**Close + send race.** Panic или lost values; protocol «only sender closes».
+
+**Pointer через chan.** Безопасная передача pointer, но mutable object после send shared.
+
+**Len/Cap не sync contract.** Для synchronization не использую len(ch) в logic.
+
+**Select pseudo-random.** Не fairness guarantee между writers.
+
+**Unbuffered deadlock.** Missing receiver blocks sender forever.

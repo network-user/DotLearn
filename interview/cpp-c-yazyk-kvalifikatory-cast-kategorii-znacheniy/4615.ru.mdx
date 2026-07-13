@@ -1,0 +1,60 @@
+---
+id: 4615
+title: "Заменяют ли умные указатели сборщик мусора?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Заменяют ли умные указатели сборщик мусора?
+
+## Суть
+
+Умные указатели автоматизируют delete при выходе из scope или обнулении последнего owner, но не сканируют heap глобально и не собирают циклы сами. Это deterministic RAII, а не tracing GC как в Java или C#.
+
+## Что ответить на собесе
+
+- `unique_ptr`: единственный owner, move-only, zero overhead в типичном случае.
+- `shared_ptr`: shared ownership + control block; циклы `shared_ptr` не освобождаются без `weak_ptr`.
+- `weak_ptr` ломает cycles и наблюдает без продления lifetime.
+- GC скрывает ownership и даёт паузы; smart pointers требуют явной модели владения.
+- Честно: графы с shared ownership всё равно проектирую через unique + raw observer или weak, а не «как GC».
+
+## Как это работает
+
+Деструктор `unique_ptr` вызывает deleter. `shared_ptr` держит strong count; при нуле удаляет объект и block. `weak_ptr` не увеличивает strong count.
+
+```cpp
+#include <memory>
+#include <iostream>
+
+struct Node {
+    std::shared_ptr<Node> next;
+    int id;
+    explicit Node(int v) : id(v) {}
+    ~Node() { std::cout << "drop " << id << '\n'; }
+};
+
+int main() {
+    auto head = std::make_shared<Node>(1);
+    {
+        auto tail = std::make_shared<Node>(2);
+        head->next = tail;
+        tail->next = head;
+    }
+    std::cout << "scope end\n";
+    return 0;
+}
+```
+
+Цикл `head↔tail` удерживает оба узла после scope: без `weak_ptr` память не освобождается. GC нашёл бы цикл и собрал; `shared_ptr` нет.
+
+## Подводные камни
+
+- **shared_ptr везде.** Лишние atomic inc/dec и раздувание API; default often `unique_ptr`.
+- **this->shared_from_this.** Нужен `enable_shared_from_this`; иначе double control block.
+- **custom deleter и array.** `shared_ptr<T[]>` и `unique_ptr<T[]>` имеют особые правила delete.
+- **Не для non-owning.** Raw или `observer_ptr`/reference для borrow; smart pointer не заменяет дизайн lifetime.
+- **Interoperability с C.** `unique_ptr` с custom deleter `free`/` fclose` обязателен; иначе mismatch allocator.

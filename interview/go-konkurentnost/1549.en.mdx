@@ -1,0 +1,64 @@
+---
+id: 1549
+title: "How do you explicitly yield the CPU to another goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you explicitly yield the CPU to another goroutine?
+
+## In short
+
+`runtime.Gosched()` puts the current G on the runnable queue and lets the scheduler pick another G on the same P. It is a cooperative yield, not sleep and not guaranteed fairness; in production I prefer blocking ops or worker pools over frequent Gosched.
+
+## How to answer in an interview
+
+- Gosched means "hand off control, I am ready to wait" without releasing M for long.
+- It does not replace sync: with no other runnable G you resume immediately.
+- Go 1.14+ async preemption partly replaces manual Gosched in CPU loops.
+- Honestly: in app code Gosched is almost never; I keep it for runtime tests and scheduler demos.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func ticker(name string, steps int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for i := 0; i < steps; i++ {
+		fmt.Println(name, i)
+		runtime.Gosched()
+	}
+}
+
+func main() {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go ticker("A", 4, &wg)
+	go ticker("B", 4, &wg)
+	wg.Wait()
+}
+```
+
+After each println G calls Gosched; the scheduler may run a peer on the same P. With GOMAXPROCS>1 both can run in parallel without constant yielding.
+
+## Pitfalls
+
+**Gosched in a hot path.** Extra context switches without real blocking.
+
+**Expecting fairness.** The scheduler does not promise round-robin after Gosched.
+
+**Instead of sync.** Spin-wait plus Gosched is worse than cond/mutex/chan.
+
+**Benchmark noise.** Gosched in microbenchmarks skews results.
+
+**Gosched vs time.Sleep(0).** Sleep uses a timer; Gosched only requeues as runnable.

@@ -1,0 +1,50 @@
+---
+id: 3764
+title: "Контейнеры и VM: где граница изоляции?"
+category: devops-docker-konteynery
+categoryLabel: "Docker / Контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Контейнеры и VM: где граница изоляции?
+
+## Суть
+
+Виртуализация эмулирует железо и поднимает гостевую ОС на гипервизоре: полная изоляция, высокий overhead. Контейнеры делят kernel хоста, изолируются namespaces и cgroups: быстрый старт и плотная упаковка, но общий kernel и слабее «железная» граница.
+
+## Что ответить на собесе
+
+- VM: Type-1/Type-2 hypervisor, свой kernel, virtio диски/сеть, типичный use case multi-tenant legacy и разные ОС.
+- Container: image + runtime (containerd/runc), seccomp/AppArmor опционально, один Linux kernel на хост.
+- Сравниваю density: десятки VM vs сотни pods на том же железе.
+- Честно добавляю: для untrusted workload или Windows+Linux на одном iron всё ещё VM или отдельные bare-metal; containers не замена VM «везде».
+
+## Как это работает
+
+Hypervisor (KVM, ESXi) выделяет vCPU/RAM каждой VM, грузит guest OS с нуля. Boot minutes, snapshot на уровне virtual disk.
+
+Контейнер стартует процесс в изолированном mount/pid/network namespace поверх host kernel:
+
+```bash
+systemd-detect-virt
+lscpu | grep -i virtualization
+
+docker run --rm --name bench-alpine alpine:3.20 sleep 1
+time docker run --rm alpine:3.20 echo ready
+
+virsh list --all 2>/dev/null || true
+```
+
+Первый блок показывает, включена ли аппаратная виртуализация. `docker run` стартует за секунды: нет загрузки guest kernel. VM через libvirt (`virsh`) живёт дольше и потребляет RAM под полноценную ОС.
+
+В Kubernetes worker node часто VM (cloud) или bare-metal, поверх которого kubelet запускает pods как containers. Nested virtualization (containers in VM) распространён в публичных облаках.
+
+## Подводные камни
+
+- **Kernel CVE.** Уязвимость в host kernel бьёт все containers; в VM guest изолирован другим kernel.
+- **Noisy neighbor без limits.** Container без CPU/memory limits может выжрать node.
+- **License и OS mix.** Windows container vs Linux container требуют разных host pools; смешивать на одном kernel нельзя.
+- **Storage driver overhead.** Overlay на медленном disk хуже raw block для VM databases.
+- **False sense of security.** Default Docker socket mount = root on host; это не «лёгкая VM».

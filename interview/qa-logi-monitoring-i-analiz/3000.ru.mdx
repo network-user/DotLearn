@@ -1,0 +1,52 @@
+---
+id: 3000
+title: "Как QA восстанавливает цепочку запроса по логам нескольких сервисов?"
+category: qa-logi-monitoring-i-analiz
+categoryLabel: "Логи, мониторинг и анализ"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как QA восстанавливает цепочку запроса по логам нескольких сервисов?
+
+## Суть
+
+Centralized logging (ELK, Loki, Splunk) собирает stdout/file logs всех pods. По trace/correlation id фильтруешь все строки одного user action через gateway → auth → order → payment. Без единого id ручной grep по timestamp и userId ненадёжен.
+
+## Что ответить на собесе
+
+- Беру id из response header или Jaeger UI.
+- Kibana query: `trace_id:"abc123" OR correlation_id:"abc123"`.
+- Сортирую по `@timestamp`, строю timeline: received → validated → failed at payment.
+- Сверяю span duration с SLA; ищу первый ERROR level.
+- Честно: без staging mirror prod logging QA тренируется на synthetic trace в docs.
+
+## Как это работает
+
+```gherkin
+Feature: Trace одного checkout
+
+  Scenario: Gateway логирует вход
+    Given trace_id T-991 in response
+    Then log service gateway contains "Received POST /checkout" trace T-991
+
+  Scenario: Downstream order service
+    When filter logs trace T-991 service order
+    Then line "Inventory reserved" before payment call
+
+  Scenario: Root cause на payment 502
+    When filter level ERROR trace T-991
+    Then payment service log "upstream timeout" at 12:00:02
+    And order service log "compensating rollback" after
+```
+
+Logstash/Fluent Bit ship labels `service`, `env`, `pod`; structured JSON поля `duration_ms`, `http.status`.
+
+## Подводные камни
+
+- **Logs not centralized.** SSH на 5 pods, miss one hop.
+- **Different field names per team.** `traceId` vs `request_id`.
+- **Sampling drops ERROR.** Rare bug invisible in prod traces.
+- **Timezone mix UTC/local.** Wrong sequence in timeline.
+- **Async gap.** Message queue delay looks like missing step.

@@ -1,0 +1,64 @@
+---
+id: 2964
+title: "IP address structure: what does QA check in network bugs?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# IP address structure: what does QA check in network bugs?
+
+## In short
+
+At the link layer the IP address sits in the L3 header: version (4 or 6), source, destination, TTL/hop limit. IPv4 is written as four octets, IPv6 as eight hextet blocks with zero-compression rules. Understanding the format helps read load balancer logs, traceroute, and geo limits by subnet.
+
+## How to answer in an interview
+
+- Mask / prefix length defines subnet size: /24 in v4 is 256 addresses, in v6 /64 is standard on a link.
+- Loopback 127.0.0.1 and ::1 are always local; Docker services often publish 127.0.0.1:port only on the host.
+- Link-local fe80::/10 and 169.254.0.0/16 are not routed to the internet.
+- Honestly: in bug reports I always write the full address and prefix; "does not ping" without a mask is useless.
+
+## How it works
+
+Record mapping:
+
+| Version | Example | Length | Typical test |
+|---------|---------|--------|--------------|
+| IPv4 | 192.168.1.50/24 | 32 bit | home lab |
+| IPv6 | 2001:db8::ac1:32/64 | 128 bit | cloud LB |
+
+Gherkin config validation:
+
+```gherkin
+Feature: Correct IP in deploy config
+
+  Scenario: Whitelist accepts CIDR only
+    Given security group rule "198.51.100.0/24"
+    When QA from IP 198.51.100.77 calls /internal
+    Then access is allowed
+
+  Scenario: Single IP without mask rejected in admin UI
+    Given field "Allowed CIDR"
+    When the operator enters "203.0.113.5"
+    Then the form shows a validation error
+    And save is blocked
+
+  Scenario: IPv6 literal in health-check URL
+    Given health URL "https://[2001:db8::1]/ready"
+    When the orchestrator probes the pod
+    Then the probe succeeds
+    And the log has no parse error
+```
+
+`traceroute`/`tracert` shows which hop drops packets; for v6 I use `traceroute6`.
+
+## Pitfalls
+
+- **One address, two roles.** LB VIP and pod IP get mixed in logs.
+- **IPv6 :: compression.** Two `::` in one address is invalid, config won't start.
+- **Reverse DNS.** Mail tests fail without PTR although HTTP is OK.
+- **GeoIP on stale DB.** QA VPN in the "wrong" region.
+- **Static vs DHCP lease.** Different IP after reboot, whitelist breaks.

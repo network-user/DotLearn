@@ -1,0 +1,71 @@
+---
+id: 4289
+title: "Что такое service discovery в Prometheus?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое service discovery в Prometheus?
+
+## Суть
+
+Service discovery (SD) автоматически строит список scrape targets из оркестратора или registry вместо статического `static_configs`. Prometheus опрашивает Kubernetes API, Consul, EC2, DNS и др., получает endpoints, затем `relabel_configs` фильтрует и навешивает labels. При scale-out новые pod'ы попадают в scrape без reload руками.
+
+## Что ответить на собесе
+
+- В k8s использую `kubernetes_sd_configs` с role `pod`, `service` или `endpoints`.
+- `relabel_configs` keep/drop по annotations `prometheus.io/scrape`.
+- Для VM outside k8s: `file_sd` + generated JSON от consul-template или Ansible.
+- AWS: `ec2_sd_configs` с фильтром по tag `Environment=prod`.
+- Честно: SD без relabel съедает весь control plane и sidecar metrics; aggressive drop rules обязательны.
+
+## Как это работает
+
+Kubernetes pod discovery с фильтром по label:
+
+```bash
+cat <<'EOF' >> /etc/prometheus/prometheus.yml
+scrape_configs:
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        target_label: __address__
+        regex: (.+)
+        replacement: ${1}
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+EOF
+```
+
+File-based SD для bare metal:
+
+```bash
+cat <<'EOF' > /etc/prometheus/file_sd/apps.json
+[
+  { "targets": ["10.0.1.12:9100", "10.0.1.13:9100"], "labels": { "job": "node", "env": "prod" } }
+]
+EOF
+```
+
+Проверка активных targets:
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/targets?state=active' | jq '.data.activeTargets[] | {job: .labels.job, instance: .labels.instance}'
+```
+
+## Подводные камни
+
+- **Scrape всего kube-system.** Без drop rules Prometheus DDOS'ит себя тысячами cAdvisor series.
+- **Stale targets.** Удалённые pod IP остаются до TTL; смотрю `up==0` noise и scrape timeout.
+- **Annotation typo.** `prometheus.io/port` без scrape=true молча игнорируется; документирую contract для dev.
+- **RBAC.** Prometheus SA без `get/list/watch pods` даёт пустой target list без явной ошибки в UI.
+- **File SD drift.** JSON от template без atomic rename ловит half-written file; пишу через temp + mv.

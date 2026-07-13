@@ -1,0 +1,59 @@
+---
+id: 1999
+title: "How does traceId appear and flow through microservices?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does traceId appear and flow through microservices?
+
+## In short
+
+A traceId is an end-to-end identifier for one user request across the whole service chain. The entry service generates it (or accepts it from the gateway) and propagates it downstream through HTTP/gRPC headers and message metadata. All logs and spans with the same traceId merge into one timeline for RCA.
+
+## How to answer in an interview
+
+- Generation at the edge: API gateway or first backend, UUID or W3C traceparent format.
+- Propagation: `traceparent`, `X-Request-Id`, OpenTelemetry baggage.
+- In Java: servlet filter, WebClient interceptor, or gRPC ClientInterceptor.
+- I connect it to MDC and structured logging.
+- I add honestly: without one header standard across teams, correlation breaks; agreement matters more than the exact UUID format.
+
+## How it works
+
+```java
+final class TraceHeaders {
+    static final String TRACE = "traceparent";
+
+    static String beginTrace() {
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        return "00-" + traceId + "-" + randomSpan() + "-01";
+    }
+
+    static void inject(HttpHeaders headers, String traceparent) {
+        headers.set(TRACE, traceparent);
+    }
+
+    static String extract(HttpHeaders headers) {
+        String incoming = headers.getFirst(TRACE);
+        return incoming != null ? incoming : beginTrace();
+    }
+
+    private static String randomSpan() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+}
+```
+
+The gateway receives a request without traceparent, calls `beginTrace()`, and puts the value in the header to billing-service. Billing reads `extract`, writes traceId into MDC, and forwards the same header to inventory. A Kibana/Jaeger filter by traceId shows the full path: auth → billing → inventory → DB.
+
+## Pitfalls
+
+- **New traceId on every hop.** The chain loses continuity.
+- **Loss in async.** `CompletableFuture` without context propagation breaks the trace.
+- **Trusting client traceId without validation.** Collisions and spoofing.
+- **Forgotten MDC.clear().** The next request on a thread pool inherits a foreign id.
+- **Different header names.** `X-Trace-Id` vs `traceparent` across services.

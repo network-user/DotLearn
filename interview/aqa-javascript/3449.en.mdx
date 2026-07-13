@@ -1,0 +1,92 @@
+---
+id: 3449
+title: "async/await on top of Promises in test code"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# async/await on top of Promises in test code
+
+## In short
+
+`async` marks a function that always returns a Promise; `await` pauses it until the inner Promise settles and unwraps the result. The syntax is linear; under the hood it is a state machine on `then`. In tests, an `async` test body is required for network steps.
+
+## How to answer in an interview
+
+- Any `return value` inside `async` becomes `Promise.resolve(value)`.
+- `await` only inside `async`; top-level await is available in ESM test modules.
+- I catch errors with `try/catch` around `await`, equivalent to a `.catch` chain.
+- Parallel: `await Promise.all([a(), b()])`, not two sequential awaits without need.
+- Honestly: a forgotten `await` on `expect` with a Promise-returning matcher gives a misleading pass.
+
+## How it works
+
+A linear API scenario:
+
+```
+async function loadUser(client, id) {
+    const response = await client.get(`/users/${id}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+}
+```
+
+The `then` equivalent (to see the transform):
+
+```
+function loadUser(client, id) {
+    return client.get(`/users/${id}`).then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+    });
+}
+```
+
+In pytest I mirror the async flow:
+
+```python
+import asyncio
+import pytest
+
+
+async def load_user(client, user_id: int) -> dict:
+    response = await client.get(f"/users/{user_id}")
+    if response.status != 200:
+        raise RuntimeError(f"HTTP {response.status}")
+    return await response.json()
+
+
+class FakeResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+class FakeClient:
+    async def get(self, path):
+        return FakeResponse(200, {"id": 7, "name": "qa"})
+
+
+@pytest.mark.asyncio
+async def test_async_loader():
+    user = await load_user(FakeClient(), 7)
+    assert user["name"] == "qa"
+```
+
+## Pitfalls
+
+**await in forEach.** The callback is not async-aware; the loop does not wait.
+
+**Sequential await in setup.** Increases suite time without benefit.
+
+**Unhandled rejection in an async IIFE.** The test ends; failure happens in the background.
+
+**Mixing return and await.** Extra `return await` wraps the Promise twice in the wrong places.
+
+**async without await.** Ignored linter warnings lose stack on throw.

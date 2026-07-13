@@ -1,0 +1,61 @@
+---
+id: 3036
+title: "Что такое topic в Kafka и как QA тестирует поток событий?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое topic в Kafka и как QA тестирует поток событий?
+
+## Суть
+
+Topic это именованный канал потока записей в Kafka, разбитый на partition с независимыми offset. Несколько producer пишут в один topic; несколько consumer group читают независимо, не «забирая» сообщения друг у друга. QA мапит бизнес-домен на topic, проверяет retention, ACL, schema и end-to-end эффект подписчиков.
+
+## Что ответить на собесе
+
+- Имя topic отражает домен: `user.signups`, `inventory.adjustments`.
+- Partition count задаёт max parallel consumers в одной group.
+- Retention hours/bytes определяет, можно ли replay старых событий.
+- Каждая group хранит свой committed offset per partition.
+- Честно: слишком общий topic «events» превращает тестирование в хаос без контрактов.
+
+## Как это работает
+
+```gherkin
+Feature: Kafka topic testing
+
+  Scenario: Orders topic end to end
+    Given producer writes to topic shop.orders
+    When WarehouseGroup consumes
+    Then stock table decremented for SKU in payload
+
+  Scenario: Multiple groups same topic
+    Given AnalyticsGroup and BillingGroup subscribe shop.orders
+    When one order event published
+    Then both groups receive independent copy
+
+  Scenario: Retention boundary
+    Given retention 24 hours
+    When event older than 24 hours
+    Then replay test cannot fetch QA documents limitation
+```
+
+```gherkin
+Feature: Topic smoke publish read
+
+  Scenario: Round trip orders topic
+    Given send shop.orders body New order 7781
+    When consumer in group qa-smoke polls
+    Then received body matches published
+```
+
+## Подводные камни
+
+- **Один partition на high volume topic.** Lag растёт линейно.
+- **Тест consumer без знания partition count.** Неверные ожидания parallelism.
+- **Compacted topic как event log.** Теряется история изменений.
+- **ACL typo staging.** Publish 403, кажется баг приложения.
+- **Нет schema version в topic contract.** Silent consumer skip.

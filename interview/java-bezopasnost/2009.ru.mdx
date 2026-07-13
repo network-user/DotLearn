@@ -1,0 +1,66 @@
+---
+id: 2009
+title: "Как работает Bearer token в HTTP API?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как работает Bearer token в HTTP API?
+
+## Суть
+
+Bearer token передаёт право доступа «предъявителю»: кто знает строку токена, тот и клиент. В HTTP его кладут в заголовок `Authorization: Bearer <token>`. Сервер валидирует подпись, срок и scope, не спрашивая пароль на каждый запрос.
+
+## Что ответить на собесе
+
+- Схема из RFC 6750, часто JWT или opaque token от IdP.
+- Только HTTPS; токен в логах и Referer недопустим.
+- Короткий TTL + refresh или re-login при компрометации.
+- Resource server не доверяет клиенту: проверяет issuer, audience, signature.
+- Честно: Bearer не шифрует payload JWT; claims видны Base64, секрет только в подписи.
+
+## Как это работает
+
+1. Клиент получает token на `/oauth/token` после login или code exchange.
+2. Каждый вызов API несёт заголовок:
+
+```java
+var request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.example.com/invoices"))
+    .header("Authorization", "Bearer " + accessToken)
+    .GET()
+    .build();
+```
+
+3. Gateway или Spring filter парсит заголовок:
+
+```java
+public class BearerAuthFilter extends OncePerRequestFilter {
+    @Override
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res,
+                                    FilterChain chain) throws ServletException, IOException {
+        String header = req.getHeader(HttpHeaders.AUTHORIZATION);
+        if (header != null && header.startsWith("Bearer ")) {
+            String raw = header.substring(7);
+            JwtClaims claims = tokenValidator.parse(raw);
+            SecurityContextHolder.getContext().setAuthentication(toAuth(claims));
+        }
+        chain.doFilter(req, res);
+    }
+}
+```
+
+4. При невалидном token: `401 Unauthorized`, без fallback на anonymous для protected routes.
+
+Opaque token валидируют introspection endpoint; JWT проверяют локально по JWKS public key.
+
+## Подводные камни
+
+- **Token в query string.** CDN и access logs сохранят секрет.
+- **Логирование Authorization.** DEBUG appenders утекают в SIEM.
+- **Отсутствие audience check.** Token от другого client_id принимается.
+- **Длинный TTL без revoke.** Украли Bearer, доступ до exp.
+- **Передача через WebSocket subprotocol без TLS.** Bearer readable on wire.

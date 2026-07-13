@@ -1,0 +1,53 @@
+---
+id: 1620
+title: "What gets encrypted in an HTTPS request"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What gets encrypted in an HTTPS request
+
+## In short
+
+After the TLS handshake, the entire application HTTP layer is encrypted: the request line, headers, and request/response body. Before TLS, IP, port, and hostname in DNS/SNI stay visible for routing. Path and query inside the TLS record are not available to passive sniffing on the wire.
+
+## How to answer in an interview
+
+- TLS protects application data, not network-level metadata.
+- SNI sends the hostname in ClientHello before encryption (ESNI/ECH partly mitigates).
+- Cookie, Authorization, JSON body are all inside encrypted records.
+- A corporate proxy with a MITM cert sees decrypted HTTP.
+- Honestly: the DNS query to the resolver can leak too; HTTPS does not cover it.
+
+## How it works
+
+```
+[Open]  DNS: api.shop.example → 203.0.113.10
+[Open]  TCP → :443, TLS ClientHello + SNI=api.shop.example
+[Enc]   GET /v1/orders?limit=10 HTTP/2
+[Enc]   Authorization: Bearer eyJ...
+[Enc]   {"filter":"pending"}
+```
+
+```go
+req, _ := http.NewRequest(http.MethodGet, "https://api.shop.example/v1/orders?limit=10", nil)
+req.Header.Set("Authorization", "Bearer "+token)
+resp, err := http.DefaultClient.Do(req)
+```
+
+An observer on the router sees volume and timing of encrypted packets, but not path or headers. CDN and WAF at the edge terminate TLS and see plaintext again inside the perimeter.
+
+## Pitfalls
+
+**Assume the URL is fully secret externally.** SNI and DNS leakage remain.
+
+**Logs on reverse proxy.** Path and query land in access logs after decrypt.
+
+**Referer to third-party HTTP.** Path leaks via header to an unprotected site.
+
+**Corporate SSL inspection.** The user trusts the company root CA.
+
+**Traffic metadata.** Size and frequency of requests are still analyzable without decryption.

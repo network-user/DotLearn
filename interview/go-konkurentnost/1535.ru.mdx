@@ -1,0 +1,87 @@
+---
+id: 1535
+title: "Когда планировщик переключает горутины?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда планировщик переключает горутины?
+
+## Суть
+
+Переключение cooperative: горутина уступает CPU при блокировке (канал, mutex, sleep, syscalls, netpoll) или когда runtime вставляет preemption на safepoint/по сигналу. Чистый CPU-bound цикл без блокировок может долго не отдавать поток, пока не сработает асинхронный preemption (Go 1.14+).
+
+## Что ответить на собесе
+
+- Типичные точки yield: send/recv на канале, Lock, time.Sleep, syscall, select.
+- Go не делает time-slicing как OS threads на каждой инструкции; нужны блокировки или preemption.
+- `runtime.Gosched()` явно просит уступить текущему P.
+- Честно: точные heuristics preemption менялись между версиями; блокирующие операции остаются надёжной точкой переключения.
+
+## Как это работает
+
+Планировщик M:P:G связывает goroutine G с OS-thread M через logical processor P. Когда G блокируется, M может выполнять другую G из run queue того же P или украсть работу у соседа.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func emitDigits(done <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for d := 1; d <= 5; d++ {
+		select {
+		case <-done:
+			return
+		default:
+			fmt.Println("digit:", d)
+			time.Sleep(80 * time.Millisecond)
+		}
+	}
+}
+
+func emitRunes(done <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for r := 'a'; r <= 'e'; r++ {
+		select {
+		case <-done:
+			return
+		default:
+			fmt.Printf("rune: %c\n", r)
+			time.Sleep(120 * time.Millisecond)
+		}
+	}
+}
+
+func main() {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go emitDigits(done, &wg)
+	go emitRunes(done, &wg)
+	time.Sleep(700 * time.Millisecond)
+	close(done)
+	wg.Wait()
+}
+```
+
+Каждый `Sleep` переводит G в waiting; M подхватывает другую ready G. Без таких точек две CPU-bound горутины на одном P будут чередоваться только после preemption или GOMAXPROCS>1.
+
+## Подводные камни
+
+**Busy loop без блокировок.** Тight loop может монopolize P и голодать соседей; добавляют Gosched, chunking или worker pool с лимитом.
+
+**Syscall и поток.** Долгий blocking syscall может отсоединить M от P; runtime поднимет новый M, чтобы P не простаивал.
+
+**False sharing планировщика.** Массовый spawn без backpressure заполняет run queues; latency растёт не из-за «медленного switch», а из-за очередей.
+
+**Sleep в main для синхронизации.** В production вместо sleep в main использую WaitGroup, errgroup или context.
+
+**Assumption про fairness.** Порядок пробуждения G не гарантирован FIFO; для справедливости нужны явные примitives (semaphore, rate limiter).

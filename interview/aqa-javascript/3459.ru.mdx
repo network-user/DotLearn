@@ -1,0 +1,73 @@
+---
+id: 3459
+title: "null и 0 в ответах API: как assert в тестах"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# null и 0 в ответах API: как assert в тестах
+
+## Суть
+
+`null` означает намеренное отсутствие значения, `0` это валидное число. В JSON поле `"count": 0` и отсутствие ключа или `"count": null` семантически разные. В JS `null == 0` ложно, но `null` falsy как и `0`, что путает guard в клиентском коде и тестах.
+
+## Что ответить на собесе
+
+- Для nullable counter проверяю `value === null` отдельно от `value === 0`.
+- В schema test (Zod/OpenAPI) явно различаю optional, nullable и required number.
+- SQL export: NULL колонка не то же самое, что 0 в агрегате.
+- В UI таблице пустая ячейка может быть 0, прочерк или null backend.
+- Честно: `if (count)` в проде скрывает баг «ноль заказов», тест с `toBeTruthy` тоже зелёный.
+
+## Как это работает
+
+JS проверки:
+
+```
+const missing = null;
+const zero = 0;
+console.log(missing === zero);
+console.log(Boolean(missing), Boolean(zero));
+```
+
+Контракт API:
+
+```
+{ "items": null }
+{ "items": 0 }
+```
+
+В pytest валидатор ответа:
+
+```python
+def normalize_items(payload: dict) -> str:
+    if "items" not in payload:
+        return "missing_key"
+    value = payload["items"]
+    if value is None:
+        return "null"
+    if value == 0:
+        return "zero"
+    return "other"
+
+
+def test_null_vs_zero_semantics():
+    assert normalize_items({}) == "missing_key"
+    assert normalize_items({"items": None}) == "null"
+    assert normalize_items({"items": 0}) == "zero"
+```
+
+## Подводные камни
+
+**Coalesce `??` vs `||`.** `0 ?? 1` остаётся 0, `0 || 1` становится 1.
+
+**Default в деструктуризации.** `const { n = 0 } = obj` подставит 0 при undefined, не при null.
+
+**GraphQL non-null Int.** null в ответе ломает весь query, 0 валиден.
+
+**toEqual без типа.** Строка `"0"` проходит бизнес-логику с нестрогим сравнением.
+
+**Aggregate SQL.** SUM пустого набора NULL, COUNT 0.

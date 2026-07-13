@@ -1,0 +1,58 @@
+---
+id: 1532
+title: "Как Go планирует goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как Go планирует goroutine?
+
+## Суть
+
+Модель GMP: G (goroutine) ставится в run queue P; M (OS thread) исполняет G, привязанный к P. Число P = `GOMAXPROCS`. Планировщик балансирует локальные очереди, global queue и work stealing между P.
+
+## Что ответить на собесе
+
+- Новая G от `go` попадает в local queue текущего P (или global при переполнении).
+- Idle P ворует половину очереди у другого P или берёт batch из global.
+- Blocked G освобождает M; syscall может отсоединить M от P.
+- Честно уточняю: это user-space scheduling; контекст switch дешевле OS thread, но не нулевой.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+)
+
+func main() {
+	fmt.Println("procs", runtime.GOMAXPROCS(0))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			fmt.Println(n)
+		}(i)
+	}
+	wg.Wait()
+}
+```
+
+Восемь G конкурируют за P потоков. При GOMAXPROCS=4 одновременно CPU-bound исполняются до четырёх G, остальные ждут в очередях.
+
+## Подводные камни
+
+- **Создание G быстрее M.** Миллионы G возможны, но очереди растут и latency растёт.
+- **Global queue lock.** Массовый spawn бьёт в global runqlock.
+- **Network poller.** Net I/O не блокирует M так же, как file I/O в старых паттернах.
+- **Nested locking в runtime.** Не касается прикладного кода, но объясняет редкие latency spikes.
+- **Привязка к OS thread.** `LockOSThread` сужает планирование до одного M.

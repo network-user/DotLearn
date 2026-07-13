@@ -1,0 +1,68 @@
+---
+id: 1554
+title: "Может ли idle goroutine забрать work у другой?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Может ли idle goroutine забрать work у другой?
+
+## Суть
+
+Сама G не «крадёт» у соседней G: work stealing делает P (logical processor), забирая G из run queue другого P. На уровне приложения idle worker забирает задачу из shared chan, а не из stack другой goroutine.
+
+## Что ответить на собесе
+
+- Scheduler: P steals half of runq у другого P, не goroutine-to-goroutine.
+- App pattern: worker pool + jobs chan; idle worker получает следующий job.
+- Одна goroutine не preempt CPU-bound соседа без preemption/block.
+- Честно: формулировка «простаивающая goroutine» на собесе уточняю: scheduler level vs worker pool.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func poolWorker(id int, jobs <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for j := range jobs {
+		fmt.Printf("worker %d job %d\n", id, j)
+	}
+}
+
+func main() {
+	jobs := make(chan int, 8)
+	var wg sync.WaitGroup
+	for w := 0; w < 3; w++ {
+		wg.Add(1)
+		go poolWorker(w, jobs, &wg)
+	}
+	for j := 1; j <= 6; j++ {
+		jobs <- j
+	}
+	close(jobs)
+	wg.Wait()
+}
+```
+
+Три workers ждут на chan; кто idle первым, тот получит следующий send. Это load balancing через channel, не runtime steal между G напрямую.
+
+## Подводные камни
+
+**Путаница P steal vs chan.** Разные уровни; оба valid answers с уточнением.
+
+**Local runq affinity.** G может stick к P; steal выравнивает load между P.
+
+**Unbalanced job size.** Chan fair по arrival, не по duration; нужен weighted pool.
+
+**No work stealing in app.** Если один producer chan, workers сами balance; steal внутри runtime прозрачен.
+
+**Steal under GOMAXPROCS=1.** Только один P → steal между P не работает.

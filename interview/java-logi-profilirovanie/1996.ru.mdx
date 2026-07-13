@@ -1,0 +1,52 @@
+---
+id: 1996
+title: "Какие виды профилирования JVM-приложений бывают?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие виды профилирования JVM-приложений бывают?
+
+## Суть
+
+Профилирование ищет узкие места по трём осям: CPU (горячие методы и sampling), memory (allocations, retained heap, leaks) и I/O (disk, network, JDBC latency). В Java используют async-profiler, JFR, VisualVM, YourKit; выбор зависит от симптома: high CPU, GC pause, slow endpoint.
+
+## Что ответить на собесе
+
+- CPU profiling: flame graph, self time vs total time, inlined frames.
+- Memory: heap histogram, dominator tree, allocation profiling.
+- I/O: blocked threads, socket read/write wait, JDBC pool saturation.
+- Разделяю production-safe (JFR, low-overhead sampling) и deep dive (heap dump).
+- Честно добавляю: профилирование без baseline метрик даёт ложные приоритеты; сначала смотрю p95 latency и GC logs.
+
+## Как это работает
+
+CPU hotspot через JFR event (упрощённо):
+
+```java
+final class ReportBuilder {
+    String buildMonthlySummary(List<LedgerRow> rows) {
+        return rows.stream()
+            .filter(row -> row.amountCents() > 0)
+            .map(this::formatRow)
+            .collect(Collectors.joining("\n"));
+    }
+
+    private String formatRow(LedgerRow row) {
+        return row.accountId() + ":" + row.amountCents();
+    }
+}
+```
+
+Flame graph покажет, что `formatRow` и `Collectors.joining` съедают CPU на большом `rows`. Memory profiler выявит, что промежуточные `String` от `map` давят young gen. I/O trace покажет BLOCKED потоки на `socketRead0` при медленном downstream. Три вида профилирования отвечают на разные вопросы и часто комбинируются в одном инциденте.
+
+## Подводные камни
+
+- **Профилирование в dev на малых данных.** Hotspot в prod не воспроизводится.
+- **Instrumenting profiler в prod.** Bytecode injection искажает timing.
+- **Игнор JVM overhead.** Оптимизируют Java код, а проблема в GC tuning.
+- **Путаница allocation vs retention.** Много alloc не равно leak.
+- **Один snapshot без нагрузки.** Idle dump бесполезен для capacity issue.

@@ -1,0 +1,55 @@
+---
+id: 2468
+title: "Why you must not send secrets via GET"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why you must not send secrets via GET
+
+## In short
+
+GET puts parameters in the URL, which lands in history, server access logs, Referer on third-party navigation, analytics, and proxies. Passwords, tokens, and PII belong in POST/PUT bodies over HTTPS; sensitive operations must not be idempotent GET.
+
+## How to answer in an interview
+
+- Credentials only via POST plus TLS; query strings are logged by default.
+- I never put tokens in shareable links (`?token=` is an anti-pattern).
+- Downloads sometimes need GET, but use one-time signed URLs with short TTL.
+- Honestly: some WAFs log POST bodies if misconfigured, but risk is still lower than URL.
+- CDN prefetch/prerender may hit GET links with secrets from href.
+
+## How it works
+
+Bad:
+
+```ts
+await fetch(`https://api.example/login?user=${user}&pass=${pass}`);
+```
+
+The URL ends up in DevTools history, nginx logs, browser sync.
+
+Good:
+
+```ts
+await fetch('https://api.example/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ user, pass }),
+});
+```
+
+Referer leak: after login, an external `<img src="http://evil...">` could leak old GET queries via Referer (mitigation: Referrer-Policy: no-referrer).
+
+GET is also cached (browser/CDN) and bookmarked/shared. RFC semantics: GET is safe and idempotent, so crawlers and prefetchers may repeat it without asking.
+
+## Pitfalls
+
+- **Legacy OAuth implicit.** Tokens in fragment/query; prefer PKCE authorization code.
+- **Email magic links.** Token in URL is unavoidable; use one-time plus short TTL plus POST confirm.
+- **SSR logs.** SSR frameworks log request URLs with query strings.
+- **Browser extensions.** They read the address bar and history.
+- **Length limits.** Long secrets in query truncate (<2k) and break auth silently.

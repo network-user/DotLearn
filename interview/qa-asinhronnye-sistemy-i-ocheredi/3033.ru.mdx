@@ -1,0 +1,64 @@
+---
+id: 3033
+title: "Что такое Kafka producer и что проверяет QA при публикации?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое Kafka producer и что проверяет QA при публикации?
+
+## Суть
+
+Producer это клиент, который сериализует и отправляет записи в topic Kafka. Он выбирает partition по key или round-robin, ждёт ack от брокера и может ретраить при transient ошибках. QA проверяет корректность payload, попадание в нужный topic/partition, уровень `acks` и отсутствие silent drop при сбое кластера.
+
+## Что ответить на собесе
+
+- Producer не хранит очередь для consumer; он append в log partition.
+- Key `orderId` держит все события заказа в одной partition для порядка.
+- Callback/metadata даёт topic, partition, offset для трассировки в тесте.
+- `acks=all` при financial events; `acks=1` осознанный компромисс на telemetry.
+- Честно: без flush/close на shutdown буферизованные сообщения могут не уйти.
+
+## Как это работает
+
+```gherkin
+Feature: Kafka producer validation
+
+  Scenario: Publish with business key
+    Given producer sends to topic payments key ord-441
+    When metadata callback returns partition 2 offset 90821
+    Then consumer in same partition reads in order
+
+  Scenario: Ack all on broker loss
+    Given acks all min.insync.replicas 2
+    When one broker stops
+    And two replicas alive
+    Then publish still succeeds QA logs offset
+
+  Scenario: Invalid serialization
+    Given value serializer expects Avro
+    When plain string sent
+    Then publish fails before broker QA catches contract bug
+```
+
+Переименованный Java smoke (идиомы сохранены, имена сменены):
+
+```java
+Properties cfg = new Properties();
+cfg.put("bootstrap.servers", "kafka-staging:9092");
+cfg.put("acks", "all");
+KafkaProducer<String, String> writer = new KafkaProducer<>(cfg);
+writer.send(new ProducerRecord<>("billing-events", "inv-9", "{\"total\":120}"));
+writer.flush();
+```
+
+## Подводные камни
+
+- **Публикация без key на ordered flow.** События перемешиваются.
+- **acks=0 в «критичном» тесте.** Ложная уверенность в доставке.
+- **Нет проверки offset в тесте.** Не доказано, что сообщение дошло.
+- **Игнор max.in.flight.** Переупорядочивание при retry.
+- **Staging topic name typo.** Сообщения в пустой topic, кажется баг consumer.

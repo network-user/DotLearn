@@ -1,0 +1,53 @@
+---
+id: 1998
+title: "What is the difference between a heap dump and a thread dump?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is the difference between a heap dump and a thread dump?
+
+## In short
+
+A heap dump is a snapshot of all objects in the heap at capture time: who retains memory and how much. A thread dump is a snapshot of all threads: state, stack, locks, and park/wait targets. Heap answers OOM and leaks; thread dump answers deadlock, starvation, and stuck I/O.
+
+## How to answer in an interview
+
+- Heap: `.hprof`, analysis in MAT/VisualVM, dominator tree, leak suspects.
+- Thread: `jstack`, states RUNNABLE/BLOCKED/WAITING/TIMED_WAITING.
+- Commands: `jcmd <pid> GC.heap_dump`, `jcmd <pid> Thread.print`.
+- I mention legacy `jmap -dump` and pause impact of a full heap dump.
+- I add honestly: one thread dump may miss a race; several snapshots help; heap dump is heavy for production without planning.
+
+## How it works
+
+Capturing dumps from a running JVM:
+
+```bash
+jcmd 41872 VM.native_memory summary
+jcmd 41872 GC.heap_dump /tmp/heap-41872.hprof
+jcmd 41872 Thread.print > /tmp/threads-41872.txt
+```
+
+A thread dump fragment:
+
+```
+"pool-2-thread-5" #27 prio=5 os_prio=0 cpu=123.45ms elapsed=300.12s tid=0x... nid=0x8c waiting on condition
+   java.lang.Thread.State: WAITING (parking)
+        at jdk.internal.misc.Unsafe.park(...)
+        at java.util.concurrent.locks.LockSupport.park(...)
+        at com.acme.queue.WorkerLoop.pollTask(WorkerLoop.java:88)
+```
+
+`WAITING (parking)` on `WorkerLoop.pollTask` points to an empty queue or a missed signal. A heap dump of the same PID shows whether `byte[]` or `HashMap$Node` grows from a cache without eviction. Together they localize memory leak vs thread pool exhaustion.
+
+## Pitfalls
+
+- **Heap dump on a 32GB heap at peak.** Stop-the-world and disk space pain.
+- **One thread dump for a flaky deadlock.** You need a series at intervals.
+- **Analysis without retained set.** You count all objects and ignore GC root paths.
+- **Wrong PID after restart.** The dump belongs to an old process.
+- **Thread dump without lock info.** Older JDK or stripped builds hide the monitor owner.

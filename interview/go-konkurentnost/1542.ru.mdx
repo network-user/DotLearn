@@ -1,0 +1,83 @@
+---
+id: 1542
+title: "Как устранить data race в Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устранить data race в Go?
+
+## Суть
+
+Data race возникает при concurrent доступе к одной памяти, когда хотя бы один access пишет без синхронизации. Лечат mutex/RWMutex, atomic, channels, single-writer goroutine или immutable data; детектят `go test -race` и race detector в CI.
+
+## Что ответить на собесе
+
+- Сначала воспроизвожу с `-race`, фиксирую shared state и границы ownership.
+- Для счётчиков и flags часто `atomic`; для struct invariant Mutex.
+- «Share memory by communicating»: один goroutine владеет map, остальные шлют messages.
+- Честно: race detector замедляет и не ловит все logical races (TOCTOU без shared write).
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+func withMutex(n int) int {
+	var mu sync.Mutex
+	sum := 0
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mu.Lock()
+			sum++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return sum
+}
+
+func withAtomic(n int) int64 {
+	var total atomic.Int64
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			total.Add(1)
+		}()
+	}
+	wg.Wait()
+	return total.Load()
+}
+
+func main() {
+	fmt.Println(withMutex(1000), withAtomic(1000))
+}
+```
+
+Mutex сериализует инкремент; atomic даёт lock-free счётчик без защиты сложных struct. Для composite state выбираю один механизм и документирую invariant.
+
+## Подводные камни
+
+**Race только в prod.** Без `-race` в CI гонки всплывают случайно под нагрузкой.
+
+**Mutex copy.** Скопированный Mutex после use даёт silent broken lock.
+
+**Channel как mutex костыль.** Buffered chan size 1 работает, но хуже читается и профилируется чем Mutex.
+
+**False confidence от atomic полей.** Atomic int + non-atomic struct fields рядом всё ещё race.
+
+**Logical race без detector.** Два goroutine read-modify-write через DB без transaction тоже «race», но не поймает Go race detector.

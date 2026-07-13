@@ -1,0 +1,67 @@
+---
+id: 2514
+title: "Транспиляция в frontend сборке"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Транспиляция в frontend сборке
+
+## Суть
+
+Транспиляция преобразует исходный код в синтаксически другой, но семантически эквивалентный на том же уровне (TS → JS, ES2022 → ES2018, JSX → `React.createElement`). От компиляции отличается: не генерирует machine code, меняет текст source. Нужна для browser targets и для языков над JS (TS, Vue SFC).
+
+## Что ответить на собесе
+
+- Babel, TypeScript (`tsc`), esbuild, SWC: разные speed/feature tradeoffs.
+- `target`/`browserslist` задаёт набор syntax transforms; polyfill отдельно (`core-js`).
+- TS transpileOnly через esbuild в Vite dev; typecheck отдельным `tsc --noEmit`.
+- Честно: evergreen-only проекты режут transpile до minify; экономят CI минуты.
+- Source maps обязательны, иначе prod errors нечитаемы.
+
+## Как это работает
+
+Modern input:
+
+```ts
+export const formatLabel = (name: string) => `Hello, ${name}!`;
+
+export async function loadConfig(url: string) {
+  const res = await fetch(url);
+  return res.json();
+}
+```
+
+Downleveled output (conceptual):
+
+```js
+export const formatLabel = function (name) {
+  return 'Hello, ' + name + '!';
+};
+
+export async function loadConfig(url) {
+  const res = await fetch(url);
+  return res.json();
+}
+```
+
+Pipeline в Webpack: `ts-loader` или `babel-loader` в rules → output JS → terser minify. Vite dev: esbuild transform on request (<50ms). Prod Rollup + esbuild minify. JSX:
+
+```tsx
+export function Badge({ text }: { text: string }) {
+  return <span className="badge">{text}</span>;
+}
+```
+
+→ `_jsx("span", { className: "badge", children: text })` (automatic runtime).
+
+## Подводные камни
+
+- **Transpile without types.** `esbuild` игнорирует TS errors; нужен отдельный gate в CI.
+- **Polyfill confusion.** Syntax transform не добавляет `Promise.allSettled` в IE без core-js.
+- **Double transform.** Babel поверх tsc output раздувает build time.
+- **Helper duplication.** Забытый `@babel/runtime` копирует `_extends` в каждый file.
+- **Wrong target.** Слишком низкий target раздувает bundle; слишком высокий ломает legacy SLA.

@@ -1,0 +1,77 @@
+---
+id: 2080
+title: "Java Memory Model: visibility and ordering"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Java Memory Model: visibility and ordering
+
+## In short
+
+JMM (JSR-133) formally defines when a write in one thread is visible to a read in another despite CPU caches and compiler reordering. The key tool is happens-before edges (monitor enter/exit, volatile read/write, Thread.start/join). Without HB relations stale reads and surprising reorderings are possible even for "simple" fields.
+
+## How to answer in an interview
+
+- JMM addresses visibility + instruction ordering, not atomicity of compound ops.
+- `volatile` provides HB and visibility; `count++` on volatile is still a race.
+- `synchronized` release/acquire semantics on the monitor.
+- `java.util.concurrent` (Atomic*, locks) builds on JMM guarantees.
+- Honestly: double-checked locking without volatile is broken; with volatile or enum singleton it is OK.
+
+## How it works
+
+Broken flag (no HB):
+
+```java
+public final class BrokenReadyFlag {
+    private boolean ready;
+    private int payload;
+
+    public void publish(int value) {
+        payload = value;
+        ready = true;
+    }
+
+    public int consume() {
+        while (!ready) { Thread.onSpinWait(); }
+        return payload;
+    }
+}
+```
+
+Reader may see `ready=true` but stale `payload=0` from reorder.
+
+Fixed:
+
+```java
+public final class SafeReadyFlag {
+    private volatile boolean ready;
+    private int payload;
+
+    public void publish(int value) {
+        payload = value;
+        ready = true;
+    }
+
+    public int consume() {
+        while (!ready) { Thread.onSpinWait(); }
+        return payload;
+    }
+}
+```
+
+`ready=true` HB next read of `ready` → visibility of `payload` write that happened before.
+
+Happens-before also from: `ConcurrentHashMap` actions, `CountDownLatch`, `BlockingQueue` ops.
+
+## Pitfalls
+
+- **volatile ≠ mutex.** High contention increment still wrong.
+- **Final field safe publication.** Immutable object if ref published after ctor complete in same thread without escape.
+- **False sharing.** Padding/cache line effects are performance, not JMM visibility (often confused).
+- **Lazy holder without volatile.** Another thread sees partially constructed singleton.
+- **Assuming println flushes memory.** IO side effect ≠ HB for arbitrary fields.

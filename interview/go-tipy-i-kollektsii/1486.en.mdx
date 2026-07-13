@@ -1,0 +1,60 @@
+---
+id: 1486
+title: "How does a map store keys larger than 128 bytes?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a map store keys larger than 128 bytes?
+
+## In short
+
+The Go runtime stores small keys inline in buckets and, above a threshold (128 bytes), stores a pointer to a heap-allocated copy. That avoids moving large structs on every bucket comparison.
+
+## How to answer in an interview
+
+- I explain the runtime optimization: inline vs indirect key storage.
+- The 128-byte cutoff is an implementation detail, not spec; the interview idea is "large keys by pointer".
+- Comparable struct keys still compare by value, not pointer address.
+- I honestly add that for very large keys, `map[string]V` with a canonical string id beats a heavy struct key.
+
+## How it works
+
+On insert the key is copied to the heap when it does not fit a bucket slot. Hash and equality use the actual key value. Lookup compares contents, so two different variables with the same `[200]byte` hit one entry.
+
+```go
+package main
+
+import "fmt"
+
+type WideKey struct {
+	Payload [200]byte
+}
+
+func main() {
+	store := make(map[WideKey]string)
+
+	k1 := WideKey{}
+	k1.Payload[0] = 7
+
+	store[k1] = "cached"
+
+	k2 := WideKey{}
+	k2.Payload[0] = 7
+
+	fmt.Println(store[k2])
+}
+```
+
+`k1` and `k2` are distinct variables but equal as keys; the value is read through `k2`.
+
+## Pitfalls
+
+- **Copy on insert.** A large key value is copied into the map; frequent inserts are costly.
+- **Confusion with pointer keys.** `map[*WideKey]V` compares addresses, not struct contents.
+- **Mutating keys after insert.** Changing `[N]byte` in a local variable does not update the key inside the map.
+- **Relying on the threshold.** Do not design APIs around 128 bytes; the constant may change between Go versions.
+- **GC pressure.** Many large keys grow the heap and mark phase time.

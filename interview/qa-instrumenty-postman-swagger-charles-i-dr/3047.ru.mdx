@@ -1,0 +1,67 @@
+---
+id: 3047
+title: "Как менять сетевые параметры запросов в Charles?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как менять сетевые параметры запросов в Charles?
+
+## Суть
+
+Charles позволяет не только смотреть, но и подменять трафик: Rewrite, Map Local/Remote, Breakpoints, Throttling. QA меняет headers, query, body или response status без пересборки клиента, чтобы проверить error handling, retry и UI на медленной сети.
+
+## Что ответить на собесе
+
+- Breakpoints: останавливаю request/response, правлю JSON, форward.
+- Rewrite rule: постоянная подмена header `Accept-Language` или добавление `X-Debug-Trace`.
+- Map Local: отдаю статический JSON вместо backend для offline UI тестов.
+- Throttling preset 3G проверяет timeout и skeleton loaders.
+- Честно: подмена response на prod-like stand может скрыть реальный баг API; фиксирую, что тест с mock, не интеграционный.
+
+## Как это работает
+
+```gherkin
+Feature: Charles traffic modification for QA
+
+  Scenario: Simulate 503 on payment endpoint
+    Given Breakpoints enabled for POST /api/v1/charge
+    When app submits payment
+    Then Charles intercepts response
+    And tester edits status to 503 with body service_unavailable
+    And app shows retry banner without crash
+
+  Scenario: Rewrite User-Agent for compatibility check
+    Given Rewrite rule adds header User-Agent LegacyClient/2.1
+    When mobile app sends catalog request
+    Then server branch legacy path exercised without rebuild
+
+  Scenario: Throttle checkout on slow network
+    Given Throttling profile 3G 780kbps 300ms latency
+    When user completes checkout
+    Then UI keeps spinner under 15s and no double submit
+```
+
+Пример правки request на breakpoint (логическая форма):
+
+```
+POST /api/v1/cart/apply-coupon HTTP/1.1
+Host: shop.stage.example
+Content-Type: application/json
+
+{"code":"SAVE10","cartId":"c-4419"}
+→ tester changes code to EXPIRED99 to verify error toast
+```
+
+Map Remote перенаправляет host на другой stand; Map Local подставляет файл `./fixtures/empty_cart.json`. Compose rules аккуратно: порядок Rewrite vs Breakpoint влияет на итог.
+
+## Подводные камни
+
+- **Забытый Breakpoint.** Все запросы висят; команда думает, что staging лёг.
+- **Rewrite на `*`.** Ломает OAuth redirect и CDN assets.
+- **Map Local с устаревшим JSON.** UI зелёный против мёртвого контракта.
+- **Throttle на Wi‑Fi desktop only.** Mobile real network иначе ведёт себя.
+- **Edited response без логов в тикете.** Dev не воспроизводит; экспортируй session.

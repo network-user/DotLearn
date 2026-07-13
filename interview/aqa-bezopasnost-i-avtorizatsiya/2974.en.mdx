@@ -1,0 +1,77 @@
+---
+id: 2974
+title: "Authentication and authorization in API tests"
+category: aqa-bezopasnost-i-avtorizatsiya
+categoryLabel: "Безопасность и авторизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Authentication and authorization in API tests
+
+## In short
+
+Authentication answers "who are you" and verifies credentials or a token. Authorization decides "what you may do" after identity is established. In automation these are different case sets: login/refresh vs role-based access to an endpoint.
+
+## How to answer in an interview
+
+- I define authN: password, OAuth code flow, JWT, mTLS, API key; I test negatives (wrong password, expired token).
+- I define authZ: RBAC/ABAC, scopes, resource ownership; I expect 403 with a valid token but no permission.
+- I split test roles: admin, user, guest; I create data under each account.
+- I mention OWASP: do not confuse 401 and 403, do not log secrets, rotate refresh tokens in staging.
+- I add honestly: e2e with a real IdP is slow; I mock some authN but hit real policy for authZ on the API.
+
+## How it works
+
+Typical REST flow: POST `/login` checks credentials and returns an access token → the client sends `Authorization: Bearer` → middleware validates signature and claims → the handler asks a policy engine whether DELETE `/orders/{id}` is allowed.
+
+```python
+import httpx
+import pytest
+
+BASE = "https://staging.example.com"
+
+
+def login(client: httpx.Client, username: str, password: str) -> str:
+    response = client.post(f"{BASE}/auth/login", json={"username": username, "password": password})
+    response.raise_for_status()
+    return response.json()["access_token"]
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize(
+    "role, order_id, expected_status",
+    [
+        ("admin", "9001", 204),
+        ("user", "9001", 403),
+        ("guest", "9001", 401),
+    ],
+)
+def test_delete_order_authorization(role: str, order_id: str, expected_status: int):
+    creds = {"admin": ("a", "a-pass"), "user": ("u", "u-pass"), "guest": ("", "")}[role]
+    with httpx.Client(timeout=10.0) as client:
+        if role == "guest":
+            response = client.delete(f"{BASE}/orders/{order_id}")
+        else:
+            token = login(client, creds[0], creds[1])
+            response = client.delete(f"{BASE}/orders/{order_id}", headers=auth_headers(token))
+    assert response.status_code == expected_status
+```
+
+I also test horizontal privilege escalation: user A must not read user B's order when swapping the id in the URL.
+
+## Pitfalls
+
+**Swapped 401 vs 403.** The API contract drifts and clients cannot tell re-login from "no permission".
+
+**Admin claim token in user tests.** Copy-paste fixtures grant access that should fail.
+
+**Clock skew on JWT exp.** Flaky nightly runs at exp boundary without slack.
+
+**Auth only on the gateway.** Direct internal calls skip policy.
+
+**Forgotten logout/revoke.** Refresh stays valid after "deleting" the user in the UI.

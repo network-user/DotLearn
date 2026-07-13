@@ -1,0 +1,76 @@
+---
+id: 4676
+title: "Why does a polymorphic base need a virtual destructor?"
+category: cpp-klassy-oop-polimorfizm
+categoryLabel: "Классы / ООП / Полиморфизм"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why does a polymorphic base need a virtual destructor?
+
+## In short
+
+When a derived object is deleted through a base pointer without a virtual destructor, only ~Base runs. Dynamically allocated derived members, file handles, and mutex members are not released.
+
+## How to answer in an interview
+
+- Polymorphic base plus delete through base pointer implies virtual ~Base.
+- UB-free alternative: never delete through base (CRTP, static typing); runtime polymorphism needs virtual.
+- `std::unique_ptr<Base>` needs a complete type and virtual dtor for correct derived cleanup via the base deleter.
+- Rule of thumb: virtual destructor if any virtual function exists.
+- Honestly: `= default` virtual ~ in the header is enough; out-of-line definition is rarely needed.
+
+## How it works
+
+```cpp
+#include <iostream>
+#include <memory>
+
+struct Shape {
+    virtual ~Shape() { std::cout << "~Shape\n"; }
+    virtual void draw() const = 0;
+};
+
+struct Circle : Shape {
+    ~Circle() override { std::cout << "~Circle\n"; }
+    void draw() const override {}
+};
+
+void dispose(Shape* item) {
+    delete item;
+}
+
+int main() {
+    dispose(new Circle{});
+    std::unique_ptr<Shape> owned{new Circle{}};
+}
+```
+
+On `delete` through `Shape*`, runtime lookup picks `~Circle`, then automatically `~Shape`.
+
+Without virtual:
+
+```cpp
+struct ShapeBad {
+    ~ShapeBad() { std::cout << "~ShapeBad\n"; }
+};
+
+struct CircleBad : ShapeBad {
+    ~CircleBad() { std::cout << "~CircleBad\n"; }
+};
+
+void leak(CircleBad* c) {
+    ShapeBad* view = c;
+    delete view; // only ~ShapeBad
+}
+```
+
+## Pitfalls
+
+- **Stack objects are fine.** Virtual dtor matters for pointer delete, not automatic storage.
+- **Protected non-virtual ~.** Rare pattern: protected non-virtual base ~ plus public destroy() factory.
+- **Multiple inheritance.** Virtual bases complicate order; polymorphic root still needs virtual ~.
+- **Exception safety.** Partial construction plus non-virtual delete is worse.
+- **Compiler warnings.** Keep `-Wdelete-non-virtual-dtor` (Clang/GCC) enabled.

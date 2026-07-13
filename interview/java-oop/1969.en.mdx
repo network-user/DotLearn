@@ -1,0 +1,69 @@
+---
+id: 1969
+title: "When does a thread need Object.wait()?"
+category: java-oop
+categoryLabel: "ООП"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When does a thread need Object.wait()?
+
+## In short
+
+`wait()` puts the current thread to sleep and **releases the monitor** of the object it was called on. The thread wakes when another thread calls `notify`/`notifyAll` on that same object or a timeout expires. It only works inside a synchronized block on that object.
+
+## How to answer in an interview
+
+- Stress that `wait` is not `sleep`; it releases the monitor so other threads can enter synchronized code.
+- Explain the producer-consumer pattern with `while`, not `if`, because of spurious wakeups.
+- Mention overloads: `wait(timeout)`, `wait(timeout, nanos)`.
+- Tie to `InterruptedException`: restore the interrupt flag on cancellation.
+- Be honest: new code usually prefers `java.util.concurrent` (`BlockingQueue`, `Condition`) over raw wait/notify.
+
+## How it works
+
+```java
+final class HandoffBuffer {
+    private String payload;
+    private boolean ready;
+
+    synchronized void publish(String value) {
+        while (ready) {
+            awaitSafely();
+        }
+        payload = value;
+        ready = true;
+        notifyAll();
+    }
+
+    synchronized String consume() {
+        while (!ready) {
+            awaitSafely();
+        }
+        String taken = payload;
+        ready = false;
+        notifyAll();
+        return taken;
+    }
+
+    private void awaitSafely() {
+        try {
+            wait();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+```
+
+The producer waits while the buffer is full; the consumer waits until data is ready. `while` guards against spurious wakeups and against another thread changing state before the monitor is reacquired.
+
+## Pitfalls
+
+- **wait without synchronized.** Throws `IllegalMonitorStateException`.
+- **if instead of while.** Classic race after a spurious wakeup.
+- **notify instead of notifyAll.** May fail to wake the right thread with multiple waiters.
+- **Lost interrupt.** Empty catch without `Thread.currentThread().interrupt()`.
+- **Holding the monitor too long.** Keep post-wait work short to avoid starvation.

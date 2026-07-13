@@ -1,0 +1,64 @@
+---
+id: 4576
+title: "Can a virtual member function be a template?"
+category: cpp-shablony-metaprogramming
+categoryLabel: "Шаблоны / Metaprogramming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Can a virtual member function be a template?
+
+## In short
+
+An individual virtual member cannot also be a function template: the vtable is fixed when the class is compiled, while a template produces a family of functions only at instantiation. The workaround is a class template with ordinary virtual members parameterized by the class type.
+
+## How to answer in an interview
+
+- I answer directly: `virtual template` on a member in one class is not allowed in standard C++.
+- I explain the conflict: polymorphism needs a stable vtable slot, while a template expands later with different signatures.
+- I show the CRTP pattern or a template base `Base<T>` with `virtual void handle(const T&)`.
+- I mention type erasure (`std::function`, `std::any`) as runtime polymorphism across types.
+- I add honestly: when one interface must cover many types, I prefer a non-virtual template API or a variant instead of stretching the vtable model.
+
+## How it works
+
+Virtual dispatch goes through a table of function pointers filled when the hierarchy is compiled. A templated member would be generated separately for each `T`, and the compiler could not reserve one polymorphic slot. That is why `virtual template <typename U> void foo(U);` is rejected.
+
+```cpp
+#include <iostream>
+
+template <typename Payload>
+struct Sink {
+    virtual ~Sink() = default;
+    virtual void accept(const Payload& item) = 0;
+};
+
+template <typename Payload>
+struct ConsoleSink : Sink<Payload> {
+    void accept(const Payload& item) override {
+        std::cout << "got: " << item << '\n';
+    }
+};
+
+int main() {
+    ConsoleSink<int> int_sink;
+    ConsoleSink<double> double_sink;
+
+    int_sink.accept(7);
+    double_sink.accept(3.14);
+}
+```
+
+Virtual behavior exists here, but only inside a concrete `Sink<int>` or `Sink<double>`. Those are different classes with different vtables, not one polymorphic base for arbitrary `Payload`. A call through `Sink<int>*` stays polymorphic among descendants of `Sink<int>`, not between `Sink<int>` and `Sink<double>`.
+
+A single runtime interface over mixed types uses type erasure: a virtual base holds type-erased state and delegates to a template implementation inside a `.cpp` file. Many standard library facades follow that shape.
+
+## Pitfalls
+
+- **Attempting virtual template.** The compiler rejects it; macros do not fix the model.
+- **False polymorphism across instantiations.** `Sink<int>` and `Sink<double>` are unrelated for `dynamic_cast` through one common base.
+- **Templated ctor is not virtual.** Interview confusion between "template class" and "template member" is common.
+- **Vtable size.** Many virtual members in a template hierarchy duplicate per instantiated class.
+- **Type erasure cost.** Allocations and indirection; the static template path is faster but less flexible.

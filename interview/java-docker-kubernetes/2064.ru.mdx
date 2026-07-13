@@ -1,0 +1,74 @@
+---
+id: 2064
+title: "Ingress в OpenShift: внешний HTTP-доступ к сервисам"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Ingress в OpenShift: внешний HTTP-доступ к сервисам
+
+## Суть
+
+Ingress (в OpenShift часто реализуется через Route или совместимый Ingress controller) маршрутизирует внешний HTTP/HTTPS трафик к Service внутри кластера по host и path. Один входной IP/балансировщик заменяет десятки NodePort; поддерживается TLS termination и rewrite rules. Для Java microservices это стандартная точка публикации REST API.
+
+## Что ответить на собесе
+
+- Service даёт stable cluster IP; Ingress/Router публикует его наружу по домену.
+- Правила: host `api.shop.example`, path `/orders` → Service `order-svc:8080`.
+- TLS cert хранится в Secret или platform wildcard; termination на edge.
+- Ingress controller (nginx, HAProxy, OpenShift router) реализует spec.
+- Честно: без health checks и timeout tuning Ingress маскирует медленные upstream Pod.
+
+## Как это работает
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop-api
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+spec:
+  tls:
+  - hosts:
+    - api.shop.example
+    secretName: shop-api-tls
+  rules:
+  - host: api.shop.example
+    http:
+      paths:
+      - path: /v1/catalog
+        pathType: Prefix
+        backend:
+          service:
+            name: catalog-svc
+            port:
+              number: 80
+      - path: /v1/checkout
+        pathType: Prefix
+        backend:
+          service:
+            name: checkout-svc
+            port:
+              number: 80
+```
+
+Цепочка запроса:
+
+1. Client → Load Balancer → Ingress controller Pod.
+2. Controller выбирает backend Service по host+path.
+3. kube-proxy (или eBPF dataplane) направляет на один из Endpoints Pod.
+4. Spring Boot в Pod принимает на `containerPort` (часто 8080, Service map 80→8080).
+
+OpenShift Route упрощает шаг 1: `oc expose route shop-api --hostname=api.shop.example`.
+
+## Подводные камни
+
+- **Path overlap.** Два Prefix rule на `/` и `/api` без порядка дают неожиданный backend.
+- **Sticky sessions без cookie.** Round-robin ломает server session state.
+- **Large body upload.** Default proxy buffer режет multipart/file upload.
+- **gRPC через HTTP Ingress.** Нужен backend protocol annotation или отдельный LB.
+- **Wildcard cert mismatch.** Internal service name != public host ломает SNI.

@@ -1,0 +1,55 @@
+---
+id: 3016
+title: "Какие риски асинхронной обработки важны для ручного QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие риски асинхронной обработки важны для ручного QA?
+
+## Суть
+
+Асинхронность отделяет отправку задачи от её результата: UI может показать успех, пока очередь ещё обрабатывает сообщение. Риски включают гонки данных, дубликаты, потерю порядка, таймауты без обратной связи и сложность воспроизведения intermittent-багов. QA проверяет конечное состояние системы после задержки, а не только мгновенный ответ API.
+
+## Что ответить на собесе
+
+- Race condition: два параллельных запроса меняют один баланс или складской остаток.
+- Дубликаты при retry без идемпотентности дают двойное списание или два письма.
+- Out-of-order события ломают workflow, где шаг B зависит от шага A.
+- Нагрузка на consumer отстаёт: растёт lag очереди, SLA нарушается.
+- Честно: без контроля eventual consistency тест «прошёл сразу» не гарантирует корректность через минуту.
+
+## Как это работает
+
+```gherkin
+Feature: Async processing risks
+
+  Scenario: Double spend without idempotency
+    Given wallet balance 1000
+    When two parallel withdraw 600 requests enqueue
+    And consumer processes both without lock
+    Then final balance may be 400 instead of expected rejection
+
+  Scenario: UI success before worker failure
+    Given POST /orders returns 202 Accepted
+    When poll order status for 60 seconds
+    Then status becomes FAILED and inventory restored
+
+  Scenario: Message order violation
+    Given events CREATE then ACTIVATE sent to same partition key
+    When network reorders delivery
+    Then consumer rejects ACTIVATE before CREATE exists
+```
+
+Мониторинг `queue depth`, `consumer lag`, DLQ size обязателен в тест-плане интеграционных сценариев. QA фиксирует timestamps producer, broker и consumer в одном тикете.
+
+## Подводные камни
+
+- **Проверка только синхронного ответа.** Пропускаю поздний сбой worker.
+- **Один прогон без нагрузки.** Race не проявляется.
+- **Нет ожидания eventual consistency.** False pass на UI.
+- **Игнор DLQ.** «Потерянные» сообщения вне happy path.
+- **Общий тестовый аккаунт.** Параллельные тесты создают ложные гонки.

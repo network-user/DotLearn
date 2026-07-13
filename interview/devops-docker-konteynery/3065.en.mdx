@@ -1,0 +1,48 @@
+---
+id: 3065
+title: "How does a Docker image differ from a container?"
+category: devops-docker-konteynery
+categoryLabel: "Docker / Контейнеры"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does a Docker image differ from a container?
+
+## In short
+
+An image is a read-only template of filesystem and start metadata. A container is a running instance of that image with isolated namespaces, its own writable layer, and a process. One image spawns many containers; you can stop and delete a container while the image stays in the registry.
+
+## How to answer in an interview
+
+- I compare an image to a class or ISO, and a container to a process started from it.
+- I note the container adds a copy-on-write layer for writes; the image itself does not change at runtime.
+- I walk the lifecycle: build/push image, pull on host, `docker run` creates a container id.
+- I add honestly: "rebuild the container" in interviews often means recreate from a new image tag, not patch the running instance.
+
+## How it works
+
+Build via Dockerfile or `docker commit` produces an image as a chain of layers addressed by digest. On `docker run`, the runtime (containerd/runc) mounts overlay layers, creates cgroups/namespaces, and starts `CMD`/`ENTRYPOINT`.
+
+```bash
+docker build -t payments-api:2.1.0 .
+docker images payments-api
+docker run -d --name pay-api-01 -p 8080:8080 payments-api:2.1.0
+docker ps --filter name=pay-api-01
+docker inspect pay-api-01 --format '{{.Image}}'
+docker stop pay-api-01 && docker rm pay-api-01
+docker rmi payments-api:2.1.0
+```
+
+Early commands target the image: build freezes layers, `images` shows tag and size. `run` creates a container with its own ID and thin writable layer for logs and temp files. `inspect` links container to image sha256. Removing the container leaves the image; `rmi` removes the image if nothing references it.
+
+Kubernetes follows the same model: Pod spec references an image pull policy; each restart may start a new container instance from the same tag (drift risk if the tag is mutable).
+
+## Pitfalls
+
+- **Edits inside a running container.** Writable layer changes vanish after delete; ship a new image tag instead.
+- **latest in prod.** One tag, different digests across nodes causes "works on my node" during rollouts.
+- **Dangling images.** Frequent rebuilds without GC fill the daemon disk.
+- **Mixing image id and container id.** Logs and alerts must clarify what gets redeployed.
+- **Stateful data in the container.** Without volumes/bind mounts, data dies with the container; images are not for persistence.

@@ -1,0 +1,62 @@
+---
+id: 4630
+title: "Как менять состояние в const-методе?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как менять состояние в const-методе?
+
+## Суть
+
+Const method обещает не менять logical state. Физически менять можно только `mutable` members или через `const_cast`, если объект не был truly const. Правильный путь почти всегда `mutable` для cache/metrics/mutex.
+
+## Что ответить на собесе
+
+- `mutable` для lazy cache, hit counters, internal locks.
+- `const_cast` на `this` допустим только если object реально non-const storage (legacy C APIs).
+- Never const_cast + write on truly const object (UB).
+- Alternative: split const/non-const overload (`data()` vs `data() const` with shared impl).
+- Честно: если const method часто «обходит» const, API design стоит пересмотреть.
+
+## Как это работает
+
+Compiler treats const method as unable to modify non-mutable members.
+
+```cpp
+#include <optional>
+#include <string>
+
+class Lookup {
+    std::string key;
+    mutable std::optional<std::string> cached;
+
+public:
+    explicit Lookup(std::string k) : key(std::move(k)) {}
+
+    const std::string& resolve() const {
+        if (!cached) {
+            cached = key + "_value";
+        }
+        return *cached;
+    }
+};
+
+int main() {
+    const Lookup item("id");
+    return static_cast<int>(item.resolve().size());
+}
+```
+
+Первый вызов `resolve()` заполняет cache; последующие читают без recompute. Observable result stable → logical const сохранён.
+
+## Подводные камни
+
+- **const_cast hack на business field.** Ломает thread-safety и reasoning.
+- **mutable cache stale.** Нужна invalidation при hidden mutation paths.
+- **const method + mutex.** Lock guard на mutable mutex ok; deadlocks still possible.
+- **Data races.** const не означает thread-safe.
+- **ABI/API promise.** Clients trust const; breaking logical const это contract break.

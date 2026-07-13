@@ -1,0 +1,89 @@
+---
+id: 1563
+title: "Context with multiple DB transactions in one method"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Context with multiple DB transactions in one method
+
+## In short
+
+Pass one parent ctx with timeout/cancel into each `BeginTx(ctx)` and `ExecContext(ctx)`. Parent cancel aborts in-flight queries; atomicity across DBs needs saga/outbox, not one ctx. Inside one service often one tx or nested tx per driver support.
+
+## How to answer in an interview
+
+- `context.WithTimeout` for the whole use case; always defer cancel.
+- Each tx: BeginTx(ctx), rollback on err, commit on success.
+- ctx cancel mid-tx leads to rollback and return ctx.Err().
+- Honestly: two sequential txs are not atomic together; partial commit is possible without 2PC.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+type Tx interface {
+	Exec(ctx context.Context, q string) error
+	Commit() error
+	Rollback() error
+}
+
+type DB interface {
+	BeginTx(ctx context.Context) (Tx, error)
+}
+
+func runSteps(ctx context.Context, db DB) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	tx1, err := db.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	if err := tx1.Exec(ctx, "step1"); err != nil {
+		tx1.Rollback()
+		return err
+	}
+	if err := tx1.Commit(); err != nil {
+		return err
+	}
+
+	tx2, err := db.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx2.Rollback()
+	if err := tx2.Exec(ctx, "step2"); err != nil {
+		return err
+	}
+	return tx2.Commit()
+}
+
+func main() {
+	fmt.Println(runSteps != nil)
+}
+```
+
+One deadline covers both txs; the second does not start if ctx expired after the first.
+
+## Pitfalls
+
+**Commit tx1 then ctx cancel before tx2.** Partial state; need compensating action.
+
+**Reuse cancelled ctx.** BeginTx fails immediately; create a child ctx only when intentionally extending deadline.
+
+**Stale ctx on transaction handle.** Always pass current ctx to ExecContext.
+
+**Long tx holding ctx.** Timeout rollback under production load.
+
+**WithValue for tx handle.** Anti-pattern; keep tx in scope, not in ctx.

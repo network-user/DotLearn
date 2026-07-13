@@ -1,0 +1,65 @@
+---
+id: 1781
+title: "When to use transaction splitting in 1C"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When to use transaction splitting in 1C
+
+## In short
+
+Transaction splitting (several short commits instead of one long one) fits bulk operations when atomicity of the whole set is not required or can be restored by a scheduled job. Goal: shorten lock hold time and let other sessions work between batches.
+
+## How to answer in an interview
+
+- I use splitting when the business allows partial success or a compensating scheduled job exists.
+- In an interview I contrast "one document = one transaction" with "a job over thousands of rows".
+- I stress platform document posting is atomic by itself; splitting makes sense for job batches.
+- I honestly say with strict end-to-end atomicity you cannot split without a saga or queue.
+- I record progress in an information register or log to resume after failure.
+
+## How it works
+
+A price load job updates tens of thousands of rows. One transaction would lock the register for minutes.
+
+```bsl
+Процедура ОбновитьЦеныПакетами(ТаблицаЦен, РазмерПакета) Экспорт
+    Смещение = 0;
+    Пока Смещение < ТаблицаЦен.Количество() Цикл
+        НачатьТранзакцию();
+        Попытка
+            Лимит = Мин(Смещение + РазмерПакета, ТаблицаЦен.Количество());
+            Для Инд = Смещение По Лимит - 1 Цикл
+                Строка = ТаблицаЦен[Инд];
+                Менеджер = РегистрыСведений.ЦеныНоменклатуры.СоздатьМенеджерЗаписи();
+                Менеджер.Период = Строка.Период;
+                Менеджер.Номенклатура = Строка.Номенклатура;
+                Менеджер.Цена = Строка.Цена;
+                Менеджер.Записать();
+            КонецЦикла;
+            ЗафиксироватьТранзакцию();
+            ЗафиксироватьПрогресс(Лимит);
+        Исключение
+            ОтменитьТранзакцию();
+            ВызватьИсключение;
+        КонецПопытки;
+        Смещение = Лимит;
+    КонецЦикла;
+КонецПроцедуры
+```
+
+Splitting fits: bulk deletion marks, warehouse transfers in batches, external sync in chunks. It does not fit when a document must post all movements as a whole or the operation is indivisible financially.
+
+Between batches other users see intermediate state. If that is unacceptable, use a job queue or an overnight window.
+
+## Pitfalls
+
+- **Splitting posting of one document.** You get a document without the full movement set.
+- **No progress log.** After failure the job starts from scratch.
+- **Batch too large.** Locks are long again.
+- **Batch too small.** Commit eats the gain.
+- **Intermediate data in reports.** Users see "half" of a load.

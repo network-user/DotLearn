@@ -1,0 +1,87 @@
+---
+id: 3463
+title: "Three ways to wait for async in Jest and Mocha"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Three ways to wait for async in Jest and Mocha
+
+## In short
+
+Jest and Mocha treat a test as async if you pass a `done` callback, return a Promise, or mark the test `async` and use `await`. The runner will not finish the case until it gets a completion signal or the Promise settles. Without that, an assert after a timer or HTTP call may never run while the test falsely passes.
+
+## How to answer in an interview
+
+- For legacy callback APIs (old DB drivers) I use `done`, call it on both success and failure paths, and forward rejections.
+- For fetch/axios I return a Promise from the test or write `async/await` for readability.
+- Playwright/Cypress have built-in await, but Jest unit tests still need one of the three patterns.
+- In CI I run `--detectOpenHandles` when a test hangs after a forgotten timer.
+- Honestly: `done` without a timeout hides deadlocks; I prefer Promise plus `jest.setTimeout`.
+
+## How it works
+
+`done` callback:
+
+```
+test("poll status", (done) => {
+  pollUntilReady((err, payload) => {
+    if (err) return done(err);
+    expect(payload.status).toBe("ready");
+    done();
+  });
+});
+```
+
+Returning a Promise:
+
+```
+test("fetch profile", () => {
+  return apiClient.get("/profile/7").then((res) => {
+    expect(res.data.role).toBe("tester");
+  });
+});
+```
+
+Async/await:
+
+```
+test("create order", async () => {
+  const order = await orderService.create({ sku: "AQ-01" });
+  expect(order.id).toMatch(/^\d+$/);
+});
+```
+
+In a pytest-asyncio wrapper the same contract applies: wait for settle:
+
+```python
+import asyncio
+
+
+async def wait_for_flag(flag: asyncio.Event) -> bool:
+    await asyncio.wait_for(flag.wait(), timeout=0.2)
+    return True
+
+
+def test_runner_waits_for_async():
+    loop = asyncio.new_event_loop()
+    flag = asyncio.Event()
+    loop.call_later(0.05, flag.set)
+    assert loop.run_until_complete(wait_for_flag(flag)) is True
+    loop.close()
+```
+
+## Pitfalls
+
+**Forgotten done.** The test finishes immediately; asserts inside setTimeout never run.
+
+**Return and done together.** Jest may finish on return while `done` fires later and fails.
+
+**Unhandled rejection.** A returned Promise that rejects without `.catch` makes CI flaky.
+
+**Fake timers without advance.** `jest.useFakeTimers()` without `runAllTimersAsync` leaves await hanging.
+
+**Mocha done vs async.** Do not mix `done` and `async` in one `it`; you get double completion.

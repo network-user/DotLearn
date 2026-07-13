@@ -1,0 +1,91 @@
+---
+id: 2420
+title: "z-index и stacking context: почему 9999 не всегда сверху"
+category: frontend-css
+categoryLabel: "CSS"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# z-index и stacking context: почему 9999 не всегда сверху
+
+## Суть
+
+`z-index` управляет порядком наложения только внутри одного stacking context. Свойство работает на positioned-элементах (`relative`, `absolute`, `fixed`, `sticky`) и на flex/grid-детях с заданным z-index; контекст создают также opacity, transform, filter и isolation.
+
+## Что ответить на собесе
+
+- Без `position` (не static) или flex/grid z-index на потомке не соревнуется с внешним overlay.
+- Каждый новый stacking context изолирует дочерние z-index от соседних веток DOM.
+- Порядок в DOM решает при равном auto z-index в одном контексте.
+- Для слоёв UI держу шкалу токенов: base 0, dropdown 100, modal 200, toast 300.
+- Честно добавляю: бесконечный рост чисел (`99999`) не пробивает родительский контекст с меньшим z-index на корне.
+
+## Как это работает
+
+Три перекрывающихся блока в одном контексте:
+
+```css
+.layer-a {
+  position: relative;
+  z-index: 1;
+}
+
+.layer-b {
+  position: relative;
+  z-index: 2;
+}
+
+.layer-c {
+  position: relative;
+  z-index: 3;
+}
+```
+
+Вложенный контекст:
+
+```css
+.sidebar {
+  position: relative;
+  z-index: 10;
+  isolation: isolate;
+}
+
+.sidebar .tooltip {
+  z-index: 1000;
+}
+```
+
+Tooltip с `1000` всё равно ниже модалки на `z-index: 50` у `.app-header`, если header создал отдельный контекст с большим корневым z-index.
+
+Создатели контекста (неполный список): `opacity < 1`, `transform`, `filter`, `will-change: transform`, `contain: paint`, `mix-blend-mode`.
+
+Практика для модалки:
+
+```css
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 200);
+}
+
+.modal-panel {
+  position: relative;
+  z-index: 1;
+}
+```
+
+Backdrop и panel живут в одном портале; panel выше фона внутри общего контекста.
+
+## Подводные камни
+
+**z-index на static.** Значение игнорируется; нужен position или flex/grid item.
+
+**Контекст от transform на родителе.** `transform: translateZ(0)` на wrapper ломает fixed-позиционирование дочернего «fullscreen» overlay.
+
+**Отрицательный z-index.** Уводит элемент под фон родителя; может скрыть контент неожиданно.
+
+**Сравнение между контекстами.** z-index: 1 внутри контекста с z-index: 100 на родителе beats z-index: 9999 внутри контекста с z-index: 1.
+
+**Порталы React.** Рендер модалки в `document.body` выносит overlay в корневой контекст; без портала modal застрянет под header.

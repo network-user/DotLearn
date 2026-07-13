@@ -1,0 +1,76 @@
+---
+id: 3510
+title: "Race condition и thread-safety в suite"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Race condition и thread-safety в suite
+
+## Суть
+
+Race condition возникает, когда несколько потоков читают/пишут shared mutable state без синхронизации и результат зависит от scheduling. Thread-safe код сохраняет инварианты при concurrent access через locks, atomic types или immutable data. В parallel JUnit и shared static fixtures это главный источник flaky.
+
+## Что ответить на собесе
+
+- Не шарю mutable `ArrayList` между `@Test` без sync.
+- `AtomicInteger` для счётчика retry в listener, не `int++`.
+- Immutable expected + локальные переменные в каждом тесте.
+- `ConcurrentHashMap` для shared cache метаданных runner.
+- Честно: `@TestInstance(PER_CLASS)` + поля экземпляра требуют явной thread-safety дисциплины.
+
+## Как это работает
+
+Небезопасный счётчик:
+
+```
+class Hits {
+  int value;
+  void inc() { value++; }
+}
+```
+
+Два потока по 1000 `inc()` могут дать < 2000.
+
+Thread-safe:
+
+```
+AtomicInteger hits = new AtomicInteger();
+hits.incrementAndGet();
+```
+
+Python mirror:
+
+```python
+import threading
+
+
+def test_race_without_lock():
+    total = {"n": 0}
+
+    def inc() -> None:
+        for _ in range(1000):
+            total["n"] += 1
+
+    threads = [threading.Thread(target=inc), threading.Thread(target=inc)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert total["n"] <= 2000
+```
+
+## Подводные камни
+
+**check-then-act.** if (!map.contains) put без sync гонка.
+
+**volatile не атомарность.** `count++` остаётся racy с volatile.
+
+**Static SimpleDateFormat.** Классический thread-unsafe singleton в util.
+
+**Parallel tests + same user.** DB state collision, не Java memory model, но выглядит как race.
+
+**synchronized на весь suite.** Убивает parallel, маскирует design bug.

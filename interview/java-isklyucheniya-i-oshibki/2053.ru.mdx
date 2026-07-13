@@ -1,0 +1,76 @@
+---
+id: 2053
+title: "Multi-catch: несколько исключений в одном catch"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Multi-catch: несколько исключений в одном catch
+
+## Суть
+
+С Java 7 один `catch` может ловить несколько типов через `|`, если они не связаны наследованием. Обработчик одинаков для всех перечисленных исключений. Переменная исключения effectively final: нельзя переприсвоить. Компилятор генерирует bytecode с несколькими catch branches, объединёнными в один блок.
+
+## Что ответить на собесе
+
+- Синтаксис: `catch (IOException | SQLException ex)`.
+- Нельзя `IOException | Exception`, потому что IOException подтип Exception.
+- Порядок catch blocks всё ещё от частного к общему для отдельных блоков.
+- Multi-catch сокращает дублирование одинаковой recovery логики.
+- Честно: если обработка разная, отдельные catch читабельнее multi-catch.
+
+## Как это работает
+
+```java
+public void importRecords(Path csvPath, Connection db) {
+    try {
+        var lines = Files.readAllLines(csvPath);
+        insertBatch(db, lines);
+    } catch (IOException | SQLException ex) {
+        throw new DataImportException("Import failed for " + csvPath, ex);
+    }
+}
+```
+
+Оба checked типа требуют try/catch или throws на методе; здесь ловим и оборачиваем в доменное unchecked.
+
+Unchecked multi-catch:
+
+```java
+try {
+    routePayment(request);
+} catch (IllegalArgumentException | IllegalStateException ex) {
+    metrics.increment("payment.validation.failure");
+    return PaymentResult.rejected(ex.getMessage());
+}
+```
+
+Недопустимо:
+
+```java
+// не компилируется
+catch (Exception | IOException ex) { }
+```
+
+Потому что `IOException extends Exception`.
+
+Java 9+ можно ловить по имени без переменной для игнорирования:
+
+```java
+try {
+    risky();
+} catch (IOException _) {
+    return Optional.empty();
+}
+```
+
+## Подводные камни
+
+- **Пересекающиеся типы в multi-catch.** Compile error, легко ошибиться с иерархией.
+- **Разная recovery в одном блоке.** if (ex instanceof ...) возвращает к boilerplate.
+- **Ловля Throwable | что-то.** Throwable поглощает всё, второй тип бессмысленен.
+- **Мутация ex.** Effectively final: нельзя `ex = new IOException()`.
+- **Логирование без контекста.** Multi-catch скрывает, какой именно тип случился, если не логировать class.

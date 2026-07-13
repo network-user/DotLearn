@@ -1,0 +1,88 @@
+---
+id: 1460
+title: "Как ограничить частоту запросов в Go?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как ограничить частоту запросов в Go?
+
+## Суть
+
+Rate limiter сдерживает поток операций во времени, чтобы сервис не перегружался и клиенты получали предсказуемый доступ. В Go стандартный путь: пакет `golang.org/x/time/rate` с алгоритмом token bucket или собственная обёртка в middleware.
+
+## Что ответить на собесе
+
+- Называю `rate.Limiter` из `golang.org/x/time/rate`: задаю среднюю скорость и burst, проверяю через `Allow`, `Wait` или `Reserve`.
+- Показываю типичные места: HTTP middleware, исходящие вызовы к внешним API, фоновые воркеры.
+- Уточняю выбор стратегии: token bucket даёт кратковременные всплески, fixed/sliding window жёстче режет пики.
+- Честно добавляю: для распределённого лимита одного in-process limiter недостаточно, нужен Redis или централизованный gateway.
+
+## Как это работает
+
+`rate.NewLimiter(r, b)` создаёт ведро: токены приходят со скоростью `r` (events per second), максимум `b` накопленных. `Wait(ctx)` блокирует горутину, пока не появится токен; `Allow()` возвращает bool без ожидания; `Reserve()` откладывает выполнение на вычисленную задержку.
+
+В HTTP-сервисе limiter вешают на handler или группу маршрутов. Для исходящих клиентов один shared `Limiter` на все горутины защищает внешний API от шторма запросов.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	"golang.org/x/time/rate"
+)
+
+type gate struct {
+	limiter *rate.Limiter
+	next    http.Handler
+}
+
+func (g *gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !g.limiter.Allow() {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	g.next.ServeHTTP(w, r)
+}
+
+func work(ctx context.Context, limiter *rate.Limiter, id int) error {
+	if err := limiter.Wait(ctx); err != nil {
+		return err
+	}
+	fmt.Printf("job %d at %s\n", id, time.Now().Format(time.RFC3339))
+	return nil
+}
+
+func main() {
+	limiter := rate.NewLimiter(rate.Every(500*time.Millisecond), 2)
+
+	for i := 1; i <= 5; i++ {
+		_ = work(context.Background(), limiter, i)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("pong"))
+	})
+	_ = http.ListenAndServe(":8080", &gate{limiter: limiter, next: mux})
+}
+```
+
+Первый цикл демонстрирует `Wait`: пять задач растягиваются во времени. Второй фрагмент показывает middleware, который отвечает 429 при исчерпании burst.
+
+Для per-IP лимита держу `map[string]*rate.Limiter` с mutex или LRU, иначе один клиент съест весь burst. Альтернатива: leaky bucket через канал фиксированной ёмкости и тикер, но `x/time/rate` покрывает большинство кейсов.
+
+## Подводные камни
+
+- **Глобальный limiter на всех клиентов.** Один злоумышленник или тяжёлый партнёр блокирует остальных без ключа (IP, API key, tenant).
+- **Забытый burst.** Нулевой или слишком маленький burst режет легитимные всплески; слишком большой почти отключает лимит.
+- **Wait без контекста.** `Wait(nil)` не отменяется при shutdown; передаю `ctx` из запроса или signal handler.
+- **Только входящий трафик.** Исходящие вызовы к Stripe, SMTP или LDAP тоже нужно ограничивать отдельным limiter.
+- **Кластер из N инстансов.** Локальный limiter умножает допустимый RPS на N; для точного квотирования нужен shared store.

@@ -1,0 +1,66 @@
+---
+id: 2019
+title: "Mock, stub, spy и fake: чем отличаются?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Mock, stub, spy и fake: чем отличаются?
+
+## Суть
+
+Test doubles подменяют зависимости в unit-тестах. Stub отдаёт заготовленные ответы. Mock проверяет, что collaboration произошла как ожидали. Spy оборачивает реальный объект и записывает вызовы. Fake даёт рабочую, но упрощённую реализацию (in-memory repo).
+
+## Что ответить на собесе
+
+- Stub = canned response; mock = verify interaction (Mockito смешивает оба).
+- Spy частично real: `spy(ArrayList)` вызывает настоящий `add`, но можно stub отдельный метод.
+- Fake предпочитаю для repository/cache: реальная логика без Docker.
+- Не mock value objects и не то, что не контролируешь (JDK final без mockito-inline осторожно).
+- Честно: over-mocking тестирует Mockito, а не домен; fake + slice test часто стабильнее.
+
+## Как это работает
+
+```java
+interface RateClient { BigDecimal fetch(String pair); }
+
+@Test
+void orderUsesLiveRate() {
+    RateClient stub = mock(RateClient.class);
+    when(stub.fetch("EUR/USD")).thenReturn(new BigDecimal("1.08"));
+
+    OrderPricing pricing = new OrderPricing(stub);
+    Money total = pricing.quote(Money.of("100", "EUR"));
+
+    assertEquals(new BigDecimal("108.00"), total.amount());
+    verify(stub).fetch("EUR/USD");
+}
+
+@Test
+void spyKeepsRealListState() {
+    List<String> backing = new ArrayList<>();
+    List<String> tracked = spy(backing);
+    tracked.add("alpha");
+    verify(tracked).add("alpha");
+    assertEquals(1, tracked.size());
+}
+
+class InMemoryOrders implements OrderRepository {
+    private final Map<UUID, Order> store = new HashMap<>();
+    @Override public void save(Order order) { store.put(order.id(), order); }
+    @Override public Optional<Order> find(UUID id) { return Optional.ofNullable(store.get(id)); }
+}
+```
+
+Mockito `mock()` по умолчанию stub + verify. Fake `InMemoryOrders` переживает рефакторинг лучше, чем 15 `when()` на каждый метод DAO.
+
+## Подводные камни
+
+- **Mock concrete class с final методами.** Нужен inline mock maker или interface extraction.
+- **Spy на partially constructed object.** Constructor side effects + stub = confusing failures.
+- **Verify every call.** Хрупкие тесты ломаются при добавлении log call.
+- **Fake без thread safety.** Parallel tests corrupt shared map.
+- **Stub void method без doThrow.** `when(voidMethod()).thenThrow` не компилируется, нужен `doThrow`.

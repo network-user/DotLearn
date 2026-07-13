@@ -1,0 +1,65 @@
+---
+id: 2014
+title: "Authentication и authorization: в чём разница?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Authentication и authorization: в чём разница?
+
+## Суть
+
+Authentication (authn) отвечает на вопрос «кто ты?»: проверка личности по паролю, MFA, сертификату. Authorization (authz) решает «что тебе можно?» после успешной authn: роли, permissions, ABAC policies на ресурсах.
+
+## Что ответить на собесе
+
+- Authn = identity; authz = access decision.
+- Spring Security: `AuthenticationManager` для login, `@PreAuthorize` / `AuthorizationManager` для методов.
+- 401 когда не аутентифицирован, 403 когда аутентифицирован, но нет права.
+- JWT claims (`sub`, `roles`) authn; проверка scope на endpoint authz.
+- Честно: роль ADMIN в token без server-side policy review опасна при token forgery (если слабая подпись).
+
+## Как это работает
+
+Authn: сравнение хэша пароля, не plaintext:
+
+```java
+public Optional<UserAccount> authenticate(String email, String rawPassword) {
+    return userRepository.findByEmail(email)
+        .filter(user -> passwordEncoder.matches(rawPassword, user.passwordHash()))
+        .map(user -> {
+            audit.log("login_ok", user.id());
+            return user;
+        });
+}
+```
+
+Authz после установки `SecurityContext`:
+
+```java
+@Service
+public class InvoiceService {
+    @PreAuthorize("hasAuthority('invoice:read') or #ownerId == authentication.name")
+    public InvoiceDto fetch(UUID invoiceId, String ownerId) {
+        return mapper.toDto(repository.require(invoiceId));
+    }
+
+    @PreAuthorize("hasRole('BILLING_ADMIN')")
+    public void refund(UUID invoiceId) {
+        billing.refund(invoiceId);
+    }
+}
+```
+
+Filter chain сначала извлекает credentials (Basic, Bearer, session cookie), строит `Authentication`. Затем `AuthorizationFilter` сопоставляет request URI + HTTP method с правилами. OAuth scope `read:invoices` маппят на Spring authorities через `JwtAuthenticationConverter`.
+
+## Подводные камни
+
+- **Authz до authn.** Проверка роли до валидации token даёт null pointer или bypass.
+- **Role string drift.** `ROLE_ADMIN` vs `ADMIN` ломает `@PreAuthorize`.
+- **403 вместо 404.** Для sensitive resources иногда скрывают existence.
+- **Client-side authz only.** UI скрывает кнопку, API без проверки открыт.
+- **Confusing OAuth scope with RBAC.** Scope на token не заменяет fine-grained policy в домене.

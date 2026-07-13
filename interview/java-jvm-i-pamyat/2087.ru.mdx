@@ -1,0 +1,51 @@
+---
+id: 2087
+title: "Shenandoah GC: concurrent low-pause collector"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Shenandoah GC: concurrent low-pause collector
+
+## Суть
+
+Shenandoah это regional concurrent GC для OpenJDK, оптимизированный под короткие STW паузы независимо от heap size. Большая часть mark, evacuate и compact выполняется параллельно с mutator через Brooks pointers (forwarding). Подходит для latency-sensitive Java сервисов на больших heap, где Parallel/G1 pauses слишком длинные.
+
+## Что ответить на собесе
+
+- Enable: `-XX:+UseShenandoahGC` (Red Hat builds, upstream OpenJDK 12+).
+- Concurrent phases + короткие init mark/evac STW pauses.
+- Конкурирует с ZGC в low-latency niche; разные barrier implementation.
+- Trade-off: extra CPU overhead vs pause reduction.
+- Честно: не default; проверяю distro (Amazon Corretto, Temurin) на bundled support.
+
+## Как это работает
+
+```bash
+java -XX:+UseShenandoahGC \
+  -Xms8g -Xmx8g \
+  -XX:ShenandoahGCHeuristics=adaptive \
+  -jar matching-engine.jar
+```
+
+Cycle (упрощённо):
+
+1. **Concurrent mark.** Traverse object graph while app runs; snapshot-at-beginning style coordination.
+2. **Concurrent evacuation.** Copy live objects to new regions; forwarding pointer in object header.
+3. **Brief STW.** Finalize roots update, finish evacuation wave.
+4. **Concurrent update refs.** Mutator barriers follow forwarded objects.
+
+Load barriers на read могут добавить overhead vs G1, но P99 pause часто <10ms even on large heaps.
+
+Compare ZGC: both target sub-ms/sub-10ms; Shenandoah available earlier on some enterprise distros; tuning heuristics differ.
+
+## Подводные камни
+
+- **Missing on some JDK builds.** Flag unrecognized → startup fail.
+- **CPU saturation.** Concurrent GC threads compete with app under load.
+- **Assuming zero pause.** STW phases still exist, just short.
+- **Small heap workloads.** Barrier cost may dominate.
+- **No magic for allocation storm.** Allocation rate still drives GC frequency.

@@ -1,0 +1,65 @@
+---
+id: 2029
+title: "What is contract testing?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is contract testing?
+
+## In short
+
+Contract testing verifies the consumer-provider agreement: which requests and responses are allowed between services. Consumer tests generate a pact; provider verification runs the same expectations against the real API. It catches breaking changes before deploy without a full environment E2E.
+
+## How to answer in an interview
+
+- Unlike integration: provider can be a mock server in consumer CI.
+- Pact/Spring Cloud Contract: JSON schema, status codes, headers.
+- Consumer-driven: client team defines contract, provider must verify.
+- Versioned contracts in a broker; can-i-deploy gate before prod.
+- Honestly: contract does not cover business workflow end-to-end, only API surface.
+
+## How it works
+
+Pact consumer (JUnit 5):
+
+```java
+@ExtendWith(PactConsumerTestExt.class)
+class CatalogClientContractTest {
+    @Pact(consumer = "checkout", provider = "catalog")
+    public RequestResponsePact fetchSku(PactDslWithProvider builder) {
+        return builder
+            .given("sku ABC exists")
+            .uponReceiving("lookup sku")
+            .path("/skus/ABC")
+            .method("GET")
+            .willRespondWith()
+            .status(200)
+            .body(new PactDslJsonBody()
+                .stringType("sku", "ABC")
+                .decimalType("price"))
+            .toPact();
+    }
+
+    @Test
+    @PactTestFor(pactMethod = "fetchSku")
+    void mapsCatalogResponse(MockServer mockServer) {
+        CatalogClient client = new CatalogClient(mockServer.getUrl());
+        SkuView sku = client.fetch("ABC");
+        assertEquals("ABC", sku.sku());
+    }
+}
+```
+
+Provider side `@Provider` verification replays pact against running Spring MVC. Broker publishes `checkout-catalog.json`; breaking field rename fails provider job before consumer hits prod 404.
+
+## Pitfalls
+
+- **Pact only on consumer.** Provider never verifies, drift silently.
+- **Over-specified body.** Brittle on additive JSON fields.
+- **Shared broker without auth.** Contract leaks internal API shape.
+- **Contract vs OpenAPI divergence.** Two sources of truth fight.
+- **Replacing all integration with pact.** DB logic untested.

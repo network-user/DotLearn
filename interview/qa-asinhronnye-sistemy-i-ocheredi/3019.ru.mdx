@@ -1,0 +1,54 @@
+---
+id: 3019
+title: "Как QA тестирует порядок обработки сообщений?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как QA тестирует порядок обработки сообщений?
+
+## Суть
+
+Порядок критичен, когда позднее событие меняет смысл раннего: CREATE перед ACTIVATE, debit перед credit. В Kafka порядок гарантирован внутри partition при одном producer key; в RabbitMQ при одной consumer и prefetch=1. QA отправляет последовательность с метками, читает audit log или API и сравнивает фактический порядок с контрактом.
+
+## Что ответить на собесе
+
+- Формирую цепочку событий с явными seq номерами в payload.
+- Проверяю happy path: строгая последовательность в downstream БД.
+- Нагрузочный прогон: несколько ключей параллельно, порядок внутри ключа сохраняется.
+- Негатив: намеренно нарушаю порядок на staging и смотрю compensating action.
+- Честно: глобальный порядок между всеми пользователями обычно не требуется и не гарантируется.
+
+## Как это работает
+
+```gherkin
+Feature: Message order verification
+
+  Scenario: Strict sequence per user
+    Given publish to topic orders partition key user-12
+    When messages seq 1 CREATE seq 2 PAY seq 3 SHIP in order
+    Then order status timeline shows CREATED then PAID then SHIPPED
+
+  Scenario: Parallel keys independent order
+    Given user-12 and user-99 events interleaved on broker
+    When each key processed
+    Then per user timeline ordered globally interleaved allowed
+
+  Scenario: Out of order detection
+    Given consumer receives ACTIVATE before CREATE
+    When handler runs
+    Then message moves to DLQ or retries until CREATE exists
+```
+
+Для проверки QA использует timestamp в логах, `sequence_id` в таблице событий, Kafka UI offset order. Polling API с backoff до финального статуса.
+
+## Подводные камни
+
+- **Один consumer в тесте, десять в проде.** Порядок ломается при scale-out без key.
+- **Проверка только первого сообщения.** Середина цепочки перепутана незаметно.
+- **Clock skew.** Timestamps врут о порядке.
+- **Rebalance Kafka.** Кратковременный reorder при перераспределении partition.
+- **Игнор idempotent reorder.** Повтор seq 2 не должен откатывать seq 3.

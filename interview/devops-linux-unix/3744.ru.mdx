@@ -1,0 +1,53 @@
+---
+id: 3744
+title: "Какими командами создать файл в Linux?"
+category: devops-linux-unix
+categoryLabel: "Linux / Unix"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какими командами создать файл в Linux?
+
+## Суть
+
+В Linux файл появляется при первой записи в путь: пустой marker через `touch`, редирект stdout через `>`/`>>`, heredoc или редактор. Выбор зависит от того, нужен ли пустой placeholder, однострочный конфиг или интерактивное редактирование.
+
+## Что ответить на собесе
+
+- Называю `touch` для пустого файла и обновления mtime, `echo`/`printf` с редиректом для содержимого.
+- Упоминаю `install -D`, `mktemp`, `tee` для скриптов и automation.
+- Подчёркиваю права: umask, владелец, SELinux context на prod-хостах.
+- Честно добавляю: в Ansible/Terraform файл часто создают idempotent модулем, а не ручным `touch` на сервере.
+
+## Как это работает
+
+`touch path` создаёт zero-byte файл или обновляет timestamps. Оператор `>` перезаписывает, `>>` дописывает. Heredoc удобен для multi-line конфигов в bash.
+
+```bash
+install -d -m 0750 /var/log/myapp
+touch /var/log/myapp/audit.log
+chmod 0640 /var/log/myapp/audit.log
+chown app:app /var/log/myapp/audit.log
+
+printf '%s\n' 'DB_HOST=127.0.0.1' 'DB_PORT=5432' > /etc/myapp/env.conf
+
+cat <<'EOF' >> /etc/myapp/env.conf
+METRICS_ENABLED=true
+EOF
+
+TMP=$(mktemp /tmp/deploy.XXXXXX)
+echo "staging marker" > "$TMP"
+mv "$TMP" /var/log/myapp/bootstrap.done
+```
+
+`install -d` создаёт каталог с нужными правами атомарно. `mktemp` исключает race при создании временного файла. Редирект обрабатывается shell до exec бинаря; права нового файла = `666 & ~umask`.
+
+## Подводные камни
+
+- **`>` без проверки пути.** Опечатка в пути перезапишет системный файл или создаст мусор в `/`.
+- **Отсутствие каталога.** Редирект в `dir/file` падает, если `dir` не существует; нужен `mkdir -p`.
+- **Heredoc без кавычек.** `<<EOF` раскрывает переменные; для literal конфига использую `<<'EOF'`.
+- **NFS и атрибуты.** `touch` на NFS может вести себя иначе по времени; для lock-файлов лучше `flock`.
+- **Immutable flag.** `chattr +i` блокирует даже root перезапись до `chattr -i`.

@@ -1,0 +1,65 @@
+---
+id: 2959
+title: "DevTools Network: timing, status, and request body for QA"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# DevTools Network: timing, status, and request body for QA
+
+## In short
+
+The Network tab lists every HTTP/WebSocket request: status, type, initiator, waterfall timing, and payload. QA uses it to reproduce API bugs without Postman, find redundant calls, check CORS, cache, and "200 with error JSON". Preserve log and Disable cache are mandatory for auth flow regression.
+
+## How to answer in an interview
+
+- Status: 2xx success, 3xx redirect (check Location chain), 4xx client, 5xx server; filter `-status-code:200` for noise.
+- Timing: TTFB (Waiting) splits backend from CDN; Stalled often means HTTP/1.1 connection limit; SSL is its own phase.
+- Request: method, query, headers (Authorization, Content-Type), form/JSON payload; Response: Set-Cookie, CORS headers, body.
+- Honestly: copy as cURL includes session cookies; I redact tokens before pasting into bug reports.
+
+## How it works
+
+Typical slow login breakdown:
+
+| Phase | High value | Hypothesis |
+|-------|------------|------------|
+| DNS Lookup | >100ms | DNS/DoH |
+| Initial connection | >200ms | TCP/TLS |
+| Waiting (TTFB) | >1s | backend/DB |
+| Content Download | large on small JSON | gzip/brotli ok, check body size |
+
+Regression Gherkin checklist:
+
+```gherkin
+Feature: Network analysis at checkout
+
+  Scenario: Successful payment without 5xx
+    When the user confirms the order
+    Then POST "/api/checkout" has status 200 or 201
+    And no requests with status 5xx in the same session
+
+  Scenario: Validation error returns 422 JSON
+    When the user submits empty address
+    Then POST "/api/checkout" status is 422
+    And response JSON contains field errors
+    And the UI shows the same messages
+
+  Scenario: Login redirect chain is not looped
+    When the user opens "/account"
+    Then the 302 chain leads to "/login" once
+    And the final document status is 200
+```
+
+Filters: `method:POST`, `domain:api.example.com`, `ws` for WebSocket. Initiator shows which JS file called fetch.
+
+## Pitfalls
+
+- **Preserve log off.** Redirect after login wipes the first 401.
+- **Service Worker cache.** Network shows (from ServiceWorker); confused with CDN HIT.
+- **200 OK with `{error:true}`.** Green status column; must read body.
+- **Forgotten preflight OPTIONS.** POST "fails" from CORS; backend POST blamed.
+- **HAR with PII.** HAR export to ticket without redacting Authorization.

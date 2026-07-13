@@ -1,0 +1,60 @@
+---
+id: 1779
+title: "How batch processing of posted documents affects locking"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How batch processing of posted documents affects locking
+
+## In short
+
+Batch posting groups several documents into one or a few short transactional blocks. That cuts commit overhead but extends lock hold time on registers if the whole set runs in one transaction.
+
+## How to answer in an interview
+
+- I separate "batch by document count" from "one transaction for the entire set".
+- In an interview I say optimal batch size is tuned by lock duration and deadlock rate.
+- I stress sorting documents by warehouse and date for consistent lock order.
+- I honestly note one large transaction is faster on commit but worse for interactive users.
+- I use `РежимПроведения` and background jobs for bulk work outside peak load.
+
+## How it works
+
+A scheduled job reposts a document list. One-transaction variant holds locks on all affected registers until the loop ends.
+
+```bsl
+Процедура ПерепровестиПакет(СсылкиДокументов, РазмерПакета = 20) Экспорт
+    Индекс = 0;
+    Пока Индекс < СсылкиДокументов.Количество() Цикл
+        НачатьТранзакцию();
+        Попытка
+            ВерхняяГраница = Мин(Индекс + РазмерПакета, СсылкиДокументов.Количество()) - 1;
+            Для Ном = Индекс По ВерхняяГраница Цикл
+                ДокОбъект = СсылкиДокументов[Ном].ПолучитьОбъект();
+                ДокОбъект.Записать(РежимЗаписиДокумента.Проведение);
+            КонецЦикла;
+            ЗафиксироватьТранзакцию();
+        Исключение
+            ОтменитьТранзакцию();
+            ВызватьИсключение;
+        КонецПопытки;
+        Индекс = ВерхняяГраница + 1;
+    КонецЦикла;
+КонецПроцедуры
+```
+
+Before the loop, documents are sorted by warehouse and date so all sessions lock registers in the same order. Between batches locks are released and interactive posting gets a window.
+
+The platform reuses the DBMS connection and metadata cache on batch write. Totals recalculation may defer until batch end when the corresponding mode is enabled in typical configuration jobs.
+
+## Pitfalls
+
+- **Whole set in one transaction.** One failure rolls back hundreds of documents.
+- **Random document order.** More deadlocks between batches and interactive work.
+- **Batch during business hours.** Daytime users wait on registers.
+- **Ignoring totals.** Batch speeds posting but totals rebuild locks again later.
+- **Batch too small.** Commit dominates, no gain.

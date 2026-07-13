@@ -1,0 +1,55 @@
+---
+id: 1770
+title: "When a 1C transaction ends"
+category: onec-dev-tranzaktsii-i-blokirovki
+categoryLabel: "Транзакции и блокировки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# When a 1C transaction ends
+
+## In short
+
+A transaction closes with explicit `ЗафиксироватьТранзакцию()` or `ОтменитьТранзакцию()`, or implicitly when a server call finishes without a nested open transaction. While it is open, locks are held and changes are invisible to other sessions.
+
+## How to answer in an interview
+
+- I separate explicit control in application code from the platform implicit transaction on write and posting.
+- In an interview I say that without commit or rollback the transaction stays open until the server call ends or the session breaks.
+- I stress that `НачатьТранзакцию()` without commit/rollback in `Попытка` is a common source of locks.
+- I honestly note that automatic commit at method end does not help if an inner procedure already rolled back the block.
+- Document posting closes the transaction on success or rolls back all movements on `Отказ`.
+
+## How it works
+
+The developer opens a transaction before a batch of writes. The success path ends with commit; an error in `Исключение` must call rollback.
+
+```bsl
+Процедура ПеренестиОстатки(СкладИсточник, СкладПриемник) Экспорт
+    НачатьТранзакцию();
+    Попытка
+        СписатьСоСклада(СкладИсточник);
+        ОприходоватьНаСклад(СкладПриемник);
+        ЗафиксироватьТранзакцию();
+    Исключение
+        ОтменитьТранзакцию();
+        ВызватьИсключение;
+    КонецПопытки;
+КонецПроцедуры
+```
+
+When saving a document without explicit `НачатьТранзакцию()`, the platform opens a transaction for the write/post operation. If a posting handler sets `Отказ = Истина`, the platform rolls back changes and the transaction closes without commit.
+
+A nested call does not create an independent commit: rollback in the inner block cancels the whole outer one. Library procedures must not commit a transaction opened by the caller.
+
+A client disconnect with an open transaction leads to DBMS rollback on timeout, but until then locks may block other users.
+
+## Pitfalls
+
+- **Commit in the middle of a chain.** The caller cannot roll back an already committed part.
+- **Missing rollback in Исключение.** The transaction hangs until session timeout.
+- **Long dialog inside a transaction.** The user thinks while locks live.
+- **Expecting auto-close with explicit НачатьТранзакцию.** An explicit transaction needs explicit commit or rollback.
+- **Mixing with managed locks.** SQL rollback does not release global locks unless the code frees them.

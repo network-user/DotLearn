@@ -1,0 +1,125 @@
+---
+id: 1462
+title: "Token bucket vs leaky bucket: where does each fit?"
+category: go-set-i-protsessy
+categoryLabel: "Сеть и процессы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Token bucket vs leaky bucket: where does each fit?
+
+## In short
+
+Both algorithms cap traffic intensity differently: a token bucket accumulates "permits" and allows short bursts; a leaky bucket smooths flow to an almost steady rate. The choice depends on whether peak flexibility or a flat load on downstream matters more.
+
+## How to answer in an interview
+
+- Token bucket: tokens refill at rate R, capacity C, each request spends one token; burst up to C at once, then average rate R.
+- Leaky bucket: fixed-size queue, processing (leak) at a constant rate; input bursts get smoothed and overflow is dropped.
+- I map usage: API gateways and client quotas often use token bucket; network shapers and message-queue stabilization lean leaky bucket.
+- I add honestly: fixed window and sliding window show up in production too; `golang.org/x/time/rate` implements token bucket, not leaky.
+
+## How it works
+
+**Token bucket.** The bucket fills at a steady rate but never above capacity. A request arrives: if a token exists, serve it and decrement; otherwise wait or return 429. Quiet periods let you bank burst and spend it during spikes.
+
+**Leaky bucket.** Requests enter a buffer; a "tap" drains them evenly. When the buffer is full, new requests are rejected. Output is nearly flat even when input is bursty.
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+type TokenBucket struct {
+	mu         sync.Mutex
+	capacity   float64
+	tokens     float64
+	refillRate float64
+	lastTick   time.Time
+}
+
+func NewTokenBucket(capacity, refillPerSec float64) *TokenBucket {
+	return &TokenBucket{
+		capacity:   capacity,
+		tokens:     capacity,
+		refillRate: refillPerSec,
+		lastTick:   time.Now(),
+	}
+}
+
+func (tb *TokenBucket) Allow() bool {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(tb.lastTick).Seconds()
+	tb.tokens += elapsed * tb.refillRate
+	if tb.tokens > tb.capacity {
+		tb.tokens = tb.capacity
+	}
+	tb.lastTick = now
+	if tb.tokens < 1 {
+		return false
+	}
+	tb.tokens--
+	return true
+}
+
+type LeakyBucket struct {
+	mu       sync.Mutex
+	capacity int
+	queued   int
+	leakRate int
+	lastLeak time.Time
+}
+
+func NewLeakyBucket(capacity, leakPerSec int) *LeakyBucket {
+	return &LeakyBucket{
+		capacity: capacity,
+		leakRate: leakPerSec,
+		lastLeak: time.Now(),
+	}
+}
+
+func (lb *LeakyBucket) Admit() bool {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	now := time.Now()
+	elapsed := int(now.Sub(lb.lastLeak).Seconds())
+	lb.queued -= elapsed * lb.leakRate
+	if lb.queued < 0 {
+		lb.queued = 0
+	}
+	lb.lastLeak = now
+	if lb.queued >= lb.capacity {
+		return false
+	}
+	lb.queued++
+	return true
+}
+
+func main() {
+	tb := NewTokenBucket(5, 2)
+	lb := NewLeakyBucket(3, 1)
+	for i := 0; i < 8; i++ {
+		fmt.Printf("req %d token=%v leaky=%v\n", i, tb.Allow(), lb.Admit())
+	}
+}
+```
+
+These simplified structs show the split: token bucket spends saved balance; leaky bucket grows a queue and drains at a fixed pace.
+
+In microservices a token bucket shields a public REST API from DDoS while allowing a short burst after idle time. A leaky bucket helps before a worker with fixed throughput (SMS sending, writing to a Kafka partition with a cap).
+
+## Pitfalls
+
+- **Mixed terminology.** Many people call token bucket "leaky bucket"; in interviews I nail down definitions first.
+- **Races without a mutex.** Blog samples often skip synchronization; production needs atomics or `rate.Limiter`.
+- **Discrete refill.** Updating tokens only once per second creates steps; I accrue fractional tokens with `time.Since`.
+- **Leaky as an unbounded queue.** Enqueueing forever on overflow defeats the limiter.
+- **Distributed burst.** A local token bucket per replica multiplies allowed burst by instance count.

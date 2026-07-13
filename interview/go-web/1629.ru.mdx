@@ -1,0 +1,60 @@
+---
+id: 1629
+title: "Как устроен HTTP/2"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроен HTTP/2
+
+## Суть
+
+HTTP/2 мультиплексирует множество stream в одном TCP соединении, кодирует фреймы в бинарном формате и сжимает заголовки HPACK. Убирает head-of-line blocking HTTP/1.1 на уровне запросов, сохраняя один connection per origin. ALPN в TLS согласует h2 при HTTPS.
+
+## Что ответить на собесе
+
+- Frames: DATA, HEADERS, SETTINGS, WINDOW_UPDATE, RST_STREAM.
+- Stream ID для параллельных request/response без очереди.
+- HPACK table для повторяющихся cookie и auth headers.
+- Server push редко используется; приоритеты stream зависят от реализации.
+- Честно: TCP HOL blocking остаётся на уровне пакетов; HTTP/3 (QUIC) решает иначе.
+
+## Как это работает
+
+```go
+srv := &http.Server{
+	Addr:    ":443",
+	Handler: mux,
+}
+log.Fatal(srv.ListenAndServeTLS("fullchain.pem", "key.pem"))
+```
+
+Клиент и сервер обмениваются SETTINGS (размер окна, max concurrent streams). Запрос `GET /static/app.js` и `GET /api/me` идут в stream 1 и 3 на одном TLS socket. Заголовки режутся на HEADERS frames, тело на DATA frames с flow control.
+
+<figure aria-label="TCP · streams · frames">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 52" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="4" y="16" width="292" height="20" rx="4"/>
+  <text x="150" y="30" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Single TCP connection</text>
+  <line x1="60" y1="8" x2="60" y2="16"/><line x1="150" y1="8" x2="150" y2="16"/><line x1="240" y1="8" x2="240" y2="16"/>
+  <text x="60" y="6" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">stream 1</text>
+  <text x="150" y="6" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">stream 3</text>
+  <text x="240" y="6" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">stream 5</text>
+</svg>
+</figure>
+
+Go `net/http` включает HTTP/2 server при TLS; клиент по умолчанию пробует h2 через ALPN.
+
+## Подводные камни
+
+**L7 proxy в HTTP/1.1 к backend.** Теряются multiplex gains на последней миле.
+
+**Огромные cookie в каждом stream.** HPACK помогает, но таблица переполняется.
+
+**Непонимание flow control.** Медленный consumer блокирует stream, не всё соединение.
+
+**Debug curl без `--http2`.** Кажется, что сервер «медленный» из-за последовательных запросов.
+
+**Server push без cache policy.** Лишний трафик вместо ускорения.

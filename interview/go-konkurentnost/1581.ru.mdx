@@ -1,0 +1,61 @@
+---
+id: 1581
+title: "Как найти goroutine leak"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как найти goroutine leak
+
+## Суть
+
+Goroutine leak это G, которые не завершаются и держат stack plus captured refs. Диагностика: `runtime/pprof` goroutine profile, `debug.SetTraceback`, pprof HTTP `/debug/pprof/goroutine`, сравнение snapshots во времени. Ищем repeating stack frames без exit path.
+
+## Что ответить на собесе
+
+- Снимаю goroutine dump до и после нагрузки.
+- `go tool pprof` или Grafana Pyroscope для diff stacks.
+- Типичные причины: blocked on chan, forgotten ctx cancel, WaitGroup mismatch.
+- Честно: «утечка памяти goroutine» часто blocked forever, не GC leak классический.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"net/http"
+	_ "net/http/pprof"
+	"time"
+)
+
+func leaky() {
+	ch := make(chan struct{})
+	<-ch
+}
+
+func main() {
+	go func() {
+		_ = http.ListenAndServe(":6060", nil)
+	}()
+	go leaky()
+	time.Sleep(2 * time.Second)
+}
+```
+
+`curl localhost:6060/debug/pprof/goroutine?debug=2` покажет stack на `<-ch`. Анализ: кто создал, почему нет close/cancel.
+
+## Подводные камни
+
+**Snapshot too early.** Background workers выглядят как leak.
+
+**pprof только в dev.** Нужен endpoint или SIGQUIT в prod carefully.
+
+**Leak vs intentional pool.** Worker goroutines OK если bounded.
+
+**Forgot parent context.** HTTP handler spawn без timeout.
+
+**Mutex + chan cycle.** Deadlock, не всегда рост G count.

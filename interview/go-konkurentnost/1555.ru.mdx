@@ -1,0 +1,76 @@
+---
+id: 1555
+title: "Какие операции блокируют goroutine?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие операции блокируют goroutine?
+
+## Суть
+
+G блокируется на channel send/recv (если нет парной стороны или буфер полон/пуст), mutex Lock, WaitGroup Wait, time.Sleep, select без ready case, blocking syscalls и net I/O. Блокировка переводит G в waiting и освобождает M для других G.
+
+## Что ответить на собесе
+
+- Unbuffered chan: send и recv rendezvous, обе стороны sync point.
+- Mutex Lock блокирует до Unlock другой G.
+- Non-blocking try: select с default, TryLock, select на ctx.
+- Честно: «блокирующая» не значит «OS thread blocked»; netpoller часто без лишнего thread.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func demoChan() {
+	ch := make(chan int)
+	go func() { ch <- 1 }()
+	fmt.Println(<-ch)
+}
+
+func demoWG() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+func demoMutex() {
+	var mu sync.Mutex
+	mu.Lock()
+	mu.Unlock()
+}
+
+func main() {
+	demoChan()
+	demoWG()
+	demoMutex()
+}
+```
+
+Каждая операция снимает G с run queue до выполнения условия. Scheduler использует это для multiplexing.
+
+## Подводные камни
+
+**Busy loop не blocking.** G остаётся runnable и голодит других без preemption delay.
+
+**Buffered chan full send.** Блокировка при len==cap, не только unbuffered.
+
+**Lock ordering deadlock.** Два mutex blocking forever.
+
+**Wait без Add.** Permanent block или panic race.
+
+**Blocking in holding lock.** Deadlock если другой ждёт тот же lock для unblock.

@@ -1,0 +1,57 @@
+---
+id: 4207
+title: "IAM role vs IAM policy: how do they relate?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# IAM role vs IAM policy: how do they relate?
+
+## In short
+
+An IAM policy is a JSON document of Allow/Deny on actions and resources. An IAM role is an identity a principal (EC2, Lambda, user) can assume to get temporary credentials via STS. Policies attach to roles, users, or groups.
+
+## How to answer in an interview
+
+- Role = trust policy (who can AssumeRole) plus permission policies (what they can do).
+- Instance profile wraps a role for EC2; kube2iam/IRSA for pods.
+- Managed vs inline policies: reuse AWS managed, custom least privilege inline.
+- Honestly: a role without a boundary can escalate via PassRole; I limit PassRole and use permission boundaries on CI roles.
+
+## How it works
+
+Trust plus attach managed policy:
+
+```bash
+aws iam create-role --role-name EKSNodeRole \
+  --assume-role-policy-document '{
+    "Version":"2012-10-17",
+    "Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]
+  }'
+
+aws iam attach-role-policy --role-name EKSNodeRole \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+```
+
+Pod via IRSA:
+
+```bash
+aws iam create-role --role-name payments-sa \
+  --assume-role-policy-document file://trust-oidc.json
+
+aws iam put-role-policy --role-name payments-sa --policy-name s3-read \
+  --policy-document file://allow-s3-read.json
+```
+
+`aws sts assume-role` returns AccessKeyId/Secret/Token for 15 minutes up to 12 hours. CloudTrail logs AssumeRole and role session API calls.
+
+## Pitfalls
+
+- **`*` on Resource.** Overprivileged policy ships with «fix later» review.
+- **Trust policy Principal `*`.** Cross-account assume without ExternalId.
+- **Role chaining 1h limit.** Long pipelines can expire mid-job.
+- **Stale instance profile.** New policy may need EC2 metadata refresh (usually fast, not instant).
+- **User policy vs role confusion.** Humans should not use long-lived keys in prod instead of SSO roles.

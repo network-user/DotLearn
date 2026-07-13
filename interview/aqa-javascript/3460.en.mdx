@@ -1,0 +1,76 @@
+---
+id: 3460
+title: "Promise.all vs Promise.any in parallel API tests"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Promise.all vs Promise.any in parallel API tests
+
+## In short
+
+`Promise.all` waits for every promise: success yields an ordered result array; the first rejection fails the aggregate. `Promise.any` settles on the first fulfilled promise, ignoring rejects until all fail (`AggregateError`). Pick based on whether you need every response or just the first healthy mirror.
+
+## How to answer in an interview
+
+- `all` for setup: user + cart + token before a UI scenario.
+- `any` for CDN/health fallback when one region is down.
+- Non-promise entries in an `all` array are auto-wrapped with `resolve`.
+- With `all` I log the index of the failing promise for diagnostics.
+- Honestly: `any` hides degradation of second and third upstreams when the first succeeds.
+
+## How it works
+
+Everything must pass:
+
+```
+const rows = await Promise.all([
+    client.get("/users/1"),
+    client.get("/users/2"),
+]);
+```
+
+First success wins:
+
+```
+const fastest = await Promise.any([
+    client.get("https://edge-a.test/ping"),
+    client.get("https://edge-b.test/ping"),
+]);
+```
+
+Strategy table in pytest:
+
+```python
+def combine_all(results: list[int]) -> int:
+    if any(r < 0 for r in results):
+        raise RuntimeError("one failed")
+    return sum(results)
+
+
+def pick_any(results: list[int | None]) -> int:
+    for value in results:
+        if value is not None and value >= 0:
+            return value
+    raise RuntimeError("all failed")
+
+
+def test_all_vs_any_policy():
+    assert combine_all([1, 2, 3]) == 6
+    assert pick_any([None, 5, 1]) == 5
+```
+
+## Pitfalls
+
+**Promise.all without return in map.** `items.map(async () => ...)` builds promises you never await.
+
+**any on dependent steps.** The second call needs an id from the first; `any` does not fit.
+
+**Empty array for any.** Immediate AggregateError; guard in setup.
+
+**Confusing allSettled with all.** You need a full report, not fail-fast.
+
+**Timeout on one leg.** `all` fails logically but fetch may hang without AbortSignal.

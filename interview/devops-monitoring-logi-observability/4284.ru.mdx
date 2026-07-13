@@ -1,0 +1,72 @@
+---
+id: 4284
+title: "Как хранить метрики Prometheus долго?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как хранить метрики Prometheus долго?
+
+## Суть
+
+Локальный TSDB Prometheus рассчитан на недели, не годы. Для long-term retention используют `remote_write` / `remote_read` в внешние TSDB: Thanos (object storage), Cortex/Mimir, VictoriaMetrics, M3, иногда Timescale через adapter. Данные уходят асинхронно WAL batch'ами; локальный retention остаётся для hot queries.
+
+## Что ответить на собесе
+
+- Включаю `remote_write` на Thanos Receive или Mimir distributor.
+- Thanos sidecar + S3 для cheap immutable blocks и global query через Thanos Query.
+- Cortex/Mimir дают multi-tenancy и horizontal scale для SaaS-style monitoring.
+- VictoriaMetrics single/cluster как drop-in с PromQL совместимостью и компрессией.
+- Честно: remote_write не бесплатен по egress и cardinality; без relabel drop шлюзу дорого.
+
+## Как это работает
+
+Prometheus remote_write в Mimir:
+
+```bash
+cat <<'EOF' >> /etc/prometheus/prometheus.yml
+remote_write:
+  - url: https://mimir.internal/api/v1/push
+    queue_config:
+      capacity: 10000
+      max_shards: 20
+    write_relabel_configs:
+      - source_labels: [__name__]
+        regex: "go_.*|process_.*"
+        action: drop
+EOF
+```
+
+Thanos sidecar upload blocks:
+
+```bash
+thanos sidecar \
+  --tsdb.path=/var/lib/prometheus \
+  --prometheus.url=http://127.0.0.1:9090 \
+  --objstore.config-file=/etc/thanos/s3.yml
+```
+
+Проверка, что remote_write не отстаёт:
+
+```bash
+curl -s http://127.0.0.1:9090/metrics | grep prometheus_remote_storage_queue_highest_sent_timestamp_seconds
+```
+
+Query исторических данных через Thanos Query:
+
+```bash
+curl -G 'http://thanos-query:9090/api/v1/query' \
+  --data-urlencode 'query=sum(rate(http_requests_total[5m]))' \
+  --data-urlencode 'time=2025-06-01T12:00:00Z'
+```
+
+## Подводные камни
+
+- **Cardinality explosion в backend.** Remote_write копирует все labels; high-cardinality `user_id` убивает Mimir/Cortex.
+- **Gap при outage.** WAL replay после долгого downtime remote endpoint даёт burst; нужен queue capacity и rate limit.
+- **Двойное хранение cost.** Локальный 30d + remote 1y без downsampling раздувает счёт; настраиваю compaction и recording rules.
+- **Query federation latency.** Global query через Thanos на cold object storage медленнее локального PromQL.
+- **Несовместимые функции.** Некоторые PromQL edge cases ведут себя иначе в VM/M3; тестирую critical dashboards.

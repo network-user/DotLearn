@@ -1,0 +1,82 @@
+---
+id: 1571
+title: "Fan-in и fan-out в Go"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Fan-in и fan-out в Go
+
+## Суть
+
+Fan-out: несколько workers читают один input chan (parallel stage). Fan-in: merge нескольких output chan в один через extra goroutine и forward. Pipeline: generate → fan-out process → fan-in collect.
+
+## Что ответить на собесе
+
+- Fan-out масштабирует CPU stage; fan-in собирает results без race на shared slice.
+- sync.WaitGroup или errgroup на merge goroutine before close out.
+- ctx cancel останавливает все stages.
+- Честно: order после fan-in не guaranteed без sequence id.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func merge(out chan<- int, wg *sync.WaitGroup, ins ...<-chan int) {
+	defer wg.Done()
+	var inner sync.WaitGroup
+	for _, ch := range ins {
+		inner.Add(1)
+		go func(c <-chan int) {
+			defer inner.Done()
+			for v := range c {
+				out <- v
+			}
+		}(ch)
+	}
+	inner.Wait()
+}
+
+func main() {
+	a := make(chan int, 2)
+	b := make(chan int, 2)
+	a <- 1
+	b <- 2
+	close(a)
+	close(b)
+	out := make(chan int, 4)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go merge(out, &wg, a, b)
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	for v := range out {
+		fmt.Println(v)
+	}
+}
+```
+
+merge fan-in из a и b в out; каждый input drained параллельно.
+
+## Подводные камни
+
+**Merge without close out.** Consumer hangs.
+
+**Block on full out.** Merge goroutine stalls all inputs.
+
+**Fan-out without close jobs.** Workers leak.
+
+**Shared result append.** Use fan-in chan instead.
+
+**Unbounded fan-out.** Cap workers.

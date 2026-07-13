@@ -1,0 +1,65 @@
+---
+id: 3025
+title: "Партиционирование в Kafka и БД: зачем это знать QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Партиционирование в Kafka и БД: зачем это знать QA?
+
+## Суть
+
+Партиция это логическое деление данных для параллелизма и управляемости. В Kafka partition задаёт параллельных consumer и порядок по ключу. В БД table partition ускоряет запросы по диапазону дат и упрощает архивацию. QA проверяет, что бизнес-правила порядка и целостности сохраняются после split и что тестовые данные попадают в ожидаемую партицию.
+
+## Что ответить на собесе
+
+- Kafka: больше partition выше throughput, но нужен осмысленный message key.
+- DB range partition: запрос за март читает только partition p202403.
+- Hash partition равномерно распределяет нагрузку без диапазонного фильтра.
+- При миграции partition QA сверяет count строк до/после split.
+- Честно: неправильный key в Kafka даёт hot partition и skew lag на одном consumer.
+
+## Как это работает
+
+```gherkin
+Feature: Partitioning awareness
+
+  Scenario: Kafka hot key detection
+    Given topic payments 12 partitions
+    When 90 percent messages use key default
+    Then partition 0 lag high others idle QA files perf defect
+
+  Scenario: DB range prune old data
+    Given sales table partitioned by year
+    When archive job drops partition p2019
+    Then queries for 2019 fail fast not full table scan
+
+  Scenario: Order per customer in Kafka
+    Given key customerId in publish
+    When events PAY and REFUND for customer 88
+    Then both land same partition processed in offset order
+```
+
+SQL пример table partition (переименованные поля):
+
+```sql
+CREATE TABLE audit_events (
+  evt_id BIGINT,
+  evt_day DATE,
+  payload JSON
+) PARTITION BY RANGE (YEAR(evt_day)) (
+  PARTITION y2023 VALUES LESS THAN (2024),
+  PARTITION y2024 VALUES LESS THAN (2025)
+);
+```
+
+## Подводные камни
+
+- **Случайный partition key.** Порядок related events ломается.
+- **Слишком много partition.** Overhead координации Kafka.
+- **Тест на непартиционированной staging DB.** Prod perf баг не виден.
+- **Путаю Kafka partition и consumer instance.** Не 1:1 без rebalance.
+- **Забываю partition pruning в explain.** Ложное ощущение медленного запроса.

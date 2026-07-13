@@ -1,0 +1,55 @@
+---
+id: 1533
+title: "Когда P берёт G из global run queue?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Когда P берёт G из global run queue?
+
+## Суть
+
+P обращается к global run queue, когда локальная очередь P пуста и work stealing у соседних P не дал работы. Также часть новых G при массовом spawn сразу попадает в global, откуда P забирают batch (~половину или фиксированный размер по версии runtime).
+
+## Что ответить на собесе
+
+- Порядок: local runq → steal от другого P → global runq → netpoller (готовые после I/O).
+- Global queue защищена mutex; частые обращения добавляют contention при burst spawn.
+- Балансировка не гарантирует FIFO порядок выполнения G.
+- Честно оговариваю: детали batch size и steal fraction менялись между релизами; идея «сначала local, потом global» стабильна.
+
+## Как это работает
+
+```go
+package main
+
+import (
+	"sync"
+)
+
+func main() {
+	var wg sync.WaitGroup
+
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+		}()
+	}
+
+	wg.Wait()
+}
+```
+
+При тысяче `go` часть G окажется в global queue. P с пустой local очередью заберёт пачку и распределит выполнение, пока другие P воруют или тоже читают global.
+
+## Подводные камни
+
+- **Burst spawn latency.** Первые G стартуют быстро, хвост ждёт разбор global queue.
+- **Не полагаться на порядок.** Global не даёт fair ordering для приложения.
+- **GOMAXPROCS низкий.** Global queue длиннее при малом числе P.
+- **Idle P и sysmon.** Sysmon подталкивает P опросить poller и global при простое.
+- **Тесты на scheduling.** Поведение недетерминировано; проверяю инварианты, не порядок логов.

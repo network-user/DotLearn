@@ -1,0 +1,74 @@
+---
+id: 2064
+title: "Ingress in OpenShift: external HTTP access to services"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Ingress in OpenShift: external HTTP access to services
+
+## In short
+
+Ingress (in OpenShift often via Route or a compatible Ingress controller) routes external HTTP/HTTPS traffic to in-cluster Services by host and path. One entry IP/load balancer replaces dozens of NodePorts; TLS termination and rewrite rules are supported. For Java microservices this is the standard way to publish REST APIs.
+
+## How to answer in an interview
+
+- A Service provides a stable cluster IP; Ingress/Router exposes it externally by domain.
+- Rules: host `api.shop.example`, path `/orders` → Service `order-svc:8080`.
+- TLS cert lives in a Secret or platform wildcard; termination at the edge.
+- An Ingress controller (nginx, HAProxy, OpenShift router) implements the spec.
+- Honestly: without health checks and timeout tuning, Ingress hides slow upstream Pods.
+
+## How it works
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shop-api
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+spec:
+  tls:
+  - hosts:
+    - api.shop.example
+    secretName: shop-api-tls
+  rules:
+  - host: api.shop.example
+    http:
+      paths:
+      - path: /v1/catalog
+        pathType: Prefix
+        backend:
+          service:
+            name: catalog-svc
+            port:
+              number: 80
+      - path: /v1/checkout
+        pathType: Prefix
+        backend:
+          service:
+            name: checkout-svc
+            port:
+              number: 80
+```
+
+Request chain:
+
+1. Client → Load Balancer → Ingress controller Pod.
+2. Controller picks backend Service by host+path.
+3. kube-proxy (or eBPF dataplane) forwards to one Endpoint Pod.
+4. Spring Boot in the Pod listens on `containerPort` (often 8080; Service maps 80→8080).
+
+OpenShift Route simplifies step 1: `oc expose route shop-api --hostname=api.shop.example`.
+
+## Pitfalls
+
+- **Path overlap.** Two Prefix rules on `/` and `/api` without order yield unexpected backends.
+- **Sticky sessions without cookies.** Round-robin breaks server session state.
+- **Large body upload.** Default proxy buffers truncate multipart/file uploads.
+- **gRPC over HTTP Ingress.** Needs backend protocol annotation or a separate LB.
+- **Wildcard cert mismatch.** Internal service name != public host breaks SNI.

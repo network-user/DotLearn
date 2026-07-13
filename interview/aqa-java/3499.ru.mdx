@@ -1,0 +1,67 @@
+---
+id: 3499
+title: "Стек потока JVM и отладка тестов"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Стек потока JVM и отладка тестов
+
+## Суть
+
+У каждого потока JVM свой call stack из stack frames: локальные переменные, operand stack и ссылка на текущий метод. При вложенных вызовах frames push/pop. `StackOverflowError` возникает при бесконечной рекурсии; в отчёте CI thread dump показывает цепочку frames для зависшего теста.
+
+## Что ответить на собесе
+
+- Каждый `@Test` метод получает свой frame с локальными переменными и параметрами.
+- Рекурсивный helper без base case валит suite через `StackOverflowError`.
+- Thread dump в Jenkins: ищу blocked frame на `WebDriverWait` или lock.
+- `-Xss` увеличивает глубину стека для глубоких JSON path рекурсий (редко).
+- Честно: причина flaky чаще heap/GC, но stack dump первый быстрый сигнал deadlock.
+
+## Как это работает
+
+```
+public static int sum(int left, int right) {
+  return left + right;
+}
+
+public static void main(String[] args) {
+  int total = sum(4, 6);
+}
+```
+
+Вызов `sum` создаёт frame с `left`, `right`, operand stack для `+`, затем frame удаляется, результат в frame `main`.
+
+Python mirror call stack:
+
+```python
+import traceback
+
+
+def nested() -> None:
+    raise RuntimeError("stuck wait")
+
+
+def test_stack_trace_contains_frame():
+    try:
+        nested()
+    except RuntimeError:
+        frames = traceback.format_exc()
+        assert "nested" in frames
+```
+
+## Подводные камни
+
+**Смешение stack и heap.** Объекты в heap, ссылки на них в frame locals.
+
+**Глубокая рекурсия в data gen.** Faker tree без лимита.
+
+**Native stack.** JNI/WebDriver chromedriver добавляет native frames вне Java stack.
+
+**Async stack.** CompletableFuture теряет очевидный stack без `exceptionally`.
+
+**Parallel streams.** Общий stack per worker, путаница при чтении dump.

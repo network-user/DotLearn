@@ -1,0 +1,82 @@
+---
+id: 2050
+title: "Does the finally block always run?"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Does the finally block always run?
+
+## In short
+
+`finally` runs in the vast majority of cases after `try`/`catch`, including on exceptions and `return` from try. Exceptions: `System.exit()`, catastrophic JVM termination (`OutOfMemoryError`, SIGKILL), infinite hang in try with no exit, `Thread.stop()` (deprecated). In normal server code finally is reliable for cleanup; shutdown hooks are a separate mechanism.
+
+## How to answer in an interview
+
+- finally is guaranteed when the try/catch block completes normally in a live thread.
+- `System.exit` in try stops the JVM before finally on that path runs.
+- A fatal Error can kill the JVM before finally.
+- SIGKILL / power loss: finally does not run; operations must be idempotent.
+- try-with-resources relies on the same finally semantics.
+- Honestly: relying on finally alone to release distributed locks without TTL is risky on kill -9.
+
+## How it works
+
+Normal case:
+
+```java
+String readFirstLine(Path path) throws IOException {
+    try (var lines = Files.lines(path)) {
+        return lines.findFirst().orElse("");
+    } finally {
+        System.out.println("done reading");
+    }
+}
+```
+
+`done reading` prints even on IOException.
+
+`System.exit` bypasses finally:
+
+```java
+try {
+    System.exit(0);
+} finally {
+    System.out.println("never printed");
+}
+```
+
+The JVM exits; the line is not printed.
+
+Thread interrupted during try:
+
+```java
+try {
+    Thread.sleep(Long.MAX_VALUE);
+} catch (InterruptedException ex) {
+    Thread.currentThread().interrupt();
+} finally {
+    releaseLock();
+}
+```
+
+With a proper interrupt, finally runs after catch. With `Thread.stop()` (deprecated), state is unpredictable.
+
+For graceful service shutdown:
+
+```java
+Runtime.getRuntime().addShutdownHook(new Thread(() -> flushBuffers()));
+```
+
+A shutdown hook complements, but does not replace, finally inside a method.
+
+## Pitfalls
+
+- **System.exit in a library.** Breaks caller finally expectations.
+- **Infinite loop in try.** finally is unreachable while the thread lives.
+- **Process kill -9.** No cleanup: files and temp locks remain.
+- **return in try + throw in finally.** Suppressed exception, hard debugging.
+- **Treating finally as a transaction.** DB commit in finally after rollback in catch causes inconsistency.

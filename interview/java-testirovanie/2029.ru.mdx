@@ -1,0 +1,65 @@
+---
+id: 2029
+title: "Что такое contract testing?"
+category: java-testirovanie
+categoryLabel: "Тестирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое contract testing?
+
+## Суть
+
+Contract testing проверяет соглашение consumer-provider: какие request/response допустимы между сервисами. Consumer test генерирует pact; provider verify прогоняет те же ожидания против реального API. Ловит breaking change до deploy, без full environment E2E.
+
+## Что ответить на собесе
+
+- Отличие от integration: provider может быть mock server у consumer CI.
+- Pact/Spring Cloud Contract: JSON schema, status codes, headers.
+- Consumer-driven: команда клиента задаёт контракт, provider обязан verify.
+- Versioned contracts в broker; can-i-deploy gate перед prod.
+- Честно: contract не покрывает business workflow end-to-end, только API surface.
+
+## Как это работает
+
+Pact consumer (JUnit 5):
+
+```java
+@ExtendWith(PactConsumerTestExt.class)
+class CatalogClientContractTest {
+    @Pact(consumer = "checkout", provider = "catalog")
+    public RequestResponsePact fetchSku(PactDslWithProvider builder) {
+        return builder
+            .given("sku ABC exists")
+            .uponReceiving("lookup sku")
+            .path("/skus/ABC")
+            .method("GET")
+            .willRespondWith()
+            .status(200)
+            .body(new PactDslJsonBody()
+                .stringType("sku", "ABC")
+                .decimalType("price"))
+            .toPact();
+    }
+
+    @Test
+    @PactTestFor(pactMethod = "fetchSku")
+    void mapsCatalogResponse(MockServer mockServer) {
+        CatalogClient client = new CatalogClient(mockServer.getUrl());
+        SkuView sku = client.fetch("ABC");
+        assertEquals("ABC", sku.sku());
+    }
+}
+```
+
+Provider side `@Provider` verification replay pact against running Spring MVC. Broker publishes `checkout-catalog.json`; breaking field rename fails provider job before consumer hits prod 404.
+
+## Подводные камни
+
+- **Pact only on consumer.** Provider never verifies, drift silently.
+- **Over-specified body.** Brittle on additive JSON fields.
+- **Shared broker without auth.** Contract leak internal API shape.
+- **Contract vs OpenAPI divergence.** Two sources of truth fight.
+- **Replacing all integration with pact.** DB logic untested.

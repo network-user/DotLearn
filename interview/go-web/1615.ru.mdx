@@ -1,0 +1,80 @@
+---
+id: 1615
+title: "Как устроен вызов RPC в gRPC"
+category: go-web
+categoryLabel: "Web"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как устроен вызов RPC в gRPC
+
+## Суть
+
+Удалённый вызов в gRPC начинается с контракта в `.proto`: сервис, методы и сообщения. Компилятор генерирует клиентский stub и серверный интерфейс; на проводе protobuf-сообщения едут поверх HTTP/2. Клиент вызывает сгенерированный метод, runtime сериализует запрос, сервер десериализует, выполняет handler и возвращает ответ по тому же каналу.
+
+## Что ответить на собесе
+
+- Сначала описываю `.proto`, затем `protoc` с `protoc-gen-go` и `protoc-gen-go-grpc`.
+- На сервере реализую сгенерированный интерфейс и регистрирую сервис в `grpc.Server`.
+- Клиент открывает `grpc.Dial`, вызывает stub с `context` для дедлайна.
+- Упоминаю unary, client/server/bidi streaming как варианты одного контракта.
+- Честно: без codegen и reflection отладка сложнее, чем у REST с curl.
+
+## Как это работает
+
+```protobuf
+syntax = "proto3";
+
+package greet.v1;
+
+service GreeterService {
+  rpc SayHello(HelloRequest) returns (HelloResponse);
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloResponse {
+  string greeting = 1;
+}
+```
+
+```go
+type greeterServer struct {
+	pb.UnimplementedGreeterServiceServer
+}
+
+func (s *greeterServer) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloResponse, error) {
+	return &pb.HelloResponse{Greeting: "Привет, " + req.GetName()}, nil
+}
+
+func main() {
+	lis, _ := net.Listen("tcp", ":50051")
+	srv := grpc.NewServer()
+	pb.RegisterGreeterServiceServer(srv, &greeterServer{})
+	log.Fatal(srv.Serve(lis))
+}
+```
+
+```go
+conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+client := pb.NewGreeterServiceClient(conn)
+resp, err := client.SayHello(ctx, &pb.HelloRequest{Name: "Аня"})
+```
+
+Цепочка: stub формирует protobuf, gRPC кладёт фреймы в HTTP/2 stream, сервер маршрутизирует по path `/package.Service/Method`, handler пишет ответ. Метаданные (trace id, auth token) идут в headers параллельно телу.
+
+## Подводные камни
+
+**Breaking change в proto.** Смена номера или типа поля ломает старых клиентов; только additive изменения безопасны.
+
+**Забытый `Unimplemented*Server`.** При добавлении метода в proto старый бинарь сервера вернёт `Unimplemented` вместо compile error.
+
+**Insecure transport в prod.** `insecure.NewCredentials()` только для локальной разработки.
+
+**Нет deadline на клиенте.** Висящие RPC копят горутины и соединения.
+
+**Огромные unary payload.** Лимиты gRPC и прокси режут большие сообщения; для файлов нужен streaming.

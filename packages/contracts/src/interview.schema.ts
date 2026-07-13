@@ -5,6 +5,19 @@ import { SLUG_PATTERN } from './topic.schema';
 export const InterviewStage = z.enum(['hr', 'tech', 'system-design']);
 export type InterviewStage = z.infer<typeof InterviewStage>;
 
+export const InterviewDirection = z.enum([
+  'python',
+  'go',
+  'frontend',
+  'java',
+  '1c',
+  'cpp',
+  'devops',
+  'qa',
+  'aqa',
+]);
+export type InterviewDirection = z.infer<typeof InterviewDirection>;
+
 export const InterviewCategory = z.string().regex(SLUG_PATTERN);
 export type InterviewCategory = z.infer<typeof InterviewCategory>;
 
@@ -23,6 +36,7 @@ export const InterviewQuestionMeta = z
     titleEn: z.string().optional(),
     category: InterviewCategory,
     categoryLabel: z.string().min(1),
+    direction: InterviewDirection.optional(),
     stage: InterviewStage,
     stageLabel: z.string().min(1),
     exerciseCount: z.number().int().nonnegative().default(0),
@@ -44,6 +58,7 @@ export const InterviewExerciseMeta = z
     qid: z.number().int().positive(),
     category: InterviewCategory,
     categoryLabel: z.string().min(1),
+    direction: InterviewDirection.optional(),
     stage: InterviewStage,
     stageLabel: z.string().min(1),
     type: z.string().min(1),

@@ -1,0 +1,68 @@
+---
+id: 1528
+title: "How do you wait for multiple goroutines?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you wait for multiple goroutines?
+
+## In short
+
+Main patterns: `sync.WaitGroup` for fork-join without results, `errgroup` for errors, closing a `done` channel as broadcast, `select` on multiple channels, and `context` for cancellation. Pick based on whether you need errors, results, and deadlines.
+
+## How to answer in an interview
+
+- WaitGroup: `Add` before `go`, `Done` in the worker, `Wait` in the coordinator.
+- `golang.org/x/sync/errgroup` cancels siblings on the first error.
+- Channels: N senders, one receiver counts N messages or waits for `close`.
+- I honestly say: `time.Sleep` in main to wait for goroutines is a production anti-pattern.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func worker(id int, out chan<- int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	out <- id * 10
+}
+
+func main() {
+	const n = 3
+	out := make(chan int, n)
+	var wg sync.WaitGroup
+
+	wg.Add(n)
+	for i := 1; i <= n; i++ {
+		go worker(i, out, &wg)
+	}
+
+	wg.Wait()
+	close(out)
+
+	sum := 0
+	for v := range out {
+		sum += v
+	}
+	fmt.Println(sum)
+}
+```
+
+WaitGroup ensures every send finishes before `close(out)`. Without `Wait`, early `close` races with send and panics.
+
+## Pitfalls
+
+- **Close before Wait.** Send/close race on the channel.
+- **WaitGroup Add after Wait.** Panics; count tasks up front.
+- **errgroup without context.** Hung goroutines are not canceled when a peer fails.
+- **Mixing WaitGroup and channels.** Two completion sources confuse maintenance.
+- **Main blocked forever.** A missed `Done` or deadlock on an unbuffered channel.

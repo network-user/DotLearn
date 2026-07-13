@@ -1,0 +1,64 @@
+---
+id: 2967
+title: "Уровни анонимности прокси: что важно при перехвате трафика?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Уровни анонимности прокси: что важно при перехвате трафика?
+
+## Суть
+
+Прокси классифицируют по тому, какие заголовки и IP видит origin: transparent передаёт клиентский IP (часто Via/X-Forwarded-For), anonymous подменяет IP но оставляет след прокси, elite/high-anonymous старается выглядеть как прямой клиент. Для QA Charles/Burp это forward proxy; поведение заголовков влияет на rate limit, geo и audit log.
+
+## Что ответить на собесе
+
+- Transparent в корпоративной сети: сервер видит реальный IP сотрудника, QA проверяет X-Forwarded-For в логах.
+- Anonymous: IP прокси в access.log, заголовок Proxy-Connection или Via выдаёт посредника.
+- Elite: подходит для проверки геоблоков «как пользователь из региона», но TLS MITM требует своего CA.
+- Честно: без согласованного MITM не ломаю certificate pinning в мобильном приложении.
+
+## Как это работает
+
+Сравнение того, что видит backend:
+
+| Уровень | IP в логе | Признак прокси |
+|---------|-----------|----------------|
+| Transparent | клиент | X-Forwarded-For |
+| Anonymous | прокси | Via, Proxy-* |
+| Elite | прокси | минимум заголовков |
+
+Gherkin с Charles map local:
+
+```gherkin
+Feature: Поведение приложения через forward proxy
+
+  Scenario: API логирует реальный IP за corporate transparent proxy
+    Given proxy добавляет X-Forwarded-For 198.51.100.9
+    When пользователь POST /login
+    Then audit log user_ip равен 198.51.100.9
+
+  Scenario: Rate limit по IP прокси при anonymous
+    Given лимит 10 req/min на IP
+    And ten QA машин за одним anonymous proxy
+    When каждая шлёт 5 запросов
+    Then после 10 суммарных запросов статус 429
+
+  Scenario: Geo rule с elite proxy из разрешённого региона
+    Given elite proxy egress в EU
+    When GET /content/eu-only
+    Then статус 200
+```
+
+В Postman proxy settings дублирую путь мобильного клиента; сверяю заголовки в DevTools и на сервере.
+
+## Подводные камни
+
+- **Путают reverse и forward proxy.** CDN edge не то же самое, что Charles.
+- **Двойной X-Forwarded-For.** Парсер берёт левый или правый IP непоследовательно.
+- **HTTPS CONNECT tunnel.** Без MITM видно только SNI, не body.
+- **SOCKS5 vs HTTP proxy.** Клиент «не умеет» без отдельной настройки.
+- **Elite за NAT.** Все тестеры с одного IP, ложные 429.

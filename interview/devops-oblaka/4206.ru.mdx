@@ -1,0 +1,52 @@
+---
+id: 4206
+title: "EBS и EFS: блок против общего файлового хранилища"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# EBS и EFS: блок против общего файлового хранилища
+
+## Суть
+
+EBS это блочный том на одного EC2 в одной AZ: низкая latency, gp3/io2 для БД и boot volume. EFS это NFS в нескольких AZ: shared read/write mount на многих инстансах, elastic capacity, выше latency.
+
+## Что ответить на собесе
+
+- EBS attach один instance (multi-attach только io2 Block Express с ограничениями).
+- EFS mount target per AZ; security group + NFS 2049.
+- StatefulSet в K8s on EBS via CSI; shared content (media, configs) on EFS.
+- Честно: EFS дороже на sustained high IOPS; hot database data на EBS, не на EFS.
+
+## Как это работает
+
+EBS gp3 volume:
+
+```bash
+aws ec2 create-volume --availability-zone eu-central-1a --size 100 --volume-type gp3 \
+  --iops 3000 --throughput 125
+
+aws ec2 attach-volume --volume-id vol-0abc --instance-id i-0def --device /dev/xvdf
+```
+
+EFS mount на Linux:
+
+```bash
+aws efs create-file-system --encrypted --performance-mode generalPurpose \
+  --throughput-mode bursting
+
+sudo mount -t nfs4 -o nfsvers=4.1 fs-0123456789.efs.eu-central-1.amazonaws.com:/ /mnt/shared
+```
+
+Snapshots EBS для backup; EFS Backup policy или AWS Backup. Resize EBS online; EFS grows automatically.
+
+## Подводные камни
+
+- **EBS AZ lock.** Том нельзя attach в другую AZ без snapshot copy.
+- **EFS latency spikes.** Мелкие random writes на NFS бьют по app.
+- **Нет encryption at rest по умолчанию старых томов.** Включаю на create.
+- **Burst credits EFS.** Throughput mode bursting исчерпывается на batch job.
+- **Root volume full.** AMI default 8 GiB; мониторю disk, не только CPU.

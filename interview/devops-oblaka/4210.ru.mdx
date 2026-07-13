@@ -1,0 +1,66 @@
+---
+id: 4210
+title: "Типы томов EBS: какой выбрать под нагрузку?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Типы томов EBS: какой выбрать под нагрузку?
+
+## Суть
+
+EBS даёт блочные диски для EC2 с разной ценой и профилем I/O. SSD-линейка (gp2/gp3, io1/io2) для random IOPS; HDD (st1/sc1) для последовательного throughput. gp3 — дефолт для большинства workload; io2 — когда нужны гарантированные IOPS и durability 99.999%.
+
+## Что ответить на собесе
+
+- gp3: root volume, app-диски, умеренные БД; IOPS и throughput настраиваются отдельно от размера.
+- io2 Block Express: OLTP с десятками тысяч IOPS и SLA на latency.
+- st1: лог-агрегация, Kafka data dir, big data sequential read.
+- sc1: архивы, редкий доступ; самый дешёвый $/GB.
+- Честно: gp2 на малых томах (< 1 TiB) даёт мало IOPS; миграция на gp3 часто дешевле и предсказуемее.
+
+## Как это работает
+
+Создание gp3 с явными IOPS/throughput:
+
+```bash
+aws ec2 create-volume \
+  --availability-zone eu-central-1a \
+  --size 200 \
+  --volume-type gp3 \
+  --iops 6000 \
+  --throughput 250 \
+  --tag-specifications 'ResourceType=volume,Tags=[{Key=Name,Value=app-data}]'
+```
+
+Прикрепление к инстансу:
+
+```bash
+aws ec2 attach-volume \
+  --volume-id vol-0abc123 \
+  --instance-id i-0def456 \
+  --device /dev/sdf
+```
+
+Сравнение профилей:
+
+| Тип | Профиль | Типичный кейс |
+|-----|---------|---------------|
+| gp3 | SSD, IOPS/throughput отдельно | Универсальный диск |
+| gp2 | SSD, 3 IOPS/GB (burst) | Legacy, мигрирую на gp3 |
+| io2 | SSD, provisioned IOPS до 256k | Критичные БД |
+| st1 | HDD, throughput | Streaming, логи |
+| sc1 | HDD, cold | Бэкапы, архив |
+
+На gp3 базовые 3000 IOPS и 125 MiB/s входят в цену; сверху докупаю IOPS до 16k и throughput до 1000 MiB/s.
+
+## Подводные камни
+
+- **gp2 burst credits.** Малый root 8 GiB быстро съедает burst pool под apt upgrade.
+- **io1/io2 без реальной нагрузки.** Плата за provisioned IOPS даже в idle.
+- **HDD на random IOPS.** st1/sc1 на PostgreSQL data dir убьёт latency.
+- **AZ binding.** Том привязан к AZ; snapshot + create-volume в другой AZ при DR.
+- **Размер и modify-volume.** Увеличение онлайн, уменьшение нельзя; планирую с запасом.

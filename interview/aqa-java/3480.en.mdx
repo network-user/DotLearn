@@ -1,0 +1,73 @@
+---
+id: 3480
+title: "Statement vs PreparedStatement in JDBC tests"
+category: aqa-java
+categoryLabel: "Java"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Statement vs PreparedStatement in JDBC tests
+
+## In short
+
+`Statement` runs a static SQL string and parses on the server each time. `PreparedStatement` binds parameters via `?`, caches the plan, and prevents SQL injection. In integration data setup I may use Statement for DDL; all DML with user input goes through PreparedStatement only.
+
+## How to answer in an interview
+
+- Seed fixtures with `prepareStatement("INSERT INTO run VALUES (?,?)")`.
+- Dynamic table names cannot be parameterized; use a whitelist enum instead of concat.
+- try-with-resources closes statement and result set.
+- Batch insert via `addBatch`/`executeBatch` speeds up thousands of rows.
+- Honestly: string-formatting ids in Statement "for tests" is still a bad habit.
+
+## How it works
+
+Statement:
+
+```
+Statement st = conn.createStatement();
+ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM runs");
+```
+
+PreparedStatement:
+
+```
+PreparedStatement ps = conn.prepareStatement(
+    "SELECT status FROM runs WHERE id = ?"
+);
+ps.setLong(1, runId);
+ResultSet rs = ps.executeQuery();
+```
+
+Python DB API analogue:
+
+```python
+def fetch_status(conn, run_id: int) -> str:
+    cur = conn.cursor()
+    cur.execute("SELECT status FROM runs WHERE id = ?", (run_id,))
+    row = cur.fetchone()
+    return row[0]
+
+
+def test_parameterized_query():
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE runs (id INT, status TEXT)")
+    conn.execute("INSERT INTO runs VALUES (1, 'PASS')")
+    assert fetch_status(conn, 1) == "PASS"
+    conn.close()
+```
+
+## Pitfalls
+
+**setString index 0.** JDBC placeholders are 1-based.
+
+**Reuse PreparedStatement after schema change.** Stale plan after migration.
+
+**Statement with huge IN list.** Parse cost; prefer temp table or batch.
+
+**getConnection autocommit.** Forgotten commit in setup yields stale asserts.
+
+**ResultSet TYPE_FORWARD_ONLY.** Second pass needs a re-query.

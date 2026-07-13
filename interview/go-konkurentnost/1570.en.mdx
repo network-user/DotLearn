@@ -1,0 +1,69 @@
+---
+id: 1570
+title: "Worker pool in Go: when to use it?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Worker pool in Go: when to use it?
+
+## In short
+
+A worker pool fixes the number of goroutines reading jobs from a channel and doing work. It caps parallelism (CPU, DB connections, file descriptors) instead of unbounded `go` per task.
+
+## How to answer in an interview
+
+- CPU-bound: workers around GOMAXPROCS or slightly more.
+- I/O-bound: pool size from backend limits (DB pool, API rate).
+- jobs chan + N workers + close + WaitGroup/errgroup.
+- Honestly: for 3 tasks a pool is overkill; for 10k tasks without a cap it is risky.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func worker(id int, jobs <-chan int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for j := range jobs {
+		fmt.Printf("w%d:%d ", id, j*j)
+	}
+}
+
+func main() {
+	const n = 4
+	jobs := make(chan int, 32)
+	var wg sync.WaitGroup
+	for w := 0; w < n; w++ {
+		wg.Add(1)
+		go worker(w, jobs, &wg)
+	}
+	for j := 0; j < 20; j++ {
+		jobs <- j
+	}
+	close(jobs)
+	wg.Wait()
+}
+```
+
+Four workers drain twenty jobs; spawn once, throughput bounded.
+
+## Pitfalls
+
+**Pool too small.** Queue latency; too large saturates DB.
+
+**Unbuffered jobs chan.** Producer blocks every send.
+
+**No shutdown.** Workers block on range forever.
+
+**Submit after close.** Panic on send.
+
+**Recreate pool per request.** Spawn cost defeats purpose; reuse the pool.

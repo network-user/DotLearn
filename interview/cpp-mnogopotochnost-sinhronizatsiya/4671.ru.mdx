@@ -1,0 +1,73 @@
+---
+id: 4671
+title: "Что такое deadlock в многопоточной программе?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое deadlock в многопоточной программе?
+
+## Суть
+
+Deadlock это состояние, когда группа потоков навсегда ждёт ресурсы, удерживаемые друг другом, и ни один не может продвинуться. В C++ это чаще всего mutex, захваченные в несогласованном порядке.
+
+## Что ответить на собесе
+
+- Определение: circular wait + hold-and-wait на exclusives resources.
+- Четыре условия Коффмана: mutual exclusion, hold-and-wait, no preemption, circular wait.
+- Симптом: CPU idle, потоки blocked, прогресса нет без внешнего kill.
+- Профилактика: lock ordering, `std::lock`, timeouts, меньше nested locks, lock-free где уместно.
+- Честно: deadlock легко показать на доске, но в prod ловят через дампы стеков и TSan, не через теорию.
+
+## Как это работает
+
+```cpp
+#include <chrono>
+#include <mutex>
+#include <thread>
+
+std::mutex vault;
+std::mutex ledger;
+
+void auditor_path() {
+    std::lock_guard<std::mutex> a(vault);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    std::lock_guard<std::mutex> b(ledger);
+}
+
+void cashier_path() {
+    std::lock_guard<std::mutex> b(ledger);
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    std::lock_guard<std::mutex> a(vault);
+}
+
+int main() {
+    std::thread t1(auditor_path);
+    std::thread t2(cashier_path);
+    t1.join();
+    t2.join();
+}
+```
+
+`auditor_path` ждёт `ledger`, `cashier_path` ждёт `vault`: цикл.
+
+Стратегии предотвращения:
+
+```cpp
+inline void take_both(std::mutex& m1, std::mutex& m2) {
+    std::scoped_lock guard(m1, m2);
+}
+```
+
+Detection в production: watchdog threads, lock order graphs, periodic stack sampling blocked threads.
+
+## Подводные камни
+
+- **Livelock путают с deadlock.** Потоки активны, но прогресса нет из‑за retry.
+- **Starvation не deadlock.** Низкоприоритетный поток может голодать без цикла.
+- **DB distributed deadlock.** Транзакции между сервисами требуют timeout и retry idempotency.
+- **Lock in logging.** LOG macro под global mutex + callback, который снова логирует.
+- **Fix без root cause.** Timeout маскирует bug; ordering или redesign надёжнее.

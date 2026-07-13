@@ -1,0 +1,73 @@
+---
+id: 2058
+title: "Исключения Java: механизм обработки ошибок"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Исключения Java: механизм обработки ошибок
+
+## Суть
+
+Exception в Java это объект `Throwable`, который прерывает нормальный поток и ищет подходящий `catch` вверх по стеку. Если handler не найден, поток завершается с stack trace. Механизм отделяет основную логику от recovery: try для risky code, catch для handling, finally для cleanup, throws для делегирования checked exceptions.
+
+## Что ответить на собесе
+
+- throw создаёт exception object; JVM unwinds stack до matching catch.
+- Checked заставляют явно планировать failure (I/O, DB).
+- Unchecked сигнализируют баги, тесты должны ловить до prod.
+- try-with-resources и suppressed exceptions (Java 7+) для resource safety.
+- Честно: exceptions для control flow (на каждый parse fail) медленнее и хуже читаются, чем Result type.
+
+## Как это работает
+
+```java
+public final class InvoiceImporter {
+
+    public void importFrom(Path csvPath) {
+        try (var lines = Files.lines(csvPath)) {
+            lines.skip(1)
+                .map(this::parseRow)
+                .forEach(repository::save);
+        } catch (IOException ex) {
+            throw new ImportFailedException("Cannot read " + csvPath, ex);
+        } catch (DateTimeParseException ex) {
+            throw new ImportFailedException("Invalid date in CSV", ex);
+        }
+    }
+
+    private InvoiceRow parseRow(String line) {
+        var parts = line.split(",");
+        return new InvoiceRow(parts[0], LocalDate.parse(parts[1]));
+    }
+}
+```
+
+`FileNotFoundException` (checked) всплывает как `IOException`. `DateTimeParseException` unchecked, но здесь конвертируем в доменное `ImportFailedException`.
+
+Unwinding:
+
+1. `throw` в `parseRow` → нет local catch → метод завершается abruptly.
+2. Stream pipeline прерывается, `Files.lines` close в implicit finally.
+3. `importFrom` catch выбирает handler по типу.
+
+Логирование:
+
+```java
+catch (ImportFailedException ex) {
+    log.error("Import failed", ex);
+    metrics.increment("import.failure");
+    throw ex;
+}
+```
+
+## Подводные камни
+
+- **Пустой catch.** Silent data loss.
+- **catch Exception наверху.** Скрывает programming bugs.
+- **Исключения в hot loop.** Аллокации stack trace дорогие.
+- **Не chained cause.** `new Ex("msg")` без `initCause` теряет root.
+- **finally return.** Подавляет throw из try.

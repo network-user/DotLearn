@@ -1,0 +1,56 @@
+---
+id: 3029
+title: "How does QA test retries and message redelivery?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does QA test retries and message redelivery?
+
+## In short
+
+A retry repeats work after a transient failure: HTTP 503, consumer timeout, nack with requeue. QA models failure, counts attempts, checks backoff intervals, and the final outcome: success, DLQ, or alert. Critical checks: retries must not duplicate side effects and must respect limits.
+
+## How to answer in an interview
+
+- I set maxAttempts=3, exponential backoff 1s 2s 4s in config and verify logs.
+- I simulate 503 on a mock downstream twice, then 200.
+- For queues: nack requeue=true, count delivery_count header in RabbitMQ.
+- After retries exhaust, message lands in DLQ with a PagerDuty alert.
+- Honestly: infinite retry on a poison message blocks all processing.
+
+## How it works
+
+```gherkin
+Feature: Retry and redelivery testing
+
+  Scenario: HTTP client retry on 503
+    Given downstream returns 503 twice then 200
+    When worker calls invoice API
+    Then three attempts logged
+    And single invoice row created
+
+  Scenario: Exponential backoff timing
+    Given backoff base 1 second factor 2
+    When attempt 1 fails at T0
+    Then attempt 2 not before T0 plus 1 second
+    And attempt 3 not before T0 plus 3 seconds total wait
+
+  Scenario: DLQ after max retries
+    Given max retries 5 poison payload
+    When all attempts throw parse error
+    Then message in dead letter queue ops alert fired
+```
+
+Chaos: iptables drop, toxiproxy latency, kill pod after receive before ack. Metrics: `retry_total`, `dlq_depth`.
+
+## Pitfalls
+
+- **Retry without jitter.** Thundering herd on mass outage.
+- **Idempotency not tested.** Three attempts, three charges.
+- **Happy retry only.** DLQ path skipped.
+- **CI clock too fast.** Backoff not reflected in logs.
+- **Mix producer and consumer retry.** Doubled effect.

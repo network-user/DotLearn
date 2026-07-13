@@ -1,0 +1,74 @@
+---
+id: 1610
+title: "Зачем AQA-инженеру понимать gRPC и как он устроен"
+category: aqa-api-i-protokoly
+categoryLabel: "API и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем AQA-инженеру понимать gRPC и как он устроен
+
+## Суть
+
+gRPC — RPC-фреймворк от Google для вызова удалённых методов поверх HTTP/2 с бинарной сериализацией через Protocol Buffers. Для автотестов это означает контрактные `.proto`-схемы, строгие типы сообщений и высокую скорость обмена, но другой набор инструментов проверки по сравнению с REST/JSON.
+
+## Что ответить на собесе
+
+- Объясняю, что gRPC описывает сервис и сообщения в `.proto`, а клиент и сервер генерируются компилятором protobuf под нужный язык.
+- Подчёркиваю транспорт HTTP/2: мультиплексирование потоков, сжатие заголовков, стриминг (unary, server/client/bidi).
+- Рассказываю, как тестирую: контрактные тесты по `.proto`, интеграционные вызовы через grpcio, проверка статус-кодов и метаданных, моки через grpc-testing или testcontainers.
+- Упоминаю типичные сценарии: микросервисы, внутренние API, mobile/IoT с ограниченным каналом.
+- Честно добавляю: для публичных браузерных API gRPC часто неудобен без grpc-web и прокси; REST/OpenAPI по-прежнему доминирует во внешних интеграциях.
+
+## Как это работает
+
+Контракт задаётся декларативно. Сервис объявляет RPC-методы с входными и выходными message-типами; из одного `.proto` генерируются stub на клиенте и servicer на сервере. На провод уходит бинарный protobuf, а не текстовый JSON, поэтому payload компактнее и парсится быстрее.
+
+Типовой поток: описали `Greeter` в proto → `python -m grpc_tools.protoc` сгенерировал `*_pb2.py` и `*_pb2_grpc.py` → сервер реализует методы servicer → клиент дергает stub как обычные функции. Канал (`grpc.insecure_channel` или TLS) держит HTTP/2-соединение; поверх него мультиплексируются вызовы.
+
+```python
+from concurrent import futures
+import grpc
+import greeter_pb2
+import greeter_pb2_grpc
+
+
+class GreeterService(greeter_pb2_grpc.GreeterServicer):
+    def SayHello(self, request, context):
+        if not request.name.strip():
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            context.set_details("name must not be empty")
+            return greeter_pb2.HelloReply()
+        return greeter_pb2.HelloReply(message=f"Hi, {request.name}")
+
+
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
+    greeter_pb2_grpc.add_GreeterServicer_to_server(GreeterService(), server)
+    server.add_insecure_port("127.0.0.1:50051")
+    server.start()
+    server.wait_for_termination()
+
+
+def call_greeting(name: str) -> str:
+    with grpc.insecure_channel("127.0.0.1:50051") as channel:
+        stub = greeter_pb2_grpc.GreeterStub(channel)
+        reply = stub.SayHello(greeter_pb2.HelloRequest(name=name), timeout=3)
+        return reply.message
+```
+
+В автотестах проверяю не только happy path, но и gRPC-статусы (`INVALID_ARGUMENT`, `DEADLINE_EXCEEDED`), дедлайны на вызове и совместимость версий proto между сервисами. Для изоляции поднимаю сервер in-process или в контейнере и подменяю зависимости через fakes.
+
+## Подводные камни
+
+**Breaking changes в proto.** Добавление required-полей или смена номеров полей ломает совместимость; нужны правила версионирования и backward-compatible эволюция схем.
+
+**Отладка бинарного трафика.** Без grpcurl/Envoy tap или логирования на сервере сложнее понять расхождение, чем с JSON в REST-клиенте.
+
+**Таймауты и ретраи.** gRPC не отменяет необходимость дедлайнов на клиенте; слепые ретраи на неидемпотентных методах дают дубликаты.
+
+**TLS и сертификаты.** В CI часто забывают про mTLS/credentials; тесты проходят локально на insecure_channel и падают в staging.
+
+**Нагрузочное тестирование.** HTTP/2 и стриминг требуют других профилей нагрузки и метрик (latency per RPC, backpressure), чем классический REST.

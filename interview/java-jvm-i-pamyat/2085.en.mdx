@@ -1,0 +1,66 @@
+---
+id: 2085
+title: "GC roots: where heap traversal starts"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# GC roots: where heap traversal starts
+
+## In short
+
+The GC mark phase does not start from "the whole heap" but from a fixed set of GC roots: active thread frames, static fields of loaded classes, JNI global refs, JVM internal handles (monitors, JMX), sometimes safepoint sync structures. Any object with no path from a root is eligible for reclaim. Roots define the minimum live set baseline.
+
+## How to answer in an interview
+
+- Stack locals and params in running methods are roots.
+- Static fields of loaded classes (Class mirror on heap).
+- Active Thread objects and their thread-local maps.
+- JNI global references pin objects from native code.
+- Honestly: unreachable from app logic but reachable via static cache is still "alive" for GC.
+
+## How it works
+
+```java
+public final class RootScanExample {
+
+    private static final Map<String, byte[]> GLOBAL_CACHE = new HashMap<>();
+
+    public static void main(String[] args) {
+        var temp = allocateChunk("session-1");
+        process(temp);
+        temp = null;
+    }
+
+    private static byte[] allocateChunk(String key) {
+        var data = new byte[4096];
+        GLOBAL_CACHE.put(key, data);
+        return data;
+    }
+
+    private static void process(byte[] chunk) {
+        System.out.println(chunk.length);
+    }
+}
+```
+
+Root paths during `process`:
+
+- `GLOBAL_CACHE` static ref → Map → `byte[]` for session-1 (alive entire JVM life).
+- `chunk` local in `process` frame → same array (duplicate path).
+- `temp` in `main` until `null`; array still alive via cache.
+
+After `temp = null` the array remains because the static root holds it. Fix: `GLOBAL_CACHE.remove(key)` or bounded cache.
+
+Minor GC root set also scans remembered set: Old gen refs pointing into Young.
+
+## Pitfalls
+
+- **ThreadLocal without remove.** Thread pool worker root keeps request-scoped graph.
+- **Classloader static.** Entire plugin graph rooted until loader collectible.
+- **Finalizer queue.** Objects pending finalization stay alive temporarily (deprecated path).
+- **Mis-debugging MAT.** Dominator from root vs garbage dominator tree confusion.
+- **Assuming null static clears metaspace.** Static ref null frees object; class metadata separate lifecycle.

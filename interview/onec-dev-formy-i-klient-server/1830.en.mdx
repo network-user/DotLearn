@@ -1,0 +1,72 @@
+---
+id: 1830
+title: "Which 1C modules run on both client and server"
+category: onec-dev-formy-i-klient-server
+categoryLabel: "Формы и клиент-сервер"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which 1C modules run on both client and server
+
+## In short
+
+In a managed application, code runs on the client or on the server. Dual-context modules are managed application modules and common modules with both "Client" and "Server" flags: the same exported method is available in both runtimes when compile directives and call sites allow it.
+
+## How to answer in an interview
+
+- I name two kinds: a common module with both flags and a managed application module with client-server procedures.
+- I show checking context with `ЭтоКлиент()` / `ЭтоСервер()` or splitting logic with `&НаКлиенте` and `&НаСервере`.
+- I stress that heavy queries and infobase object work stay on the server; UI and instant validation stay on the client.
+- I honestly note that "dual context" does not mean any code can run on the client without limits; the platform blocks server APIs in the client runtime.
+- In extensions and SSL I inspect common module properties in the designer, not just the file name.
+
+## How it works
+
+A common module with "Client (managed application)" and "Server" flags is compiled into both runtimes. An exported procedure can branch by execution site:
+
+```bsl
+Функция НормализоватьСтроку(ИсходнаяСтрока) Экспорт
+
+    Если ЭтоКлиент() Тогда
+        Возврат СокрЛП(ИсходнаяСтрока);
+    Иначе
+        Возврат ВРег(СокрЛП(ИсходнаяСтрока));
+    КонецЕсли;
+
+КонецФункции
+```
+
+A managed application module often holds session handlers and global procedures the platform invokes in the right runtime. Typical pattern: a client handler gathers parameters and calls a server function via `&НаСервереБезКонтекста` or `&НаСервере`.
+
+```bsl
+&НаКлиенте
+Процедура ОбновитьПодписьНаФорме()
+
+    ТекстПодписи = ПолучитьТекстПодписиНаСервере();
+    Элементы.ПодписьСтатуса.Заголовок = ТекстПодписи;
+
+КонецПроцедуры
+
+&НаСервереБезКонтекста
+Функция ПолучитьТекстПодписиНаСервере()
+
+    Возврат "Последнее обновление: " + Формат(ТекущаяДата(), "ДЛФ=DT");
+
+КонецФункции
+```
+
+Splitting contexts cuts network traffic: light work stays on the client; queries, locks, and writes run on the server. When designing common modules I avoid mixing calls unavailable on the client inside one procedure.
+
+## Pitfalls
+
+**False symmetry.** The same signature on client and server does not guarantee the same behavior: transactions, direct metadata access, and part of the API are unavailable on the client.
+
+**Hidden server round-trips.** A client procedure that frequently hits the server turns a form into an RPC magnet and hurts UI responsiveness.
+
+**Copy-paste instead of a common module.** Duplicating one rule in a form module and an object module drifts on edits; a dual-context common module centralizes it.
+
+**Wrong module flags.** "Client" without "Server" or the reverse causes compile errors when called from the wrong runtime; in extensions module attachment order matters too.
+
+**Debugging.** A breakpoint in a common module fires in the process where code actually runs; without checking context you chase bugs in the wrong place.

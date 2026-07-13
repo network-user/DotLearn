@@ -1,0 +1,70 @@
+---
+id: 1564
+title: "How do you stop code when context is canceled?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you stop code when context is canceled?
+
+## In short
+
+Listen on `<-ctx.Done()` in select or check `ctx.Err()` before long steps. HTTP/DB APIs take ctx and abort themselves. In loops select between work chunks and Done; on cancel return ctx.Err() and cleanup.
+
+## How to answer in an interview
+
+- defer cancel() at the child ctx creator.
+- Propagate ctx as the first argument downstream.
+- A default branch in a loop does not replace Done checks for long work.
+- Honestly: cancel is cooperative; a goroutine without Done checks is not force-killed.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func worker(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+			fmt.Println("tick")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	fmt.Println(worker(ctx))
+}
+```
+
+Done closes on timeout or manual cancel; worker exits with context.DeadlineExceeded or Canceled.
+
+## Pitfalls
+
+**Ignore ctx in library call.** Internal goroutine leak after parent cancel.
+
+**Only check once.** One long call without ctx param ignores cancel.
+
+**Forget cancel leaks timer.** WithTimeout without defer cancel leaks timer until GC.
+
+**Cancel parent from child wrongly.** Cancel only the child you created unless API says otherwise.
+
+**Blocking without select.** Channel recv without ctx branch hangs past shutdown.

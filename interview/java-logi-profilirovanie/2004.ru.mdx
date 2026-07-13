@@ -1,0 +1,59 @@
+---
+id: 2004
+title: "Зачем нужно профилирование Java-приложений?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем нужно профилирование Java-приложений?
+
+## Суть
+
+Профилирование измеряет поведение программы в рантайме: где тратится CPU, память и I/O. Цель не «посмотреть метрики ради метрик», а найти узкие места и подтвердить эффект оптимизации данными, а не интуицией.
+
+## Что ответить на собесе
+
+- Профилирование отвечает на вопрос «где горит», а не «почему медленно в целом».
+- Сначала воспроизвожу нагрузку, потом снимаю CPU/allocation trace, сравниваю до и после правки.
+- В prod предпочитаю sampling (JFR, async-profiler), в dev допустим heavier attach.
+- Метрики latency из APM дополняю flame graph, а не заменяю им.
+- Честно: без репрезентативной нагрузки профиль покажет «холодный» код, не prod bottleneck.
+
+## Как это работает
+
+Профайлер вставляет probes или периодически снимает stack samples. На выходе видно hot methods, allocation sites, lock contention. Простой micro-benchmark в Java даёт грубую оценку, но не заменяет инструмент:
+
+```java
+public final class ThroughputProbe {
+    public static void main(String[] args) {
+        long started = System.nanoTime();
+        long checksum = 0L;
+        for (int i = 0; i < 1_000_000; i++) {
+            checksum += aggregate(i);
+        }
+        long elapsedNs = System.nanoTime() - started;
+        System.out.printf("checksum=%d elapsed=%d ns%n", checksum, elapsedNs);
+    }
+
+    private static int aggregate(int seed) {
+        int acc = 0;
+        for (int j = 0; j < 500; j++) {
+            acc += seed ^ j;
+        }
+        return acc;
+    }
+}
+```
+
+`System.nanoTime()` подходит для относительных замеров на одной JVM. Для реального сервиса подключаю VisualVM или JFR: CPU view покажет, что 60% времени уходит в `String.format`, allocation view выявит создание лишних `byte[]` в сериализации. После замены на `StringBuilder` и пул буферов повторяю снимок и сверяю цифры.
+
+## Подводные камни
+
+- **Observer effect.** Агент с высоким overhead искажает профиль; в prod только low-overhead sampling.
+- **Нерепрезентативная нагрузка.** Профиль на idle-сервисе бесполезен для поиска пиковых деградаций.
+- **Оптимизация без baseline.** Без «до/после» легко «улучшить» не тот участок.
+- **Слепая вера в одну метрику.** Высокий CPU в методе может быть следствием lock wait, а не вычислений.
+- **Профилирование вместо алгоритма.** Иногда проблема в O(n²) запросе, а не в микрооптимизации цикла.

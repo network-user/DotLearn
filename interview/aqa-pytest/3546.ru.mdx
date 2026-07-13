@@ -1,0 +1,63 @@
+---
+id: 3546
+title: "Ожидания и ретраи в AQA"
+category: aqa-pytest
+categoryLabel: "PyTest"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Ожидания и ретраи в AQA
+
+## Суть
+
+Explicit wait ждёт конкретное условие с timeout и poll interval; implicit wait глобально тормозит каждый find. Retry повторяет операцию или тест при transient failure с лимитом попыток. В PyTest UI слой обычно playwright `expect` или tenacity на API poll, не голый `time.sleep`.
+
+## Что ответить на собесе
+
+- Explicit: `wait_until(lambda: status() == "ready", timeout=10)`.
+- Implicit в Selenium один раз на driver, смешивать с explicit осторожно.
+- Retry на HTTP 502 с exponential backoff, не на 404.
+- Разделяю retry шага и rerun всего теста.
+- Честно: sleep(5) маскирует баг, не стабилизирует; только удлиняет suite.
+
+## Как это работает
+
+Poll helper:
+
+```python
+import time
+
+
+def wait_until(predicate, timeout: float = 10, interval: float = 0.2) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(interval)
+    raise TimeoutError("condition not met")
+```
+
+Tenacity на API:
+
+```python
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5))
+def fetch_job(job_id: str) -> dict:
+    return api.get_job(job_id)
+```
+
+## Подводные камни
+
+**Слишком длинный implicit.** Каждый missing element ждёт max время.
+
+**Retry на assertion.** Повторяет неверный expected, не лечит тест.
+
+**Без jitter.** Параллельные retries бьют API одновременно.
+
+**Условие с side effect.** predicate меняет state, гонка.
+
+**Playwright auto-wait выключен.** `no_wait` флаг ломает стабильность кликов.

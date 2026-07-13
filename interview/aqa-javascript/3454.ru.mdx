@@ -1,0 +1,74 @@
+---
+id: 3454
+title: "prototype и __proto__: различия для тестировщика"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# prototype и __proto__: различия для тестировщика
+
+## Суть
+
+`prototype` есть только у функций-конструкторов: объект-шаблон методов для экземпляров `new`. `__proto__` (лучше `Object.getPrototypeOf(obj)`) это ссылка конкретного экземпляра на тот шаблон. При вызове метода движок идёт по `__proto__`, если own property нет.
+
+## Что ответить на собесе
+
+- `alice.__proto__ === Person.prototype` после `new Person()`.
+- Методы экономят память: один объект prototype на все экземпляры.
+- Для introspection в тесте использую `Object.getPrototypeOf`, не legacy `__proto__`.
+- Изменение `Constructor.prototype` влияет на уже созданные объекты.
+- Честно: monkey patch prototype в одном тесте без restore отравляет следующие spec в том же worker.
+
+## Как это работает
+
+Конструктор и экземпляр:
+
+```
+function Session(id) {
+    this.id = id;
+}
+Session.prototype.revoke = function () {
+    return `revoked:${this.id}`;
+};
+
+const active = new Session("s-42");
+```
+
+Связь:
+
+```
+Object.getPrototypeOf(active) === Session.prototype;
+```
+
+Патч и откат в harness:
+
+```python
+class Session:
+    def __init__(self, sid: str):
+        self.id = sid
+
+    def revoke(self):
+        return f"revoked:{self.id}"
+
+
+def test_prototype_style_method_on_instance():
+    s = Session("s-42")
+    assert s.revoke() == "revoked:s-42"
+```
+
+В JS suite после spy вызываю `mockRestore()` в `afterEach`.
+
+## Подводные камни
+
+**Путаница prototype у объекта.** Обычный object literal не имеет собственного `prototype` property.
+
+**Двойная запись __proto__.** Deprecated accessor, линтер ругается, но попадает в legacy код.
+
+**Object.setPrototypeOf в hot path.** Медленно, ломает JIT оптимизации в stress тестах.
+
+**instanceof после setPrototypeOf.** Может вернуть false для прежнего класса.
+
+**Копия объекта через spread.** `__proto__` не копируется, методы всё ещё делегируются.

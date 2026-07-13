@@ -1,0 +1,70 @@
+---
+id: 4222
+title: "Как работает AWS CloudFormation?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как работает AWS CloudFormation?
+
+## Суть
+
+CloudFormation это IaC-сервис AWS: YAML/JSON шаблон описывает ресурсы, сервис создаёт stack и управляет жизненным циклом как единым объектом. Поддерживает drift detection, change sets, nested stacks, custom resources. Альтернатива Terraform, но нативная интеграция с IAM и rollout policies AWS.
+
+## Что ответить на собесе
+
+- Шаблон в Git, деплой через `aws cloudformation deploy` или pipeline; stack name фиксирует окружение.
+- Parameters и mappings параметризуют dev/stage/prod без копипасты шаблона.
+- DeletionPolicy Retain на stateful ресурсах (RDS, S3) защищает от случайного wipe.
+- Change set показывает diff до apply; на проде только через него.
+- Честно: сложная логика в шаблонах быстро становится нечитаемой; для модульности смотрю CDK или Terraform modules.
+
+## Как это работает
+
+Stack event log отражает create/update/delete. Resource dependencies строятся по `Ref`, `GetAtt`, implicit deps.
+
+Минимальный шаблон EC2:
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Single app host
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+
+Resources:
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: ami-0c55b159cbfafe1f0
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: cf-app-host
+```
+
+Деплой:
+
+```bash
+aws cloudformation deploy \
+  --template-file app-host.yaml \
+  --stack-name app-dev \
+  --parameter-overrides KeyName=deploy-key \
+  --capabilities CAPABILITY_IAM \
+  --no-fail-on-empty-changeset
+```
+
+Update заменяет ресурсы по policy (replacement vs in-place); CloudFormation orchestrates rolling where supported.
+
+## Подводные камни
+
+- **Rollback trap.** Failed update откатывает stack; stateful ресурсы могут остаться в промежуточном состоянии.
+- **Drift.** Ручные правки в консоли ломают следующий deploy; включаю drift detection в CI.
+- **Export name collision.** Cross-stack exports глобальны в регионе; имена с префиксом org/env.
+- **Custom resource timeouts.** Lambda-backed custom resources зависают при ошибке; нужен robust rollback handler.
+- **Template size limit.** 1 MB body; большие проекты дроблю nested stacks или CDK synthesis.

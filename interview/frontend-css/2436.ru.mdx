@@ -1,0 +1,88 @@
+---
+id: 2436
+title: "Что такое FLIP и зачем он для плавных анимаций"
+category: frontend-css
+categoryLabel: "CSS"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое FLIP и зачем он для плавных анимаций
+
+## Суть
+
+FLIP (First, Last, Invert, Play) анимирует layout-сдвиг через transform: сначала фиксируем геометрию до и после DOM-изменения, компенсируем разницу translate, затем снимаем transform transition'ом. Layout меняется один раз, движение идёт на compositor.
+
+## Что ответить на собесе
+
+- First: `getBoundingClientRect()` до изменения DOM/CSS layout.
+- Last: применяю новое состояние (reorder, grid area), снова меряю rect.
+- Invert: `translate(deltaX, deltaY)` возвращает визуально на старт.
+- Play: убираю transform с transition на transform/opacity.
+- Честно: FLIP не спасает, если между First и Last меняются width/height контента без фиксации.
+
+## Как это работает
+
+Перестановка карточки в списке:
+
+```ts
+function flipMove(node: HTMLElement, mutate: () => void) {
+  const first = node.getBoundingClientRect();
+
+  mutate();
+
+  const last = node.getBoundingClientRect();
+  const dx = first.left - last.left;
+  const dy = first.top - last.top;
+
+  node.style.transform = `translate(${dx}px, ${dy}px)`;
+  node.style.transition = "transform 0s";
+
+  requestAnimationFrame(() => {
+    node.style.transition = "transform 280ms ease";
+    node.style.transform = "translate(0, 0)";
+  });
+}
+
+const tile = document.querySelector<HTMLElement>(".tile");
+if (tile) {
+  flipMove(tile, () => {
+    tile.style.order = "3";
+  });
+}
+```
+
+```css
+.tile {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile {
+    transition: none !important;
+  }
+}
+```
+
+Для списков меряю все элементы, не один:
+
+```ts
+type RectMap = Map<Element, DOMRect>;
+
+function capture(nodes: Element[]): RectMap {
+  return new Map(nodes.map((n) => [n, n.getBoundingClientRect()]));
+}
+```
+
+## Подводные камни
+
+**Subpixel rounding.** translate на дробных px даёт «дрожание» на retina.
+
+**Scroll во время FLIP.** rect смещается; фиксирую scroll container или использую FLIP только в viewport.
+
+**Забытый transitionend.** transform остаётся, ломает hit-testing.
+
+**height:auto анимация.** FLIP про позицию; отдельно нужен max-height или grid trick.
+
+**will-change everywhere.** Память GPU растёт; снимаю после анимации.

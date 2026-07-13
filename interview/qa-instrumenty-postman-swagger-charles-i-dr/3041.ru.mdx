@@ -1,0 +1,79 @@
+---
+id: 3041
+title: "Переменные окружений и авторизация в Postman: как настроить?"
+category: qa-instrumenty-postman-swagger-charles-i-dr
+categoryLabel: "Инструменты: Postman, Swagger, Charles и др"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Переменные окружений и авторизация в Postman: как настроить?
+
+## Суть
+
+Environment в Postman хранит пары ключ/значение (`baseUrl`, `clientId`, `accessToken`) и подставляет их в URL, headers и body через `{{name}}`. Вкладка Authorization добавляет Bearer, Basic, OAuth2 или API Key на уровне запроса, папки или коллекции. Переключение окружения меняет все подстановки без правки каждого запроса.
+
+## Что ответить на собесе
+
+- Создаю окружения Dev, Staging, Prod с разными `baseUrl` и credential placeholders.
+- Токен кладу в переменную `accessToken`; обновляю pre-request script после login request.
+- Auth наследую: коллекция Bearer, отдельный запрос Basic только для legacy endpoint.
+- Секреты помечаю type secret/current value, не коммичу export с initial value.
+- Честно: без отдельного «auth refresh» запроса длинные сессии в CI падают по 401 через час.
+
+## Как это работает
+
+```gherkin
+Feature: Postman environments and auth
+
+  Scenario: Switch staging to prod without editing URLs
+    Given environment Staging with baseUrl https://api-stage.shop.example
+    And environment Production with baseUrl https://api.shop.example
+    When tester selects Production from environment dropdown
+    Then request GET {{baseUrl}}/health hits production host
+    And all collection requests reuse same variable names
+
+  Scenario: OAuth token chain
+    Given folder Auth contains POST /oauth/token
+    And test script saves json.access_token to environment accessToken
+    When subsequent GET /profile uses Authorization Bearer {{accessToken}}
+    Then profile returns 200 without manual paste
+
+  Scenario: Newman run with env file
+    Given exported staging.postman_environment.json in CI vault
+    When newman run orders.json -e staging.postman_environment.json
+    Then pipeline uses injected secrets not stored in collection JSON
+```
+
+Пример pre-request script (переименованные поля):
+
+```javascript
+const expires = pm.environment.get("tokenExpiresAt");
+if (!expires || Date.now() > Number(expires)) {
+  pm.sendRequest({
+    url: pm.environment.get("baseUrl") + "/oauth/token",
+    method: "POST",
+    header: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: { mode: "urlencoded", urlencoded: [
+      { key: "grant_type", value: "client_credentials" },
+      { key: "client_id", value: pm.environment.get("clientId") },
+      { key: "client_secret", value: pm.environment.get("clientSecret") }
+    ]}
+  }, (err, res) => {
+    const body = res.json();
+    pm.environment.set("accessToken", body.access_token);
+    pm.environment.set("tokenExpiresAt", Date.now() + body.expires_in * 1000);
+  });
+}
+```
+
+Scopes переменных: **environment** (Dev/Prod), **collection**, **global**; при совпадении имён побеждает более узкий scope. `{{$randomUUID}}` и dynamic variables помогают генерировать уникальные payload без внешних скриптов.
+
+## Подводные камни
+
+- **Initial value с prod токеном в git.** Export окружения утекает; храни secrets в CI variables.
+- **Забытый active environment.** Запросы бьют не туда; проверяй dropdown перед демо заказчику.
+- **Auth на запросе и дубль header вручную.** Двойной Authorization ломает некоторые gateways.
+- **OAuth2 без refresh.** Длинный regression run получает 401 на середине.
+- **Variable name typo.** `{{baseURL}}` vs `{{baseUrl}}` молча не подставляется; включай console logging в debug.

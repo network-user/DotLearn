@@ -1,0 +1,64 @@
+---
+id: 2001
+title: "Что входит в ELK Stack?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что входит в ELK Stack?
+
+## Суть
+
+ELK это три роли в observability pipeline: Elasticsearch хранит и индексирует события, Logstash (или Beats) собирает и трансформирует, Kibana визуализирует и ищет. Вместе они превращают разрозненные файловые логи в централизованный searchable store с дашбордами и алертами.
+
+## Что ответить на собесе
+
+- Elasticsearch: inverted index, shards/replicas, ILM, Query DSL.
+- Logstash: input/filter/output pipeline; grok, mutate, date parse.
+- Kibana: Discover, Lens, dashboards, Watcher alerts.
+- Современный вариант: Elastic Beats вместо тяжёлого Logstash на edge.
+- Честно добавляю: managed OpenSearch/Grafana Loki конкурируют; ELK выигрывает на зрелом full-text и агрегациях.
+
+## Как это работает
+
+Минимальный pipeline для Java-сервиса:
+
+```plaintext
+input {
+  beats {
+    port => 5044
+  }
+}
+
+filter {
+  json {
+    source => "message"
+  }
+  date {
+    match => ["timestamp", "ISO8601"]
+    target => "@timestamp"
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["https://es-cluster:9200"]
+    index => "orders-%{+YYYY.MM.dd}"
+    user => "logstash_writer"
+    password => "${LOGSTASH_ES_PASSWORD}"
+  }
+}
+```
+
+Filebeat на pod шлёт JSON stdout в Logstash beats input. Filter парсит timestamp и поля `level`, `traceId`. Elasticsearch кладёт документ в дневной index `orders-2026.07.13`. Kibana строит line chart ERROR rate и table top `logger`. При инциденте инженер в Discover фильтрует `traceId` и `level:ERROR` без grep по SSH.
+
+## Подводные камни
+
+- **Grok на нестабильном формате.** Парсер ломается при смене log pattern.
+- **Один shard giant index.** Hot node перегружен.
+- **Отсутствие ILM.** Диск заполняется, кластер уходит в read-only.
+- **Logstash single thread bottleneck.** Нужен persistent queue или Beats direct to ES.
+- **Kibana access без RBAC.** Все видят prod PII в логах.

@@ -1,0 +1,66 @@
+---
+id: 1566
+title: "Mutable or immutable data in context?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Mutable or immutable data in context?
+
+## In short
+
+Context values should be immutable or treated as immutable: trace id, auth subject, request metadata. A mutable map/slice in ctx causes data races when handlers mutate without sync. WithValue creates a new ctx node; it does not mutate the parent.
+
+## How to answer in an interview
+
+- Typed private key type for Value, not string literals from foreign packages.
+- Do not pass DB handles or loggers with mutable state without clear docs.
+- Business optional params belong in struct args, not a ctx bag.
+- Honestly: community guideline "ctx for cancel/deadline, not data"; values sparingly.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+)
+
+type traceKey struct{}
+
+func withTrace(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, traceKey{}, id)
+}
+
+func traceFrom(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(traceKey{}).(string)
+	return v, ok
+}
+
+func main() {
+	root := context.Background()
+	ctx := withTrace(root, "req-42")
+	if id, ok := traceFrom(ctx); ok {
+		fmt.Println(id)
+	}
+}
+```
+
+String id is immutable; safe read-only in all layers. Parent root unchanged.
+
+## Pitfalls
+
+**Mutable struct pointer in Value.** All readers share it; race on fields.
+
+**String key collision.** Exported string keys collide across libs.
+
+**Large payload in ctx.** Memory held until ctx GC chain ends.
+
+**Replace logger in ctx each layer.** Fine if logger config is immutable.
+
+**Context as service locator.** Untestable hidden dependencies.

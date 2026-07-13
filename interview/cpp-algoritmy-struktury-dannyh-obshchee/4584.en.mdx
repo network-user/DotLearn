@@ -1,0 +1,67 @@
+---
+id: 4584
+title: "Where do unordered_map elements live on collision?"
+category: cpp-algoritmy-struktury-dannyh-obshchee
+categoryLabel: "Алгоритмы / Структуры данных (общее)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where do unordered_map elements live on collision?
+
+## In short
+
+Every `std::unordered_map` element sits in one hash table: a bucket array plus nodes holding key/value pairs. On collision, different keys that share a bucket index link into one chain inside that bucket, not into a separate table.
+
+## How to answer in an interview
+
+- I sketch the model: `bucket[i]` points to the head of a chain of `pair<const Key, T>` nodes.
+- I stress that a hash bucket clash does not mean equal keys; comparison uses `operator==`.
+- I note nodes usually come from the container's pool, not copied into the bucket array itself.
+- I show `bucket(key)`, `bucket_size(i)`, and `bucket_count()` to inspect distribution.
+- I add honestly: internal layout (forward list vs linked nodes) is unspecified; in practice I watch load factor, not byte layout.
+
+## How it works
+
+The key hash yields a bucket index. An empty bucket gets the first node. A occupied bucket appends the new node to that bucket's chain. Iterators walk all nodes in all buckets in unspecified order.
+
+```cpp
+#include <iostream>
+#include <unordered_map>
+
+struct IdTag {
+    int id;
+    bool operator==(const IdTag& other) const { return id == other.id; }
+};
+
+struct IdHash {
+    std::size_t operator()(IdTag t) const {
+        return static_cast<std::size_t>(t.id % 4);
+    }
+};
+
+int main() {
+    std::unordered_map<IdTag, std::string, IdHash> registry;
+
+    registry[{1}] = "alpha";
+    registry[{5}] = "beta";   // same bucket as 1 (weak hash)
+    registry[{2}] = "gamma";
+
+    for (const auto& [tag, name] : registry) {
+        auto b = registry.bucket(tag);
+        std::cout << "id " << tag.id << " -> " << name
+                  << " (bucket " << b << ", chain " << registry.bucket_size(b) << ")\n";
+    }
+}
+```
+
+The toy weak hash forces keys 1 and 5 into one bucket: both nodes stay in the table but share bucket 1. On growth, rehash changes bucket count and recomputes indices, shortening chains.
+
+## Pitfalls
+
+- **Bucket vs hash confusion.** Same bucket does not imply same full hash; key compare is mandatory.
+- **Fake collision demos.** Neighboring int keys in tutorials need not collide under `std::hash<int>`.
+- **Scan cost.** One long chain hurts `find` more than even spread across buckets.
+- **Unstable iteration order.** Rehash reshuffles traversal order; code must not rely on it.
+- **Node size.** Nodes store key, value, and bookkeeping pointers; packing is looser than `std::map`, but lookup is faster with a good hash.

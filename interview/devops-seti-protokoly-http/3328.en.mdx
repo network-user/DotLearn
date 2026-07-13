@@ -1,0 +1,58 @@
+---
+id: 3328
+title: "How does WebSocket provide a bidirectional channel over HTTP?"
+category: devops-seti-protokoly-http
+categoryLabel: "Сети / Протоколы / HTTP"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does WebSocket provide a bidirectional channel over HTTP?
+
+## In short
+
+WebSocket starts as a normal HTTP/1.1 request with `Upgrade: websocket` and `Connection: Upgrade`. After a successful handshake the TCP session stays open, the protocol switches to binary/text frames, and both sides can send data without a new request/response per message.
+
+## How to answer in an interview
+
+- Contrast with polling/long-polling: one persistent socket instead of frequent HTTP round trips.
+- Describe the handshake: 101 Switching Protocols, `Sec-WebSocket-Key`, response `Sec-WebSocket-Accept`.
+- Name typical cases: chat, live dashboards, collaborative editing, game lobbies.
+- Add honestly: behind a load balancer you need sticky sessions or an L7-aware proxy; HTTP health checks do not validate the ws channel by default.
+
+## How it works
+
+The client opens TCP to the origin and sends GET with upgrade headers. The server (nginx, ingress, or app) validates the protocol version and returns 101. Traffic then flows as frames with opcodes (text/binary/ping/pong/close). Ping/pong heartbeats keep NAT and proxy idle timeouts alive.
+
+Handshake probe with curl (expect 101 or 400 without a full client):
+
+```bash
+KEY=$(openssl rand -base64 16)
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: ${KEY}" \
+  "https://chat.example.com/ws"
+```
+
+In production the reverse proxy forwards upgrade:
+
+```bash
+grep -A6 'location /ws' /etc/nginx/snippets/websocket.conf
+# proxy_http_version 1.1;
+# proxy_set_header Upgrade $http_upgrade;
+# proxy_set_header Connection "upgrade";
+# proxy_read_timeout 3600s;
+```
+
+Without `Upgrade`/`Connection`, nginx stays on HTTP and kills the long-lived session. Raise `proxy_read_timeout` for quiet channels.
+
+## Pitfalls
+
+- **TLS termination and wss.** Clients use `wss://`; the proxy must preserve hop-by-hop upgrade headers end-to-end.
+- **No backpressure.** A fast producer can fill buffers; app-side queue limits are required.
+- **Reconnect without state.** After drop the client loses subscriptions; use a resume token or broker replay.
+- **Mixed content.** An HTTPS page cannot open `ws://` without browser mixed-content blocking.
+- **Handshake DDoS.** Cheap upgrade storms hit CPU; rate limit `/ws` is mandatory.

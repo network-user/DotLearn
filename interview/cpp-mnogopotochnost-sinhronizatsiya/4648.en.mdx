@@ -1,0 +1,62 @@
+---
+id: 4648
+title: "What synchronization primitives does the STL provide?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What synchronization primitives does the STL provide?
+
+## In short
+
+`<mutex>`, `<shared_mutex>`, `<condition_variable>`, `<semaphore>`, `<atomic>`, `<barrier>`, and `<latch>` (C++20) cover locking, condition waits, counted admission, lock-free ops, and phased sync. RAII wrappers (`lock_guard`, `unique_lock`, `shared_lock`, `scoped_lock`) manage lock lifetime.
+
+## How to answer in an interview
+
+- Mutex family plus condition_variable for classic producer/consumer.
+- `std::atomic` and `atomic_flag` for counters, flags, lock-free structures.
+- `counting_semaphore` / `binary_semaphore` (C++20) for slot pools.
+- `barrier` / `latch` for "everyone reached this point" in parallel algorithms.
+- Honestly: there is no spinlock in the STL; you build one on `atomic` manually and rarely need it in user-space x86.
+
+## How it works
+
+```cpp
+#include <atomic>
+#include <barrier>
+#include <iostream>
+#include <thread>
+
+std::barrier<> phase(3);
+std::atomic<int> done{0};
+
+void stage(int id) {
+    ++done;
+    phase.arrive_and_wait();
+    if (id == 0) {
+        std::cout << "all reached: " << done.load() << '\n';
+    }
+}
+
+int main() {
+    std::thread a(stage, 0);
+    std::thread b(stage, 1);
+    std::thread c(stage, 2);
+    a.join();
+    b.join();
+    c.join();
+}
+```
+
+Each thread atomically increments `done`, then the `barrier` blocks until all three arrive. After the barrier it is safe to read the total (3 here). Atomic plus barrier is typical in parallel pipelines.
+
+## Pitfalls
+
+- **C++20 availability.** `barrier`/`semaphore` may be missing on older libstdc++; check the toolchain.
+- **atomic memory order.** Default `seq_cst` is costly; counters sometimes need only `relaxed`.
+- **condition_variable_any.** More flexible but heavier; use only with non-mutex lockables.
+- **Not everything is STL.** IPC, futex tuning, priority-aware RW locks stay in OS APIs.
+- **Forgotten notify.** Without `notify` after `wait`, threads sleep forever.

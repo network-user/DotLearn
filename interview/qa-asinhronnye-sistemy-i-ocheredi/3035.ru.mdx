@@ -1,0 +1,62 @@
+---
+id: 3035
+title: "Что такое очередь сообщений в интеграционном тестировании?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое очередь сообщений в интеграционном тестировании?
+
+## Суть
+
+Очередь сообщений это буфер FIFO (или с приоритетом) между producer и consumer в распределённой системе. Она обеспечивает временную развязку, выравнивание пиков и гарантию доставки при durable настройках. QA рассматривает очередь как чёрный ящик с метриками depth, latency и DLQ, а не только как «ещё один API».
+
+## Что ответить на собесе
+
+- Отправитель кладёт job; получатель забирает когда готов.
+- FIFO по умолчанию; priority queue для срочных задач.
+- Rabbit queue, Kafka partition log, SQS standard queue разные модели, тесты разные.
+- Проверяю: сообщение опубликовано, видно в UI брокера, обработано ровно один раз по эффекту.
+- Честно: очередь не ускоряет обработку, она сглаживает и переносит во времени.
+
+## Как это работает
+
+```gherkin
+Feature: Message queue integration test
+
+  Scenario: Order pipeline FIFO
+    Given publish Order-100 then Order-101 to queue fulfillment
+    When single consumer active
+    Then process order 100 before 101
+
+  Scenario: Backlog during outage
+    Given consumer stopped
+    When 50 orders enqueued
+    Then depth 50 no message dropped durable true
+    And after consumer start depth returns 0
+
+  Scenario: Cross team contract
+    Given JSON schema version 2 in queue payload
+    When producer sends version 1 fields
+    Then consumer rejects to DLQ QA blocks release
+```
+
+```gherkin
+Feature: Publish to order queue
+
+  Scenario: Fire order job
+    Given queue order_pipeline declared durable
+    When basic_publish body Order 5567
+    Then management UI shows ready 1
+```
+
+## Подводные камни
+
+- **Очередь без мониторинга depth.** Переполнение незаметно до timeout пользователя.
+- **Тест только publish.** Consumer never verified.
+- **Non-durable на CI.** Сообщения исчезают при рестарте контейнера.
+- **Путаю очередь с кэшем.** Повторное чтение из Kafka не равно queue pop.
+- **Игнор poison message.** Одна bad запись стопорит FIFO.

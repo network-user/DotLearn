@@ -1,0 +1,85 @@
+---
+id: 2140
+title: "ACID-транзакции: зачем они важны для тестирования данных"
+category: aqa-bazy-dannyh-i-sql
+categoryLabel: "Базы данных и SQL"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# ACID-транзакции: зачем они важны для тестирования данных
+
+## Суть
+
+ACID описывает четыре гарантии СУБД при выполнении транзакции: атомарность, согласованность, изолированность и долговечность. Для AQA это основа проверок целостности данных, параллельных сценариев и корректного rollback после негативных тестов.
+
+## Что ответить на собесе
+
+- Расшифровываю акроним: Atomicity, Consistency, Isolation, Durability и связываю каждую букву с примером из банковского перевода или резервирования товара.
+- Объясняю, что тестовые данные часто готовлю в транзакции с rollback или через truncate в isolated schema.
+- Упоминаю уровни изоляции (READ COMMITTED, REPEATABLE READ, SERIALIZABLE) и типичные аномалии: dirty read, non-repeatable read, phantom.
+- Рассказываю, как ловлю race condition: параллельные pytest-xdist workers, два клиента на одну строку, assert на финальный баланс.
+- Честно добавляю: не все хранилища дают полный ACID (например, eventual consistency в NoSQL); требования зависят от продукта.
+
+## Как это работает
+
+Транзакция группирует несколько SQL-операций. При COMMIT изменения фиксируются в WAL/redo log и становятся durable после подтверждения. При ошибке или ROLLBACK СУБД откатывает все шаги (atomicity). Constraints и триггеры обеспечивают consistency: отрицательный баланс или нарушение FK не пройдут.
+
+Изоляция определяет, видит ли транзакция незакоммиченные изменения соседей. В автотестах это критично для сценариев «два пользователя покупают последний билет»: без правильного уровня изоляции или блокировки оба теста могут пройти, а прод выдаст oversell.
+
+```python
+import psycopg
+import pytest
+
+
+@pytest.fixture
+def db_conn():
+    conn = psycopg.connect("postgresql://test:test@localhost:5433/shop_test")
+    conn.autocommit = False
+    yield conn
+    conn.rollback()
+    conn.close()
+
+
+def transfer(conn, from_id: int, to_id: int, amount: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET balance = balance - %s WHERE id = %s AND balance >= %s",
+            (amount, from_id, amount),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("insufficient funds")
+        cur.execute(
+            "UPDATE accounts SET balance = balance + %s WHERE id = %s",
+            (amount, to_id),
+        )
+    conn.commit()
+
+
+def test_transfer_is_atomic_on_insufficient_funds(db_conn):
+    with db_conn.cursor() as cur:
+        cur.execute("INSERT INTO accounts (id, balance) VALUES (1, 50), (2, 0)")
+    db_conn.commit()
+
+    with pytest.raises(ValueError):
+        transfer(db_conn, from_id=1, to_id=2, amount=100)
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT balance FROM accounts WHERE id = 1")
+        assert cur.fetchone()[0] == 50
+```
+
+После интеграционных тестов проверяю, что fixture откатила изменения или очистила schema, иначе следующий кейс получит грязное состояние.
+
+## Подводные камни
+
+**Autocommit по умолчанию.** Забытый BEGIN/COMMIT делает тесты недетерминированными и «засоряет» БД.
+
+**Долгие транзакции в тестах.** Блокировки держатся до teardown и вызывают deadlock в параллельном CI.
+
+**Assumption полного ACID на read replica.** Assert на replica до репликации даёт ложные падения.
+
+**Игнор isolation level.** Flaky тесты при xdist без понимания, что READ UNCOMMITTED в другом сервисе.
+
+**Durability vs скорость тестов.** `fsync=off` в test Postgres ускоряет прогон, но скрывает сценарии crash recovery.

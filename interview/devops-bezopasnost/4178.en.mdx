@@ -1,0 +1,50 @@
+---
+id: 4178
+title: "How do you issue and install a TLS certificate?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you issue and install a TLS certificate?
+
+## In short
+
+You obtain a TLS certificate by generating a key pair, a CSR with CN/SAN, and passing domain validation at a CA (Let's Encrypt, DigiCert, or internal PKI). Mount signed leaf plus chain on a reverse proxy or ingress; the private key stays on the server or in a secret store only.
+
+## How to answer in an interview
+
+- I describe the chain: key → CSR → CA challenge → cert + intermediate → reload nginx/ingress.
+- For public sites: ACME HTTP-01 or DNS-01 via certbot/lego/Caddy auto.
+- For internal: step-ca/Vault PKI with short-lived certs and automation via CSI or cert-manager.
+- I add honestly: CSR without SAN for multiple hostnames fails today; wildcards need DNS-01.
+
+## How it works
+
+```bash
+openssl ecparam -genkey -name prime256v1 -noout -out svc.key
+openssl req -new -key svc.key -out svc.csr \
+  -subj "/CN=api.example.com" \
+  -addext "subjectAltName=DNS:api.example.com,DNS:*.api.example.com"
+
+certbot certonly --webroot -w /var/www/acme \
+  -d api.example.com --non-interactive --agree-tos -m ops@example.com
+
+install -m 0644 /etc/letsencrypt/live/api.example.com/fullchain.pem /etc/nginx/tls/
+install -m 0600 /etc/letsencrypt/live/api.example.com/privkey.pem /etc/nginx/tls/
+nginx -t && systemctl reload nginx
+```
+
+EC keys speed handshakes vs RSA. CSR carries SAN for all SNI names. Certbot completes HTTP-01 at `/.well-known/acme-challenge/`. `fullchain.pem` includes intermediate for Android/Java trust.
+
+Renewal: cron/systemd timer `certbot renew --deploy-hook "systemctl reload nginx"`.
+
+## Pitfalls
+
+- **Private key in git.** Leak equals domain impersonation until revoke.
+- **Incomplete chain.** Desktop browsers tolerate; mobile SDKs fail.
+- **Forgotten reload.** New cert on disk while nginx keeps old cert in memory.
+- **HTTP-01 behind CDN.** Challenge must reach origin, not only edge cache.
+- **90-day LE without monitoring.** Expiry alerts mandatory even with auto-renew.

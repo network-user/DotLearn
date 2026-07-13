@@ -1,0 +1,68 @@
+---
+id: 2005
+title: "How does OAuth 2.0 work for Java services?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does OAuth 2.0 work for Java services?
+
+## In short
+
+OAuth 2.0 delegates access to resources without giving the user's password to the client. The client obtains a token from the authorization server and presents it to the resource server; only the trusted IdP sees the password.
+
+## How to answer in an interview
+
+- Roles: resource owner, client, authorization server, resource server.
+- For server-side web I use Authorization Code + PKCE; I do not use the password grant in prod.
+- Access tokens are short-lived; refresh tokens live server-side or in HttpOnly cookies.
+- Scopes are minimal: `read:orders`, not `admin`.
+- Honestly: OAuth solves delegation; it does not replace a full authorization model inside the API.
+
+## How it works
+
+Authorization Code Flow for a Spring app:
+
+1. The browser goes to `/oauth2/authorize?response_type=code&client_id=...&redirect_uri=...&scope=read`.
+2. The user logs in at the IdP and approves the scope.
+3. The IdP redirects to `redirect_uri?code=...`.
+4. The backend exchanges the code for tokens server-to-server:
+
+```java
+var form = new LinkedMultiValueMap<String, String>();
+form.add("grant_type", "authorization_code");
+form.add("code", authCode);
+form.add("redirect_uri", redirectUri);
+form.add("client_id", clientId);
+form.add("client_secret", clientSecret);
+
+var response = restClient.post()
+    .uri(tokenEndpoint)
+    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+    .body(form)
+    .retrieve()
+    .body(TokenResponse.class);
+```
+
+5. With the access token I call the API:
+
+```java
+restClient.get()
+    .uri(resourceBase + "/profile")
+    .header(HttpHeaders.AUTHORIZATION, "Bearer " + response.accessToken())
+    .retrieve()
+    .body(Profile.class);
+```
+
+PKCE (`code_challenge` / `code_verifier`) protects public clients from code interception. Client Credentials Flow applies to service-to-service calls without a user.
+
+## Pitfalls
+
+- **Implicit flow in SPAs.** Deprecated; without PKCE, code interception is realistic.
+- **Refresh token in localStorage.** XSS steals a long-lived session.
+- **Broad scopes.** Granting everything breaks least privilege.
+- **Mixing authn and authz.** A token proves identity; permissions are checked separately.
+- **Unvalidated redirect_uri.** An open redirect turns into code leakage.

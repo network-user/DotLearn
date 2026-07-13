@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { parseFlashcardsPracticeSearch, parseTopicsParam, topicsToParam } from './practice-search';
 
 describe('parseFlashcardsPracticeSearch', () => {
-  it('parses mode, filters, topics, and autostart', () => {
+  it('parses mode, filters, topics, direction, and autostart', () => {
     expect(
       parseFlashcardsPracticeSearch({
         mode: 'interview',
         category: 'python-core',
         stage: 'tech',
+        direction: 'go',
         topics: 'git,sql',
         due: 'all',
         count: '50',
@@ -18,11 +19,16 @@ describe('parseFlashcardsPracticeSearch', () => {
       mode: 'interview',
       category: 'python-core',
       stage: 'tech',
+      direction: 'go',
       topics: 'git,sql',
       due: 'all',
       count: '50',
       start: true,
     });
+  });
+
+  it('ignores invalid direction values', () => {
+    expect(parseFlashcardsPracticeSearch({ direction: 'invalid' })).toEqual({});
   });
 
   it('ignores invalid values', () => {

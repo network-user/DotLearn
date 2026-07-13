@@ -1,0 +1,75 @@
+---
+id: 1544
+title: "How do you stop a goroutine when no data arrives?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do you stop a goroutine when no data arrives?
+
+## In short
+
+In a worker loop use `select` among receive, `context.Done()`, and optionally `time.After`. External signals (cancel, closing a done chan, deadline) break the wait even when the data chan is silent. Without select the goroutine hangs on a blocking receive.
+
+## How to answer in an interview
+
+- Standard: `context.Context` for cancel and timeout; done chan as a legacy pattern.
+- `select` with default does not replace cancel; you need an explicit `<-ctx.Done()` branch.
+- After cancel exit the loop and release resources (defer close, wg.Done).
+- Honestly: `time.After` in a hot loop allocates timers; for frequent ticks prefer `time.NewTimer` with Reset.
+
+## How it works
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func awaitPayload(ctx context.Context, inbox <-chan int) error {
+	for {
+		select {
+		case v, ok := <-inbox:
+			if !ok {
+				return nil
+			}
+			fmt.Println("got:", v)
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	inbox := make(chan int)
+	go func() {
+		time.Sleep(2 * time.Second)
+		inbox <- 7
+	}()
+	err := awaitPayload(ctx, inbox)
+	fmt.Println("exit:", err)
+}
+```
+
+Context timeout exits the worker before 7 arrives. Production pattern: parent cancel on server shutdown.
+
+## Pitfalls
+
+**Sender leak after return.** Sender goroutine may stay blocked on send; cancel the sender or use a buffer.
+
+**Close data chan as cancel.** Closing data conflates "no more data" with shutdown; often use a separate done signal.
+
+**time.After every iteration.** Timer leaks in tight loops before recent runtime fixes; prefer context deadlines.
+
+**No drain on cancel.** Pending values in chan cause logical loss or double handling later.
+
+**Forget wg.Done on early exit.** Worker exits on timeout but WaitGroup never completes.

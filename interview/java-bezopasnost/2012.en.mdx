@@ -1,0 +1,56 @@
+---
+id: 2012
+title: "How does the TLS handshake work?"
+category: java-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does the TLS handshake work?
+
+## In short
+
+The TLS handshake negotiates protocol version, cipher suite, authenticates the server (and optionally the client), and derives shared session keys. Only after `Finished` does traffic flow encrypted with integrity checks.
+
+## How to answer in an interview
+
+- 1-RTT in TLS 1.3: ClientHello, ServerHello + cert + key share, Finished.
+- The server proves private key ownership via transcript signature or key exchange.
+- Symmetric keys come from ECDHE shared secret + HKDF, not RSA-encrypted premaster (legacy).
+- Java: `SSLSocket.startHandshake()` or implicit on first `read/write`.
+- Honestly: handshake CPU is costly on short connections; session resumption (TLS ticket) saves RTT and CPU.
+
+## How it works
+
+TLS 1.2 simplified:
+
+1. **ClientHello:** versions, cipher suites, random, SNI hostname.
+2. **ServerHello + Certificate:** chosen cipher, cert chain.
+3. **ServerKeyExchange** (for DHE/ECDHE): group parameters.
+4. **ClientKeyExchange:** premaster / client public share.
+5. **ChangeCipherSpec + Finished** from both sides: MAC transcript under the new key.
+
+Explicit handshake in Java:
+
+```java
+try (SSLSocket socket = (SSLSocket) SSLSocketFactory.getDefault()
+        .createSocket("api.example.com", 443)) {
+    socket.setEnabledProtocols(new String[] { "TLSv1.3", "TLSv1.2" });
+    socket.startHandshake();
+    SSLSession session = socket.getSession();
+    System.out.println("Cipher: " + session.getCipherSuite());
+    socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: api.example.com\r\n\r\n".getBytes(UTF_8));
+}
+```
+
+`startHandshake()` blocks until the exchange completes. After success `getSession()` shows the negotiated cipher (`TLS_AES_256_GCM_SHA384` in 1.3). Certificate validation and hostname check run automatically in JSSE with a correct trust store.
+
+## Pitfalls
+
+- **TLS renegotiation attacks (legacy).** Disable renegotiation on old stacks.
+- **Downgrade without HSTS.** The first HTTP request is intercepted before redirect.
+- **Weak cipher still enabled.** Without filtering `setEnabledCipherSuites`, 3DES remains.
+- **Missing SNI on shared IP.** Wrong cert on multi-tenant nginx.
+- **Handshake without OCSP stapling.** Extra latency and privacy leak on CRL checks.

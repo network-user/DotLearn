@@ -1,0 +1,76 @@
+---
+id: 4676
+title: "Почему полиморфный базовый класс требует virtual destructor?"
+category: cpp-klassy-oop-polimorfizm
+categoryLabel: "Классы / ООП / Полиморфизм"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Почему полиморфный базовый класс требует virtual destructor?
+
+## Суть
+
+Когда объект derived удаляют через указатель на base, без virtual destructor вызывается только ~Base. Динамически выделенные поля derived, file handles и mutex members не освобождаются.
+
+## Что ответить на собесе
+
+- Polymorphic base + delete через base pointer => virtual ~Base.
+- Альтернатива UB-free: не delete через base (CRTP, static type), но для runtime polymorphism virtual обязателен.
+- `std::unique_ptr<Base>` требует complete type и virtual dtor для массивов derived через base deleter.
+- Rule of thumb: destructor virtual if any virtual function exists.
+- Честно: `= default` virtual ~ в header достаточно; out-of-line definition нужен редко.
+
+## Как это работает
+
+```cpp
+#include <iostream>
+#include <memory>
+
+struct Shape {
+    virtual ~Shape() { std::cout << "~Shape\n"; }
+    virtual void draw() const = 0;
+};
+
+struct Circle : Shape {
+    ~Circle() override { std::cout << "~Circle\n"; }
+    void draw() const override {}
+};
+
+void dispose(Shape* item) {
+    delete item;
+}
+
+int main() {
+    dispose(new Circle{});
+    std::unique_ptr<Shape> owned{new Circle{}};
+}
+```
+
+При `delete` через `Shape*` runtime lookup выбирает `~Circle`, затем автоматически `~Shape`.
+
+Без virtual:
+
+```cpp
+struct ShapeBad {
+    ~ShapeBad() { std::cout << "~ShapeBad\n"; }
+};
+
+struct CircleBad : ShapeBad {
+    ~CircleBad() { std::cout << "~CircleBad\n"; }
+};
+
+void leak(CircleBad* c) {
+    ShapeBad* view = c;
+    delete view; // only ~ShapeBad
+}
+```
+
+## Подводные камни
+
+- **Stack objects fine.** Virtual dtor matters for pointer delete, not for automatic storage duration.
+- **Protected non-virtual ~.** Иногда base ~ protected non-virtual + public destroy() factory; pattern редкий.
+- **Multiple inheritance.** Virtual base subobjects complicate order; still need virtual ~ on polymorphic root.
+- **Exception safety.** Partial construction + non-virtual delete double trouble.
+- **Compiler warnings.** `-Wdelete-non-virtual-dtor` (Clang/GCC) стоит держать включённым.

@@ -1,0 +1,77 @@
+---
+id: 2974
+title: "Аутентификация и авторизация в API-тестах"
+category: aqa-bezopasnost-i-avtorizatsiya
+categoryLabel: "Безопасность и авторизация"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Аутентификация и авторизация в API-тестах
+
+## Суть
+
+Аутентификация отвечает на вопрос «кто ты» и проверяет учётные данные или токен. Авторизация решает «что тебе можно» после установленной личности. В автотестах это разные наборы кейсов: login/refresh vs role-based access к endpoint.
+
+## Что ответить на собесе
+
+- Формулирую authN: пароль, OAuth code flow, JWT, mTLS, API key; проверяю негативы (wrong password, expired token).
+- Формулирую authZ: RBAC/ABAC, scopes, ownership ресурса; ожидаю 403 при валидном токене без прав.
+- Разделяю тестовые роли: admin, user, guest; данные создаю под каждой учёткой.
+- Упоминаю OWASP: не путать 401 и 403, не логировать секреты, rotate refresh tokens в staging.
+- Честно добавляю: e2e с реальным IdP медленный; часть authN мокаю, но authZ на API проверяю против реальной policy.
+
+## Как это работает
+
+Типичный REST flow: POST `/login` проверяет credentials и выдаёт access token → клиент шлёт `Authorization: Bearer` → middleware валидирует подпись и claims → handler спрашивает policy engine, можно ли DELETE `/orders/{id}`.
+
+```python
+import httpx
+import pytest
+
+BASE = "https://staging.example.com"
+
+
+def login(client: httpx.Client, username: str, password: str) -> str:
+    response = client.post(f"{BASE}/auth/login", json={"username": username, "password": password})
+    response.raise_for_status()
+    return response.json()["access_token"]
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize(
+    "role, order_id, expected_status",
+    [
+        ("admin", "9001", 204),
+        ("user", "9001", 403),
+        ("guest", "9001", 401),
+    ],
+)
+def test_delete_order_authorization(role: str, order_id: str, expected_status: int):
+    creds = {"admin": ("a", "a-pass"), "user": ("u", "u-pass"), "guest": ("", "")}[role]
+    with httpx.Client(timeout=10.0) as client:
+        if role == "guest":
+            response = client.delete(f"{BASE}/orders/{order_id}")
+        else:
+            token = login(client, creds[0], creds[1])
+            response = client.delete(f"{BASE}/orders/{order_id}", headers=auth_headers(token))
+    assert response.status_code == expected_status
+```
+
+Отдельно тестирую horizontal privilege escalation: user A не читает заказ user B при подмене id в URL.
+
+## Подводные камни
+
+**401 vs 403 перепутаны.** Контракт API плавает, клиенты не различают re-login и «нет прав».
+
+**Токен с admin claim в user-тестах.** Copy-paste fixture открывает ложноположительный доступ.
+
+**Clock skew на JWT exp.** Flaky nightly из-за границы exp без запаса.
+
+**Auth только на gateway.** Прямой вызов internal service без проверки обходит policy.
+
+**Забытый logout/revoke.** Refresh остаётся валидным после «удаления» пользователя в UI.

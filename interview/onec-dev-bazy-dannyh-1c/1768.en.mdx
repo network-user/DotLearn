@@ -1,0 +1,60 @@
+---
+id: 1768
+title: "Physical layout of accumulation register tables in the DBMS"
+category: onec-dev-bazy-dannyh-1c
+categoryLabel: "Базы данных (1C)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Physical layout of accumulation register tables in the DBMS
+
+## In short
+
+An accumulation register in the database is a movement table with period, movement type, dimensions, resources, and recorder. To speed balances the platform may store total aggregates; query virtual tables read movements and totals when needed.
+
+## How to answer in an interview
+
+- I describe one movement row as a fact of resource change for a dimension set at a point in time.
+- In an interview I name key columns: `Period`, `_RecordKind`, dimensions, resources, `_RecorderRRef`.
+- I stress that balance is not a separate cell but an aggregate of receipts and issues for a slice.
+- I am honest that enabled totals speed reads but require recalculation when old documents are reposted.
+- For diagnosis I inspect `_AccumReg*` in the DBMS and tie them to document movements by recorder.
+
+## How it works
+
+When a document is posted each movement line becomes an INSERT into `_AccumRegN`. Movement type encodes receipt or issue. Period and point in time define order in operational accounting.
+
+```bsl
+Движения.ОстаткиТоваров.Записывать = Истина;
+Движение = Движения.ОстаткиТоваров.Добавить();
+Движение.ВидДвижения = ВидДвиженияНакопления.Приход;
+Движение.Период = ДатаДокумента;
+Движение.Склад = СкладПоступления;
+Движение.Номенклатура = Строка.Номенклатура;
+Движение.Количество = Строка.Количество;
+```
+
+The totals (aggregate) table stores accumulated sums by periods and dimensions when the register uses totals. Then the `Остатки` virtual table combines the total before the boundary and movements after, reducing read volume.
+
+A balance query compiles to SQL with GROUP BY or JOIN to the totals table:
+
+```bsl
+Запрос.Текст =
+"ВЫБРАТЬ
+|    Остатки.Номенклатура,
+|    Остатки.КоличествоОстаток
+|ИЗ
+|    РегистрНакопления.ОстаткиТоваров.Остатки(&Граница, Склад = &Склад) КАК Остатки";
+```
+
+Default indexes target period and dimensions. Mass reposting backdated rows invalidates totals and triggers recalculation, visible as an IO spike on the register table.
+
+## Pitfalls
+
+- **Confusing with an information register.** There is no receipt/issue movement type; the key model differs.
+- **Disabled totals on a large register.** Balances are always computed over full movement history.
+- **Reposting without understanding aggregates.** Totals diverge from detail until a scheduled rebuild.
+- **Balance query without a period boundary.** The plan reads the entire register.
+- **Direct SQL row deletion.** Breaks recorder linkage and corrupts accounting.

@@ -1,0 +1,74 @@
+---
+id: 3448
+title: "Event loop и порядок assert в JS-тестах"
+category: aqa-javascript
+categoryLabel: "JavaScript"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Event loop и порядок assert в JS-тестах
+
+## Суть
+
+Event loop в браузере и Node держит один поток JS: call stack выполняет синхронный код, Web API/ libuv уводят таймеры и I/O, колбэки попадают в очереди (macrotask/microtask). Когда стек пуст, loop подтягивает microtask (Promise) раньше следующего macrotask (`setTimeout`). Flaky часто из-за неверного ожидания порядка.
+
+## Что ответить на собесе
+
+- Синхронный код всегда завершается до колбэка таймера с нулевой задержкой... кроме microtask между ними.
+- `setTimeout(fn, 0)` не гарантирует мгновенный запуск после `fetch` thenable.
+- В тестах жду condition (Playwright `expect.poll`), а не фиксированный sleep.
+- В Node API suite разделяю unit без I/O и integration с реальным loop timing.
+- Честно: `queueMicrotask` и `Promise.resolve().then` могут опередить `setTimeout(0)` и сломать наивный assert порядка логов.
+
+## Как это работает
+
+Демонстрация порядка:
+
+```
+console.log("A");
+setTimeout(() => console.log("B"), 0);
+Promise.resolve().then(() => console.log("C"));
+console.log("D");
+```
+
+Вывод: A, D, C, B. Таймер ушёл в Web API, then попал в microtask queue.
+
+Схема потока:
+
+<figure aria-label="event loop · stack · queues">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" fill="none" stroke="currentColor" stroke-width="1.5">
+  <rect x="8" y="20" width="70" height="40" rx="4"/>
+  <text x="43" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Stack</text>
+  <path d="M88 40 H110"/>
+  <polygon points="110,36 118,40 110,44" fill="currentColor"/>
+  <rect x="124" y="20" width="80" height="40" rx="4"/>
+  <text x="164" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Microtasks</text>
+  <path d="M214 40 H236"/>
+  <polygon points="236,36 244,40 236,44" fill="currentColor"/>
+  <rect x="250" y="20" width="62" height="40" rx="4"/>
+  <text x="281" y="45" text-anchor="middle" font-size="9" fill="currentColor" stroke="none">Timers</text>
+</svg>
+</figure>
+
+В pytest фиксирую ожидаемую последовательность событий тестового лога:
+
+```python
+def test_expected_async_log_order():
+    events = ["sync_start", "sync_end", "microtask", "macrotask"]
+    assert events.index("microtask") < events.index("macrotask")
+    assert events.index("sync_end") < events.index("microtask")
+```
+
+## Подводные камни
+
+**Жёсткий sleep 1000ms.** Маскирует баг и удлиняет пайплайн.
+
+**Блокирующий while в тесте.** Кладёт весь tab/process, таймеры не тикают.
+
+**await только первого then.** Второй microtask ещё не выполнен.
+
+**requestAnimationFrame в headless.** Кадры throttled, assert на paint flaky.
+
+**Параллельные воркеры Jest.** Общий таймер mock не изолирован без `jest.isolateModules`.

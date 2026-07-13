@@ -1,0 +1,63 @@
+---
+id: 4281
+title: "Где смотреть логи Nginx и как их читать?"
+category: devops-monitoring-logi-observability
+categoryLabel: "Мониторинг / Логи / Observability"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Где смотреть логи Nginx и как их читать?
+
+## Суть
+
+Nginx пишет access log (каждый HTTP-запрос) и error log (ошибки worker'ов и upstream). Пути задаются в `nginx.conf` через директивы `access_log` и `error_log`; дефолт на Debian/Ubuntu часто `/var/log/nginx/`. Для live-диагностики используют `tail -f`, для разбора инцидента фильтруют `grep`/`awk` или шлют в Loki/ELK.
+
+## Что ответить на собесе
+
+- Сначала смотрю `error.log` при 502/504, затем `access.log` по status и latency.
+- `tail -f` для realtime, `less +G` для больших файлов, `journalctl` если nginx в systemd unit с redirect.
+- Проверяю custom path: `nginx -T | grep -E 'access_log|error_log'`.
+- На k8s: `kubectl logs` sidecar или stdout driver вместо файлов на диске pod.
+- Честно: ротация без log shipper теряет контекст; на prod всегда centralize + retention policy.
+
+## Как это работает
+
+Узнать фактические пути логов:
+
+```bash
+sudo nginx -T 2>/dev/null | grep -E '^\s*(access_log|error_log)'
+```
+
+Мониторинг 5xx в access log в реальном времени:
+
+```bash
+sudo tail -F /var/log/nginx/access.log | awk '$9 ~ /^5/ { print $0 }'
+```
+
+Последние 200 строк error log с контекстом:
+
+```bash
+sudo tail -n 200 /var/log/nginx/error.log
+```
+
+Поиск медленных запросов (если log_format содержит `$request_time`):
+
+```bash
+sudo awk '$NF > 1.0 { print }' /var/log/nginx/access.log | tail -n 50
+```
+
+В контейнере без shell доступа к файлу:
+
+```bash
+kubectl logs -n ingress deploy/nginx-ingress -c controller --tail=100 -f
+```
+
+## Подводные камни
+
+- **Неверный vhost log.** Virtual host может писать в отдельный файл; смотрю только default и пропускаю 404 storm на другом site.
+- **Permission denied.** Обычный пользователь не читает `/var/log/nginx`; нужен sudo или группа `adm`.
+- **Ротация и tail -F.** После `logrotate` без `copytruncate` или `create` tail теряет inode; предпочитаю shipper с offset.
+- **Шум health checks.** LB probes забивают access log; выношу их в отдельный `location` с `access_log off`.
+- **JSON vs combined.** Парсинг combined формата regex'ом хрупок; для аналитики перевожу на `log_format json`.

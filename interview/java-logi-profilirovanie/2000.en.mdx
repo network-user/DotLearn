@@ -1,0 +1,71 @@
+---
+id: 2000
+title: "How does distributed tracing work with traceId and spanId?"
+category: java-logi-profilirovanie
+categoryLabel: "Логи/Профилирование"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does distributed tracing work with traceId and spanId?
+
+## In short
+
+Distributed tracing models a request as a tree of spans. TraceId unifies the whole tree; each spanId is one operation (HTTP call, SQL, cache) with timing and tags. Parent spanId links child steps; export to Jaeger/Tempo gives a waterfall and the critical path latency.
+
+## How to answer in an interview
+
+- Trace = full request path; span = unit of work with start/end timestamps.
+- Parent/child links build the call tree; span kind: CLIENT, SERVER, INTERNAL.
+- W3C Trace Context: traceparent carries trace-id and parent span-id.
+- In Java: OpenTelemetry SDK, Micrometer Tracing, Brave.
+- I add honestly: 100% sampling in production is expensive; head-based 1-5% plus tail sampling on errors is typical.
+
+## How it works
+
+```java
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
+
+final class CheckoutFacade {
+    private final Tracer tracer;
+    private final InventoryClient inventory;
+
+    CheckoutFacade(Tracer tracer, InventoryClient inventory) {
+        this.tracer = tracer;
+        this.inventory = inventory;
+    }
+
+    void checkout(String orderId) {
+        Span root = tracer.spanBuilder("checkout").startSpan();
+        try (Scope scope = root.makeCurrent()) {
+            reserveStock(orderId);
+        } finally {
+            root.end();
+        }
+    }
+
+    private void reserveStock(String orderId) {
+        Span child = tracer.spanBuilder("inventory.reserve")
+            .setAttribute("orderId", orderId)
+            .startSpan();
+        try (Scope scope = child.makeCurrent()) {
+            inventory.reserve(orderId);
+        } finally {
+            child.end();
+        }
+    }
+}
+```
+
+The `checkout` span is the root with a shared traceId. The `inventory.reserve` child inherits traceId, gets its own spanId and parent link. The exporter sends both spans to the backend; the UI builds a timeline: checkout 120ms, reserve 95ms (bottleneck). Errors are marked with `span.recordException(ex)` for a red span in the trace view.
+
+## Pitfalls
+
+- **Orphan spans.** Downstream did not receive propagated context.
+- **Spans that are too fine.** Tracing every getter bloats storage.
+- **Clock skew across hosts.** Wrong order without NTP.
+- **Forgotten span.end().** Leaks and open durations in the backend.
+- **Tracing only HTTP.** Missed Kafka consumers and batch jobs.

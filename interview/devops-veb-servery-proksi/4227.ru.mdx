@@ -1,0 +1,70 @@
+---
+id: 4227
+title: "Что такое Nginx и где его применяют?"
+category: devops-veb-servery-proksi
+categoryLabel: "Веб-серверы / Прокси"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что такое Nginx и где его применяют?
+
+## Суть
+
+Nginx это event-driven веб-сервер и reverse proxy с низким потреблением памяти на соединение. Решает static content, TLS termination, load balancing, rate limiting, кэширование upstream. Часто стоит перед app-серверами (Node, PHP-FPM, uWSGI) как edge tier в Kubernetes Ingress и CDN origin.
+
+## Что ответить на собесе
+
+- Master + worker processes, async I/O; хорошо держит много keep-alive без thread-per-connection.
+- Reverse proxy с `proxy_pass`, health-aware upstream, пасс заголовков `X-Forwarded-*`.
+- L7 балансировка: round-robin, least_conn, hash, sticky cookie.
+- Static offload: `root`/`try_files` снимает нагрузку с application tier.
+- Честно: динамика без кэша всё равно упирается в backend; nginx не заменяет app scaling.
+
+## Как это работает
+
+Типичный edge server block:
+
+```nginx
+upstream api_backends {
+    least_conn;
+    server 10.0.1.11:8080 max_fails=2 fail_timeout=10s;
+    server 10.0.1.12:8080 max_fails=2 fail_timeout=10s;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/ssl/certs/api.pem;
+    ssl_certificate_key /etc/ssl/private/api.key;
+
+    location / {
+        proxy_pass http://api_backends;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /assets/ {
+        root /var/www/static;
+        expires 7d;
+    }
+}
+```
+
+Reload без drop соединений при корректном `upgrade`:
+
+```bash
+sudo nginx -t && sudo nginx -s reload
+```
+
+## Подводные камни
+
+- **Worker connections limit.** При дефолте 512 и massive traffic получаю 502; поднимаю `worker_connections` и `somaxconn`.
+- **Proxy buffer defaults.** Большие JSON ответы блокируются на `proxy_buffers`; тюню под API payload.
+- **Config include order.** Server blocks в алфавитном include меняют implicit default; явный `default_server` обязателен.
+- **HTTP/2 push deprecated.** Не включаю push без измерений; часто вреден cache hit ratio.
+- **Stream module отдельно.** TCP proxy в `stream {}`, не в `http {}`; другой контекст и метрики.

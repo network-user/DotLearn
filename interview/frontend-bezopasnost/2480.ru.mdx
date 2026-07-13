@@ -1,0 +1,63 @@
+---
+id: 2480
+title: "HttpOnly: как скрыть cookie от JavaScript"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HttpOnly: как скрыть cookie от JavaScript
+
+## Суть
+
+Флаг HttpOnly в Set-Cookie запрещает доступ к cookie через `document.cookie` и любой DOM API. Браузер всё равно автоматически прикрепляет cookie к HTTP запросам matching domain/path. Это снижает impact XSS на session hijack.
+
+## Что ответить на собесе
+
+- Session, refresh, CSRF double-submit secret: HttpOnly + Secure + SameSite.
+- JS не может прочитать HttpOnly даже для debug; использую network tab server-side logs.
+- HttpOnly не защищает от CSRF: browser still sends cookie on forged request.
+- Честно: XSS может perform actions as user without reading cookie (same-origin fetch).
+- Pair with short TTL and rotation on privilege change.
+
+## Как это работает
+
+Server response:
+
+```http
+Set-Cookie: refresh=eyJ...; HttpOnly; Secure; SameSite=Strict; Path=/auth/refresh; Max-Age=604800
+```
+
+Client fetch:
+
+```ts
+await fetch('/api/profile', { credentials: 'include' });
+console.log(document.cookie);
+```
+
+`document.cookie` не покажет `refresh`. Browser adds header automatically:
+
+```http
+Cookie: refresh=eyJ...
+```
+
+In Express-like APIs flag set server-side only:
+
+```ts
+response.headers.append(
+  'Set-Cookie',
+  `session=${sid}; HttpOnly; Secure; SameSite=Lax; Path=/`
+);
+```
+
+Defense depth: HttpOnly removes one XSS exfil path; CSP still required to block script injection.
+
+## Подводные камни
+
+- **Bearer in JS vs cookie auth.** Teams mix models; HttpOnly irrelevant if token in localStorage.
+- **Debug frustration.** Devs toggle HttpOnly off locally; must not ship.
+- **Subresource requests.** HttpOnly cookies still sent; CSRF token needed.
+- **Cookie prefixes.** `__Secure-` and `__Host-` add extra constraints modern browsers enforce.
+- **XSS still dangerous.** Attacker script can call `/api/transfer` with credentials include without reading cookie value.

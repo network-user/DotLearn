@@ -1,0 +1,55 @@
+---
+id: 3026
+title: "Зачем в системе очереди сообщений с позиции QA?"
+category: qa-asinhronnye-sistemy-i-ocheredi
+categoryLabel: "Асинхронные системы и очереди"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в системе очереди сообщений с позиции QA?
+
+## Суть
+
+Очередь буферизует работу между быстрым приёмом запроса и медленной обработкой. Она даёт асинхронность, балансировку нагрузки между workers, устойчивость при падении consumer и горизонтальное масштабирование. QA проверяет, что при пике заказов API отвечает быстро, а фоновые задачи доходят без потерь и в разумный SLA.
+
+## Что ответить на собесе
+
+- Пользователь получает 202 Accepted, письмо уходит из worker позже.
+- Несколько consumer делят одну очередь: round-robin или competing consumers.
+- При остановке worker сообщения не исчезают при durable queue.
+- Метрики: depth, age of oldest message, processing rate.
+- Честно: без лимита prefetch один жирный job блокирует всю очередь.
+
+## Как это работает
+
+```gherkin
+Feature: Queue purpose validation
+
+  Scenario: Fast API response under load
+    Given 500 checkout requests per minute
+    When API enqueues PaymentJob only
+    Then HTTP response under 300 ms
+    And all jobs processed within 10 minutes
+
+  Scenario: Worker scale out
+    Given queue depth 2000
+    When add second consumer instance
+    Then drain rate doubles depth decreases
+
+  Scenario: Consumer crash recovery
+    Given worker dies mid job without ack
+    When worker restarts
+    Then same job redelivered exactly once business effect if idempotent
+```
+
+Пример order flow: `enqueue(orderId)` → workers `process_order` → статус в БД. QA polling статуса до `COMPLETED`.
+
+## Подводные камни
+
+- **Нет лимита длины очереди.** OOM брокера при burst.
+- **Тест одиночным worker при prod cluster.** SLA не совпадает.
+- **Игнор priority queue.** VIP заказы ждут за bulk import.
+- **Синхронный fallback без теста.** Обход очереди под нагрузкой ломается.
+- **Не проверяю dead letter.** Зависшие job невидимы пользователю.

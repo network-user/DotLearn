@@ -1,0 +1,54 @@
+---
+id: 4177
+title: "How does TLS combine symmetric and asymmetric encryption?"
+category: devops-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How does TLS combine symmetric and asymmetric encryption?
+
+## In short
+
+During the TLS handshake, asymmetric crypto (RSA or ECDHE) authenticates the server and derives the premaster/session secret. After key switch, all HTTP traffic uses symmetric AEAD (AES-GCM, ChaCha20-Poly1305) because symmetric crypto is faster at bulk volume.
+
+## How to answer in an interview
+
+- I split phases: handshake (public-key math) vs record layer (bulk symmetric).
+- In TLS 1.3 forward secrecy comes from ephemeral ECDHE; compromising a long-term key does not decrypt past sessions.
+- I name typical cipher suites and note that nginx `HIGH` is outdated guidance.
+- I add honestly: "SSL" in interviews usually means TLS 1.2+; I do not use SSLv3.
+
+## How it works
+
+ClientHello/ServerHello pick version and groups. The server sends a cert chain; the client checks the trust store. ECDHE yields a shared secret without sending it in cleartext. KDF derives client/server write keys.
+
+Inspect negotiated cipher:
+
+```bash
+openssl s_client -connect gateway.example.com:443 -tls1_2 </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject
+
+echo | openssl s_client -connect gateway.example.com:443 -tls1_3 2>/dev/null \
+  | grep -E 'Protocol|Cipher|Server Temp Key'
+```
+
+For hardening disable static RSA key transport (no FS) and legacy 3DES:
+
+```bash
+grep ssl_protocols /etc/nginx/nginx.conf
+grep ssl_ciphers /etc/nginx/nginx.conf
+nginx -T 2>/dev/null | grep -i ssl_protocols
+```
+
+TLS 1.3 narrows cipher choice; server and client agree on one AEAD suite. Session resumption (tickets) speeds repeat handshakes without full asymmetric math again.
+
+## Pitfalls
+
+- **RSA key exchange without ECDHE.** No forward secrecy; private key compromise exposes archived traffic.
+- **Mixed TLS versions.** Client fallback to 1.0 revives BEAST/POODLE class issues.
+- **Self-signed in prod.** Internal mesh without a private CA breaks mTLS automation.
+- **Reused session tickets.** Bad ticket key rotation risks decrypting resumed sessions.
+- **Termination logging.** Reverse proxy SSL inspection needs explicit policy and audit.

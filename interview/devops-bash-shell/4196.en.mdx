@@ -1,0 +1,61 @@
+---
+id: 4196
+title: "How do Docker exec and shell forms differ?"
+category: devops-bash-shell
+categoryLabel: "Bash / Shell"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How do Docker exec and shell forms differ?
+
+## In short
+
+In a Dockerfile `CMD`/`ENTRYPOINT` can use exec form (JSON array) or shell form (string via `/bin/sh -c`). Exec starts the process directly as PID 1; shell wraps the command in sh, including variable expansion and `&&` chains.
+
+## How to answer in an interview
+
+- Exec: `CMD ["nginx", "-g", "daemon off;"]` with no intermediate shell.
+- Shell: `CMD nginx -g 'daemon off;'` becomes `sh -c`.
+- `docker exec` is a separate runtime command: a new process in a live container for debugging.
+- Honestly: shell form breaks signal forwarding (SIGTERM may not reach the app); in production I prefer exec plus an explicit entrypoint script when needed.
+
+## How it works
+
+Exec form in the image:
+
+```dockerfile
+FROM nginx:1.27
+ENTRYPOINT ["nginx"]
+CMD ["-g", "daemon off;"]
+```
+
+Shell form (anti-pattern for PID 1):
+
+```dockerfile
+CMD nginx -g 'daemon off;'
+```
+
+Debug a running container:
+
+```bash
+docker exec -it payments-api-1 /bin/bash
+docker exec payments-api-1 ps aux
+```
+
+Check who is PID 1:
+
+```bash
+docker top payments-api-1
+```
+
+I add an init wrapper (`tini`, `dumb-init`) if the app does not reap zombies.
+
+## Pitfalls
+
+- **Shell form and env vars.** `$VAR` expands in sh but signals are lost.
+- **JSON exec without shell.** `CMD ["sh", "-c", "migrate && app"]` is still needed for chains.
+- **docker exec as root.** People forget `--user`; debugging breaks file permissions.
+- **PID 1 without graceful shutdown.** Kubernetes SIGTERM may not reach JVM/Node.
+- **Dockerfile exec vs docker exec CLI.** In interviews I separate build-time entrypoint and runtime attach.

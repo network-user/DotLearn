@@ -1,0 +1,48 @@
+---
+id: 4192
+title: "How is a Kafka consumer structured?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How is a Kafka consumer structured?
+
+## In short
+
+A consumer reads records from a topic via the pull API, joins a consumer group, and receives assigned partitions. Offsets are committed to `__consumer_offsets` after processing; rebalance redistributes partitions on scale up/down.
+
+## How to answer in an interview
+
+- `group.id` defines cooperative consumption: one partition per consumer in the group.
+- `enable.auto.commit=false` plus manual commit after successful processing gives at-least-once.
+- `max.poll.interval.ms` and `session.timeout.ms` guard against a stuck consumer.
+- Honestly: exactly-once end-to-end needs an idempotent producer plus transactional consume-process-produce; a simple consumer is usually at-least-once with dedup.
+
+## How it works
+
+Console consumer for debugging:
+
+```bash
+kafka-console-consumer.sh --bootstrap-server kafka.internal:9092 \
+  --topic payments --group debug-readers --from-beginning --max-messages 5
+```
+
+Group lag check:
+
+```bash
+kafka-consumer-groups.sh --bootstrap-server kafka.internal:9092 \
+  --describe --group billing-workers
+```
+
+Typical app loop: `poll()` → process batch → `commitSync()` or async commit. Adding a Kubernetes pod triggers coordinator rebalance; `CooperativeStickyAssignor` reduces stop-the-world. Paused partitions allow backpressure without losing membership.
+
+## Pitfalls
+
+- **Commit before processing.** Auto-commit loses messages on crash after poll.
+- **Long batch processing.** Exceeding `max.poll.interval` evicts the consumer from the group.
+- **Rebalance storm.** Frequent HPA scaling without static membership shuffles offsets.
+- **Reading without key ordering.** Multiple partitions break ordering for one entity.
+- **Duplicates after rebalance.** At-least-once without an idempotent handler causes double charges.

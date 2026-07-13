@@ -1,0 +1,78 @@
+---
+id: 2973
+title: "Refresh flow: как QA гоняет обновление токена?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Refresh flow: как QA гоняет обновление токена?
+
+## Суть
+
+Refresh flow обменивает долгоживущий refresh token на новый access (и иногда новый refresh при rotation). Это снижает окно компрометации access и избавляет от частого ввода пароля. QA проверяет позитивный обмен, отзыв, reuse detection, утечку refresh в логи и корректность cookie vs body transport.
+
+## Что ответить на собесе
+
+- После login получаю пару access+refresh; истекаю access, один POST `/token` с `grant_type=refresh_token` даёт новый access.
+- Rotation: старый refresh после успешного обмена недействителен; повтор со старым жду 401 и revoke всех сессий.
+- Refresh только по HTTPS, Prefer HttpOnly cookie для refresh в browser apps.
+- Честно: не тестирую refresh в localStorage как best practice; если продукт так сделан, эскалирую security review.
+
+## Как это работает
+
+Запрос обновления:
+
+```http
+POST /oauth/token HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=rt_8f3k...&client_id=spa
+```
+
+Ответ:
+
+```json
+{
+  "access_token": "at_new",
+  "expires_in": 900,
+  "refresh_token": "rt_rotated"
+}
+```
+
+Gherkin:
+
+```gherkin
+Feature: OAuth refresh flow
+
+  Scenario: Успешное обновление access
+    Given валидный refresh rt_valid
+    When POST /oauth/token с grant_type refresh_token
+    Then статус 200
+    And access_token новый
+    And expires_in больше 0
+
+  Scenario: Reuse старого refresh после rotation
+    Given refresh уже использован и выдан rt_new
+    When POST с rt_old повторно
+    Then статус 401 invalid_grant
+    And все сессии пользователя revoked
+
+  Scenario: Истёкший refresh требует login
+    Given refresh exp прошёл
+    When POST refresh
+    Then статус 401
+    And SPA редирект на /login
+```
+
+В Network фильтрую `token`; убеждаюсь, refresh не попадает в analytics query params.
+
+## Подводные камни
+
+- **Refresh в URL redirect.** Утечка через Referer и server logs.
+- **Нет binding refresh к client_id.** Украденный refresh работает с другого origin.
+- **Infinite refresh loop на 500.** Клиент DDOSит auth server.
+- **Concurrent tab double refresh.** Race ломает rotation.
+- **Mobile background refresh без network.** Silent fail до foreground.

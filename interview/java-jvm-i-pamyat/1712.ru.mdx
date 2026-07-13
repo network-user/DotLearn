@@ -1,0 +1,52 @@
+---
+id: 1712
+title: "Как JVM освобождает память через Garbage Collector?"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Как JVM освобождает память через Garbage Collector?
+
+## Суть
+
+Garbage Collector находит объекты, до которых нет достижимых ссылок из GC roots, и reclaim-ит их память без ручного `free`. Современные JVM делят heap на поколения и применяют разные алгоритмы к young и old generation, чтобы большинство короткоживущих объектов собиралось быстро.
+
+## Что ответить на собесе
+
+- Определяю GC как автоматическое управление heap: программист не освобождает память явно.
+- Объясняю reachability: живы объекты, достижимые из stack, static fields, JNI handles и т.д.
+- Называю типичные алгоритмы: mark-sweep, copying в young gen, generational hypothesis.
+- Упоминаю stop-the-world паузы и concurrent/collector-ы (G1, ZGC, Shenandoah) для снижения latency.
+- Честно добавляю: `System.gc()` лишь *предлагает* сборку и на проде обычно отключён или игнорируется; полагаться на него нельзя.
+
+## Как это работает
+
+При создании объекта память берётся из eden young generation. Minor GC копирует живые объекты в survivor space; после нескольких циклов они промотируются в old gen. Major GC (или mixed в G1) обрабатывает долгоживущие структуры.
+
+```java
+public final class EphemeralBufferDemo {
+    public static void main(String[] args) {
+        byte[] payload = new byte[1024];
+        System.out.println("allocated length=" + payload.length);
+
+        payload = null;
+
+        System.gc();
+    }
+}
+```
+
+После `payload = null` массив становится unreachable (если нет других ссылок). GC может его удалить при следующем цикле, но момент не детерминирован. JVM выбирает collector через флаги (`-XX:+UseG1GC`, `-XX:+UseZGC`) и размер heap (`-Xms`, `-Xmx`).
+
+Мониторинг: логи GC (`-Xlog:gc*`), метрики pause time и allocation rate помогают ловить memory leak (объект reachable, но бизнес-логике не нужен) vs просто высокий churn.
+
+## Подводные камни
+
+- **Утечка через static/cache.** Объект reachable из static map живёт до конца процесса, GC его не тронет.
+- **Finalizer и Cleaner.** Отложенное освобождение ресурсов растягивает lifetime; для файлов и сокетов лучше try-with-resources.
+- **Premature promotion.** Слишком большие объекты или высокая survival rate забивают old gen и вызывают длинные full GC.
+- **Неверный размер heap.** Слишком маленький heap повышает частоту GC; слишком большой удлиняет pause на mark phase.
+- **Off-heap слепая зона.** Direct buffers и native memory не в heap; их нужно учитывать отдельно от `-Xmx`.

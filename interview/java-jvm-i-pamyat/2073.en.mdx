@@ -1,0 +1,57 @@
+---
+id: 2073
+title: "How to hunt a Java memory leak"
+category: java-jvm-i-pamyat
+categoryLabel: "JVM и память"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How to hunt a Java memory leak
+
+## In short
+
+A leak in Java is not a forgotten `free` but live references to objects the app no longer needs. GC will not collect the reachable graph from GC roots. Diagnosis: heap metrics after Full GC, heap dump, dominator tree in MAT, then fix the reference source (static map, listener, ThreadLocal, cache without eviction).
+
+## How to answer in an interview
+
+- Confirm leak: heap grows, old gen does not drop after GC.
+- Capture hprof: `-XX:+HeapDumpOnOutOfMemoryError` or `jcmd PID GC.heap_dump`.
+- MAT Leak Suspects + path to GC roots shows the retaining collection.
+- Typical culprits: unbounded cache, forgotten EventListener, classloader leak.
+- Honestly: without staging repro and load test it is easy to confuse leak with normal working set growth.
+
+## How it works
+
+Suspicious code:
+
+```java
+public final class SessionRegistry {
+
+    private static final Map<String, UserSession> ACTIVE = new ConcurrentHashMap<>();
+
+    public void register(UserSession session) {
+        ACTIVE.put(session.token(), session);
+    }
+}
+```
+
+`register` without `remove` → map grows with every login.
+
+Workflow:
+
+1. **Monitoring.** Prometheus `jvm_memory_used_bytes{area="heap"}` or Micrometer; watch trend after forced GC.
+2. **Dump.** `jcmd <pid> GC.heap_dump /tmp/leak.hprof`.
+3. **MAT.** Dominator tree → `ConcurrentHashMap` 80% heap → inspect entries → inbound references from `SessionRegistry.ACTIVE`.
+4. **Fix.** TTL cache (Caffeine `expireAfterAccess`), weak refs only if semantics allow, or explicit logout cleanup.
+
+Verify: 2h soak test, heap plateau after GC cycles.
+
+## Pitfalls
+
+- **System.gc() in prod.** STW pause with no guarantee of full cycle; prefer JFR + native memory tracking.
+- **Dump on huge heap.** 32GB hprof will not open on a laptop; need `-XX:HeapDumpPath` on server.
+- **False leak.** Class metadata growth from dynamic proxies != object leak.
+- **ThreadLocal in pool.** Worker thread reused, value not `remove()` after request.
+- **SoftReference myth.** GC collects soft refs only under memory pressure, not immediately.

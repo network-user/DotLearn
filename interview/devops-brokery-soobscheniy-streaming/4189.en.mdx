@@ -1,0 +1,52 @@
+---
+id: 4189
+title: "Why do you need RabbitMQ in the stack?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Why do you need RabbitMQ in the stack?
+
+## In short
+
+RabbitMQ is an AMQP broker that decouples producers and consumers through exchanges, bindings, and queues. Messages are buffered to disk; routing is flexible (direct, topic, fanout, headers); acknowledgements and dead-letter queues give delivery control.
+
+## How to answer in an interview
+
+- A producer publishes to an exchange, not directly to a queue; bindings tie routing keys to queues.
+- Consumer ack/nack controls redelivery; prefetch limits in-flight messages.
+- I use it for task queues, RPC via reply queues, and fanout notifications across services.
+- Honestly: RabbitMQ is not log-based streaming like Kafka; for full-stream replay and high throughput I usually pick Kafka or Pulsar.
+
+## How it works
+
+An order service publishes an event; warehouse and billing subscribe to different queues via a topic exchange:
+
+```bash
+rabbitmqadmin declare exchange name=orders.events type=topic durable=true
+rabbitmqadmin declare queue name=warehouse.fulfill durable=true
+rabbitmqadmin declare binding source=orders.events destination=warehouse.fulfill \
+  routing_key='order.created'
+
+rabbitmqadmin publish exchange=orders.events routing_key=order.created \
+  payload='{"orderId":"ord-991","sku":"widget-a"}'
+```
+
+Consumer with manual ack:
+
+```bash
+rabbitmqadmin get queue=warehouse.fulfill ackmode=ack_requeue_false count=1
+```
+
+Publisher confirms and persistent messages (`delivery_mode=2`) protect against loss on broker crash. HA uses quorum queues or classic mirrored queues (legacy). The management plugin exposes unacked counts and rates.
+
+## Pitfalls
+
+- **Unbounded queue growth.** A consumer slower than the producer without TTL/DLQ fills RAM and disk.
+- **Prefetch too high.** One consumer grabs all messages while others sit idle.
+- **Fanout without binding keys.** Messages are lost if no queue is bound to the exchange.
+- **Poison message loop.** Nack with requeue=true without a retry counter spins one message forever.
+- **Classic mirrored queues deprecated.** On new clusters I plan for quorum streams upfront.

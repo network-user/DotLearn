@@ -1,0 +1,66 @@
+---
+id: 2498
+title: "Environment variables on the frontend"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Environment variables on the frontend
+
+## In short
+
+On the frontend, env vars are baked in at build time: the bundler replaces `import.meta.env.VITE_*` or `process.env.REACT_APP_*` with literals. The browser runtime does not read OS environment. This is per-deploy config (dev/stage/prod), not a secret store: any user can see values in the bundle.
+
+## How to answer in an interview
+
+- Vite: only `VITE_`-prefixed variables reach client code; `.env` and `.env.production` follow mode.
+- CRA/React scripts: `REACT_APP_` prefix with static `process.env` replacement.
+- Keep secrets (private API keys) on a backend proxy, not in frontend env.
+- Honestly: you cannot hide a client key via env; obfuscation is not protection.
+- CI injects via `ENVFILE` or pipeline variables before `pnpm build`.
+
+## How it works
+
+`.env.production`:
+
+```
+VITE_API_ORIGIN=https://api.example.com
+VITE_FEATURE_FLAGS=checkout_v2
+```
+
+```ts
+const apiOrigin = import.meta.env.VITE_API_ORIGIN;
+const flags = import.meta.env.VITE_FEATURE_FLAGS?.split(',') ?? [];
+
+export async function fetchProfile() {
+  const response = await fetch(`${apiOrigin}/profile`, { credentials: 'include' });
+  return response.json();
+}
+
+export function isCheckoutV2Enabled() {
+  return flags.includes('checkout_v2');
+}
+```
+
+Webpack-style (legacy):
+
+```ts
+const apiOrigin = process.env.REACT_APP_API_ORIGIN;
+
+if (!apiOrigin) {
+  throw new Error('REACT_APP_API_ORIGIN is required at build time');
+}
+```
+
+The build pipeline substitutes values: `VITE_API_ORIGIN=https://staging.api.example.com pnpm build`. After deploy you cannot change the URL without a rebuild (except runtime config endpoints or `window.__CONFIG__` injected via server HTML).
+
+## Pitfalls
+
+- **False security.** Publishing `VITE_STRIPE_KEY` in a repo `.env` still leaks in JS.
+- **Drift between env files.** A dev `.env.local` with another API breaks production repro.
+- **Typo in prefix.** `API_URL` without `VITE_` is silently undefined in Vite.
+- **Boolean as string.** `VITE_DEBUG=false` is truthy; compare with `=== 'true'`.
+- **SSR leak.** Env also lands in server bundles; do not duplicate server-only secrets in `VITE_` vars.

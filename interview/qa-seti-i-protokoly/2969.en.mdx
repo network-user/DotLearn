@@ -1,0 +1,67 @@
+---
+id: 2969
+title: "HTTP proxying: how does QA use an intermediary in tests?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# HTTP proxying: how does QA use an intermediary in tests?
+
+## In short
+
+A forward proxy accepts the client request, may change headers or URL, calls the origin, and returns the response. A reverse proxy (nginx, CDN) sits in front of the backend and terminates TLS. QA mostly uses forward (Charles, Fiddler, Burp) for map local, throttle, and response rewrite; understanding the chain helps separate CDN bugs from API bugs.
+
+## How to answer in an interview
+
+- HTTP proxy for HTTPS uses CONNECT: tunnel to origin, decryption only with MITM on a trusted CA.
+- Proxy cache may serve stale 304; after an API deploy I use Disable cache in DevTools and hard refresh.
+- Map local in Charles reproduces offline JSON without an in-app mock.
+- Honestly: rewriting responses in a proxy does not replace contract tests on real staging.
+
+## How it works
+
+Chain with reverse proxy:
+
+```
+Browser → CDN (reverse) → Ingress → Pod
+                ↑ QA checks X-Cache, Age here
+```
+
+Gherkin with map local:
+
+```gherkin
+Feature: UI test when backend is unavailable
+
+  Background:
+    Given Charles map local "/api/v1/profile" to fixture profile_ok.json
+
+  Scenario: Profile loads from fixture
+    When the user opens /account
+    Then block "Email" shows qa@example.com
+    And Network has no TCP error to origin
+
+  Scenario: Rewrite 500 to 200 to test error boundary
+    Given map local "/api/v1/orders" to orders_500.json with status 500
+    When the user opens /orders
+    Then the UI shows a retry banner
+    And Sentry receives an event with correlation_id
+
+  Scenario: Proxy throttle simulates 3G
+    Given bandwidth throttle 400 kbps
+    When catalog loads
+    Then skeleton is visible at least 2 seconds
+    And there is no layout shift after data
+```
+
+For API without UI, Postman proxy or `HTTP_PROXY` env in curl is enough.
+
+## Pitfalls
+
+- **Forgotten map local.** "Bug" on staging is actually an old fixture.
+- **CONNECT without MITM.** HTTPS body hidden, only host and timing visible.
+- **Proxy auth 407.** CI fails, local works.
+- **HTTP/2 through old proxy.** Downgrade to h1 changes header order.
+- **Confusing QA forward proxy and WAF.** WAF 403 block is not fixed by map local.

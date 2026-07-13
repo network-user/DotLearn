@@ -1,0 +1,79 @@
+---
+id: 2049
+title: "The finally block: guaranteed resource cleanup"
+category: java-isklyucheniya-i-oshibki
+categoryLabel: "Исключения и ошибки"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# The finally block: guaranteed resource cleanup
+
+## In short
+
+`finally` runs after `try` and any matching `catch`, whether or not an exception occurred or a normal return happened. It was historically used to close files and connections. Since Java 7, try-with-resources is preferred, but `finally` still matters for non-`AutoCloseable` cleanup and state reset.
+
+## How to answer in an interview
+
+- Order: try → catch (if matched) → finally → rethrow if needed.
+- `return` in try does not skip finally, but `return` in finally overwrites the return value.
+- try-with-resources generates implicit finally with `close()` in the right order.
+- I avoid throwing new exceptions from finally: they mask the original one.
+- Honestly: duplicating close logic in catch and finally before try-with-resources caused many bugs.
+
+## How it works
+
+Classic pattern (pre-Java 7):
+
+```java
+Connection connection = null;
+try {
+    connection = dataSource.getConnection();
+    runMigration(connection);
+} catch (SQLException ex) {
+    log.warn("Migration failed", ex);
+    throw ex;
+} finally {
+    if (connection != null) {
+        try {
+            connection.close();
+        } catch (SQLException closeEx) {
+            log.warn("Failed to close connection", closeEx);
+        }
+    }
+}
+```
+
+Modern form:
+
+```java
+try (Connection connection = dataSource.getConnection();
+     PreparedStatement stmt = connection.prepareStatement(sql)) {
+    stmt.executeUpdate();
+}
+```
+
+The compiler inserts a finally-like block: `close()` runs even when try throws; if both try and close throw, the primary exception is kept and close is added as suppressed.
+
+`return` and finally:
+
+```java
+int compute() {
+    try {
+        return 1;
+    } finally {
+        System.out.println("cleanup");
+    }
+}
+```
+
+Prints `cleanup`, returns 1. If `return 2` is inside finally, the result is 2.
+
+## Pitfalls
+
+- **return in finally.** Hides the try exception and breaks the method contract.
+- **Exception in finally.** Masks the root cause from try/catch.
+- **Slow finally.** Blocks shutdown path, HTTP handler timeout.
+- **Forgot null check.** NPE in finally on an uninitialized resource.
+- **Treating finally as absolute.** `System.exit`, kill -9, JVM crash bypass finally.

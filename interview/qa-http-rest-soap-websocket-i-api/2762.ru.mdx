@@ -1,0 +1,66 @@
+---
+id: 2762
+title: "HTTP/1.0 и HTTP/2: что меняется для тестирования загрузки страницы?"
+category: qa-http-rest-soap-websocket-i-api
+categoryLabel: "HTTP, REST, SOAP, WebSocket и API"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# HTTP/1.0 и HTTP/2: что меняется для тестирования загрузки страницы?
+
+## Суть
+
+HTTP/1.0 historically открывал отдельное TCP-соединение на каждый запрос (Connection: close), что давало head-of-line blocking на уровне страницы с десятками ассетов. HTTP/2 поверх одного соединения мультиплексирует потоки, сжимает заголовки HPACK и поддерживает приоритеты. Для QA это влияет на Waterfall в DevTools, время TTFB/LCP и поведение при throttling.
+
+## Что ответить на собесе
+
+- HTTP/1.1 добавил keep-alive и pipelining, но практически браузеры ограничивали параллельность ~6 соединений на хост; HTTP/2 снимает это одним каналом.
+- HTTP/2 бинарный: в Network видно protocol h2, frames не читаются глазами как в HTTP/1.1 text.
+- Проверяю, что CDN и reverse proxy реально отдают h2 (или h3), а не только маркeting на landing.
+- Честно: HTTP/2 не отменяет медленный backend; улучшает доставку множества мелких файлов, но тяжёлый API ответ всё равно блокирует UX.
+
+## Как это работает
+
+**HTTP/1.0 стиль** (каждый ресурс новое соединение):
+
+```
+GET /index.html HTTP/1.0
+Connection: close
+
+GET /styles/app.css HTTP/1.0
+Connection: close
+
+GET /scripts/bundle.js HTTP/1.0
+Connection: close
+```
+
+**HTTP/2:** один TLS/TCP, параллельные streams для `/index.html`, `/styles/app.css`, `/scripts/bundle.js`; заголовки дедуплицируются HPACK.
+
+Gherkin для регресса производительности фронта:
+
+```gherkin
+Feature: Протокол HTTP и загрузка ассетов
+
+  Scenario: Главная отдаётся по HTTP/2
+    When браузер открывает "https://app.example.com/"
+    Then основной документ загружен с protocol HTTP/2
+    And статические ассеты с того же хоста используют HTTP/2 или HTTP/3
+
+  Scenario: Нет избыточных новых TCP на каждый мелкий файл
+    Given включён keep-alive или HTTP/2
+    When страница запрашивает 20 ресурсов с одного origin
+    Then число новых TCP handshake не равно 20
+    And waterfall не показывает serial blocking на все 20 файлов из-за лимита 1 соединения
+```
+
+В Charles сравниваю timing «Connect» vs «Waiting» до/после включения h2 на staging. Для API smoke достаточно curl `--http2 -I` и проверки ALPN.
+
+## Подводные камни
+
+- **h2 только между CDN и клиентом, HTTP/1.1 внутри.** Waterfall быстрый, origin всё ещё узкое место.
+- **Много мелких файлов без bundling.** h2 помогает, но overhead frames остаётся; метрики «улучшились» не линейно.
+- **TLS обязателен для h2 в браузерах.** http:// URL не получит multiplexing в Chrome.
+- **Server push (устаревший паттерн).** Лишний трафик если ассет уже в cache; QA ловит двойную загрузку.
+- **Сравнение локально без HTTPS.** Dev-сервер на HTTP/1.1, prod на h2; ложные регрессии по LCP.

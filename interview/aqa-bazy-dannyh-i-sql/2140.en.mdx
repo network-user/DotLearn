@@ -1,0 +1,85 @@
+---
+id: 2140
+title: "ACID transactions: why they matter for data testing"
+category: aqa-bazy-dannyh-i-sql
+categoryLabel: "Базы данных и SQL"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# ACID transactions: why they matter for data testing
+
+## In short
+
+ACID defines four DBMS guarantees for a transaction: atomicity, consistency, isolation, and durability. For AQA this is the foundation for data integrity checks, concurrent scenarios, and correct rollback after negative tests.
+
+## How to answer in an interview
+
+- I spell out the acronym: Atomicity, Consistency, Isolation, Durability and tie each letter to a bank transfer or inventory reservation example.
+- I explain that I often prepare test data inside a transaction with rollback or via truncate in an isolated schema.
+- I mention isolation levels (READ COMMITTED, REPEATABLE READ, SERIALIZABLE) and typical anomalies: dirty read, non-repeatable read, phantom.
+- I describe catching race conditions: parallel pytest-xdist workers, two clients on one row, assert on the final balance.
+- I add honestly: not every store offers full ACID (e.g. eventual consistency in NoSQL); requirements depend on the product.
+
+## How it works
+
+A transaction groups several SQL operations. On COMMIT changes are written to WAL/redo log and become durable after acknowledgement. On error or ROLLBACK the DBMS reverses all steps (atomicity). Constraints and triggers enforce consistency: a negative balance or FK violation will not pass.
+
+Isolation defines whether a transaction sees uncommitted neighbors' changes. In automation this matters for "two users buy the last ticket": without the right isolation level or locking both tests may pass while prod oversells.
+
+```python
+import psycopg
+import pytest
+
+
+@pytest.fixture
+def db_conn():
+    conn = psycopg.connect("postgresql://test:test@localhost:5433/shop_test")
+    conn.autocommit = False
+    yield conn
+    conn.rollback()
+    conn.close()
+
+
+def transfer(conn, from_id: int, to_id: int, amount: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE accounts SET balance = balance - %s WHERE id = %s AND balance >= %s",
+            (amount, from_id, amount),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("insufficient funds")
+        cur.execute(
+            "UPDATE accounts SET balance = balance + %s WHERE id = %s",
+            (amount, to_id),
+        )
+    conn.commit()
+
+
+def test_transfer_is_atomic_on_insufficient_funds(db_conn):
+    with db_conn.cursor() as cur:
+        cur.execute("INSERT INTO accounts (id, balance) VALUES (1, 50), (2, 0)")
+    db_conn.commit()
+
+    with pytest.raises(ValueError):
+        transfer(db_conn, from_id=1, to_id=2, amount=100)
+
+    with db_conn.cursor() as cur:
+        cur.execute("SELECT balance FROM accounts WHERE id = 1")
+        assert cur.fetchone()[0] == 50
+```
+
+After integration tests I verify the fixture rolled back changes or cleaned the schema; otherwise the next case gets dirty state.
+
+## Pitfalls
+
+**Autocommit by default.** A missing BEGIN/COMMIT makes tests nondeterministic and pollutes the DB.
+
+**Long transactions in tests.** Locks live until teardown and cause deadlocks in parallel CI.
+
+**Assuming full ACID on a read replica.** Asserting on a replica before replication yields false failures.
+
+**Ignoring isolation level.** Flaky xdist runs without realizing another service uses READ UNCOMMITTED.
+
+**Durability vs test speed.** `fsync=off` in test Postgres speeds runs but hides crash recovery scenarios.

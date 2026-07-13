@@ -1,0 +1,50 @@
+---
+id: 4190
+title: "Where is Redis useful in infrastructure?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Where is Redis useful in infrastructure?
+
+## In short
+
+Redis is an in-memory data store with strings, hashes, lists, sets, sorted sets, and pub/sub. It delivers sub-millisecond access, but capacity is bounded by RAM; persistence (RDB/AOF) and replication add durability under load.
+
+## How to answer in an interview
+
+- A TTL cache offloads reads from PostgreSQL; cache-aside with invalidation on update.
+- Session store, rate limiting (INCR + EXPIRE), distributed lock (SET NX PX).
+- Streams and pub/sub for light event fan-out, but not a Kafka replacement for large logs.
+- Honestly: with `allkeys-lru` eviction cold keys disappear without warning; I do not keep critical data only in Redis.
+
+## How it works
+
+User profile cache and API rate limit counter:
+
+```bash
+redis-cli -h cache.internal SETEX profile:user-42 3600 '{"name":"Ada","plan":"pro"}'
+redis-cli -h cache.internal GET profile:user-42
+
+redis-cli -h cache.internal INCR ratelimit:api:user-42
+redis-cli -h cache.internal EXPIRE ratelimit:api:user-42 60
+```
+
+Distributed lock for a deploy hook:
+
+```bash
+redis-cli -h cache.internal SET deploy:lock:payments nx px 30000
+```
+
+Sentinel or Redis Cluster provides HA. AOF `everysec` balances durability and I/O. `INFO memory` and `maxmemory-policy` control OOM. In Kubernetes I run a dedicated StatefulSet, not a sidecar, so memory is not shared with the app.
+
+## Pitfalls
+
+- **Cache stampede.** Mass misses hit origin; add jittered TTL or singleflight.
+- **KEYS in production.** Blocks the event loop; use SCAN with a cursor only.
+- **Large values.** Serialized JSON over 1 MB fragments memory and slows replication.
+- **Lock without token.** DEL on someone else's lock after slow GC; I store a random value and verify in Lua.
+- **Cluster cross-slot multi-key.** MGET across hash slots fails; I design keys with a shared hashtag.

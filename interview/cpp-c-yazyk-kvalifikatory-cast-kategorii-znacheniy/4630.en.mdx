@@ -1,0 +1,62 @@
+---
+id: 4630
+title: "How can a const method change state?"
+category: cpp-c-yazyk-kvalifikatory-cast-kategorii-znacheniy
+categoryLabel: "C++ Язык (квалификаторы, cast, категории значений)"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# How can a const method change state?
+
+## In short
+
+A const method promises not to change logical state. Physical mutation is limited to `mutable` members or `const_cast` when the object was not truly const. The right path is almost always `mutable` for caches, metrics, or mutexes.
+
+## How to answer in an interview
+
+- `mutable` for lazy caches, hit counters, internal locks.
+- `const_cast` on `this` is acceptable only for actually non-const storage (legacy C APIs).
+- Never const_cast + write on a truly const object (UB).
+- Alternative: split const/non-const overloads (`data()` vs `data() const` with shared impl).
+- Honestly: if const methods often bypass const, revisit the API design.
+
+## How it works
+
+The compiler treats const methods as unable to modify non-mutable members.
+
+```cpp
+#include <optional>
+#include <string>
+
+class Lookup {
+    std::string key;
+    mutable std::optional<std::string> cached;
+
+public:
+    explicit Lookup(std::string k) : key(std::move(k)) {}
+
+    const std::string& resolve() const {
+        if (!cached) {
+            cached = key + "_value";
+        }
+        return *cached;
+    }
+};
+
+int main() {
+    const Lookup item("id");
+    return static_cast<int>(item.resolve().size());
+}
+```
+
+The first `resolve()` fills the cache; later calls read without recompute. Observable output stays stable, so logical const holds.
+
+## Pitfalls
+
+- **const_cast hack on business fields.** Breaks thread-safety and reasoning.
+- **Stale mutable cache.** Needs invalidation on hidden mutation paths.
+- **const method + mutex.** Locking a mutable mutex is fine; deadlocks remain possible.
+- **Data races.** const does not imply thread-safe.
+- **ABI/API promise.** Clients trust const; breaking logical const breaks the contract.

@@ -1,0 +1,74 @@
+---
+id: 2971
+title: "401 и 403: как QA различает authn и authz?"
+category: qa-bezopasnost-avtorizatsiya-i-tokeny
+categoryLabel: "Безопасность, авторизация и токены"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# 401 и 403: как QA различает authn и authz?
+
+## Суть
+
+401 Unauthorized означает «не установлена личность»: нет токена, протухла сессия, неверный пароль. 403 Forbidden означает «личность известна, права недостаточны». Смешение кодов ломает клиентский refresh flow и вводит пользователя в заблуждение. QA сверяет статус, тело ошибки и заголовки WWW-Authenticate.
+
+## Что ответить на собесе
+
+- Без Authorization header на protected route жду 401, не 404 (security through obscurity спорно, но 404 на admin скрывает факт).
+- Валидный токен viewer на DELETE admin-only жду 403 с кодом INSUFFICIENT_PERMISSION, не 401.
+- 401 часто триггерит re-login или refresh; 403 не должен бесконечно refresh'ить.
+- Честно: на публичных read endpoint иногда 200 для анонима; фиксирую контракт в OpenAPI, не «как кажется».
+
+## Как это работает
+
+Типовые ответы:
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="api"
+Content-Type: application/json
+
+{"code":"TOKEN_EXPIRED"}
+```
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{"code":"FORBIDDEN","role":"viewer"}
+```
+
+Gherkin:
+
+```gherkin
+Feature: Коды ошибок авторизации
+
+  Scenario: Анонимный запрос к protected API
+    When GET /api/v1/me без Authorization
+    Then статус 401
+    And тело содержит code UNAUTHENTICATED
+
+  Scenario: Авторизованный viewer на admin route
+    Given Bearer token role viewer
+    When GET /api/v1/admin/metrics
+    Then статус 403
+    And тело не раскрывает метрики
+
+  Scenario: Истёкший токен не маскируется под 403
+    Given access token exp в прошлом
+    When GET /api/v1/me
+    Then статус 401
+    And клиент запускает refresh flow один раз
+```
+
+В UI 403 показываю friendly «нет доступа», 401 редирект на login с returnUrl.
+
+## Подводные камни
+
+- **403 вместо 401 на expired token.** Refresh не срабатывает, logout loop.
+- **401 на wrong password и на missing header.** Разные UX, один код.
+- **CORS скрывает 401 в браузере.** В Postman OK, в UI «network error».
+- **API gateway vs service.** Разные коды на одном пути через mesh.
+- **404 на forbidden object.** IDOR маскируется; нужен тест с двумя пользователями.

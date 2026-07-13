@@ -1,0 +1,63 @@
+---
+id: 4295
+title: "Pros and cons of helm upgrade"
+category: devops-helm
+categoryLabel: "Helm"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Pros and cons of helm upgrade
+
+## In short
+
+`helm upgrade` applies a new chart or values to an existing release, creating a new revision in history. Pros: declarative drift fix, atomic hooks, rollback path. Cons: surprise diffs from template changes, subchart version skew, CRD upgrade races, and `--wait` timeouts on slow rollouts.
+
+## How to answer in an interview
+
+- Pro: one command updates the whole chart (Deployment, Service, Ingress, ConfigMap).
+- Pro: revision history plus `helm rollback` for fast revert.
+- Con: `helm upgrade` without `helm diff` blindly changes cluster state.
+- Con: `Chart.lock` dependencies may pull a major subchart bump.
+- Honestly: in prod I run `helm upgrade --install --dry-run=server` or the diff plugin first, then `--atomic --wait`.
+
+## How it works
+
+Safer upgrade with wait and atomic:
+
+```bash
+helm diff upgrade payments ./charts/payments \
+  -n prod -f values-prod.yaml --set image.tag=3.2.0
+
+helm upgrade payments ./charts/payments \
+  -n prod \
+  -f values-prod.yaml \
+  --set image.tag=3.2.0 \
+  --atomic \
+  --wait \
+  --timeout 10m
+```
+
+Check revision after upgrade:
+
+```bash
+helm history payments -n prod
+kubectl rollout status deployment/payments -n prod
+```
+
+Values-only upgrade without chart version change:
+
+```bash
+helm upgrade payments ./charts/payments -n prod \
+  --reuse-values \
+  --set resources.limits.memory=1Gi
+```
+
+## Pitfalls
+
+- **Immutable field change.** Changing `spec.selector` on a Deployment breaks upgrade; use a recreate strategy.
+- **Hook job failure.** A failing pre-upgrade DB migration with `--atomic` rolls back everything, including the working image.
+- **CRD not established.** Upgrading a chart with a new CRD before the API is ready breaks dependents; install CRDs separately.
+- **Secret regeneration.** Templates with random passwords rotate Secrets and restart all pods unplanned.
+- **`--wait` off by default.** CI marks success while pods CrashLoop; always `--wait` in prod pipelines.

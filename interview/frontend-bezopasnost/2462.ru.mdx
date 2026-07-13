@@ -1,0 +1,54 @@
+---
+id: 2462
+title: "Clickjacking и заголовки X-Frame-Options / CSP"
+category: frontend-bezopasnost
+categoryLabel: "Безопасность"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Clickjacking и заголовки X-Frame-Options / CSP
+
+## Суть
+
+Clickjacking встраивает вашу страницу в прозрачный iframe и перехватывает клики пользователя. Защита на уровне HTTP: `X-Frame-Options` (legacy) и CSP `frame-ancestors`, которые запрещают или whitelist'ят embedding. На фронте дополнительно проверяю, что критичные действия требуют явного подтверждения.
+
+## Что ответить на собесе
+
+- Для SPA выставляю `Content-Security-Policy: frame-ancestors 'self'` на CDN/SSR слое.
+- `X-Frame-Options: DENY` оставляю для старых браузеров параллельно с CSP.
+- Если нужен embed (виджет), whitelist конкретных origin, не `ALLOW-FROM` (устарел).
+- Честно: frame-busting через `if (top !== self)` обходится; полагаюсь на headers.
+- Для OAuth/login страниц embedding запрещаю полностью.
+
+## Как это работает
+
+Атакующий накладывает декoy-кнопку поверх iframe с вашим `/settings/delete`. Пользователь думает, что жмёт «Play», а клик попадает в iframe.
+
+```ts
+const securityHeaders: Record<string, string> = {
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Content-Security-Policy': "frame-ancestors 'self' https://partner.example",
+};
+
+export function applyFrameGuards(response: Response): Response {
+  const guarded = new Response(response.body, response);
+  for (const [key, value] of Object.entries(securityHeaders)) {
+    guarded.headers.set(key, value);
+  }
+  return guarded;
+}
+```
+
+`frame-ancestors` заменяет `frame-src` для родительского контекста: именно кто может встроить **ваш** документ. `SAMEORIGIN` разрешает iframe только с того же site. `none` эквивалентен DENY.
+
+Для виджетов иногда нужен осознанный embed: тогда отдельный subdomain с минимальным UI и строгим CSP, без sensitive actions внутри iframe.
+
+## Подводные камни
+
+- **Meta CSP vs header.** `<meta>` не задаёт `frame-ancestors`; только HTTP header работает.
+- **Preview в devtools/design tools.** Жёсткий DENY ломает встроенные preview; на staging ослабляю точечно.
+- **OAuth consent screens.** Банки и IdP требуют embedding; без согласования с партнёром DENY ломает интеграцию.
+- **Sandbox iframe.** `sandbox` у ребёнка не заменяет `frame-ancestors` у родителя.
+- **Double framing.** Whitelist partner origin не защищает, если partner сам без CSP и его iframe hijack'нут.

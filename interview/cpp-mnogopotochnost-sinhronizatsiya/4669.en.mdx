@@ -1,0 +1,62 @@
+---
+id: 4669
+title: "Reading a file while another process deletes it?"
+category: cpp-mnogopotochnost-sinhronizatsiya
+categoryLabel: "Многопоточность / Синхронизация"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Reading a file while another process deletes it?
+
+## In short
+
+Behavior is OS-dependent. On Unix an open fd keeps reading after `unlink` removes the name; on Windows an open file usually cannot be deleted while another process holds it.
+
+## How to answer in an interview
+
+- Linux: `unlink` drops the directory entry; the inode lives while descriptors stay open.
+- Windows: sharing flags block delete/rename with an active handle.
+- This is cross-process kernel synchronization, not a C++ mutex.
+- Portable code should not rely on unlink during reads; coordinate with lock files or APIs.
+- Honestly: two threads in one process is a different model; the question is about processes A and B.
+
+## How it works
+
+Unix-like systems:
+
+```cpp
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <unistd.h>
+
+int demo_unix() {
+    std::ifstream reader("payload.txt");
+    if (!reader) return 1;
+
+    unlink("payload.txt");
+
+    std::string row;
+    while (std::getline(reader, row)) {
+        std::cout << row << '\n';
+    }
+    reader.close();
+    return 0;
+}
+```
+
+After `unlink` the name vanishes from the directory, but `reader` keeps reading via the retained inode until `close`.
+
+Windows differs: `DeleteFile` returns a sharing violation while process A holds the handle. You need compatible share modes in `CreateFile`.
+
+For temp files, `O_TMPFILE` or unlink right after create (anonymous file) avoids name races.
+
+## Pitfalls
+
+- **Disk space.** Unix unlink does not free blocks until the last fd closes.
+- **NFS semantics.** Network filesystems may differ from local ext4.
+- **Windows share modes.** Plan READ vs DELETE sharing at open time.
+- **Create race.** Between open and lock another process may swap the file (TOCTOU).
+- **Logs and rotate.** logrotate + reopen signals are a separate pattern, not raw unlink.

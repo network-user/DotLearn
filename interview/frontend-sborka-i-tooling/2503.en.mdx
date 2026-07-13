@@ -1,0 +1,59 @@
+---
+id: 2503
+title: "Dynamic import and runtime paths"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Dynamic import and runtime paths
+
+## In short
+
+`import()` returns a module Promise and lets you compute the specifier at runtime, unlike static `import`, which is fixed at parse time. Bundlers still analyze possible targets (magic comments like `webpackChunkName`, glob importers) and emit async chunks for code splitting.
+
+## How to answer in an interview
+
+- `` const mod = await import(`./widgets/${name}.js`) `` lazy-loads a feature panel by route or permission.
+- Errors: wrap import in try/catch and show fallback UI on chunk 404 after deploy mismatch.
+- Vite `import.meta.glob` builds a compile-time map of allowed paths.
+- Honestly: fully arbitrary URLs (`import(userSupplied)`) are not bundled; you need a runtime loader or import maps.
+- Prefetch: `/* webpackPrefetch: true */` hints the browser to load a chunk early.
+
+## How it works
+
+```ts
+type PanelLoader = () => Promise<{ render(root: HTMLElement): void }>;
+
+const registry: Record<string, PanelLoader> = {
+  analytics: () => import('./panels/analytics-panel.js'),
+  billing: () => import('./panels/billing-panel.js'),
+};
+
+export async function mountPanel(name: string, root: HTMLElement) {
+  const loader = registry[name];
+  if (!loader) {
+    throw new Error(`Unknown panel: ${name}`);
+  }
+
+  try {
+    const module = await loader();
+    module.render(root);
+  } catch (cause) {
+    console.error('Panel chunk failed', cause);
+    root.textContent = 'Module unavailable';
+  }
+}
+```
+
+Webpack emits separate files like `analytics-panel.[hash].js`. The browser loads them only on demand. React `lazy(() => import('./Page'))` with `Suspense` wraps the same mechanism. Dynamic paths with variables are limited to a directory prefix, or the static analyzer cannot know the full file set.
+
+## Pitfalls
+
+- **Cache bust mismatch.** User on old HTML shell after deploy gets 404 on old chunk hash.
+- **Waterfall.** Sequential dynamic imports without prefetch lengthen TTI.
+- **SSR.** `import()` in server components needs a compatible bundler target; otherwise split client-only.
+- **Security.** Do not pass raw user input into specifiers without an allowlist.
+- **Typing.** Dynamic module `ReturnType` is weak; keep an explicit interface exported from the chunk.

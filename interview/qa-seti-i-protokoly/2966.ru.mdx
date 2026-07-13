@@ -1,0 +1,65 @@
+---
+id: 2966
+title: "Порт 53: как QA проверяет DNS UDP и TCP fallback?"
+category: qa-seti-i-protokoly
+categoryLabel: "Сети и протоколы"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Порт 53: как QA проверяет DNS UDP и TCP fallback?
+
+## Суть
+
+Стандартный DNS слушает порт 53 на UDP для быстрых запросов и на TCP для крупных ответов, zone transfer и при truncation (TC bit). Корпоративный firewall часто режет исходящий UDP/53, оставляя TCP или DoH. QA воспроизводит блокировку и смотрит, ломается ли резолв в приложении.
+
+## Что ответить на собесе
+
+- Большинство lookup идёт UDP; ответ >512 байт (DNSSEC, много A) триггерит TCP retry.
+- Закрытый UDP/53 даёт timeout; некоторые сети пропускают только TCP/53 к корпоративному резолверу.
+- dig `+tcp` и `+bufsize=1232` помогают воспроизвести truncation на стенде.
+- Честно: на guest Wi-Fi DNS может быть перехвачен captive portal; это среда, не регресс продукта.
+
+## Как это работает
+
+Типичный обмен:
+
+```
+Client --UDP 53 query--> Resolver
+Resolver --UDP 53 response TC=1--> Client
+Client --TCP 53 query--> Resolver
+Resolver --TCP 53 full response--> Client
+```
+
+Gherkin сетевых негативов:
+
+```gherkin
+Feature: DNS доступность на порту 53
+
+  Scenario: UDP резолв staging домена
+    When QA dig @8.8.8.8 staging.example.com A +time=2
+    Then статус NOERROR
+    And ответ пришёл по UDP
+
+  Scenario: TCP fallback при большом ответе
+    When QA dig @8.8.8.8 many-records.example.com ANY +bufsize=512
+    Then в ответе флаг TC или повтор по TCP
+    And полный набор записей получен
+
+  Scenario: Firewall блокирует UDP 53
+    Given egress deny UDP 53
+    When приложение резолвит api.internal
+    Then UI показывает сетевую ошибку в пределах client timeout
+    And в логе нет бесконечного retry без backoff
+```
+
+`nmap -sU -p 53` на lab resolver; в проде только с разрешения secops.
+
+## Подводные камни
+
+- **DoH 443 вместо 53.** dig падает, Chrome работает.
+- **Split horizon resolver.** Внешний 53 закрыт, внутренний открыт только в VPN.
+- **Rate limit на recursive.** Массовый параллельный e2e вызывает SERVFAIL.
+- **EDNS0 отключён.** Старый firewall ломает большие ответы.
+- **Путают DNS порт и HTTP health.** Сервис на 8053 не DNS.

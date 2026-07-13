@@ -1,0 +1,66 @@
+---
+id: 2497
+title: "Source map и режимы devtool"
+category: frontend-sborka-i-tooling
+categoryLabel: "Сборка и tooling"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Source map и режимы devtool
+
+## Суть
+
+Source map это sidecar JSON, который мапит позиции в bundled/minified файле на исходники (TS, JSX, SASS). DevTools показывают breakpoints и stack traces в оригинальных строках. Bundler выбирает tradeoff скорость сборки vs точность mapping через опцию `devtool` (Webpack) или `build.sourcemap` (Vite).
+
+## Что ответить на собесе
+
+- `source-map`: отдельный `.map`, полная точность, медленная prod сборка; обычно hidden/nosources для публикации.
+- `cheap-module-source-map`: быстрее, только line-level, без column precision.
+- `eval-cheap-module-source-map`: dev default в webpack 5, map внутри eval bundle.
+- Честно: публичные source maps утекают бизнес-логику; грузим maps только на error tracker (Sentry upload).
+- Vite dev всегда даёт ESM maps; prod `sourcemap: true` генерит external files.
+
+## Как это работает
+
+Webpack config snippet:
+
+```ts
+import type { Configuration } from 'webpack';
+
+const config: Configuration = {
+  mode: 'development',
+  devtool: 'eval-cheap-module-source-map',
+  entry: './src/main.ts',
+  output: {
+    filename: 'app.[contenthash].js',
+    path: new URL('./dist', import.meta.url).pathname,
+  },
+};
+```
+
+Vite equivalent:
+
+```ts
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  build: {
+    sourcemap: 'hidden',
+    minify: 'esbuild',
+  },
+});
+```
+
+Pipeline: compiler emit JS + `//# sourceMappingURL=app.js.map`. Browser подгружает map по запросу (если не inline). Error overlay в dev читает original file/line. CI может upload maps и удалять их из CDN artifact.
+
+Режимы отличаются: inline встраивает base64 (большой bundle), hidden подключает map только для инструментов, без URL в shipped JS.
+
+## Подводные камни
+
+- **Prod leak.** Забытый `source-map` на CDN раскрывает исходники конкурентам.
+- **Mismatch versions.** Deploy JS без соответствующего map ломает symbolication в Sentry.
+- **Performance.** Full source-map на monorepo 5k modules добавляет минуты к build.
+- **CSS maps.** Отдельные цепочки для postcss/scss; line в TS не совпадёт с DOM style rule без css map.
+- **Security scanners.** Некоторые WAF блокируют `.map` requests; настрой upload-only flow.

@@ -1,0 +1,58 @@
+---
+id: 1725
+title: "Какие уровни гарантий доставки есть в Kafka?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Какие уровни гарантий доставки есть в Kafka?
+
+## Суть
+
+Kafka не даёт одну «магическую» гарантию: семантика доставки складывается из настроек продюсера, репликации брокера и того, когда consumer фиксирует offset. На практике выбирают между at-most-once, at-least-once и exactly-once, балансируя потери, дубликаты и стоимость транзакций.
+
+## Что ответить на собесе
+
+- Называю три семантики: at-most-once (можно потерять, дублей нет), at-least-once (не теряем, но возможны повторы), exactly-once (один раз end-to-end, но дороже и не везде нужен).
+- Объясняю, что продюсер задаёт `acks` и идемпотентность, consumer решает, когда коммитить offset: до или после обработки.
+- Для финансовых потоков обычно беру at-least-once плюс идempotent consumer или dedup по ключу, а не слепо EOS.
+- Честно добавляю: exactly-once в Kafka работает в связке producer transactions + read-process-write в одной транзакции; для простого fire-and-forget логирования хватит at-most-once.
+
+## Как это работает
+
+**At-most-once.** Продюсер шлёт без ожидания подтверждения (`acks=0`), consumer коммитит offset до обработки. Сообщение может исчезнуть при сбое, зато нет повторов и минимальная задержка. Подходит для метрик и телеметрии, где пропуск точки не критичен.
+
+**At-least-once.** Продюсер ждёт ack от лидера или всех ISR (`acks=1` / `all`), consumer коммитит offset после успешной обработки. При падении между обработкой и commit сообщение придёт снова. Дубликаты гасят идempotent handler или ключ dedup в хранилище.
+
+**Exactly-once.** Включают идempotent producer (`enable.idempotence=true`), транзакции (`transactional.id`) и consumer с `isolation.level=read_committed`. Брокер и координатор транзакций гарантируют, что запись и commit offset атомарны внутри транзакции.
+
+Пример минимальной настройки через переменные окружения перед запуском клиента:
+
+```bash
+export KAFKA_BOOTSTRAP="kafka-1:9092,kafka-2:9092"
+
+# at-most-once
+export KAFKA_ACKS=0
+export KAFKA_ENABLE_IDEMPOTENCE=false
+
+# at-least-once (типичный прод)
+export KAFKA_ACKS=all
+export KAFKA_ENABLE_IDEMPOTENCE=true
+
+# exactly-once (нужен уникальный transactional.id на инстанс)
+export KAFKA_TRANSACTIONAL_ID="billing-writer-$(hostname)-001"
+export KAFKA_ISOLATION_LEVEL=read_committed
+```
+
+На стороне consumer offset commit после бизнес-логики превращает «хотя бы раз» в контролируемую модель: повтор possible, потеря при ack=all маловероятна.
+
+## Подводные камни
+
+- **Коммит offset до обработки.** Даёт at-most-once «случайно»: сообщение помечено прочитанным, а handler упал.
+- **Дубликаты без стратегии.** At-least-once без idempotency key приводит к двойным списаниям и дублям заказов.
+- **EOS и внешние side-effect.** Транзакция Kafka не откатывает HTTP-вызов или запись в S3; нужен outbox или saga.
+- **acks=1 vs min.insync.replicas.** Ack от лидера без ISR может потерять сообщение при failover до репликации.
+- **Долгие transactional.id.** Не освобождённые id блокируют fencing; при деплое нужен уникальный суффикс на pod.

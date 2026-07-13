@@ -1,0 +1,60 @@
+---
+id: 1523
+title: "What is sync.WaitGroup for in Go?"
+category: go-konkurentnost
+categoryLabel: "Конкурентность"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# What is sync.WaitGroup for in Go?
+
+## In short
+
+`sync.WaitGroup` is a counter of active goroutines: `Add` increments, `Done` decrements, `Wait` blocks until the counter hits zero. I use it when main (or a coordinator) must wait for a batch of background tasks without one channel per task.
+
+## How to answer in an interview
+
+- Pattern: `wg.Add(1)` before `go`, `defer wg.Done()` inside the worker.
+- `Wait` blocks while the counter is positive; good for fork-join without shipping results.
+- For errors I combine with `errgroup` or channels; WaitGroup does not collect errors.
+- I honestly caveat: `Add` after `Wait` or a negative counter panics; all `Add` calls must finish before `Wait`.
+
+## How it works
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func fetch(id int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("fetched", id)
+}
+
+func main() {
+	var wg sync.WaitGroup
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go fetch(i, &wg)
+	}
+
+	wg.Wait()
+	fmt.Println("all fetched")
+}
+```
+
+WaitGroup does not move data between goroutines; it only synchronizes completion. I store results in a mutex-guarded struct, a channel, or a separate errgroup.
+
+## Pitfalls
+
+- **Add inside goroutine after Wait.** Races and panic; count tasks before launch or synchronize Add separately.
+- **Copying WaitGroup.** Pass only by pointer `*sync.WaitGroup`.
+- **Done without Add.** Counter drops below zero and panics.
+- **No cancellation.** Wait blocks forever if a worker hangs; pair with context and select.
+- **Mixing with channel close.** Two "all done" signals in one flow confuse readers.

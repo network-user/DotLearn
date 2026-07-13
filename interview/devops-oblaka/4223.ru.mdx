@@ -1,0 +1,63 @@
+---
+id: 4223
+title: "Что указывают в A-записи Route 53?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Что указывают в A-записи Route 53?
+
+## Суть
+
+A-запись (Address) мапит hostname на IPv4. В Route 53 value это один или несколько IP, alias на AWS ресурс (ALB, CloudFront, API Gateway) или routing policy (weighted, latency, failover). Для IPv6 используют AAAA. A-запись это первая точка привязки домена к инфраструктуре в AWS.
+
+## Что ответить на собесе
+
+- Простой A: `app.example.com` → `203.0.113.10` (публичный IP EC2 или Elastic IP).
+- Alias A на ALB/CloudFront без отдельного charge за DNS queries к AWS target.
+- TTL задаю по сценарию: короткий для быстрого failover, длинный для статики за CDN.
+- Health checks + failover routing для active/passive пар.
+- Честно: прямой A на IP инстанса ломается при replace; предпочитаю alias на балансировщик.
+
+## Как это работает
+
+Resolver клиента спрашивает Route 53 authoritative NS; получает A record и открывает TCP к IP.
+
+CLI создание простой записи:
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id Z1234567890ABC \
+  --change-batch '{
+    "Changes": [{
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "api.example.com",
+        "Type": "A",
+        "TTL": 60,
+        "ResourceRecords": [{"Value": "203.0.113.10"}]
+      }
+    }]
+  }'
+```
+
+Alias на ALB (без TTL):
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id Z1234567890ABC \
+  --change-batch file://alias-alb.json
+```
+
+Где `alias-alb.json` содержит `AliasTarget` с DNS name и hosted zone ID балансировщика.
+
+## Подводные камни
+
+- **Публичный vs private zone.** Private hosted zone резолвится только внутри связанных VPC; путаница с split-horizon DNS.
+- **CNAME на apex.** Корневой домен не может быть CNAME; использую alias A или ANAME у регистратора.
+- **Stale TTL.** Долгий TTL при миграции держит клиентов на старом IP; снижаю TTL заранее.
+- **Multiple A без policy.** Round-robin клиентами не гарантирован; для балансировки нужен LB или weighted routing.
+- **Elastic IP vs ephemeral.** A на ephemeral public IP меняется после stop/start; фиксирую EIP или alias.

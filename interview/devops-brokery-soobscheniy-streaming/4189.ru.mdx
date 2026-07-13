@@ -1,0 +1,52 @@
+---
+id: 4189
+title: "Зачем в стеке нужен RabbitMQ?"
+category: devops-brokery-soobscheniy-streaming
+categoryLabel: "Брокеры сообщений / Streaming"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Зачем в стеке нужен RabbitMQ?
+
+## Суть
+
+RabbitMQ это AMQP-брокер, который развязывает producer и consumer через exchange, binding и queue. Сообщения буферизуются на диске, маршрутизация гибкая (direct, topic, fanout, headers), подтверждения и dead-letter дают контроль над доставкой.
+
+## Что ответить на собесе
+
+- Producer публикует в exchange, не в queue напрямую; binding связывает routing key с очередью.
+- Consumer ack/nack управляет повторной доставкой; prefetch ограничивает in-flight.
+- Использую для task queue, RPC через reply queue, fanout уведомлений между сервисами.
+- Честно: RabbitMQ не log-based streaming как Kafka; для replay всего потока и high throughput чаще беру Kafka или Pulsar.
+
+## Как это работает
+
+Сервис заказов публикует событие, склад и биллинг подписаны на разные очереди через topic exchange:
+
+```bash
+rabbitmqadmin declare exchange name=orders.events type=topic durable=true
+rabbitmqadmin declare queue name=warehouse.fulfill durable=true
+rabbitmqadmin declare binding source=orders.events destination=warehouse.fulfill \
+  routing_key='order.created'
+
+rabbitmqadmin publish exchange=orders.events routing_key=order.created \
+  payload='{"orderId":"ord-991","sku":"widget-a"}'
+```
+
+Consumer с manual ack:
+
+```bash
+rabbitmqadmin get queue=warehouse.fulfill ackmode=ack_requeue_false count=1
+```
+
+Publisher confirm и persistent messages (`delivery_mode=2`) защищают от потери при crash брокера. HA через quorum queues или classic mirrored queues (legacy). Management plugin даёт метрики unacked и rate.
+
+## Подводные камни
+
+- **Unbounded queue growth.** Consumer медленнее producer без TTL/DLQ забивает RAM и диск.
+- **Prefetch слишком высокий.** Один consumer забирает все сообщения, остальные простаивают.
+- **Fanout без binding keys.** Сообщения теряются, если очередь не привязана к exchange.
+- **Poison message loop.** Nack с requeue=true без счётчика ретраев крутит одно сообщение бесконечно.
+- **Classic mirrored queues deprecated.** На новых кластерах планирую quorum streams заранее.

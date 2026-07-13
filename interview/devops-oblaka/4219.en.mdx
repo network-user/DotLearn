@@ -1,0 +1,47 @@
+---
+id: 4219
+title: "Which service provides a shared filesystem across EC2 instances?"
+category: devops-oblaka
+categoryLabel: "Облака"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# Which service provides a shared filesystem across EC2 instances?
+
+## In short
+
+Amazon EFS (Elastic File System) is managed NFS that many EC2 instances mount at once inside a VPC. It fits shared config, uploads, CMS media, and batch scratch. Alternatives: FSx (Windows/Lustre/ONTAP) for specific protocols; EBS multi-attach does not replace a shared POSIX filesystem.
+
+## How to answer in an interview
+
+- EFS Standard for multi-AZ durability; One Zone is cheaper but lacks cross-AZ resilience.
+- I mount NFSv4.1 via the EFS mount helper or EFS Access Points to isolate paths.
+- Security groups and NACLs allow port 2049 only from the app tier.
+- Lifecycle management moves cold data to Infrequent Access.
+- Honestly: EFS is not for latency-sensitive random I/O; heavy databases stay on EBS/io2 or RDS.
+
+## How it works
+
+Create a filesystem in the VPC with mount targets in each AZ private subnet. Instances mount a DNS name like `fs-xxxx.efs.region.amazonaws.com`.
+
+```bash
+sudo yum install -y amazon-efs-utils
+
+sudo mkdir -p /mnt/shared
+
+sudo mount -t efs -o tls,iam fs-0abc1234def567890:/ /mnt/shared
+
+echo 'fs-0abc1234def567890:/ /mnt/shared efs _netdev,tls,iam 0 0' | sudo tee -a /etc/fstab
+```
+
+Access Points set POSIX user/group and root path for multi-tenant isolation without separate filesystems.
+
+## Pitfalls
+
+- **NFS latency.** Heavy metadata (millions of small files) slows down; sometimes FSx Lustre or S3 fits better.
+- **Root squashing.** File permissions break on UID/GID mismatch; fix with access points.
+- **Bursting throughput.** Small filesystems hit burst credits; enable provisioned throughput when needed.
+- **Backup RPO.** Configure AWS Backup for EFS separately; unlike EBS there is no built-in snapshot policy.
+- **Mounting in public subnets.** EFS without TLS and open port 2049 to the internet is unacceptable; stay private with security groups.

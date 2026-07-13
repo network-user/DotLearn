@@ -1,0 +1,65 @@
+---
+id: 1490
+title: "Быстрее ли range по slice, чем по map?"
+category: go-tipy-i-kollektsii
+categoryLabel: "Типы и коллекции"
+stage: tech
+stageLabel: "Tech"
+lang: ru
+---
+
+# Быстрее ли range по slice, чем по map?
+
+## Суть
+
+Полный перебор slice часто быстрее map iteration: элементы лежат contiguous в памяти, меньше pointer chasing и hash overhead. Map выигрывает на lookup по ключу, не на linear scan всех пар.
+
+## Что ответить на собесе
+
+- Slice range friendly к CPU cache; map range обходит buckets и overflow chains.
+- Если задача «пройти все значения», slice или `[]K` + map может быть быстрее, чем `range m`.
+- Benchmark решает: на маленьких n разница мала, на больших и hot loops заметна.
+- Честно добавляю: выбираю структуру по access pattern (index vs key lookup), не по микробенчмарку в вакууме.
+
+## Как это работает
+
+Slice iterator двигает index по backing array. Map iterator генерирует pseudo-random start и ходит по bucket bitmap, что добавляет branchy код.
+
+```go
+package main
+
+import "fmt"
+
+func sumSlice(vals []int) int {
+	total := 0
+	for _, v := range vals {
+		total += v
+	}
+	return total
+}
+
+func sumMap(vals map[string]int) int {
+	total := 0
+	for _, v := range vals {
+		total += v
+	}
+	return total
+}
+
+func main() {
+	s := []int{1, 2, 3, 4, 5}
+	m := map[string]int{"a": 1, "b": 2, "c": 3}
+
+	fmt.Println(sumSlice(s), sumMap(m))
+}
+```
+
+Обе функции O(n), но constant factors у slice обычно ниже.
+
+## Подводные камни
+
+- **Путать iteration и lookup.** Map O(1) get beats linear scan slice для поиска одного ключа.
+- **Pointer-heavy values.** Slice `[]*T` теряет cache benefit если объекты разбросаны по heap.
+- **Map with few elements.** Overhead iteration сопоставим, benchmark нужен.
+- **Preallocated key slice.** Держать `[]string` order + map duplicates memory но ускоряет ordered pass.
+- **Compiler optimizations.** Bounds check elimination на slice не спасает map walk.

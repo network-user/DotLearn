@@ -1,0 +1,71 @@
+---
+id: 2070
+title: "ReplicaSet: keeping Pod count stable"
+category: java-docker-kubernetes
+categoryLabel: "Docker/Kubernetes"
+stage: tech
+stageLabel: "Tech"
+lang: en
+---
+
+# ReplicaSet: keeping Pod count stable
+
+## In short
+
+The ReplicaSet controller ensures the number of running Pods with given label matchLabels always equals `spec.replicas`. On node failure or container crash it creates replacements; if there are extra Pods it deletes them. Deployment uses ReplicaSet for scaling and rolling updates; RS is rarely applied directly in prod.
+
+## How to answer in an interview
+
+- Selector + template define which Pods "belong" to the RS.
+- RS has no rolling update strategy; only ensures count.
+- Deployment creates a new RS on template change and gradually scales down the old one.
+- `kubectl scale deployment` changes replicas on the underlying RS.
+- Honestly: a manual ReplicaSet without Deployment loses history rollback and controlled rollout.
+
+## How it works
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: gateway-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      tier: gateway
+  template:
+    metadata:
+      labels:
+        tier: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: gateway:5.1.0
+        ports:
+        - containerPort: 8443
+```
+
+Reconcile loop:
+
+1. List Pods with labels `tier=gateway`.
+2. diff = desired(3) - actual → create or delete Pods.
+3. New Pod gets unique name `gateway-rs-xxxxx`.
+
+Deployment on top of RS:
+
+```
+Deployment gateway
+  ├── RS gateway-7d9f (rev 3, replicas 3)  ← current
+  └── RS gateway-4a2c (rev 2, replicas 0)  ← old, scaled down
+```
+
+On `kubectl set image deployment/gateway gateway=gateway:5.2.0` a new RS is created; maxSurge/maxUnavailable control the transition.
+
+## Pitfalls
+
+- **Immutable selector.** Changing matchLabels requires a new RS/Deployment.
+- **Orphan Pod.** Pods without ownerReference are not deleted on RS scale down mismatch.
+- **Resource quota.** RS retries Pod create forever on quota exceeded → CrashLoop events.
+- **Standalone RS edit.** Direct RS template change does not trigger Deployment history.
+- **PodDisruptionBudget ignore.** RS does not respect PDB during node maintenance without eviction API.
