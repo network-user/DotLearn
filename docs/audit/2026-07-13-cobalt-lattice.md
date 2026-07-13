@@ -1,5 +1,3 @@
-> Последний прогон: cobalt-lattice · 2026-07-13. Снимок: [2026-07-13-cobalt-lattice.md](2026-07-13-cobalt-lattice.md) · история: [docs/audit/](.)
-
 # Security Audit · Cobalt Lattice · 2026-07-13
 
 | Поле | Значение |
