@@ -2,14 +2,14 @@
 
 # Security Audit · Cobalt Lattice · 2026-07-13
 
-| Поле | Значение |
-|------|----------|
-| Статус | PASSED |
-| Прогон | cobalt-lattice |
-| Уровень | full |
-| Охват | leaks + code |
-| Модель | Claude Opus 4.8 |
-| Дата | 2026-07-13 |
+| Поле                 | Значение                                           |
+| -------------------- | -------------------------------------------------- |
+| Статус               | PASSED                                             |
+| Прогон               | cobalt-lattice                                     |
+| Уровень              | full                                               |
+| Охват                | leaks + code                                       |
+| Модель               | Claude Opus 4.8                                    |
+| Дата                 | 2026-07-13                                         |
 | Аудируемое состояние | HEAD `5b18979` + ремедиация этой сессии (см. ниже) |
 
 Веер из 8 подагентов по измерениям (утечки: дерево, история, PII; код: auth·sync·submissions, API core·сеть·persistence, sandbox, web·XSS·крипто; зависимости; инфра·CI) + adversarial-верификация. Затем ремедиация уровня «зелёный + безопасные фиксы» с проверкой гейтами.
@@ -36,34 +36,34 @@ Severity (после ремедиации): **Crit 0 · High 0 · Med 0 · Low 9
 
 Закрыто и верифицировано (typecheck web/api/sandbox чисто; тесты contracts 109 / api 157 / web 165 включая `merge.test.ts` 47 и `progress-io.spec.ts` 19; vite-трансформ 5461 модуля):
 
-| Было (severity) | Фикс | Файлы |
-|-----------------|------|-------|
-| Medium · Node 20 EOL | Node 20 → 22 LTS (снимает единственный Medium) | `.nvmrc`, `package.json` engines, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `.github/workflows/ci.yml`, README-бейдж |
-| Low · esbuild dev-CVE | `pnpm.overrides esbuild >=0.28.1` (глобальный; scoped ломал бинарь-валидацию); vite-build подтвердил совместимость | `package.json`, `pnpm-lock.yaml` |
-| Low · OPFS не нейтрализован | `navigator.storage` добавлен в нейтеринг (own-property затеняет getter) | `packages/sandbox/src/harden-worker-scope.ts` |
-| Low · денилист неполон | `WebSocketStream` добавлен | тот же файл |
-| Low · neutralize() fail-open | fail-closed self-test: `assertWorkerScopeHardened` + `WorkerScopeHardeningError` реджектят промис воркера, user-код не стартует при уцелевшем глобале | тот же файл |
-| Low · reason наружу | публичный `GET /api/topics/hidden` больше не отдаёт `reason`; схема разделена `HiddenTopic` (admin) / `HiddenTopicPublic` | `packages/contracts/src/admin-topics.schema.ts`, `hidden-topic.entity.ts`, service, controller, web `api-client.ts`, `AdminPage.tsx` |
-| Low · deep-link phishing | подтверждение показывает полный код + предупреждение о выгрузке данных (ru/en) | `apps/web/src/components/SyncPanel.tsx`, `locales/{ru,en}.json` |
-| Low · progress-io unknown keys | allowlist-пересборка каждой записи (`pick`), неизвестные ключи режутся до `bulkPut`; та же защита в `merge.ts` | `apps/web/src/lib/progress-io.ts`, `sync/merge.ts` |
-| Low · .dockerignore | добавлен `**/.env*` (вложенные `.env` вне build-context) | `.dockerignore` |
-| Low · scratch tracked | `git rm --cached packages/sandbox/.tmp-sqlite-smoke.mjs` (файл на диске, теперь ignored) | index |
+| Было (severity)                | Фикс                                                                                                                                                  | Файлы                                                                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Medium · Node 20 EOL           | Node 20 → 22 LTS (снимает единственный Medium)                                                                                                        | `.nvmrc`, `package.json` engines, `apps/api/Dockerfile`, `apps/web/Dockerfile`, `.github/workflows/ci.yml`, README-бейдж             |
+| Low · esbuild dev-CVE          | `pnpm.overrides esbuild >=0.28.1` (глобальный; scoped ломал бинарь-валидацию); vite-build подтвердил совместимость                                    | `package.json`, `pnpm-lock.yaml`                                                                                                     |
+| Low · OPFS не нейтрализован    | `navigator.storage` добавлен в нейтеринг (own-property затеняет getter)                                                                               | `packages/sandbox/src/harden-worker-scope.ts`                                                                                        |
+| Low · денилист неполон         | `WebSocketStream` добавлен                                                                                                                            | тот же файл                                                                                                                          |
+| Low · neutralize() fail-open   | fail-closed self-test: `assertWorkerScopeHardened` + `WorkerScopeHardeningError` реджектят промис воркера, user-код не стартует при уцелевшем глобале | тот же файл                                                                                                                          |
+| Low · reason наружу            | публичный `GET /api/topics/hidden` больше не отдаёт `reason`; схема разделена `HiddenTopic` (admin) / `HiddenTopicPublic`                             | `packages/contracts/src/admin-topics.schema.ts`, `hidden-topic.entity.ts`, service, controller, web `api-client.ts`, `AdminPage.tsx` |
+| Low · deep-link phishing       | подтверждение показывает полный код + предупреждение о выгрузке данных (ru/en)                                                                        | `apps/web/src/components/SyncPanel.tsx`, `locales/{ru,en}.json`                                                                      |
+| Low · progress-io unknown keys | allowlist-пересборка каждой записи (`pick`), неизвестные ключи режутся до `bulkPut`; та же защита в `merge.ts`                                        | `apps/web/src/lib/progress-io.ts`, `sync/merge.ts`                                                                                   |
+| Low · .dockerignore            | добавлен `**/.env*` (вложенные `.env` вне build-context)                                                                                              | `.dockerignore`                                                                                                                      |
+| Low · scratch tracked          | `git rm --cached packages/sandbox/.tmp-sqlite-smoke.mjs` (файл на диске, теперь ignored)                                                              | index                                                                                                                                |
 
 Отложено сознательно (объём Tier C, следующий проход): потолки presence-множеств, per-IP-квоты sync/submissions, boot-assert `TRUSTED_PROXY_HOPS`, пины Docker-образов по digest + verify `:latest`, mem/pids-лимиты compose, `chmod 600` на `.env` в `update.sh`, `VITE_ADMIN_PATH`→vars, `install-scripts` hardening (pnpm 10), scrub machine-path в истории.
 
 ## Остаточные Low (открыто)
 
-| Severity | Категория | Файл:строка | Описание |
-|----------|-----------|-------------|----------|
-| Low | resource-exhaustion | `apps/api/.../presence.service.ts:189` | `todayIds`/`topicToday` без потолка |
-| Low | availability-dos | `apps/api/.../sync.service.ts:100`, `submissions.service.ts:60` | глобальные ёмкости без per-IP-квоты |
-| Low | rate-limit-config | `apps/api/src/main.ts:55` | fairness/audit-IP зависят от `TRUSTED_PROXY_HOPS` |
-| Low | install-script-hardening | `.npmrc:1` | нет `ignore-scripts`/`onlyBuiltDependencies` (pnpm 9) |
-| Low | supply-chain-deploy | `docker-compose.prod.yml:18`, `deploy/update.sh:44` | `:latest`+auto-pull без digest/подписи |
-| Low | env-file-perms | `deploy/update.sh:37` | нет `chmod 600` на repo-root `.env` |
-| Low | resource-limits | `docker-compose.yml:24,60` | нет mem/cpu/pids-лимитов |
-| Low | base-image-pinning | `apps/*/Dockerfile` | базовые образы по тегам, не digest |
-| Low | machine-path-history | `docs/NEXT_AGENT_PROMPT.md` (истор.) | generic `C:\Users\User\…` в истории |
+| Severity | Категория                | Файл:строка                                                     | Описание                                              |
+| -------- | ------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- |
+| Low      | resource-exhaustion      | `apps/api/.../presence.service.ts:189`                          | `todayIds`/`topicToday` без потолка                   |
+| Low      | availability-dos         | `apps/api/.../sync.service.ts:100`, `submissions.service.ts:60` | глобальные ёмкости без per-IP-квоты                   |
+| Low      | rate-limit-config        | `apps/api/src/main.ts:55`                                       | fairness/audit-IP зависят от `TRUSTED_PROXY_HOPS`     |
+| Low      | install-script-hardening | `.npmrc:1`                                                      | нет `ignore-scripts`/`onlyBuiltDependencies` (pnpm 9) |
+| Low      | supply-chain-deploy      | `docker-compose.prod.yml:18`, `deploy/update.sh:44`             | `:latest`+auto-pull без digest/подписи                |
+| Low      | env-file-perms           | `deploy/update.sh:37`                                           | нет `chmod 600` на repo-root `.env`                   |
+| Low      | resource-limits          | `docker-compose.yml:24,60`                                      | нет mem/cpu/pids-лимитов                              |
+| Low      | base-image-pinning       | `apps/*/Dockerfile`                                             | базовые образы по тегам, не digest                    |
+| Low      | machine-path-history     | `docs/NEXT_AGENT_PROMPT.md` (истор.)                            | generic `C:\Users\User\…` в истории                   |
 
 ## Верификация Medium (adversarial)
 
