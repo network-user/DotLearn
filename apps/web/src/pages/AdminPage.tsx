@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { HiddenTopic, Submission, SubmissionStatus, TopicManifest } from '@dotlearn/contracts';
+import type {
+  HiddenTopicPublic,
+  Submission,
+  SubmissionStatus,
+  TopicManifest,
+} from '@dotlearn/contracts';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -60,7 +65,7 @@ export const AdminPage = () => {
   const [loadingTab, setLoadingTab] = useState<TabKey | null>(null);
   const [errorByTab, setErrorByTab] = useState<Partial<Record<TabKey, string>>>({});
 
-  const [hiddenTopics, setHiddenTopics] = useState<HiddenTopic[]>([]);
+  const [hiddenTopics, setHiddenTopics] = useState<HiddenTopicPublic[]>([]);
   const [allTopics, setAllTopics] = useState<TopicManifest[]>([]);
   const [hidingSlug, setHidingSlug] = useState<string | null>(null);
   const [pendingStepUp, setPendingStepUp] = useState<PendingStepUp | null>(null);
@@ -621,7 +626,7 @@ const SubmissionRow = ({
 
 interface HiddenTopicsTabProps {
   allTopics: TopicManifest[];
-  hidden: HiddenTopic[];
+  hidden: HiddenTopicPublic[];
   hidingSlug: string | null;
   onHide: (slug: string) => void;
   onUnhide: (slug: string) => void;

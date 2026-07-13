@@ -1,6 +1,6 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
-import type { HiddenTopic } from '@dotlearn/contracts';
+import type { HiddenTopic, HiddenTopicPublic } from '@dotlearn/contracts';
 
 import type { AdminActor } from '../../common/audit/admin-actor';
 import { HiddenTopicEntity } from './domain/hidden-topic.entity';
@@ -18,9 +18,9 @@ export class HiddenTopicsService {
     private readonly repository: HiddenTopicsRepository,
   ) {}
 
-  async list(): Promise<HiddenTopic[]> {
+  async list(): Promise<HiddenTopicPublic[]> {
     const entities = await this.repository.list();
-    return entities.map((entity) => entity.toContract());
+    return entities.map((entity) => entity.toPublicContract());
   }
 
   async listSlugs(): Promise<string[]> {
@@ -35,7 +35,7 @@ export class HiddenTopicsService {
     const entity = HiddenTopicEntity.create(slug, reason);
     await this.repository.add(entity);
     this.logger.log({ slug, reason, actorJti: actor.jti, actorIp: actor.ip }, 'topic_hidden');
-    return entity.toContract();
+    return entity.toAdminContract();
   }
 
   async unhide(slug: string, actor: AdminActor): Promise<void> {

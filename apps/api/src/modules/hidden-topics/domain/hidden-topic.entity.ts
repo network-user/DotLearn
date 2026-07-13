@@ -1,4 +1,4 @@
-import type { HiddenTopic } from '@dotlearn/contracts';
+import type { HiddenTopic, HiddenTopicPublic } from '@dotlearn/contracts';
 
 export class HiddenTopicEntity {
   private constructor(
@@ -19,7 +19,14 @@ export class HiddenTopicEntity {
     return new HiddenTopicEntity(snapshot.slug, snapshot.hiddenAt, snapshot.reason);
   }
 
-  toContract(): HiddenTopic {
+  toPublicContract(): HiddenTopicPublic {
+    return {
+      slug: this.slug,
+      hiddenAt: this.hiddenAt.toISOString(),
+    };
+  }
+
+  toAdminContract(): HiddenTopic {
     return {
       slug: this.slug,
       hiddenAt: this.hiddenAt.toISOString(),

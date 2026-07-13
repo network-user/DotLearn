@@ -2,6 +2,14 @@ import { z } from 'zod';
 
 import { SLUG_PATTERN } from './topic.schema';
 
+export const HiddenTopicPublic = z
+  .object({
+    slug: z.string().regex(SLUG_PATTERN),
+    hiddenAt: z.string().datetime(),
+  })
+  .strict();
+export type HiddenTopicPublic = z.infer<typeof HiddenTopicPublic>;
+
 export const HiddenTopic = z
   .object({
     slug: z.string().regex(SLUG_PATTERN),
