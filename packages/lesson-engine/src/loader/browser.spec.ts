@@ -6,6 +6,9 @@ import { TopicLoadError, TopicNotFoundError } from './source';
 const manifest = (slug: string) => ({
   slug,
   title: `Topic ${slug}`,
+  descriptions: {
+    ru: 'Демонстрационная тема для юнит-тестов загрузчика: манифест, концепты и упражнения lesson-engine.',
+  },
   version: '1.0.0',
   availableLanguages: ['ru'],
   primaryLanguage: 'ru',
