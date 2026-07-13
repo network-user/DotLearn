@@ -6,6 +6,9 @@ import { TopicLoadError } from './source';
 const validManifest = (slug = 'demo') => ({
   slug,
   title: 'Demo Topic',
+  descriptions: {
+    ru: 'Демонстрационная тема для юнит-тестов загрузчика: манифест, концепты и упражнения lesson-engine.',
+  },
   version: '1.0.0',
   availableLanguages: ['ru'],
   primaryLanguage: 'ru',
