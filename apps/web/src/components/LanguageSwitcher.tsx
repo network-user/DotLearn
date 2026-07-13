@@ -1,5 +1,3 @@
-import { useEffect } from 'react';
-
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
@@ -37,19 +35,15 @@ export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps)
 
   const disabledLang: Lang | undefined = topicSlug && !topicHasEn(topicSlug) ? 'en' : undefined;
 
-  // /topics and /en routes carry their own language in the URL and never call
-  // setLanguage() when navigated to directly (a link, back/forward, the switcher
-  // below). Without this, the global UI language can stay "stuck" on whatever it
-  // was last explicitly set to (e.g. via the command palette), so chrome outside
-  // the route (nav, presence indicator) stops matching the page you're on.
-  useEffect(() => {
-    if (routeLanguage && routeLanguage !== current) {
-      void setLanguage(routeLanguage);
-    }
-  }, [routeLanguage, current]);
-
   const handleChange = (lang: Lang): void => {
-    if (lang === disabledLang || lang === routeLanguage) return;
+    if (lang === disabledLang) return;
+    // /topics and /en routes carry their own language in the URL, so a click here can
+    // look like a no-op when the URL already matches (routeLanguage === lang) — but the
+    // global UI language (nav chrome, presence indicator, "follow-ui" content elsewhere)
+    // can still be on the other language if it was changed independently (command palette,
+    // settings). Always resync it on click, even when there's nothing to navigate.
+    if (lang !== current) void setLanguage(lang);
+    if (lang === routeLanguage) return;
     if (topicSlug) {
       void navigate({
         to: lang === 'en' ? '/en/topics/$slug' : '/topics/$slug',
@@ -61,10 +55,7 @@ export const LanguageSwitcher = ({ variant = 'compact' }: LanguageSwitcherProps)
     }
     if (isHomeRoute) {
       void navigate({ to: lang === 'en' ? '/en' : '/' });
-      return;
     }
-    if (lang === current) return;
-    void setLanguage(lang);
   };
 
   const isActive = (lang: Lang): boolean =>
