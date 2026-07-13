@@ -9,6 +9,7 @@ export type CatalogCategoryId =
   | 'web-api'
   | 'architecture'
   | 'ml-ai'
+  | 'onec'
   | 'tools'
   | 'other';
 
