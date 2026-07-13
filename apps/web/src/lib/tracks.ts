@@ -66,6 +66,33 @@ export const tracks: readonly Track[] = [
       'clean-architecture',
     ],
   },
+  {
+    id: 'frontend',
+    title: 'Frontend',
+    description:
+      'От основ HTML/CSS и JavaScript до React: вёрстка, DOM и события, асинхронность, TypeScript, хуки, доступность и производительность.',
+    targetRole: 'Frontend-разработчик',
+    topicSlugs: [
+      'html-css-basics',
+      'css-layout',
+      'javascript-basics',
+      'dom-and-events',
+      'javascript-async',
+      'typescript',
+      'react-basics',
+      'react-hooks',
+      'web-accessibility',
+      'web-performance',
+    ],
+  },
+  {
+    id: 'onec',
+    title: '1С:Предприятие',
+    description:
+      'Платформа 1С: конфигурации, встроенный язык (BSL), запросы и СКД, а также взгляд со стороны бизнес-аналитика.',
+    targetRole: '1С-специалист',
+    topicSlugs: ['onec-platform', 'onec-language', 'onec-queries', 'onec-analyst'],
+  },
 ];
 
 export const getTrack = (id: string): Track | undefined => tracks.find((track) => track.id === id);
