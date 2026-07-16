@@ -63,7 +63,10 @@ export const GLOSSARY_TERM_MATCHERS = [
     match: { ru: ['искажение имён', 'искажения имён'], en: ['name mangling'] },
   },
   { id: 'invariant', match: { ru: ['инвариант', 'инварианты', 'инвариантов'], en: ['invariant'] } },
-  { id: 'descriptor', match: { ru: ['дескриптор', 'дескрипторы', 'дескрипторах'], en: ['descriptor'] } },
+  {
+    id: 'descriptor',
+    match: { ru: ['дескриптор', 'дескрипторы', 'дескрипторах'], en: ['descriptor'] },
+  },
   {
     id: 'hashable',
     match: {
@@ -78,7 +81,10 @@ export const GLOSSARY_TERM_MATCHERS = [
       en: ['dependency injection'],
     },
   },
-  { id: 'duck-typing', match: { ru: ['утиная типизация', 'утиной типизации'], en: ['duck typing'] } },
+  {
+    id: 'duck-typing',
+    match: { ru: ['утиная типизация', 'утиной типизации'], en: ['duck typing'] },
+  },
   {
     id: 'liskov-substitution-principle',
     match: { ru: ['принцип подстановки'], en: ['substitution principle'] },
@@ -95,7 +101,10 @@ export const GLOSSARY_TERM_MATCHERS = [
   },
   {
     id: 'diamond-inheritance',
-    match: { ru: ['ромбовидное наследование', 'ромбовидного наследования'], en: ['diamond inheritance'] },
+    match: {
+      ru: ['ромбовидное наследование', 'ромбовидного наследования'],
+      en: ['diamond inheritance'],
+    },
   },
   {
     id: 'cooperative-inheritance',
@@ -121,7 +130,10 @@ export const GLOSSARY_TERM_MATCHERS = [
     id: 'iterator-protocol',
     match: { ru: ['протокол итерации', 'протокола итерации'], en: ['iterator protocol'] },
   },
-  { id: 'dunder-methods', match: { ru: ['дандер-методы', 'дандер-метод'], en: ['dunder methods'] } },
+  {
+    id: 'dunder-methods',
+    match: { ru: ['дандер-методы', 'дандер-метод'], en: ['dunder methods'] },
+  },
   { id: 'bytecode', match: { ru: ['байткод', 'байткода'], en: ['bytecode'] } },
   {
     id: 'stack-frame',
@@ -135,7 +147,10 @@ export const GLOSSARY_TERM_MATCHERS = [
     },
   },
   { id: 'logger-propagation', match: { ru: ['propagation'], en: ['logger propagation'] } },
-  { id: 'contextvars', match: { ru: ['ContextVar', 'contextvars'], en: ['ContextVar', 'contextvars'] } },
+  {
+    id: 'contextvars',
+    match: { ru: ['ContextVar', 'contextvars'], en: ['ContextVar', 'contextvars'] },
+  },
   {
     id: 'loop-invariant',
     match: { ru: ['инвариант цикла', 'инварианты цикла'], en: ['loop invariant'] },
@@ -146,7 +161,10 @@ export const GLOSSARY_TERM_MATCHERS = [
     id: 'reference-counting',
     match: { ru: ['подсчёт ссылок', 'счётчик ссылок'], en: ['reference counting'] },
   },
-  { id: 'weak-reference', match: { ru: ['слабая ссылка', 'слабых ссылок'], en: ['weak reference'] } },
+  {
+    id: 'weak-reference',
+    match: { ru: ['слабая ссылка', 'слабых ссылок'], en: ['weak reference'] },
+  },
   {
     id: 'amortized-complexity',
     match: { ru: ['амортизированная сложность', 'амортизированно'], en: ['amortized complexity'] },
@@ -162,8 +180,14 @@ export const GLOSSARY_TERM_MATCHERS = [
     id: 'n-plus-one',
     match: { ru: ['проблема N+1', 'N+1 запросов'], en: ['N+1 problem'] },
   },
-  { id: 'lazy-loading', match: { ru: ['ленивая загрузка', 'ленивой загрузки'], en: ['lazy loading'] } },
-  { id: 'eager-loading', match: { ru: ['жадная загрузка', 'жадной загрузки'], en: ['eager loading'] } },
+  {
+    id: 'lazy-loading',
+    match: { ru: ['ленивая загрузка', 'ленивой загрузки'], en: ['lazy loading'] },
+  },
+  {
+    id: 'eager-loading',
+    match: { ru: ['жадная загрузка', 'жадной загрузки'], en: ['eager loading'] },
+  },
   { id: 'sql-injection', match: { ru: ['SQL-инъекция', 'SQL-инъекции'], en: ['SQL injection'] } },
   {
     id: 'flaky-test',
@@ -187,8 +211,14 @@ export const GLOSSARY_TERM_MATCHERS = [
     id: 'context-switch',
     match: { ru: ['переключение контекста', 'переключения контекста'], en: ['context switch'] },
   },
-  { id: 'producer-consumer', match: { ru: ['производитель-потребитель'], en: ['producer-consumer'] } },
-  { id: 'io-bound-cpu-bound', match: { ru: ['IO-bound', 'CPU-bound'], en: ['IO-bound', 'CPU-bound'] } },
+  {
+    id: 'producer-consumer',
+    match: { ru: ['производитель-потребитель'], en: ['producer-consumer'] },
+  },
+  {
+    id: 'io-bound-cpu-bound',
+    match: { ru: ['IO-bound', 'CPU-bound'], en: ['IO-bound', 'CPU-bound'] },
+  },
   { id: 'bias', match: { ru: ['bias (смещение)'], en: ['bias'] } },
   { id: 'sigmoid', match: { ru: ['сигмоида', 'сигмоиды'], en: ['sigmoid'] } },
   {
@@ -199,7 +229,10 @@ export const GLOSSARY_TERM_MATCHERS = [
   { id: 'softmax', match: { ru: ['softmax', 'Softmax'], en: ['softmax'] } },
   {
     id: 'backpropagation',
-    match: { ru: ['обратное распространение', 'обратного распространения'], en: ['backpropagation'] },
+    match: {
+      ru: ['обратное распространение', 'обратного распространения'],
+      en: ['backpropagation'],
+    },
   },
   { id: 'learning-rate', match: { ru: ['learning rate'], en: ['learning rate'] } },
   { id: 'dropout', match: { ru: ['dropout', 'Dropout'], en: ['dropout'] } },
@@ -224,16 +257,25 @@ export const GLOSSARY_TERM_MATCHERS = [
   { id: 'nms', match: { ru: ['Non-Maximum Suppression', 'NMS'], en: ['Non-Maximum Suppression'] } },
   {
     id: 'bounding-box',
-    match: { ru: ['ограничивающая рамка', 'ограничивающей рамки', 'bounding box'], en: ['bounding box'] },
+    match: {
+      ru: ['ограничивающая рамка', 'ограничивающей рамки', 'bounding box'],
+      en: ['bounding box'],
+    },
   },
   { id: 'objectness', match: { ru: ['objectness'], en: ['objectness'] } },
   { id: 'map-metric', match: { ru: ['mAP'], en: ['mAP'] } },
   { id: 'precision', match: { ru: ['precision'], en: ['precision'] } },
   { id: 'recall', match: { ru: ['recall'], en: ['recall'] } },
   { id: 'focal-loss', match: { ru: ['focal loss'], en: ['focal loss'] } },
-  { id: 'autoregression', match: { ru: ['авторегрессия', 'авторегрессии'], en: ['autoregression'] } },
+  {
+    id: 'autoregression',
+    match: { ru: ['авторегрессия', 'авторегрессии'], en: ['autoregression'] },
+  },
   { id: 'logits', match: { ru: ['логиты', 'логитов'], en: ['logits'] } },
-  { id: 'temperature', match: { ru: ['температура генерации', 'температуре'], en: ['temperature'] } },
+  {
+    id: 'temperature',
+    match: { ru: ['температура генерации', 'температуре'], en: ['temperature'] },
+  },
   {
     id: 'greedy-decoding',
     match: { ru: ['жадный выбор', 'жадного выбора'], en: ['greedy decoding'] },
@@ -251,7 +293,10 @@ export const GLOSSARY_TERM_MATCHERS = [
   },
   {
     id: 'positional-encoding',
-    match: { ru: ['позиционное кодирование', 'позиционного кодирования', 'RoPE'], en: ['positional encoding'] },
+    match: {
+      ru: ['позиционное кодирование', 'позиционного кодирования', 'RoPE'],
+      en: ['positional encoding'],
+    },
   },
   {
     id: 'query-key-value',
@@ -259,7 +304,10 @@ export const GLOSSARY_TERM_MATCHERS = [
   },
   {
     id: 'multi-head-attention',
-    match: { ru: ['многоголовое внимание', 'многоголового внимания'], en: ['multi-head attention'] },
+    match: {
+      ru: ['многоголовое внимание', 'многоголового внимания'],
+      en: ['multi-head attention'],
+    },
   },
   { id: 'pretraining', match: { ru: ['предобучение', 'предобучения'], en: ['pretraining'] } },
   { id: 'alignment', match: { ru: ['выравнивание модели'], en: ['alignment'] } },
@@ -285,7 +333,10 @@ export const GLOSSARY_TERM_MATCHERS = [
   },
   { id: 'zero-shot', match: { ru: ['zero-shot'], en: ['zero-shot'] } },
   { id: 'few-shot', match: { ru: ['few-shot'], en: ['few-shot'] } },
-  { id: 'in-context-learning', match: { ru: ['обучение в контексте'], en: ['in-context learning'] } },
+  {
+    id: 'in-context-learning',
+    match: { ru: ['обучение в контексте'], en: ['in-context learning'] },
+  },
   {
     id: 'chain-of-thought',
     match: {
