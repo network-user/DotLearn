@@ -277,7 +277,7 @@ export const PythonFunctionRunner = ({
               value={answer}
               onChange={(value) => setAnswer(value ?? '')}
               language="python"
-              height={buildEditorHeight(isCoarsePointer, '260px', 'min(45dvh, 320px)')}
+              height={buildEditorHeight(isCoarsePointer, '320px', 'min(50dvh, 360px)')}
               options={editorOptions}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {

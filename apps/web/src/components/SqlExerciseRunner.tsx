@@ -164,7 +164,7 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
               onChange={(value) => setAnswer(value ?? '')}
               language="sql"
               sqlSchema={exercise.fixture}
-              height={buildEditorHeight(isCoarsePointer, '200px', 'min(40dvh, 280px)')}
+              height={buildEditorHeight(isCoarsePointer, '280px', 'min(45dvh, 320px)')}
               options={editorOptions}
               onMount={(editor) => {
                 editor.onKeyDown((event) => {

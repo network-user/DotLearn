@@ -92,7 +92,7 @@ export const PythonConsole = ({
       {status === 'loading' && <PythonInitProgress progress={progress} />}
       <div
         ref={scrollRef}
-        className="px-3 py-3 max-h-[40dvh] sm:max-h-[260px] overflow-y-auto whitespace-pre-wrap bg-code-bg text-fg [scrollbar-width:thin]"
+        className="px-3 py-3 min-h-[120px] max-h-[80dvh] resize-y overflow-auto whitespace-pre-wrap bg-code-bg text-fg [scrollbar-width:thin]"
       >
         {lines.length === 0 ? (
           <p className="text-fg-subtle italic text-[12px]">{emptyMessage}</p>
