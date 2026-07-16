@@ -20,7 +20,10 @@ RUN pnpm --filter @dotlearn/api build
 # store в другую глубину пути, относительные ссылки ломались -> рантайм падал с
 # "Cannot find module @nestjs/common". deploy инжектит и workspace-зависимость
 # @dotlearn/contracts как реальные файлы.
-RUN pnpm --filter=@dotlearn/api deploy --prod /output
+# --legacy: с pnpm 10+ deploy по умолчанию требует inject-workspace-packages=true
+# (ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE). Флаг возвращает прежнее поведение
+# (деплой без инъекции на уровне install) - тот же результат, что и на pnpm 9.
+RUN pnpm --filter=@dotlearn/api deploy --prod --legacy /output
 
 FROM node:22-alpine AS runtime
 
