@@ -1,7 +1,7 @@
 import type { PredictOutputExercise } from '@dotlearn/contracts';
 
 import { compareRows } from '../compare/rows';
-import { normalizeCodeish } from '../compare/normalize';
+import { normalizeStdout } from '../compare/normalize';
 import { compareValues } from '../compare/value';
 import { fail, failCoded, pass, type RunResult } from './result';
 
@@ -22,7 +22,7 @@ export const runPredictOutput = (exercise: PredictOutputExercise, answer: unknow
       return fail('expected stdout to be a string', { actual: answer });
     }
     return answer === expected.value ||
-      normalizeCodeish(answer) === normalizeCodeish(expected.value)
+      normalizeStdout(answer) === normalizeStdout(expected.value)
       ? pass({ stdout: answer })
       : failCoded('predict-stdout-differs', 'predicted stdout differs', undefined, {
           expected: expected.value,

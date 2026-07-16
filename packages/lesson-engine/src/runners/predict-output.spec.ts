@@ -35,6 +35,11 @@ describe('runPredictOutput', () => {
       expect(runPredictOutput(exercise, '2\n').ok).toBe(true);
     });
 
+    it('accepts the same text without a trailing newline', () => {
+      // YAML `|` and Python print always leave a final \n; learners type without it.
+      expect(runPredictOutput(exercise, '2').ok).toBe(true);
+    });
+
     it('rejects a non-string answer', () => {
       expect(runPredictOutput(exercise, 2).ok).toBe(false);
     });
@@ -57,6 +62,17 @@ describe('runPredictOutput', () => {
         expect(runPredictOutput(listExercise, '[ "a" , "b" ]\n').ok).toBe(true);
       });
 
+      it('accepts a list answer that matches after dropping the YAML trailing newline', () => {
+        expect(runPredictOutput(listExercise, "['a', 'b']").ok).toBe(true);
+        expect(runPredictOutput(listExercise, "['_A__id']").ok).toBe(false);
+        const mangling: PredictOutputExercise = {
+          ...base,
+          expected: { kind: 'stdout', value: "['_A__id']\n" },
+        };
+        expect(runPredictOutput(mangling, "['_A__id']").ok).toBe(true);
+        expect(runPredictOutput(mangling, '["_A__id"]').ok).toBe(true);
+      });
+
       it('still fails a genuinely different value', () => {
         const result = runPredictOutput(listExercise, "['a','c']\n");
         expect(result.ok).toBe(false);
@@ -73,6 +89,14 @@ describe('runPredictOutput', () => {
         expect(result.ok).toBe(false);
         if (result.ok) throw new Error('expected failure');
         expect(result.code).toBe('predict-stdout-differs');
+      });
+
+      it('accepts multiline stdout without a final trailing newline', () => {
+        const multiline: PredictOutputExercise = {
+          ...base,
+          expected: { kind: 'stdout', value: '1\n2\n' },
+        };
+        expect(runPredictOutput(multiline, '1\n2').ok).toBe(true);
       });
     });
   });

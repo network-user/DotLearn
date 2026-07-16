@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCodeish } from './normalize';
+import { normalizeCodeish, normalizeStdout } from './normalize';
 
 describe('normalizeCodeish', () => {
   it('makes quote style irrelevant', () => {
@@ -40,5 +40,30 @@ describe('normalizeCodeish', () => {
   it('is idempotent', () => {
     const once = normalizeCodeish("[ 'a' , 'b' ]");
     expect(normalizeCodeish(once)).toBe(once);
+  });
+});
+
+describe('normalizeStdout', () => {
+  it('treats a trailing newline as insignificant', () => {
+    expect(normalizeStdout("['_A__id']\n")).toBe(normalizeStdout("['_A__id']"));
+    expect(normalizeStdout('2\n')).toBe(normalizeStdout('2'));
+    expect(normalizeStdout('1\n2\n')).toBe(normalizeStdout('1\n2'));
+  });
+
+  it('strips multiple trailing newlines from YAML block-scalar artifacts', () => {
+    expect(normalizeStdout("['_A__id']\n\n")).toBe(normalizeStdout("['_A__id']"));
+  });
+
+  it('unifies CRLF with LF before comparing', () => {
+    expect(normalizeStdout('1\r\n2\r\n')).toBe(normalizeStdout('1\n2'));
+  });
+
+  it('still applies code-ish quote and spacing leniency', () => {
+    expect(normalizeStdout("['a', 'b']\n")).toBe(normalizeStdout('[ "a" , "b" ]'));
+  });
+
+  it('still distinguishes real content and mid-string line breaks', () => {
+    expect(normalizeStdout("['a','b']")).not.toBe(normalizeStdout("['a','c']"));
+    expect(normalizeStdout('1\n2')).not.toBe(normalizeStdout('1 2'));
   });
 });

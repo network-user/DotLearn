@@ -31,7 +31,7 @@ export type {
 } from './runtime/git';
 
 export { compareRows, formatRowDiff, type Row, type RowDiff } from './compare/rows';
-export { normalizeCodeish } from './compare/normalize';
+export { normalizeCodeish, normalizeStdout } from './compare/normalize';
 export { approximatelyEqual, compareValues, type ValueComparison } from './compare/value';
 
 export {

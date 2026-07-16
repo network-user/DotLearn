@@ -142,8 +142,14 @@ export const PredictOutputRunner = ({
 
   // stdout values are already plain text — show them raw. JSON.stringify would
   // re-quote and escape the string, turning (2, 'b') into "\"('2', b)\"".
-  const formatValue = (value: unknown): string =>
-    expected.kind === 'stdout' && typeof value === 'string' ? value : JSON.stringify(value);
+  // Drop a trailing newline so YAML `|` / print artifacts do not render as an
+  // invisible difference next to a learner answer typed without it.
+  const formatValue = (value: unknown): string => {
+    if (expected.kind === 'stdout' && typeof value === 'string') {
+      return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, '');
+    }
+    return JSON.stringify(value);
+  };
 
   return (
     <ExerciseCard
