@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 import mdx from '@mdx-js/rollup';
@@ -18,6 +19,16 @@ import { INK_THEME, PAPER_THEME } from './src/lib/shiki-themes';
 import { searchIndexPlugin } from './vite-plugin-search-index';
 import { topicManifestsPlugin } from './vite-plugin-topic-manifests';
 import { topicStatsPlugin } from './vite-plugin-topic-stats';
+
+// @mdx-js/react добавляется MDX-компилятором (providerImportSource ниже) в
+// КАЖДЫЙ скомпилированный .mdx. Уроки лежат в /interview и /topics - вне корня
+// сборки apps/web, - поэтому их bare-import резолвится от корня репозитория.
+// Раньше это держалось на public-hoist-pattern[]=@mdx-js/* в .npmrc (pnpm
+// поднимал пакет в корневой node_modules), но pnpm 11 перестал хойстить именно
+// glob @mdx-js/* (react/react-dom по точным паттернам хойстятся по-прежнему), и
+// vite build падал: 'Rollup failed to resolve import "@mdx-js/react"'. Резолвим
+// пакет явно из прямой зависимости apps/web - не зависит от hoisting и pnpm.
+const mdxReactEntry = createRequire(import.meta.url).resolve('@mdx-js/react');
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -314,6 +325,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      '@mdx-js/react': mdxReactEntry,
     },
   },
   worker: {
