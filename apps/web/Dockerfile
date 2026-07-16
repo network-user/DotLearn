@@ -16,9 +16,13 @@ ENV VITE_GITHUB_URL=$VITE_GITHUB_URL
 ENV VITE_UMAMI_WEBSITE_ID=$VITE_UMAMI_WEBSITE_ID
 ENV VITE_UMAMI_SRC=$VITE_UMAMI_SRC
 
-# .npmrc обязателен: public-hoist-pattern[]=@mdx-js/* поднимает @mdx-js/react в
-# корневой node_modules, иначе MDX-файлы из /interview и /topics (вне apps/web)
-# не резолвят его при сборке и vite build падает.
+# .npmrc обязателен: public-hoist-pattern[]=react/react-dom поднимает их в
+# корневой node_modules. MDX-файлы из /interview и /topics лежат вне apps/web,
+# поэтому их bare-импорты (react/jsx-runtime попадает в каждый скомпилированный
+# .mdx) резолвятся от корня репозитория и требуют hoist.
+# @mdx-js/react отдельно: pnpm 11 перестал хойстить glob @mdx-js/*, поэтому его
+# резолвит vite alias из прямой зависимости apps/web (см. apps/web/vite.config.ts),
+# на hoist для него больше не полагаемся.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY turbo.json tsconfig.base.json ./
 COPY packages ./packages
