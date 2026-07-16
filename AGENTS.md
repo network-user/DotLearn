@@ -7,7 +7,7 @@
 
 - **Тип:** learning (local-first учебный workbench) + full-stack монорепо
 - **Аудитория:** internal
-- **Runtime:** Node.js 20+, pnpm 9
+- **Runtime:** Node.js 22+, pnpm 11
 - **Монорепо:** да (pnpm workspaces + Turborepo)
 
 `.learn` - локальный learning-плеер. Каждая тема под `topics/<slug>/` - самодостаточный модуль: теория в MDX, упражнения в YAML, всё валидируется Zod-схемами из `packages/contracts`. Фронт (`apps/web`) работает без бэкенда; опциональный `apps/api` даёт submission/admin-эндпоинты, анонимный счётчик онлайна (presence) с опциональной расширенной аналитикой (uniques за всё время через HyperLogLog, per-topic, страница `/analytics`) под флагом `PRESENCE_ANALYTICS` и кросс-девайс синхронизацию прогресса по коду (sync: снапшот-blob на сервере, merge на клиенте в `apps/web/src/lib/sync/`).

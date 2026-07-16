@@ -67,7 +67,7 @@ fi
 ok "node $(node -v)"
 
 corepack enable >/dev/null 2>&1 || npm install -g corepack >/dev/null 2>&1
-corepack prepare pnpm@9 --activate >/dev/null 2>&1 || true
+corepack prepare pnpm@11.13.1 --activate >/dev/null 2>&1 || true
 command -v pnpm >/dev/null 2>&1 || die "pnpm not available after corepack enable"
 ok "pnpm $(pnpm -v)"
 
