@@ -49,7 +49,9 @@ const PracticeField = ({ label, children }: { label: string; children: React.Rea
 
 const resolvedSearch = (
   search: FlashcardsPracticeSearch,
-): Required<Pick<FlashcardsPracticeSearch, 'mode' | 'category' | 'stage' | 'direction' | 'due' | 'count'>> &
+): Required<
+  Pick<FlashcardsPracticeSearch, 'mode' | 'category' | 'stage' | 'direction' | 'due' | 'count'>
+> &
   Pick<FlashcardsPracticeSearch, 'topics' | 'start'> => ({
   mode: search.mode ?? practiceSearchDefaults.mode,
   category: search.category ?? practiceSearchDefaults.category,
@@ -87,8 +89,7 @@ export const FlashcardsPracticePage = () => {
     [activeDirection],
   );
   const scopedStages = useMemo(
-    () =>
-      activeDirection === 'all' ? getInterviewStages() : getInterviewStages(activeDirection),
+    () => (activeDirection === 'all' ? getInterviewStages() : getInterviewStages(activeDirection)),
     [activeDirection],
   );
 

@@ -1,6 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import type { InterviewCategory, InterviewDirection, InterviewQuestionMeta, InterviewStage } from '@dotlearn/contracts';
+import type {
+  InterviewCategory,
+  InterviewDirection,
+  InterviewQuestionMeta,
+  InterviewStage,
+} from '@dotlearn/contracts';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle2, GraduationCap, Search, Shuffle, Wand2 } from 'lucide-react';

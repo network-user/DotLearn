@@ -385,7 +385,9 @@ export const FlashcardsIndexPage = () => {
               <div key={group.direction} className="space-y-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h3 className="font-display text-lg tracking-tightish text-fg">{group.label}</h3>
+                    <h3 className="font-display text-lg tracking-tightish text-fg">
+                      {group.label}
+                    </h3>
                     <span className="text-sm text-fg-subtle">
                       {t('cardsLabel', { count: group.total })}
                     </span>

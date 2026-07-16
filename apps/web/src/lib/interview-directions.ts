@@ -1,4 +1,7 @@
-import { InterviewDirection, type InterviewDirection as InterviewDirectionType } from '@dotlearn/contracts';
+import {
+  InterviewDirection,
+  type InterviewDirection as InterviewDirectionType,
+} from '@dotlearn/contracts';
 
 import config from './interview-directions.data.json';
 
@@ -34,8 +37,7 @@ export const resolveInterviewDirection = (category: string): InterviewDirectionT
 export const categoriesForDirection = (
   directionId: InterviewDirectionType,
   categories: readonly string[],
-): string[] =>
-  categories.filter((category) => resolveInterviewDirection(category) === directionId);
+): string[] => categories.filter((category) => resolveInterviewDirection(category) === directionId);
 
 export const directionLabel = (id: InterviewDirectionType, lang: string): string => {
   const entry = directions.find((item) => item.id === id);

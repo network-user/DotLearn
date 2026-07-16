@@ -106,7 +106,11 @@ export const InterviewExamPage = () => {
   );
 
   const categories = useMemo(
-    () => buildFacet(directionExercises, (meta) => ({ slug: meta.category, label: meta.categoryLabel })),
+    () =>
+      buildFacet(directionExercises, (meta) => ({
+        slug: meta.category,
+        label: meta.categoryLabel,
+      })),
     [directionExercises],
   );
   const stages = useMemo(

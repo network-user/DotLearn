@@ -21,8 +21,7 @@ export const runPredictOutput = (exercise: PredictOutputExercise, answer: unknow
     if (typeof answer !== 'string') {
       return fail('expected stdout to be a string', { actual: answer });
     }
-    return answer === expected.value ||
-      normalizeStdout(answer) === normalizeStdout(expected.value)
+    return answer === expected.value || normalizeStdout(answer) === normalizeStdout(expected.value)
       ? pass({ stdout: answer })
       : failCoded('predict-stdout-differs', 'predicted stdout differs', undefined, {
           expected: expected.value,
