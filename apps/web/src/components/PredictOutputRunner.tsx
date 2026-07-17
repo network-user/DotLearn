@@ -143,13 +143,19 @@ export const PredictOutputRunner = ({
   // stdout values are already plain text — show them raw. JSON.stringify would
   // re-quote and escape the string, turning (2, 'b') into "\"('2', b)\"".
   // Drop a trailing newline so YAML `|` / print artifacts do not render as an
-  // invisible difference next to a learner answer typed without it.
+  // invisible difference next to a learner answer typed without it. Keep
+  // mid-string newlines so multi-print expected/got stay visually distinct
+  // (HTML would otherwise collapse them to spaces without whitespace-pre).
   const formatValue = (value: unknown): string => {
     if (expected.kind === 'stdout' && typeof value === 'string') {
       return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, '');
     }
     return JSON.stringify(value);
   };
+  const valueClassName =
+    expected.kind === 'stdout'
+      ? 'whitespace-pre-wrap break-words font-mono'
+      : 'font-mono';
 
   return (
     <ExerciseCard
@@ -277,14 +283,15 @@ export const PredictOutputRunner = ({
               {t('predict.wrong', { reason: failureMessage(state.failure) })}
             </p>
             {state.expected !== undefined && (
-              <p className="text-[12px] text-err/80 font-mono">
+              <p className="text-[12px] text-err/80">
                 {t('predict.expected')}:{' '}
-                <code className="text-ok">{formatValue(state.expected)}</code>
+                <code className={`text-ok ${valueClassName}`}>{formatValue(state.expected)}</code>
               </p>
             )}
             {state.actual !== undefined && (
-              <p className="text-[12px] text-err/80 font-mono">
-                {t('predict.got')}: <code className="text-err">{formatValue(state.actual)}</code>
+              <p className="text-[12px] text-err/80">
+                {t('predict.got')}:{' '}
+                <code className={`text-err ${valueClassName}`}>{formatValue(state.actual)}</code>
               </p>
             )}
           </div>

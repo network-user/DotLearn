@@ -80,15 +80,14 @@ describe('runPredictOutput', () => {
         expect(result.code).toBe('predict-stdout-differs');
       });
 
-      it('still fails when the line count differs', () => {
+      it('accepts space-separated tokens as equivalent to multi-line print output', () => {
         const multiline: PredictOutputExercise = {
           ...base,
           expected: { kind: 'stdout', value: '1\n2\n' },
         };
-        const result = runPredictOutput(multiline, '1 2\n');
-        expect(result.ok).toBe(false);
-        if (result.ok) throw new Error('expected failure');
-        expect(result.code).toBe('predict-stdout-differs');
+        expect(runPredictOutput(multiline, '1 2\n').ok).toBe(true);
+        expect(runPredictOutput(multiline, '1 2').ok).toBe(true);
+        expect(runPredictOutput(multiline, '1  2').ok).toBe(true);
       });
 
       it('accepts multiline stdout without a final trailing newline', () => {
@@ -97,6 +96,17 @@ describe('runPredictOutput', () => {
           expected: { kind: 'stdout', value: '1\n2\n' },
         };
         expect(runPredictOutput(multiline, '1\n2').ok).toBe(true);
+      });
+
+      it('still fails when the token sequence differs', () => {
+        const multiline: PredictOutputExercise = {
+          ...base,
+          expected: { kind: 'stdout', value: '0\n1\n' },
+        };
+        const result = runPredictOutput(multiline, '0 2');
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error('expected failure');
+        expect(result.code).toBe('predict-stdout-differs');
       });
     });
   });

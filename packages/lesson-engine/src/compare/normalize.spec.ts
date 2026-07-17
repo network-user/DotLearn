@@ -58,12 +58,20 @@ describe('normalizeStdout', () => {
     expect(normalizeStdout('1\r\n2\r\n')).toBe(normalizeStdout('1\n2'));
   });
 
+  it('treats newlines and spaces as equivalent separators between tokens', () => {
+    expect(normalizeStdout('0\n1')).toBe(normalizeStdout('0 1'));
+    expect(normalizeStdout('0\n1\n')).toBe(normalizeStdout('0  1'));
+    expect(normalizeStdout('False\nTrue')).toBe(normalizeStdout('False True'));
+    expect(normalizeStdout('5\n1\n4')).toBe(normalizeStdout('5 1 4'));
+  });
+
   it('still applies code-ish quote and spacing leniency', () => {
     expect(normalizeStdout("['a', 'b']\n")).toBe(normalizeStdout('[ "a" , "b" ]'));
   });
 
-  it('still distinguishes real content and mid-string line breaks', () => {
+  it('still distinguishes real content differences', () => {
     expect(normalizeStdout("['a','b']")).not.toBe(normalizeStdout("['a','c']"));
-    expect(normalizeStdout('1\n2')).not.toBe(normalizeStdout('1 2'));
+    expect(normalizeStdout('ab')).not.toBe(normalizeStdout('a b'));
+    expect(normalizeStdout('0 1')).not.toBe(normalizeStdout('0 2'));
   });
 });

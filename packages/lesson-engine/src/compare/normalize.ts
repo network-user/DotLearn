@@ -43,16 +43,20 @@ export const normalizeCodeish = (s: string): string => s.split('\n').map(normali
 /**
  * Normalize predicted stdout for comparison.
  *
- * YAML block scalars (`|`) always end with a newline, and Python's `print`
- * also emits a trailing newline, but learners almost never type that final
- * newline into the answer field. Stripping trailing newlines (after CRLF
- * unification) makes those equivalent without collapsing meaningful mid-string
- * line breaks. Quote style and structural spacing still go through
- * {@link normalizeCodeish}.
+ * Learners type multi-print output in different ways: real newlines (`0\n1`),
+ * spaces on one line (`0 1`), or a mix, and often omit the final newline that
+ * YAML `|` / Python `print` leave behind. After CRLF unification and the
+ * code-ish quote/spacing pass, every run of whitespace (spaces, tabs, newlines)
+ * collapses to a single space and the ends are trimmed so those forms match.
+ * Content tokens stay distinct: `a b` still differs from `ab`, and letter case
+ * is preserved via {@link normalizeCodeish}.
  *
  * @example normalizeStdout("['_A__id']\n") === normalizeStdout("['_A__id']")
- * @example normalizeStdout("1\n2\n") === normalizeStdout("1\n2")
- * @example normalizeStdout("1\n2") !== normalizeStdout("1 2")
+ * @example normalizeStdout("1\n2\n") === normalizeStdout("1 2")
+ * @example normalizeStdout("0\n1") === normalizeStdout("0 1")
+ * @example normalizeStdout("ab") !== normalizeStdout("a b")
  */
 export const normalizeStdout = (s: string): string =>
-  normalizeCodeish(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/, ''));
+  normalizeCodeish(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
+    .replace(/\s+/g, ' ')
+    .trim();
