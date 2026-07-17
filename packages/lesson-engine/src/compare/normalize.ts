@@ -16,7 +16,9 @@
  *      non-indented one and different structures stay distinct.
  *
  * Letter case, newlines, and the presence of leading indentation are preserved,
- * so `A` never equals `a` and `1\n2` never equals `1 2`.
+ * so `A` never equals `a` and `1\n2` never equals `1 2` under this helper alone.
+ * Stdout comparison uses {@link stdoutMatches}, which may still accept a
+ * space-joined single-line form when the expected side has no blank lines.
  *
  * Deterministic and linear: every regex is a simple single-pass replacement
  * with no nested quantifiers, so there is no catastrophic backtracking.
@@ -41,22 +43,47 @@ const normalizeLine = (line: string): string =>
 export const normalizeCodeish = (s: string): string => s.split('\n').map(normalizeLine).join('\n');
 
 /**
- * Normalize predicted stdout for comparison.
+ * Line-oriented stdout normalization: unify CRLF, apply code-ish rules per line,
+ * drop only trailing empty lines (YAML `|` / print final newline). Mid-string
+ * blank lines stay so empty-line pedagogy is not lost.
  *
- * Learners type multi-print output in different ways: real newlines (`0\n1`),
- * spaces on one line (`0 1`), or a mix, and often omit the final newline that
- * YAML `|` / Python `print` leave behind. After CRLF unification and the
- * code-ish quote/spacing pass, every run of whitespace (spaces, tabs, newlines)
- * collapses to a single space and the ends are trimmed so those forms match.
- * Content tokens stay distinct: `a b` still differs from `ab`, and letter case
- * is preserved via {@link normalizeCodeish}.
- *
- * @example normalizeStdout("['_A__id']\n") === normalizeStdout("['_A__id']")
- * @example normalizeStdout("1\n2\n") === normalizeStdout("1 2")
- * @example normalizeStdout("0\n1") === normalizeStdout("0 1")
- * @example normalizeStdout("ab") !== normalizeStdout("a b")
+ * @example normalizeStdout("a\n") === "a"
+ * @example normalizeStdout("a\n\nb\n") === "a\n\nb"
  */
-export const normalizeStdout = (s: string): string =>
-  normalizeCodeish(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
-    .replace(/\s+/g, ' ')
-    .trim();
+export const normalizeStdout = (s: string): string => normalizeStdoutLines(s).join('\n');
+
+export const normalizeStdoutLines = (s: string): string[] => {
+  const lines = normalizeCodeish(s.replace(/\r\n/g, '\n').replace(/\r/g, '\n')).split('\n');
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  return lines;
+};
+
+const collapseHorizontal = (s: string): string => s.replace(/[ \t]+/g, ' ').trim();
+
+/**
+ * Whether two predicted stdout answers match.
+ *
+ * 1. Line-for-line after {@link normalizeStdoutLines}.
+ * 2. Else, when expected has no blank lines, a space-joined form of the lines
+ *    also matches (learners often type multi-print output as `0 1` instead of
+ *    `0\n1`). Blank lines in expected block that fallback so `a\n\nb` stays
+ *    distinct from `a\nb`.
+ */
+export const stdoutMatches = (actual: string, expected: string): boolean => {
+  const actualLines = normalizeStdoutLines(actual);
+  const expectedLines = normalizeStdoutLines(expected);
+  if (
+    actualLines.length === expectedLines.length &&
+    actualLines.every((line, index) => line === expectedLines[index])
+  ) {
+    return true;
+  }
+  if (expectedLines.some((line) => line === '')) {
+    return false;
+  }
+  const flatExpected = collapseHorizontal(expectedLines.join(' '));
+  const flatActual = collapseHorizontal(actualLines.join(' '));
+  return flatExpected.length > 0 && flatExpected === flatActual;
+};

@@ -31,6 +31,13 @@ describe('runFillInBlanks', () => {
     );
   });
 
+  it('trims accidental surrounding whitespace on both sides', () => {
+    expect(runFillInBlanks(exercise({ 1: { accept: ['users'] } }), { 1: '  users  ' }).ok).toBe(
+      true,
+    );
+    expect(runFillInBlanks(exercise({ 1: { accept: ['  *  '] } }), { 1: '*' }).ok).toBe(true);
+  });
+
   it('still rejects an answer that differs in more than quotes or spacing', () => {
     const result = runFillInBlanks(exercise({ 1: { accept: ["['a', 'b']"] } }), { 1: "['a','c']" });
     expect(result.ok).toBe(false);

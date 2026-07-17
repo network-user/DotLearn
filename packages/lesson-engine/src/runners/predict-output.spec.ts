@@ -108,6 +108,16 @@ describe('runPredictOutput', () => {
         if (result.ok) throw new Error('expected failure');
         expect(result.code).toBe('predict-stdout-differs');
       });
+
+      it('keeps blank lines significant for multi-print pedagogy', () => {
+        const blankLine: PredictOutputExercise = {
+          ...base,
+          expected: { kind: 'stdout', value: 'a\n\nb\n' },
+        };
+        expect(runPredictOutput(blankLine, 'a\n\nb').ok).toBe(true);
+        expect(runPredictOutput(blankLine, 'a\nb').ok).toBe(false);
+        expect(runPredictOutput(blankLine, 'a b').ok).toBe(false);
+      });
     });
   });
 

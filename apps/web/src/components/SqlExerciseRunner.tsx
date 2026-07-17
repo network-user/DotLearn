@@ -42,6 +42,8 @@ type RunState =
       missing?: Record<string, unknown>[];
       extra?: Record<string, unknown>[];
       misordered?: boolean;
+      expectedScalar?: unknown;
+      actualScalar?: unknown;
     }
   | { kind: 'error'; message: string };
 
@@ -92,6 +94,8 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
           missing?: Record<string, unknown>[];
           extra?: Record<string, unknown>[];
           misordered?: boolean;
+          expected?: unknown;
+          actual?: unknown;
         };
         const failure = extractFailureReason(result);
         setState({
@@ -102,6 +106,8 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
           ...(details.missing !== undefined ? { missing: details.missing } : {}),
           ...(details.extra !== undefined ? { extra: details.extra } : {}),
           ...(details.misordered !== undefined ? { misordered: details.misordered } : {}),
+          ...(details.expected !== undefined ? { expectedScalar: details.expected } : {}),
+          ...(details.actual !== undefined ? { actualScalar: details.actual } : {}),
         });
         setFailedAttempts((count) => count + 1);
         setStatusMessage(t('common.status.failed', { reason: failureMessage(failure) }));
@@ -200,6 +206,18 @@ export const SqlExerciseRunner = ({ topicSlug, exercise, conceptId }: SqlExercis
               <p className="text-[13px] text-err">
                 {t('sql.fail', { reason: failureMessage(state.failure) })}
               </p>
+              {state.expectedScalar !== undefined && (
+                <p className="text-[12.5px] font-mono text-err/90">
+                  {t('sql.expectedScalar')}:{' '}
+                  <code className="text-ok">{JSON.stringify(state.expectedScalar)}</code>
+                </p>
+              )}
+              {state.actualScalar !== undefined && (
+                <p className="text-[12.5px] font-mono text-err/90">
+                  {t('sql.actualScalar')}:{' '}
+                  <code className="text-err">{JSON.stringify(state.actualScalar)}</code>
+                </p>
+              )}
               {state.missing && state.missing.length > 0 && (
                 <div className="space-y-1">
                   <p className="eyebrow">{t('sql.missingRows')}</p>

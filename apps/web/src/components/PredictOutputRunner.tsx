@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
 import { parseSqlFixture } from '@/components/sandbox/parseSqlFixture';
+import { ResultGrid } from '@/components/sandbox/ResultGrid';
 import { SqlSchemaPreview } from '@/components/sandbox/SqlSchemaPreview';
 import { StaticCode } from '@/components/sandbox/StaticCode';
 import { Button } from '@/components/ui/Button';
@@ -28,16 +29,26 @@ interface PredictOutputRunnerProps {
 type CheckState =
   | { kind: 'idle' }
   | { kind: 'pass' }
-  | { kind: 'fail'; failure: FailureReason; expected?: unknown; actual?: unknown };
+  | {
+      kind: 'fail';
+      failure: FailureReason;
+      expected?: unknown;
+      actual?: unknown;
+      missing?: Record<string, unknown>[];
+      extra?: Record<string, unknown>[];
+      misordered?: boolean;
+    };
 
 const parseScalar = (raw: string): unknown => {
   const trimmed = raw.trim();
-  if (trimmed === '') return '';
-  if (trimmed === 'null') return null;
-  if (trimmed === 'true') return true;
-  if (trimmed === 'false') return false;
-  if (/^-?\d+$/.test(trimmed)) return Number(trimmed);
-  if (/^-?\d+\.\d+$/.test(trimmed)) return Number(trimmed);
+  if (trimmed === '') return null;
+  const lower = trimmed.toLowerCase();
+  if (lower === 'null' || lower === 'none' || lower === 'nil') return null;
+  if (lower === 'true') return true;
+  if (lower === 'false') return false;
+  if (/^[+-]?\d+$/.test(trimmed)) return Number(trimmed);
+  if (/^[+-]?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (/^[+-]?\d+[eE][+-]?\d+$/.test(trimmed)) return Number(trimmed);
   if (
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
@@ -114,12 +125,21 @@ export const PredictOutputRunner = ({
         ...(confidence !== null ? { confidence } : {}),
       });
     } else {
-      const details = (result.details ?? {}) as { expected?: unknown; actual?: unknown };
+      const details = (result.details ?? {}) as {
+        expected?: unknown;
+        actual?: unknown;
+        missing?: Record<string, unknown>[];
+        extra?: Record<string, unknown>[];
+        misordered?: boolean;
+      };
       setState({
         kind: 'fail',
         failure: extractFailureReason(result),
         ...(details.expected !== undefined ? { expected: details.expected } : {}),
         ...(details.actual !== undefined ? { actual: details.actual } : {}),
+        ...(details.missing !== undefined ? { missing: details.missing } : {}),
+        ...(details.extra !== undefined ? { extra: details.extra } : {}),
+        ...(details.misordered !== undefined ? { misordered: details.misordered } : {}),
       });
       void recordAttempt(topicSlug, exercise.id, 'fail', {
         difficulty: exercise.difficulty,
@@ -278,7 +298,7 @@ export const PredictOutputRunner = ({
         )}
 
         {state.kind === 'fail' && (
-          <div className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-1">
+          <div className="rounded-lg border border-err/30 bg-err/8 px-4 py-3 text-[13.5px] text-err space-y-2">
             <p className="font-medium">
               {t('predict.wrong', { reason: failureMessage(state.failure) })}
             </p>
@@ -293,6 +313,31 @@ export const PredictOutputRunner = ({
                 {t('predict.got')}:{' '}
                 <code className={`text-err ${valueClassName}`}>{formatValue(state.actual)}</code>
               </p>
+            )}
+            {state.missing && state.missing.length > 0 && (
+              <div className="space-y-1">
+                <p className="eyebrow text-err/90">{t('predict.missingRows')}</p>
+                <ResultGrid
+                  columns={Object.keys(state.missing[0] ?? {})}
+                  rows={state.missing}
+                  highlight="expected"
+                  compact
+                />
+              </div>
+            )}
+            {state.extra && state.extra.length > 0 && (
+              <div className="space-y-1">
+                <p className="eyebrow text-err/90">{t('predict.extraRows')}</p>
+                <ResultGrid
+                  columns={Object.keys(state.extra[0] ?? {})}
+                  rows={state.extra}
+                  highlight="fail"
+                  compact
+                />
+              </div>
+            )}
+            {state.misordered && (
+              <p className="text-[12.5px] text-warn">{t('predict.misordered')}</p>
             )}
           </div>
         )}

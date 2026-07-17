@@ -19,12 +19,21 @@ describe('compareValues', () => {
     expect(compareValues(null, null).ok).toBe(true);
   });
 
-  it('flags a type mismatch with the path', () => {
-    expect(compareValues(1, '1')).toEqual({ ok: false, reason: 'type', path: '$' });
+  it('treats the same finite number written as number or numeric string as equal', () => {
+    expect(compareValues(1, '1').ok).toBe(true);
+    expect(compareValues('1', 1).ok).toBe(true);
+    expect(compareValues(1.5, '1.5').ok).toBe(true);
+    expect(compareValues(100, '1e2').ok).toBe(true);
+  });
+
+  it('still flags a real type mismatch with the path', () => {
+    expect(compareValues(1, true)).toEqual({ ok: false, reason: 'type', path: '$' });
+    expect(compareValues('yes', true)).toEqual({ ok: false, reason: 'type', path: '$' });
   });
 
   it('flags differing primitive values', () => {
     expect(compareValues(1, 2)).toEqual({ ok: false, reason: 'value', path: '$' });
+    expect(compareValues(1, '2')).toEqual({ ok: false, reason: 'value', path: '$' });
   });
 
   describe('code-ish string leniency', () => {
@@ -97,6 +106,24 @@ describe('compareValues', () => {
         reason: 'value',
         path: '$.a.b',
       });
+    });
+
+    it('accepts numeric string cells inside objects', () => {
+      expect(compareValues({ n: 1 }, { n: '1' }).ok).toBe(true);
+    });
+  });
+
+  describe('Set and Map', () => {
+    it('compares Set membership with value leniency', () => {
+      expect(compareValues(new Set([1, 2]), new Set([2, 1])).ok).toBe(true);
+      expect(compareValues(new Set([1]), new Set(['1'])).ok).toBe(true);
+      expect(compareValues(new Set([1]), new Set([1, 2])).ok).toBe(false);
+    });
+
+    it('compares Map entries', () => {
+      expect(compareValues(new Map([['a', 1]]), new Map([['a', 1]])).ok).toBe(true);
+      expect(compareValues(new Map([['a', 1]]), new Map([['a', '1']])).ok).toBe(true);
+      expect(compareValues(new Map([['a', 1]]), new Map([['b', 1]])).ok).toBe(false);
     });
   });
 });

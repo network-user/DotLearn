@@ -11,11 +11,6 @@ export interface RowDiff {
   actualColumns: string[];
 }
 
-const canonicalKey = (row: Row): string => {
-  const keys = Object.keys(row).sort();
-  return JSON.stringify(keys.map((key) => [key, row[key]]));
-};
-
 const collectColumns = (rows: Row[]): string[] => {
   const columns: string[] = [];
   const seen = new Set<string>();
@@ -29,6 +24,8 @@ const collectColumns = (rows: Row[]): string[] => {
   }
   return columns;
 };
+
+const rowsEqual = (left: Row, right: Row): boolean => compareValues(left, right).ok;
 
 export const compareRows = (
   actual: Row[],
@@ -56,8 +53,7 @@ export const compareRows = (
         ok = false;
         continue;
       }
-      const cmp = compareValues(left, right);
-      if (!cmp.ok) {
+      if (!rowsEqual(left, right)) {
         missing.push(right);
         extra.push(left);
         ok = false;
@@ -66,39 +62,38 @@ export const compareRows = (
     return { ok, missing, extra, misordered: false, expectedColumns, actualColumns };
   }
 
-  const actualKeys: string[] = [];
-  const actualCounts = new Map<string, { row: Row; count: number }>();
-  for (const row of actual) {
-    const key = canonicalKey(row);
-    actualKeys.push(key);
-    const entry = actualCounts.get(key);
-    if (entry) {
-      entry.count += 1;
-    } else {
-      actualCounts.set(key, { row, count: 1 });
-    }
-  }
-  const expectedKeys: string[] = [];
+  const unmatchedActual = actual.map((row) => ({ row, used: false }));
   const missing: Row[] = [];
-  for (const row of expected) {
-    const key = canonicalKey(row);
-    expectedKeys.push(key);
-    const entry = actualCounts.get(key);
-    if (!entry || entry.count === 0) {
-      missing.push(row);
-    } else {
-      entry.count -= 1;
+
+  for (const expectedRow of expected) {
+    const matchIndex = unmatchedActual.findIndex(
+      (entry) => !entry.used && rowsEqual(entry.row, expectedRow),
+    );
+    if (matchIndex < 0) {
+      missing.push(expectedRow);
+      continue;
+    }
+    const entry = unmatchedActual[matchIndex];
+    if (entry) {
+      entry.used = true;
     }
   }
-  const extra: Row[] = [];
-  for (const { row, count } of actualCounts.values()) {
-    for (let index = 0; index < count; index += 1) {
-      extra.push(row);
-    }
-  }
+
+  const extra: Row[] = unmatchedActual.filter((entry) => !entry.used).map((entry) => entry.row);
   const ok = missing.length === 0 && extra.length === 0;
-  const misordered = ok && actualKeys.some((key, index) => key !== expectedKeys[index]);
-  return { ok, missing, extra, misordered, expectedColumns, actualColumns };
+  const positionallyEqual =
+    ok &&
+    actual.length === expected.length &&
+    actual.every((row, index) => rowsEqual(row, expected[index]!));
+
+  return {
+    ok,
+    missing,
+    extra,
+    misordered: ok && !positionallyEqual,
+    expectedColumns,
+    actualColumns,
+  };
 };
 
 export const formatRowDiff = (diff: RowDiff): string => {

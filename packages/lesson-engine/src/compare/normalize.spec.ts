@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCodeish, normalizeStdout } from './normalize';
+import { normalizeCodeish, normalizeStdout, stdoutMatches } from './normalize';
 
 describe('normalizeCodeish', () => {
   it('makes quote style irrelevant', () => {
@@ -58,20 +58,39 @@ describe('normalizeStdout', () => {
     expect(normalizeStdout('1\r\n2\r\n')).toBe(normalizeStdout('1\n2'));
   });
 
-  it('treats newlines and spaces as equivalent separators between tokens', () => {
-    expect(normalizeStdout('0\n1')).toBe(normalizeStdout('0 1'));
-    expect(normalizeStdout('0\n1\n')).toBe(normalizeStdout('0  1'));
-    expect(normalizeStdout('False\nTrue')).toBe(normalizeStdout('False True'));
-    expect(normalizeStdout('5\n1\n4')).toBe(normalizeStdout('5 1 4'));
+  it('preserves mid-string blank lines', () => {
+    expect(normalizeStdout('a\n\nb')).toBe('a\n\nb');
+    expect(normalizeStdout('a\n\nb')).not.toBe(normalizeStdout('a\nb'));
   });
 
-  it('still applies code-ish quote and spacing leniency', () => {
+  it('still applies code-ish quote and spacing leniency per line', () => {
     expect(normalizeStdout("['a', 'b']\n")).toBe(normalizeStdout('[ "a" , "b" ]'));
+  });
+});
+
+describe('stdoutMatches', () => {
+  it('matches equal multi-line print output', () => {
+    expect(stdoutMatches('0\n1', '0\n1')).toBe(true);
+    expect(stdoutMatches('0\n1\n', '0\n1')).toBe(true);
+  });
+
+  it('matches space-separated tokens when expected has no blank lines', () => {
+    expect(stdoutMatches('0 1', '0\n1')).toBe(true);
+    expect(stdoutMatches('0  1', '0\n1\n')).toBe(true);
+    expect(stdoutMatches('False True', 'False\nTrue')).toBe(true);
+    expect(stdoutMatches('5 1 4', '5\n1\n4')).toBe(true);
+    expect(stdoutMatches('console: ok queue <- ok', 'console: ok\nqueue <- ok')).toBe(true);
+  });
+
+  it('keeps blank lines significant', () => {
+    expect(stdoutMatches('Анна\nконец', 'Анна\n\nконец')).toBe(false);
+    expect(stdoutMatches('Анна\n\nконец', 'Анна\n\nконец')).toBe(true);
+    expect(stdoutMatches('Анна  конец', 'Анна\n\nконец')).toBe(false);
   });
 
   it('still distinguishes real content differences', () => {
-    expect(normalizeStdout("['a','b']")).not.toBe(normalizeStdout("['a','c']"));
-    expect(normalizeStdout('ab')).not.toBe(normalizeStdout('a b'));
-    expect(normalizeStdout('0 1')).not.toBe(normalizeStdout('0 2'));
+    expect(stdoutMatches("['a','b']", "['a','c']")).toBe(false);
+    expect(stdoutMatches('0 1', '0 2')).toBe(false);
+    expect(stdoutMatches('ab', 'a b')).toBe(false);
   });
 });

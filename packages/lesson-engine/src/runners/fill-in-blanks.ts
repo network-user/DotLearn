@@ -20,16 +20,18 @@ export const runFillInBlanks = (
 ): RunResult => {
   const failures: BlankFailure[] = [];
   for (const [blankId, spec] of Object.entries(exercise.blanks)) {
-    const got = answers[blankId];
-    if (got === undefined) {
+    const raw = answers[blankId];
+    if (raw === undefined) {
       failures.push({ blank: blankId, got: undefined, reason: 'missing' });
       continue;
     }
+    const got = raw.trim();
     let matched = false;
     if (spec.accept && spec.accept.length > 0) {
-      matched =
-        spec.accept.includes(got) ||
-        spec.accept.some((candidate) => normalizeCodeish(candidate) === normalizeCodeish(got));
+      matched = spec.accept.some((candidate) => {
+        const want = candidate.trim();
+        return want === got || normalizeCodeish(want) === normalizeCodeish(got);
+      });
     }
     if (!matched && spec.accept_regex && got.length <= MAX_BLANK_ANSWER_LENGTH) {
       try {

@@ -11,6 +11,13 @@ describe('compareRows (unordered)', () => {
     expect(diff.extra).toEqual([]);
   });
 
+  it('matches rows that differ only by numeric string vs number cells', () => {
+    const diff = compareRows([{ id: '1', name: 'a' }], [{ id: 1, name: 'a' }]);
+    expect(diff.ok).toBe(true);
+    expect(diff.missing).toEqual([]);
+    expect(diff.extra).toEqual([]);
+  });
+
   it('matches identical rows in the same order without misordered', () => {
     const diff = compareRows([{ id: 1 }, { id: 2 }], [{ id: 1 }, { id: 2 }]);
     expect(diff.ok).toBe(true);
