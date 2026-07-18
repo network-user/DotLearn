@@ -1,5 +1,3 @@
-> Последний прогон: ember-circuit · 2026-07-18. Снимок: [2026-07-18-ember-circuit.md](2026-07-18-ember-circuit.md) · история: [docs/audit/](.)
-
 # Security Audit · Ember Circuit · 2026-07-18
 
 | Поле                 | Значение                         |

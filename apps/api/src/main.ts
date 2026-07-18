@@ -99,7 +99,7 @@ const bootstrap = async (): Promise<void> => {
   }
 
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
-  const host = process.env.HOST ?? '0.0.0.0';
+  const host = process.env.HOST ?? '127.0.0.1';
   await app.listen(port, host);
 };
 

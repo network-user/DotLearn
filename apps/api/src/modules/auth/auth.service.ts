@@ -120,7 +120,8 @@ export class AuthService {
     );
     if (!totpResult.ok) {
       this.lockout.registerFailure(lockoutKey);
-      throw new UnauthorizedException('Invalid TOTP code');
+      // Same message as password failure: distinct TOTP errors are a password-valid oracle.
+      throw new UnauthorizedException('Invalid credentials');
     }
 
     this.recordTotpUse(login, totpResult);

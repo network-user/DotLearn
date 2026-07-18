@@ -135,4 +135,11 @@ describe('AuthService login -> access -> refresh -> logout (smoke)', () => {
       'Invalid credentials',
     );
   });
+
+  it('rejects a wrong TOTP with the same message as a wrong password', async () => {
+    const { service } = buildService(buildAuthConfig());
+    await expect(service.login('admin', 'correct-horse', '000000')).rejects.toThrow(
+      'Invalid credentials',
+    );
+  });
 });
