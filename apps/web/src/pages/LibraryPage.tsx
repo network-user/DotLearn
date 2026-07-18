@@ -53,6 +53,7 @@ import {
   type HighlightRecord,
   type UserCardRecord,
 } from '@/lib/progress-db';
+import { Seo } from '@/lib/seo';
 import { conceptTitle, topicTitle } from '@/lib/topics';
 import {
   useAllHighlights,
@@ -276,6 +277,7 @@ export const LibraryPage = () => {
   if (reviewing) {
     return (
       <div className="space-y-6">
+        <Seo title={t('title')} robots="noindex,nofollow" />
         <Button
           variant="ghost"
           size="sm"
@@ -291,6 +293,7 @@ export const LibraryPage = () => {
 
   return (
     <div className="space-y-8">
+      <Seo title={t('title')} robots="noindex,nofollow" />
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">{t('title')}</h1>

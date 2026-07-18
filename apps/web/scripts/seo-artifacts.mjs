@@ -35,6 +35,9 @@ import {
   loadTheoryFile,
   conceptTitleFor,
   topicHasEn,
+  topicLastmod,
+  latestMtimeIso,
+  toSitemapDate,
 } from './seo-lib.mjs';
 
 // --- small localized bits (kept local: prerender.mjs already owns its own
@@ -189,7 +192,17 @@ const paragraphEmphasis = (value) => ({
 });
 const headingNode = (depth, value) => ({ type: 'heading', depth, children: [textNode(value)] });
 const blockquoteOf = (children) => ({ type: 'blockquote', children });
-const placeholder = (name) => paragraphEmphasis(`[Диаграмма: ${name}]`);
+// Set per-topic/interview while converting MDX so diagram/dataset labels match locale.
+let markdownLang = 'ru';
+
+const MD_LABELS = {
+  ru: { diagram: 'Диаграмма', dataset: 'Набор данных', web: 'Веб-версия' },
+  en: { diagram: 'Diagram', dataset: 'Dataset', web: 'Web version' },
+};
+
+const mdLabel = (key) => (MD_LABELS[markdownLang] ?? MD_LABELS.ru)[key];
+
+const placeholder = (name) => paragraphEmphasis(`[${mdLabel('diagram')}: ${name}]`);
 
 // Prefix `nodes` (block content) with a bold `label:` lead-in, merged into the
 // first paragraph when there is one (falls back to its own bold paragraph
@@ -516,7 +529,7 @@ function transformJsx(node) {
     if (query === undefined) return placeholder(name);
     const out = [{ type: 'code', lang: 'sql', value: query }];
     const fixture = extractTemplateOrLiteral(node, 'fixture');
-    if (fixture && fixture.trim()) out.push(paragraph(`Набор данных: ${fixture.trim()}`));
+    if (fixture && fixture.trim()) out.push(paragraph(`${mdLabel('dataset')}: ${fixture.trim()}`));
     return out;
   }
 
@@ -688,6 +701,7 @@ async function theoryBodyNodes(absPath, body) {
 }
 
 async function buildTopicTree(topic, lang, siteUrl) {
+  markdownLang = lang === 'en' ? 'en' : 'ru';
   const m = topic.manifest;
   const title = topicTitle(m, lang);
   const description = topicDescription(m, lang);
@@ -697,14 +711,14 @@ async function buildTopicTree(topic, lang, siteUrl) {
   const children = [headingNode(1, title)];
   if (description) children.push(blockquoteOf([paragraph(description)]));
   children.push(paragraph(metaLine(lang, m)));
-  // A real `link` node, not "Веб-версия: <url>" as plain text: besides being
+  // A real `link` node, not "Web version: <url>" as plain text: besides being
   // clickable, it avoids remark-stringify escaping the "://" as literal text
   // (it would otherwise defensively escape the colon to keep this un-clickable
   // on re-parse, since GFM autolink-literal would otherwise turn a bare
   // https://... run of text into a link on its own).
   children.push({
     type: 'paragraph',
-    children: [textNode('Веб-версия: '), { type: 'link', url, children: [textNode(url)] }],
+    children: [textNode(`${mdLabel('web')}: `), { type: 'link', url, children: [textNode(url)] }],
   });
 
   for (const concept of m.concepts ?? []) {
@@ -747,6 +761,7 @@ async function interviewBodyNodes(absPath, body) {
 }
 
 async function buildInterviewMarkdown(question, lang, siteUrl) {
+  markdownLang = lang === 'en' ? 'en' : 'ru';
   const rel = lang === 'en' ? question.path.replace(/\.ru\.mdx$/, '.en.mdx') : question.path;
   const { body, abs } = loadTheoryFile(join(REPO_ROOT, 'interview'), rel);
   const url =
@@ -754,10 +769,9 @@ async function buildInterviewMarkdown(question, lang, siteUrl) {
       ? `${siteUrl}/en/interview/${question.id}`
       : `${siteUrl}/interview/${question.id}`;
   const children = [...(await interviewBodyNodes(abs, body))];
-  const webLabel = lang === 'en' ? 'Web version' : 'Веб-версия';
   const linkPara = {
     type: 'paragraph',
-    children: [textNode(`${webLabel}: `), { type: 'link', url, children: [textNode(url)] }],
+    children: [textNode(`${mdLabel('web')}: `), { type: 'link', url, children: [textNode(url)] }],
   };
   const h1Index = children.findIndex((n) => n.type === 'heading' && n.depth === 1);
   if (h1Index >= 0) children.splice(h1Index + 1, 0, linkPara);
@@ -775,8 +789,9 @@ const xmlEscape = (value) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 
-const urlEntry = (loc, alternates) => {
+const urlEntry = (loc, alternates, lastmod) => {
   const lines = ['  <url>', `    <loc>${xmlEscape(loc)}</loc>`];
+  if (lastmod) lines.push(`    <lastmod>${xmlEscape(lastmod)}</lastmod>`);
   for (const alt of alternates) {
     lines.push(
       `    <xhtml:link rel="alternate" hreflang="${xmlEscape(alt.hreflang)}" href="${xmlEscape(alt.href)}"/>`,
@@ -786,36 +801,56 @@ const urlEntry = (loc, alternates) => {
   return lines.join('\n');
 };
 
+const interviewLastmod = (question) => {
+  const paths = [join(REPO_ROOT, 'interview', question.path)];
+  if (question.path.endsWith('.ru.mdx')) {
+    paths.push(join(REPO_ROOT, 'interview', question.path.replace(/\.ru\.mdx$/, '.en.mdx')));
+  }
+  return latestMtimeIso(paths);
+};
+
 function buildSitemap(siteUrl, topics, interviewIndex) {
   const urls = [];
+  const buildDay = toSitemapDate(new Date());
   const homeAlternates = alternatesFor(siteUrl, { ru: '/', en: '/en' });
-  urls.push(urlEntry(`${siteUrl}/`, homeAlternates));
-  urls.push(urlEntry(`${siteUrl}/en`, homeAlternates));
+  urls.push(urlEntry(`${siteUrl}/`, homeAlternates, buildDay));
+  urls.push(urlEntry(`${siteUrl}/en`, homeAlternates, buildDay));
 
   for (const topic of topics) {
     const ruPath = `/topics/${topic.slug}`;
+    const lastmod = topicLastmod(topic);
     const alternates = topicHasEn(topic)
       ? alternatesFor(siteUrl, { ru: ruPath, en: `/en/topics/${topic.slug}` })
       : [];
-    urls.push(urlEntry(`${siteUrl}${ruPath}`, alternates));
+    urls.push(urlEntry(`${siteUrl}${ruPath}`, alternates, lastmod));
   }
 
   for (const topic of topics) {
     if (!topicHasEn(topic)) continue;
     const ruPath = `/topics/${topic.slug}`;
     const enPath = `/en/topics/${topic.slug}`;
-    urls.push(urlEntry(`${siteUrl}${enPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
+    urls.push(
+      urlEntry(
+        `${siteUrl}${enPath}`,
+        alternatesFor(siteUrl, { ru: ruPath, en: enPath }),
+        topicLastmod(topic),
+      ),
+    );
   }
 
   for (const q of interviewIndex) {
     const ruPath = `/interview/${q.id}`;
     const enPath = `/en/interview/${q.id}`;
-    urls.push(urlEntry(`${siteUrl}${ruPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
+    const lastmod = interviewLastmod(q);
+    const alternates = alternatesFor(siteUrl, { ru: ruPath, en: enPath });
+    urls.push(urlEntry(`${siteUrl}${ruPath}`, alternates, lastmod));
   }
   for (const q of interviewIndex) {
     const ruPath = `/interview/${q.id}`;
     const enPath = `/en/interview/${q.id}`;
-    urls.push(urlEntry(`${siteUrl}${enPath}`, alternatesFor(siteUrl, { ru: ruPath, en: enPath })));
+    const lastmod = interviewLastmod(q);
+    const alternates = alternatesFor(siteUrl, { ru: ruPath, en: enPath });
+    urls.push(urlEntry(`${siteUrl}${enPath}`, alternates, lastmod));
   }
 
   const glossaryAlternates = alternatesFor(siteUrl, { ru: '/glossary', en: '/en/glossary' });
@@ -823,10 +858,10 @@ function buildSitemap(siteUrl, topics, interviewIndex) {
   for (const hub of HUB_ORDER) {
     const alt =
       hub === 'glossary' ? glossaryAlternates : hub === 'interview' ? interviewAlternates : [];
-    urls.push(urlEntry(`${siteUrl}/${hub}`, alt));
+    urls.push(urlEntry(`${siteUrl}/${hub}`, alt, buildDay));
   }
-  urls.push(urlEntry(`${siteUrl}/en/glossary`, glossaryAlternates));
-  urls.push(urlEntry(`${siteUrl}/en/interview`, interviewAlternates));
+  urls.push(urlEntry(`${siteUrl}/en/glossary`, glossaryAlternates, buildDay));
+  urls.push(urlEntry(`${siteUrl}/en/interview`, interviewAlternates, buildDay));
 
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -838,13 +873,24 @@ function buildSitemap(siteUrl, topics, interviewIndex) {
 
 // --- robots.txt ------------------------------------------------------------
 
-const buildRobots = (siteUrl) => `User-agent: *
+const normalizeAdminPath = (raw) => {
+  const value = String(raw ?? '/admin').trim() || '/admin';
+  const withSlash = value.startsWith('/') ? value : `/${value}`;
+  return withSlash.replace(/\/+$/, '') || '/admin';
+};
+
+export const buildRobots = (siteUrl, options = {}) => {
+  const adminPath = normalizeAdminPath(options.adminPath ?? process.env.VITE_ADMIN_PATH);
+  return `User-agent: *
 Disallow: /settings
 Disallow: /progress
 Disallow: /today
 Disallow: /proposals
 Disallow: /submit
 Disallow: /search
+Disallow: /library
+Disallow: /analytics
+Disallow: ${adminPath}
 Disallow: /flashcards/practice
 Disallow: /interview/exam
 
@@ -871,6 +917,7 @@ Allow: /
 
 Sitemap: ${siteUrl}/sitemap.xml
 `;
+};
 
 // --- llms.txt ----------------------------------------------------------------
 
@@ -901,9 +948,11 @@ function buildLlmsTxt({ siteUrl, topics, catalogData, interviewIndex }) {
     `- [Флеш-карточки](${siteUrl}/flashcards)`,
     `- [Глоссарий](${siteUrl}/glossary.md): термины и определения с привязкой к темам`,
     `- [Треки обучения](${siteUrl}/tracks)`,
+    `- [Карта знаний](${siteUrl}/map)`,
+    `- [Песочница Python/SQL](${siteUrl}/sandbox)`,
     '',
     '## Собеседования',
-    `- [Вопросы для собеседований](${siteUrl}/interview): ${interviewIndex.length} вопросов с ответами; markdown-зеркало каждого вопроса — ${siteUrl}/interview/<id>.md`,
+    `- [Вопросы для собеседований](${siteUrl}/interview): ${interviewIndex.length} вопросов с ответами; markdown-зеркало каждого вопроса - ${siteUrl}/interview/<id>.md`,
     `- [Interview questions (English)](${siteUrl}/en/interview): the same bank in English; mirrors at ${siteUrl}/en/interview/<id>.md`,
     '',
     '## Optional',

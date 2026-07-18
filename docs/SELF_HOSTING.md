@@ -138,18 +138,18 @@ sensible defaults live in `apps/api/src/modules/auth/auth.config.ts`.
 
 ---
 
-## SEO & webmaster tools
+## SEO artifacts (build-time)
 
-The web build prerenders every topic page (ru + en) and emits `sitemap.xml`,
-`robots.txt`, `llms.txt`, markdown mirrors (`/topics/<slug>.md`) and OG images
-into `dist/`. Absolute URLs come from `VITE_SITE_URL` (falls back to
-`VITE_API_BASE`), so a bare-metal deploy needs no extra configuration.
+The web build prerenders indexable pages (topics ru+en, home, glossary,
+interview bank, content hubs) and emits `sitemap.xml` (with `lastmod` +
+hreflang), `robots.txt` (private UI disallowed; major AI crawlers allowed),
+`llms.txt` / `llms-full.txt` / `en/llms-full.txt`, markdown mirrors
+(`/topics/<slug>.md`, interview Q, glossary) and per-topic OG images (ru +
+`.en.png` when the topic has an English edition) into `dist/`.
 
-When you decide to register the site with search engines: add the verification
-meta tag (or DNS TXT record) from Google Search Console / Yandex.Webmaster,
-submit `https://$DOMAIN/sitemap.xml`, and optionally drop an IndexNow key file
-into `apps/web/public/` with a ping on deploy for instant reindexing. None of
-this is preconfigured, by design.
+Absolute URLs come from `VITE_SITE_URL` (falls back to `VITE_API_BASE`).
+`scripts/deploy.sh` sets both to `https://$DOMAIN` for the production build -
+no Search Console / Yandex / IndexNow setup is required or wired in.
 
 ---
 

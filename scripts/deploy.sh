@@ -24,7 +24,9 @@ SERVICE_USER="dotlearn"
 API_RUNTIME="/opt/dotlearn/api"
 WEB_ROOT="/var/www/dotlearn"
 DEFAULT_DATA_DIR="/var/lib/dotlearn/data"
-NODE_MAJOR=20
+# Match package.json engines (>=22) and Docker base images. pnpm 11 needs
+# Node 22+ (node:sqlite); staying on 20 breaks install/build on a fresh server.
+NODE_MAJOR=22
 
 # ── Output helpers ─────────────────────────────────────────────
 c_cyan='\033[1;36m'; c_green='\033[1;32m'; c_red='\033[1;31m'; c_yellow='\033[1;33m'; c_reset='\033[0m'
@@ -116,6 +118,7 @@ ACME_EMAIL="$(env_get ACME_EMAIL)"
 
 # Derive same-origin values from the domain (deterministic, overwrite).
 env_set VITE_API_BASE "https://$DOMAIN"
+env_set VITE_SITE_URL "https://$DOMAIN"
 env_set WEB_ORIGIN    "https://$DOMAIN"
 env_set NODE_ENV      "production"
 env_set HOST          "127.0.0.1"
@@ -168,6 +171,7 @@ find "$REPO_DIR" -name '*.tsbuildinfo' -not -path '*/node_modules/*' -delete 2>/
 rm -rf "$REPO_DIR"/apps/*/dist "$REPO_DIR"/packages/*/dist
 export NODE_ENV=production
 export VITE_API_BASE="https://$DOMAIN"
+export VITE_SITE_URL="https://$DOMAIN"
 export VITE_ADMIN_PATH="$VITE_ADMIN_PATH"
 export VITE_GITHUB_URL="$VITE_GITHUB_URL"
 pnpm --filter @dotlearn/contracts build

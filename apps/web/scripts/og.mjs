@@ -34,9 +34,16 @@ const HEIGHT = 630;
 const MARGIN_X = 90;
 
 const DIFFICULTY_LABELS = {
-  beginner: 'с нуля',
-  intermediate: 'средний уровень',
-  advanced: 'продвинутый',
+  ru: {
+    beginner: 'с нуля',
+    intermediate: 'средний уровень',
+    advanced: 'продвинутый',
+  },
+  en: {
+    beginner: 'beginner',
+    intermediate: 'intermediate',
+    advanced: 'advanced',
+  },
 };
 
 // Line-art "graduation cap" glyph, lifted verbatim from docs/cover.svg (viewBox 0 0 48 48).
@@ -126,8 +133,12 @@ const brandMark = () => `
 `;
 
 /** Topic OG card: brand mark, title (greedy-wrapped, adaptive size), difficulty + tags. */
-export const buildTopicSvg = (manifest) => {
-  const lines = wrapText(manifest.title, 21, 3);
+export const buildTopicSvg = (manifest, lang = 'ru') => {
+  const title =
+    lang === 'en' && typeof manifest.titleEn === 'string' && manifest.titleEn.trim()
+      ? manifest.titleEn
+      : manifest.title;
+  const lines = wrapText(title, 21, 3);
   const fontSize = TITLE_FONT_SIZE_BY_LINES[lines.length] ?? 56;
   const lineHeight = Math.round(fontSize * 1.15);
   const firstBaseline = Math.round(HEIGHT / 2 - ((lines.length - 1) * lineHeight) / 2 - 6);
@@ -138,7 +149,8 @@ export const buildTopicSvg = (manifest) => {
     )
     .join('');
 
-  const difficulty = DIFFICULTY_LABELS[manifest.difficulty] ?? '';
+  const labels = DIFFICULTY_LABELS[lang] ?? DIFFICULTY_LABELS.ru;
+  const difficulty = labels[manifest.difficulty] ?? '';
   const tags = Array.isArray(manifest.tags) ? manifest.tags.slice(0, 3) : [];
   const metaText = [difficulty, ...tags].filter(Boolean).join(' · ');
 
@@ -152,8 +164,12 @@ export const buildTopicSvg = (manifest) => {
 };
 
 /** Site-wide default OG card: big .learn wordmark + tagline. */
-export const buildDefaultSvg = () => {
-  const subtitleLines = wrapText('Интерактивные курсы Python, SQL, Git и веб-разработки', 34, 2);
+export const buildDefaultSvg = (lang = 'ru') => {
+  const subtitle =
+    lang === 'en'
+      ? 'Interactive courses in Python, SQL, Git and web development'
+      : 'Интерактивные курсы Python, SQL, Git и веб-разработки';
+  const subtitleLines = wrapText(subtitle, 34, 2);
   const subtitleTspans = subtitleLines
     .map((line, i) => `<tspan x="${MARGIN_X}" dy="${i === 0 ? 0 : 40}">${escapeXml(line)}</tspan>`)
     .join('');
@@ -209,12 +225,28 @@ export const generateOgImages = async ({ distDir = DEFAULT_DIST_DIR } = {}) => {
   mkdirSync(ogDir, { recursive: true });
 
   const topics = loadTopicManifests();
+  let count = 0;
   for (const manifest of topics) {
-    writeFileSync(join(ogDir, `${manifest.slug}.png`), renderPng(buildTopicSvg(manifest)));
+    writeFileSync(join(ogDir, `${manifest.slug}.png`), renderPng(buildTopicSvg(manifest, 'ru')));
+    count += 1;
+    const hasEn =
+      Array.isArray(manifest.availableLanguages) &&
+      manifest.availableLanguages.includes('en');
+    if (hasEn) {
+      // Always emit .en.png when an en edition exists so prerender / SPA
+      // og:image links never 404 even if titleEn is temporarily missing.
+      writeFileSync(
+        join(ogDir, `${manifest.slug}.en.png`),
+        renderPng(buildTopicSvg(manifest, 'en')),
+      );
+      count += 1;
+    }
   }
-  writeFileSync(join(ogDir, 'default.png'), renderPng(buildDefaultSvg()));
+  writeFileSync(join(ogDir, 'default.png'), renderPng(buildDefaultSvg('ru')));
+  writeFileSync(join(ogDir, 'default.en.png'), renderPng(buildDefaultSvg('en')));
+  count += 2;
 
-  return { count: topics.length + 1, ogDir };
+  return { count, ogDir };
 };
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

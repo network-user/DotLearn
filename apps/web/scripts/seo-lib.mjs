@@ -1,7 +1,7 @@
 // Shared build-time SEO helpers. Pure Node (no Vite), reused by the prerenderer
 // and the next wave (sitemap / llms.txt / markdown mirrors). Keep dependency-free
 // beyond `yaml`, which apps/web already depends on.
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +14,39 @@ export const REPO_ROOT = resolve(here, '..', '..', '..');
 export const TOPICS_ROOT = resolve(REPO_ROOT, 'topics');
 export const DIST_ROOT = resolve(WEB_ROOT, 'dist');
 export const LOCALES_ROOT = resolve(WEB_ROOT, 'src', 'locales');
+
+/** YYYY-MM-DD for sitemap <lastmod>. */
+export const toSitemapDate = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString().slice(0, 10);
+};
+
+/** Latest mtime among existing paths → sitemap date, or undefined. */
+export const latestMtimeIso = (paths) => {
+  let maxMs = 0;
+  for (const path of paths) {
+    if (!path || !existsSync(path)) continue;
+    try {
+      const ms = statSync(path).mtimeMs;
+      if (ms > maxMs) maxMs = ms;
+    } catch {
+      // skip unreadable paths
+    }
+  }
+  return maxMs > 0 ? toSitemapDate(maxMs) : undefined;
+};
+
+/** Max mtime of a topic's manifest + theory files (any language). */
+export const topicLastmod = (topic) => {
+  const paths = [join(topic.dir, 'manifest.json')];
+  for (const concept of topic.manifest.concepts ?? []) {
+    for (const rel of concept.theoryFiles ?? []) {
+      if (typeof rel === 'string') paths.push(join(topic.dir, rel));
+    }
+  }
+  return latestMtimeIso(paths);
+};
 
 /** All topic manifests on disk, sorted by slug. Skips non-dirs and dirs without a manifest. */
 export const loadTopics = () => {

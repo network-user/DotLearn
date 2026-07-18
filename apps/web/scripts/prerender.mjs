@@ -540,6 +540,14 @@ const courseJsonLd = (topic, lang, pageUrl) => {
     })),
     provider,
     isAccessibleForFree: true,
+    offers: {
+      '@type': 'Offer',
+      price: 0,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+      category: 'Free',
+      url: pageUrl,
+    },
     hasCourseInstance: {
       '@type': 'CourseInstance',
       courseMode: 'online',
@@ -589,16 +597,14 @@ const interviewBreadcrumbJsonLd = (lang, pageUrl, questionName) => {
   };
 };
 
+// No SearchAction: /search is noindex + robots Disallow (private SPA tool).
 const websiteJsonLd = () => ({
   '@context': 'https://schema.org',
   '@type': 'WebSite',
   name: '.learn',
   url: SITE,
-  potentialAction: {
-    '@type': 'SearchAction',
-    target: `${SITE}/search?q={search_term_string}`,
-    'query-input': 'required name=search_term_string',
-  },
+  inLanguage: ['ru', 'en'],
+  publisher: { '@type': 'Organization', name: '.learn', url: SITE },
 });
 
 const renderTopicBody = async (topic, lang) => {
@@ -756,7 +762,7 @@ for (const topic of topics) {
           description: en.description,
           ogType: 'article',
           ogTitle: en.title,
-          ogImage: `${SITE}/og/${topic.slug}.png`,
+          ogImage: `${SITE}/og/${topic.slug}.en.png`,
           jsonLd: [
             courseJsonLd(topic, 'en', enUrl),
             breadcrumbJsonLd('en', enHome, enUrl, en.title),
@@ -776,7 +782,7 @@ for (const topic of topics) {
     'index.html',
     applyShell({
       lang: 'ru',
-      title: `.learn · ${ru.title}`,
+      title: `${ru.title} · .learn`,
       head: buildHead({
         lang: 'ru',
         canonical: `${SITE}/`,
@@ -796,7 +802,7 @@ for (const topic of topics) {
     'en/index.html',
     applyShell({
       lang: 'en',
-      title: `.learn · ${en.title}`,
+      title: `${en.title} · .learn`,
       head: buildHead({
         lang: 'en',
         canonical: `${SITE}/en`,
@@ -804,7 +810,7 @@ for (const topic of topics) {
         description: en.description,
         ogType: 'website',
         ogTitle: en.title,
-        ogImage: `${SITE}/og/default.png`,
+        ogImage: `${SITE}/og/default.en.png`,
         jsonLd: [websiteJsonLd()],
       }),
       body: en.html,
@@ -1060,26 +1066,133 @@ for (const topic of topics) {
   }
 }
 
-// Head-only hubs (empty #root, like the source shell).
-for (const [hub, meta] of Object.entries(HUBS)) {
-  const canonical = `${SITE}/${hub}`;
-  writePage(
-    `${hub}/index.html`,
-    applyShell({
-      lang: 'ru',
-      title: `${meta.title} · .learn`,
-      head: buildHead({
-        lang: 'ru',
-        canonical,
-        alternates: [],
-        description: meta.description,
-        ogType: 'website',
-        ogTitle: meta.title,
-        ogImage: `${SITE}/og/default.png`,
-      }),
-      body: '',
-    }),
+// Content hubs: crawlable body (topic/track lists) so no-JS crawlers and
+// AI agents see more than empty #root + meta tags.
+{
+  const tracksData = JSON.parse(
+    readFileSync(join(WEB_ROOT, 'src', 'lib', 'tracks.data.json'), 'utf8'),
   );
+  const topicTitleOf = (slug) => {
+    const topic = topics.find((t) => t.slug === slug);
+    return topic ? topic.manifest.title : slug;
+  };
+  const topicListItems = () =>
+    topics
+      .map((topic) => {
+        const m = topic.manifest;
+        const meta = `${escapeHtml(difficultyLabel('ru', m.difficulty))} · ${escapeHtml(hoursLabel('ru', m.estimatedHours))}`;
+        const desc = m.descriptions?.ru ? `<div>${escapeHtml(m.descriptions.ru)}</div>` : '';
+        return `<li><a href="/topics/${escapeAttr(topic.slug)}">${escapeHtml(m.title)}</a> <span>(${meta})</span>${desc}</li>`;
+      })
+      .join('');
+
+  const hubBodies = {
+    flashcards: () =>
+      [
+        `<h1>${escapeHtml(HUBS.flashcards.title)}</h1>`,
+        `<p>${escapeHtml(HUBS.flashcards.description)}</p>`,
+        '<p>Колоды строятся по темам курса. Откройте тему, чтобы учить теорию, затем повторяйте карточки.</p>',
+        `<ul>${topicListItems()}</ul>`,
+      ].join('\n'),
+    tracks: () => {
+      const sections = tracksData
+        .map((track) => {
+          const lis = (track.topicSlugs ?? [])
+            .map(
+              (slug) =>
+                `<li><a href="/topics/${escapeAttr(slug)}">${escapeHtml(topicTitleOf(slug))}</a></li>`,
+            )
+            .join('');
+          const role = track.targetRole
+            ? ` <span>(${escapeHtml(track.targetRole)})</span>`
+            : '';
+          return `<section><h2><a href="/tracks/${escapeAttr(track.id)}">${escapeHtml(track.title)}</a>${role}</h2><p>${escapeHtml(track.description)}</p><ul>${lis}</ul></section>`;
+        })
+        .join('\n');
+      return [
+        `<h1>${escapeHtml(HUBS.tracks.title)}</h1>`,
+        `<p>${escapeHtml(HUBS.tracks.description)}</p>`,
+        sections,
+      ].join('\n');
+    },
+    map: () =>
+      [
+        `<h1>${escapeHtml(HUBS.map.title)}</h1>`,
+        `<p>${escapeHtml(HUBS.map.description)}</p>`,
+        '<p>Список тем курса (интерактивный граф доступен в приложении):</p>',
+        `<ul>${topicListItems()}</ul>`,
+      ].join('\n'),
+    sandbox: () =>
+      [
+        `<h1>${escapeHtml(HUBS.sandbox.title)}</h1>`,
+        `<p>${escapeHtml(HUBS.sandbox.description)}</p>`,
+        '<p>В песочнице можно писать и запускать Python (Pyodide) и SQL (sql.js) без установки окружения. Теория с живыми примерами - в темах:</p>',
+        `<ul>${topicListItems()}</ul>`,
+      ].join('\n'),
+  };
+
+  const hubJsonLd = (hub, meta) => {
+    const pageUrl = `${SITE}/${hub}`;
+    if (hub === 'tracks') {
+      return [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          name: meta.title,
+          description: meta.description,
+          url: pageUrl,
+          inLanguage: 'ru',
+          isPartOf: { '@type': 'WebSite', name: '.learn', url: SITE },
+        },
+        {
+          '@context': 'https://schema.org',
+          '@type': 'ItemList',
+          itemListOrder: 'https://schema.org/ItemListOrderAscending',
+          numberOfItems: tracksData.length,
+          itemListElement: tracksData.map((track, index) => ({
+            '@type': 'ListItem',
+            position: index + 1,
+            name: track.title,
+            url: `${SITE}/tracks/${track.id}`,
+          })),
+        },
+      ];
+    }
+    return [
+      {
+        '@context': 'https://schema.org',
+        '@type': 'CollectionPage',
+        name: meta.title,
+        description: meta.description,
+        url: pageUrl,
+        inLanguage: 'ru',
+        isPartOf: { '@type': 'WebSite', name: '.learn', url: SITE },
+      },
+    ];
+  };
+
+  for (const [hub, meta] of Object.entries(HUBS)) {
+    const canonical = `${SITE}/${hub}`;
+    const body = (hubBodies[hub] ?? (() => ''))();
+    writePage(
+      `${hub}/index.html`,
+      applyShell({
+        lang: 'ru',
+        title: `${meta.title} · .learn`,
+        head: buildHead({
+          lang: 'ru',
+          canonical,
+          alternates: [],
+          description: meta.description,
+          ogType: 'website',
+          ogTitle: meta.title,
+          ogImage: `${SITE}/og/default.png`,
+          jsonLd: hubJsonLd(hub, meta),
+        }),
+        body,
+      }),
+    );
+  }
 }
 
 // 404 (noindex).

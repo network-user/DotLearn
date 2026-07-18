@@ -524,7 +524,9 @@ export const TopicPage = () => {
         alternates={
           topicHasEn(slug) ? { ru: `/topics/${slug}`, en: `/en/topics/${slug}` } : undefined
         }
-        ogImagePath={`/og/${slug}.png`}
+        ogImagePath={
+          forcedLanguage === 'en' && topicHasEn(slug) ? `/og/${slug}.en.png` : `/og/${slug}.png`
+        }
         ogType="article"
       />
       {activeConcept && (

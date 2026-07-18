@@ -126,12 +126,18 @@ export const InterviewQuestionPage = () => {
   };
 
   const questionDirection = directionOf(question);
+  const questionTitle = localizedInterviewTitle(question, locale);
+  const seoDescription =
+    locale === 'en'
+      ? `Interview prep: ${questionTitle}. ${question.stageLabel}${question.categoryLabel ? ` · ${question.categoryLabel}` : ''}. Free answer on .learn.`
+      : `Подготовка к собеседованию: ${questionTitle}. ${question.stageLabel}${question.categoryLabel ? ` · ${question.categoryLabel}` : ''}. Разбор ответа на .learn.`;
 
   return (
     <div className="space-y-8">
       <Seo
         lang={forcedLanguage ?? 'ru'}
-        title={localizedInterviewTitle(question, locale)}
+        title={questionTitle}
+        description={seoDescription.slice(0, 200)}
         canonicalPath={
           forcedLanguage === 'en' ? `/en/interview/${question.id}` : `/interview/${question.id}`
         }
