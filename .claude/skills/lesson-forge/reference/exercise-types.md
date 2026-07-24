@@ -23,6 +23,59 @@ Multiple choice on a piece of theory. No code execution.
   explanation: 'SELECT is the read operation.'
 ```
 
+**Required for every quiz and every variant:** choice lengths must be balanced (next subsection). A correct option that is a long explanation next to short distractors is a content bug, not a style preference.
+
+### Choice length balance (anti-cheat) - mandatory
+
+Learners must not be able to pick the right answer by length alone. Soft-lint (`pnpm validate --lint`) flags length-biased quizzes; for new/regenerated topics treat those warnings as blocking.
+
+Thresholds (implemented in `packages/lesson-engine/src/cli/soft-lint.ts`):
+
+| Check | Limit |
+| ----- | ----- |
+| longest correct / longest wrong | ≤ **1.3** |
+| if correct is uniquely the longest: longest correct / average wrong | ≤ **1.45** |
+
+Rules:
+
+1. **Similar length.** All `choices[].text` in one quiz (and each variant) should sit in roughly the same band.
+2. **Put detail in `explanation`, not in the correct choice.** A short accurate correct option + a rich explanation beats a paragraph-long correct option next to one-line distractors.
+3. **Expand wrong options with plausible misconceptions**, not filler. Wrong answers should sound like real student mistakes at the same level of detail as the correct one.
+4. **Never pad with fluff** just to match length - write a real alternative claim.
+5. **Apply per language and per variant.** Balancing only the base quiz or only `ru` is not enough.
+6. **Authoring check.** Before leaving the quiz, cover the `correct` ids and ask: "Is the longest option obviously right?" If yes, rewrite.
+
+Bad (correct is uniquely longest and ~2× average wrong):
+
+```yaml
+choices:
+  - id: a
+    text: 'Чем плотнее таблица, тем больше коллизий и длиннее проба; запас держит среднее время поиска близким к O(1).'
+  - id: b
+    text: 'Свободные бакеты ускоряют сортировку ключей.'
+  - id: c
+    text: 'Это требование стандарта, без практического смысла.'
+  - id: d
+    text: 'Чтобы можно было хранить значения None.'
+correct: [a]
+```
+
+Good (lengths close; detail lives in explanation):
+
+```yaml
+choices:
+  - id: a
+    text: 'Запас снижает коллизии и длину проб, держа поиск около O(1).'
+  - id: b
+    text: 'Свободные бакеты нужны, чтобы быстрее сортировать ключи.'
+  - id: c
+    text: 'Это формальное требование стандарта без пользы на практике.'
+  - id: d
+    text: 'Запас нужен, чтобы словарь мог хранить значения None.'
+correct: [a]
+explanation: 'При open addressing высокий load factor резко удлиняет пробы; таблица растёт заранее.'
+```
+
 ## `sql-query`
 
 Learner writes SQL. Runner executes against `fixture`, compares result-set to `expected`.

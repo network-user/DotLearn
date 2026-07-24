@@ -52,6 +52,7 @@ Re-read every theory file and exercise prompt as a learner. Reject any of:
 - Off-by-one or boundary errors in fixtures
 - Exercise prompts that are ambiguous about what to return
 - Hints that leak the solution or give syntax instead of mental model (see exercise-types.md, Hints quality bar)
+- **Length-biased `theory-quiz` choices** where the correct option is obviously the longest (soft-lint: correct ≤ max wrong × 1.3 and not uniquely ~1.45× avg wrong). Put detail in `explanation`; make distractors same-length plausible misconceptions (see exercise-types.md, Choice length balance).
 - Content that breaks on narrow screens: oversized tables without a scrollable wrapper, code lines that cannot wrap or scroll, viz components with unconditional `min-w-*` (scope min-widths to a breakpoint, e.g. `sm:min-w-[160px]`). Theory must be readable on a 375px-wide phone.
 
 ## G9 — Difficulty calibration
@@ -76,6 +77,7 @@ Theory is a longread article, not a conspectus (see [content-style-guide.md](./c
 | G5 fails — variant count differs between languages | Added a variant in one language only                   | Mirror the variant set in every language file                                    |
 | G7 fails — concept has only 2 exercises            | Forgot to vary difficulty                              | Add at least one more, ideally at higher difficulty                              |
 | G8 — prompt asks "return the answer"               | Vague                                                  | Specify the shape: "return a list of dicts with keys id, name"                   |
+| G8 — soft-lint `theory-quiz correct choice is length-biased` | Correct option is a paragraph; distractors are one-liners | Shorten correct; put detail in `explanation`; expand wrong options into same-length misconceptions (see exercise-types.md § Choice length balance) |
 | G9 — difficulty 1 is hard                          | Mislabelled                                            | Re-rate; typically becomes difficulty 2 or 3                                     |
 | G10 — concept has no figure                        | Theory written as plain conspectus                     | Add the concept's mental-model figure; prefer a prebuilt parametric illustration |
 

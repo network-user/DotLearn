@@ -111,7 +111,9 @@ For each concept in the plan, in order, and **for each language** listed in `ava
    - share its `id` with the corresponding exercise in other language variants of the same concept
    - ship `variants` for difficulty 1-2 tasks where the data can be varied (see [reference/exercise-types.md](./reference/exercise-types.md), Variants) - translations must mirror the variant count and order
    - carry hints that meet the hints quality bar (mental model first, never the solution)
+   - for every `theory-quiz` (base **and** each variant): **balance choice lengths** so the correct option is not guessable by length alone (see [reference/exercise-types.md](./reference/exercise-types.md) § Choice length balance). Thresholds: correct ≤ longest wrong × 1.3; correct not uniquely ~1.45× avg wrong. Put teaching detail in `explanation`; write wrong options as same-length plausible misconceptions, not one-liners next to a paragraph-long correct answer
 3. Mentally trace the solution against the fixture - for every variant. If it would not match `expected`, fix the exercise before moving on.
+4. After writing each `theory-quiz`, do a length skim: cover the `correct` ids and check whether one option is obviously the longest. If yes, rewrite before leaving the concept.
 
 Always finish one concept fully (every language) before starting the next. Do not interleave concepts.
 
@@ -121,6 +123,8 @@ Read [reference/quality-gates.md](./reference/quality-gates.md) and verify each 
 
 Run `pnpm validate` if available — the validator checks schemas, file coverage, variant parity, and executes every `sql-query` gold solution (base and variants) in sql.js. Python/JavaScript gold solutions are NOT executed by the CLI — verify them in the web sandbox before claiming G6 passes. Fix until everything is green.
 
+Also run `pnpm validate --lint` (or the package equivalent). Soft-lint reports **length-biased theory-quiz choices** (`theory-quiz correct choice is length-biased ...`). Treat those warnings as **blocking for new or regenerated content**: fix them before commit, even though soft-lint does not fail the process exit code today.
+
 ### 8. Self-review
 
 Re-read each theory file and each exercise prompt as if you were the learner. Identify:
@@ -129,6 +133,7 @@ Re-read each theory file and each exercise prompt as if you were the learner. Id
 - Unjustified claims
 - Off-by-one or boundary issues in exercises
 - Difficulty mislabelling
+- **theory-quiz length tells** - if a learner could pick the correct answer by choosing the longest option, rewrite choices (G8 / Choice length balance)
 
 Fix what you find.
 
@@ -151,14 +156,15 @@ If the topic introduces a new exercise `type` or a new runtime, that's a **break
 3. **Never skip the curriculum plan / approval step in section 3.**
 4. **Never claim an exercise works without verifying the gold solution against `expected`.**
 5. **No comments in code-style files.** Apply the project's no-comments rule to MDX code blocks too — comments allowed in MDX prose only.
+6. **Never ship a length-biased `theory-quiz`.** The correct choice must not be obvious by length (correct ≤ max wrong × 1.3; not uniquely ~1.45× avg wrong). Detail goes in `explanation`; distractors are same-band plausible misconceptions. Applies to every language file and every variant. Soft-lint flags regressions (`pnpm validate --lint`).
 
 ## Reference documents
 
 Load these on demand, not upfront. Paths are relative to this SKILL.md:
 
 - [reference/topic-contract.md](./reference/topic-contract.md) — full manifest specification
-- [reference/exercise-types.md](./reference/exercise-types.md) — catalog of allowed exercise `type` values, variants, hints quality bar
-- [reference/quality-gates.md](./reference/quality-gates.md) — what blocks merge
+- [reference/exercise-types.md](./reference/exercise-types.md) — catalog of allowed exercise `type` values, variants, hints quality bar, **theory-quiz choice length balance**
+- [reference/quality-gates.md](./reference/quality-gates.md) — what blocks merge (incl. G8 length-biased quizzes)
 - [reference/content-style-guide.md](./reference/content-style-guide.md) — voice, longread structure, length budget
 - [reference/mdx-components.md](./reference/mdx-components.md) — figures, charts, live sandboxes, prose devices available in theory MDX
 
