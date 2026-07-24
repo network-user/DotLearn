@@ -60,6 +60,10 @@ export class PersistentMap<V> {
     return existed;
   }
 
+  async whenIdle(): Promise<void> {
+    await this.writeChain;
+  }
+
   private schedulePersist(): void {
     if (!this.enabled) return;
     const snapshot = [...this.map.entries()];

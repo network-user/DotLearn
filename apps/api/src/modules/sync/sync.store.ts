@@ -81,12 +81,11 @@ export class SyncStore {
     }
   }
 
-  // PersistentMap schedules a write on every set/delete but does not expose its
-  // internal write chain, so this is a belt-and-suspenders re-persist of the
-  // current in-memory state on shutdown: idempotent, and guarantees the final
-  // state lands on disk even if an in-flight write from a prior set/delete has
-  // not settled yet.
+  // Wait for any fire-and-forget PersistentMap writes, then re-persist the
+  // current in-memory index. Idempotent; used on shutdown and in tests before
+  // tearing down the data directory.
   async flush(): Promise<void> {
+    await this.index.whenIdle();
     const snapshot = [...this.index.entries()];
     await writeJsonFile(dataFile(INDEX_FILE), snapshot);
   }

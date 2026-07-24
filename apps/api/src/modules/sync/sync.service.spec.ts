@@ -15,8 +15,28 @@ import { SyncStore } from './sync.store';
 
 const UNKNOWN_CODE = '0123456789AB';
 
+const rmDirSettled = async (dir: string): Promise<void> => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? (error as { code?: string }).code
+          : undefined;
+      if (attempt === 4 || (code !== 'ENOTEMPTY' && code !== 'EBUSY' && code !== 'ENOENT')) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+};
+
 describe('SyncService', () => {
   const dirs: string[] = [];
+  const stores: SyncStore[] = [];
+  const services: SyncService[] = [];
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -26,13 +46,13 @@ describe('SyncService', () => {
   afterEach(async () => {
     vi.unstubAllEnvs();
     vi.useRealTimers();
-    // PersistentMap.set()/delete() fire-and-forget their write onto an internal
-    // chain (see common/storage/persistent-map.ts): it is not awaited by the
-    // service calls above, so give pending writes a moment to settle on real
-    // disk I/O before the temp dir is removed, or rm() can race a rename into
-    // it (ENOENT) or see a stray .tmp file reappear mid-delete (ENOTEMPTY).
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    for (const service of services.splice(0)) {
+      await service.onModuleDestroy();
+    }
+    // Flush any residual fire-and-forget index writes before deleting DATA_DIR
+    // (otherwise rename of a .tmp mid-rm yields ENOTEMPTY/ENOENT on CI).
+    await Promise.all(stores.splice(0).map((store) => store.flush()));
+    await Promise.all(dirs.splice(0).map((dir) => rmDirSettled(dir)));
   });
 
   const createService = async (
@@ -47,6 +67,8 @@ describe('SyncService', () => {
     const store = new SyncStore();
     const service = new SyncService(store);
     await service.onModuleInit();
+    stores.push(store);
+    services.push(service);
     return { service, store };
   };
 
