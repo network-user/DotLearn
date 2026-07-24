@@ -230,8 +230,7 @@ export const generateOgImages = async ({ distDir = DEFAULT_DIST_DIR } = {}) => {
     writeFileSync(join(ogDir, `${manifest.slug}.png`), renderPng(buildTopicSvg(manifest, 'ru')));
     count += 1;
     const hasEn =
-      Array.isArray(manifest.availableLanguages) &&
-      manifest.availableLanguages.includes('en');
+      Array.isArray(manifest.availableLanguages) && manifest.availableLanguages.includes('en');
     if (hasEn) {
       // Always emit .en.png when an en edition exists so prerender / SPA
       // og:image links never 404 even if titleEn is temporarily missing.

@@ -31,9 +31,9 @@ Learners must not be able to pick the right answer by length alone. Soft-lint (`
 
 Thresholds (implemented in `packages/lesson-engine/src/cli/soft-lint.ts`):
 
-| Check | Limit |
-| ----- | ----- |
-| longest correct / longest wrong | ≤ **1.3** |
+| Check                                                               | Limit      |
+| ------------------------------------------------------------------- | ---------- |
+| longest correct / longest wrong                                     | ≤ **1.3**  |
 | if correct is uniquely the longest: longest correct / average wrong | ≤ **1.45** |
 
 Rules:

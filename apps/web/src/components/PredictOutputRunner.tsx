@@ -173,9 +173,7 @@ export const PredictOutputRunner = ({
     return JSON.stringify(value);
   };
   const valueClassName =
-    expected.kind === 'stdout'
-      ? 'whitespace-pre-wrap break-words font-mono'
-      : 'font-mono';
+    expected.kind === 'stdout' ? 'whitespace-pre-wrap break-words font-mono' : 'font-mono';
 
   return (
     <ExerciseCard

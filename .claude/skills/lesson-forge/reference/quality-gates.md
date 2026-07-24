@@ -70,15 +70,15 @@ Theory is a longread article, not a conspectus (see [content-style-guide.md](./c
 
 ## Common failure modes and fixes
 
-| Failure                                            | Likely cause                                           | Fix                                                                              |
-| -------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| G6 fails on a `sql-query` because of column order  | `ordered: true` is wrong, or solution doesn't ORDER BY | Either set `ordered: false` or add ORDER BY to gold solution                     |
-| G6 fails on a `python-function` with float result  | Used `expect:` for floats                              | Use `expect_approx:`                                                             |
-| G5 fails — variant count differs between languages | Added a variant in one language only                   | Mirror the variant set in every language file                                    |
-| G7 fails — concept has only 2 exercises            | Forgot to vary difficulty                              | Add at least one more, ideally at higher difficulty                              |
-| G8 — prompt asks "return the answer"               | Vague                                                  | Specify the shape: "return a list of dicts with keys id, name"                   |
+| Failure                                                      | Likely cause                                              | Fix                                                                                                                                                |
+| ------------------------------------------------------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G6 fails on a `sql-query` because of column order            | `ordered: true` is wrong, or solution doesn't ORDER BY    | Either set `ordered: false` or add ORDER BY to gold solution                                                                                       |
+| G6 fails on a `python-function` with float result            | Used `expect:` for floats                                 | Use `expect_approx:`                                                                                                                               |
+| G5 fails — variant count differs between languages           | Added a variant in one language only                      | Mirror the variant set in every language file                                                                                                      |
+| G7 fails — concept has only 2 exercises                      | Forgot to vary difficulty                                 | Add at least one more, ideally at higher difficulty                                                                                                |
+| G8 — prompt asks "return the answer"                         | Vague                                                     | Specify the shape: "return a list of dicts with keys id, name"                                                                                     |
 | G8 — soft-lint `theory-quiz correct choice is length-biased` | Correct option is a paragraph; distractors are one-liners | Shorten correct; put detail in `explanation`; expand wrong options into same-length misconceptions (see exercise-types.md § Choice length balance) |
-| G9 — difficulty 1 is hard                          | Mislabelled                                            | Re-rate; typically becomes difficulty 2 or 3                                     |
-| G10 — concept has no figure                        | Theory written as plain conspectus                     | Add the concept's mental-model figure; prefer a prebuilt parametric illustration |
+| G9 — difficulty 1 is hard                                    | Mislabelled                                               | Re-rate; typically becomes difficulty 2 or 3                                                                                                       |
+| G10 — concept has no figure                                  | Theory written as plain conspectus                        | Add the concept's mental-model figure; prefer a prebuilt parametric illustration                                                                   |
 
 If you cannot fix a failure within two attempts, surface it to the user instead of papering over it.

@@ -37,21 +37,21 @@ pnpm dev:api      # NestJS API (опционально)
 
 ## Сборка и проверки
 
-| Действие        | Команда                                              |
-| --------------- | ---------------------------------------------------- |
-| Установка       | `pnpm install`                                       |
-| Dev (web)       | `pnpm dev:web`                                       |
-| Dev (web + api) | `pnpm dev`                                           |
-| Тесты           | `pnpm test` (vitest; coverage-порог в lesson-engine) |
-| Typecheck       | `pnpm typecheck`                                     |
-| Lint            | `pnpm lint` / `pnpm lint:fix`                        |
-| Формат          | `pnpm format` / `pnpm format:check`                  |
-| Валидация тем   | `pnpm validate` (Zod-контракт + прогон gold-решений) |
-| Build           | `pnpm build`                                         |
-| i18n-паритет    | `pnpm check:i18n` (ключи ru/en в синхроне)           |
-| Бюджет бандла   | `pnpm check:bundle` (eager-JS ≤ лимит, после build)  |
-| Security headers| `pnpm check:headers` (CSP sync vite/nginx/Caddy)     |
-| Синк скиллов    | `pnpm sync:skills` / `pnpm check:skills`             |
+| Действие         | Команда                                              |
+| ---------------- | ---------------------------------------------------- |
+| Установка        | `pnpm install`                                       |
+| Dev (web)        | `pnpm dev:web`                                       |
+| Dev (web + api)  | `pnpm dev`                                           |
+| Тесты            | `pnpm test` (vitest; coverage-порог в lesson-engine) |
+| Typecheck        | `pnpm typecheck`                                     |
+| Lint             | `pnpm lint` / `pnpm lint:fix`                        |
+| Формат           | `pnpm format` / `pnpm format:check`                  |
+| Валидация тем    | `pnpm validate` (Zod-контракт + прогон gold-решений) |
+| Build            | `pnpm build`                                         |
+| i18n-паритет     | `pnpm check:i18n` (ключи ru/en в синхроне)           |
+| Бюджет бандла    | `pnpm check:bundle` (eager-JS ≤ лимит, после build)  |
+| Security headers | `pnpm check:headers` (CSP sync vite/nginx/Caddy)     |
+| Синк скиллов     | `pnpm sync:skills` / `pnpm check:skills`             |
 
 Команды - только из `package.json` / `Makefile` / CI. После правок гоняй релевантное из таблицы; после правок в `topics/**` - `pnpm validate`.
 

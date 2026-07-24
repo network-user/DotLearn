@@ -1103,9 +1103,7 @@ for (const topic of topics) {
                 `<li><a href="/topics/${escapeAttr(slug)}">${escapeHtml(topicTitleOf(slug))}</a></li>`,
             )
             .join('');
-          const role = track.targetRole
-            ? ` <span>(${escapeHtml(track.targetRole)})</span>`
-            : '';
+          const role = track.targetRole ? ` <span>(${escapeHtml(track.targetRole)})</span>` : '';
           return `<section><h2><a href="/tracks/${escapeAttr(track.id)}">${escapeHtml(track.title)}</a>${role}</h2><p>${escapeHtml(track.description)}</p><ul>${lis}</ul></section>`;
         })
         .join('\n');

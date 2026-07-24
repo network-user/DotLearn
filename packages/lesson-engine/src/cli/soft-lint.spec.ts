@@ -70,4 +70,3 @@ describe('analyzeQuizChoiceLengths', () => {
     expect(report.biased).toBe(false);
   });
 });
-

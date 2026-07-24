@@ -66,7 +66,7 @@ export const analyzeQuizChoiceLengths = (
     uniquelyLongestCorrect && ratioToAvgWrong > QUIZ_MAX_CORRECT_TO_AVG_WRONG_RATIO;
   const biased = exceedsMaxWrong || exceedsAvgWrong;
 
-  return {
+  const report: QuizChoiceLengthReport = {
     biased,
     maxCorrect,
     maxWrong,
@@ -74,10 +74,11 @@ export const analyzeQuizChoiceLengths = (
     ratioToMaxWrong,
     ratioToAvgWrong,
     uniquelyLongestCorrect,
-    reason: biased
-      ? `theory-quiz correct choice is length-biased (correct=${maxCorrect}, maxWrong=${maxWrong}, avgWrong=${Math.round(avgWrong)}, ratioMax=${ratioToMaxWrong.toFixed(2)}, ratioAvg=${ratioToAvgWrong.toFixed(2)})`
-      : undefined,
   };
+  if (biased) {
+    report.reason = `theory-quiz correct choice is length-biased (correct=${maxCorrect}, maxWrong=${maxWrong}, avgWrong=${Math.round(avgWrong)}, ratioMax=${ratioToMaxWrong.toFixed(2)}, ratioAvg=${ratioToAvgWrong.toFixed(2)})`;
+  }
+  return report;
 };
 
 export const collectWikilinks = (text: string): string[] => {

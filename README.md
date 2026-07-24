@@ -64,21 +64,21 @@ Bare-metal без Docker (основной путь деплоя): `sudo bash sc
 
 ## Команды
 
-| Команда             | Назначение                                            |
-| ------------------- | ----------------------------------------------------- |
-| `pnpm dev:web`      | Vite SPA, offline-first плеер                         |
-| `pnpm dev:api`      | NestJS API (submissions, admin, поиск)                |
-| `pnpm dev`          | web + api параллельно (Turborepo)                     |
-| `pnpm build`        | production-сборка (web: + пререндер, sitemap/llms/OG) |
-| `pnpm typecheck`    | TypeScript по монорепо                                |
-| `pnpm test`         | unit-тесты пакетов (vitest)                           |
-| `pnpm validate`     | Zod-контракт тем + прогон gold-решений                |
-| `pnpm lint`         | ESLint по репозиторию                                 |
-| `pnpm check:i18n`   | паритет ключей локалей ru/en                          |
-| `pnpm check:bundle` | бюджет eager-JS после build                           |
-| `pnpm check:headers`| CSP/security headers в синхроне (vite/nginx/Caddy)    |
-| `pnpm sync:skills`  | `.cursor/skills/` → `.claude/skills/`                 |
-| `pnpm check:skills` | CI: зеркала скиллов идентичны                         |
+| Команда              | Назначение                                            |
+| -------------------- | ----------------------------------------------------- |
+| `pnpm dev:web`       | Vite SPA, offline-first плеер                         |
+| `pnpm dev:api`       | NestJS API (submissions, admin, поиск)                |
+| `pnpm dev`           | web + api параллельно (Turborepo)                     |
+| `pnpm build`         | production-сборка (web: + пререндер, sitemap/llms/OG) |
+| `pnpm typecheck`     | TypeScript по монорепо                                |
+| `pnpm test`          | unit-тесты пакетов (vitest)                           |
+| `pnpm validate`      | Zod-контракт тем + прогон gold-решений                |
+| `pnpm lint`          | ESLint по репозиторию                                 |
+| `pnpm check:i18n`    | паритет ключей локалей ru/en                          |
+| `pnpm check:bundle`  | бюджет eager-JS после build                           |
+| `pnpm check:headers` | CSP/security headers в синхроне (vite/nginx/Caddy)    |
+| `pnpm sync:skills`   | `.cursor/skills/` → `.claude/skills/`                 |
+| `pnpm check:skills`  | CI: зеркала скиллов идентичны                         |
 
 ## Стек
 

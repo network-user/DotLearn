@@ -57,9 +57,7 @@ export const compareValues = (actual: unknown, expected: unknown, path = '$'): V
     expectedNumber !== undefined &&
     (typeof actual === 'number' || typeof expected === 'number')
   ) {
-    return actualNumber === expectedNumber
-      ? { ok: true }
-      : { ok: false, reason: 'value', path };
+    return actualNumber === expectedNumber ? { ok: true } : { ok: false, reason: 'value', path };
   }
   // Quote style and structural spacing should not decide correctness for code-ish
   // string answers (python/js return values, predict scalars, SQL cells). Case and
