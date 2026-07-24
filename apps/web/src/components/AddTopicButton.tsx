@@ -1,7 +1,10 @@
 import { useState } from 'react';
 
-import { Link, useNavigate } from '@tanstack/react-router';
+import { useNavigate } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
+
+const githubRepoUrl = (import.meta.env.VITE_GITHUB_URL ?? '').trim().replace(/\/+$/, '');
+const contributingUrl = githubRepoUrl ? `${githubRepoUrl}/blob/main/CONTRIBUTING.md` : '';
 
 export const AddTopicButton = () => {
   const { t } = useTranslation('addTopic');
@@ -42,22 +45,18 @@ export const AddTopicButton = () => {
             <div className="text-sm font-medium text-fg">{t('suggest')}</div>
             <div className="text-xs text-fg-muted mt-0.5">{t('suggestHint')}</div>
           </button>
-          <Link
-            to="/"
-            className="block px-3 py-2 rounded-md hover:bg-surface-2"
-            onClick={() => setOpen(false)}
-          >
+          {contributingUrl ? (
             <a
-              href="https://github.com/your-org/dotlearn/blob/main/CONTRIBUTING.md"
+              href={contributingUrl}
               target="_blank"
               rel="noreferrer"
-              className="block"
-              onClick={(event) => event.stopPropagation()}
+              className="block px-3 py-2 rounded-md hover:bg-surface-2"
+              onClick={() => setOpen(false)}
             >
               <div className="text-sm font-medium text-fg">{t('pr')}</div>
               <div className="text-xs text-fg-muted mt-0.5">{t('prHint')}</div>
             </a>
-          </Link>
+          ) : null}
         </div>
       ) : null}
     </div>
