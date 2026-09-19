@@ -45,7 +45,7 @@ const unquote = (value: string): string => {
 };
 
 const parseFrontmatter = (text: string): Record<string, string> | undefined => {
-  const match = text.match(/^---\n([\s\S]*?)\n---/);
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match?.[1]) return undefined;
   const data: Record<string, string> = {};
   for (const line of match[1].split('\n')) {
