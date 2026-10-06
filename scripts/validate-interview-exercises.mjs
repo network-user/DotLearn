@@ -31,10 +31,43 @@ function validateQuiz(q, errors, ctx) {
     if (!isStr(c.id) || !isStr(c.text)) errors.push(`${ctx}: choice missing id/text`);
     ids.add(c.id);
   }
-  if (!Array.isArray(q.correct) || q.correct.length < 1) errors.push(`${ctx}: correct empty`);
-  else
-    for (const c of q.correct)
-      if (!ids.has(c)) errors.push(`${ctx}: correct "${c}" not a choice id`);
+  if (!Array.isArray(q.correct) || q.correct.length < 1) {
+    errors.push(`${ctx}: correct empty`);
+    return;
+  }
+  let correctIdsOk = true;
+  for (const c of q.correct) {
+    if (!ids.has(c)) {
+      errors.push(`${ctx}: correct "${c}" not a choice id`);
+      correctIdsOk = false;
+    }
+  }
+  if (correctIdsOk) lintQuizChoiceLengths(q, errors, ctx);
+}
+
+function lintQuizChoiceLengths(q, errors, ctx) {
+  const correct = new Set(q.correct);
+  const correctLengths = [];
+  const wrongLengths = [];
+  for (const choice of q.choices) {
+    const length = choice.text.trim().length;
+    if (correct.has(choice.id)) correctLengths.push(length);
+    else wrongLengths.push(length);
+  }
+  if (correctLengths.length === 0 || wrongLengths.length === 0) return;
+  const maxCorrect = Math.max(...correctLengths);
+  const maxWrong = Math.max(...wrongLengths);
+  const all = q.choices.map((choice) => choice.text.trim().length);
+  const overallMax = Math.max(...all);
+  const longestCount = all.filter((length) => length === overallMax).length;
+  const uniquelyLongest = maxCorrect === overallMax && longestCount === 1;
+  const gap = maxCorrect - maxWrong;
+  const ratio = maxCorrect / Math.max(maxWrong, 1);
+  if (uniquelyLongest && (gap >= 10 || ratio > 1.18)) {
+    errors.push(
+      `${ctx}: correct choice is uniquely longest (gap=${gap}, ratio=${ratio.toFixed(2)})`,
+    );
+  }
 }
 
 function placeholders(template) {
