@@ -331,6 +331,11 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  optimizeDeps: {
+    esbuildOptions: {
+      target: 'es2022',
+    },
+  },
   server: {
     port: 5173,
     fs: {
