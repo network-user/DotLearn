@@ -12,7 +12,7 @@ How `for` works under the hood, what separates an iterable from an iterator, why
 
 ## Concepts
 
-1. Iterator Protocol: __iter__ and __next__
+1. Iterator Protocol: `__iter__` and `__next__`
 2. Comprehensions: Lists, Dicts, Sets
 3. Generators: yield and Laziness
 4. Generator Expressions and Pipelines

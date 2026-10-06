@@ -1,4 +1,4 @@
-# if __name__ == "__main__" in Python
+# if `__name__` == "`__main__`" in Python
 
 A tour of one of the most recognizable lines in Python for beginners: what a module is and why it has a `__name__` variable, how `if __name__ == "__main__"` separates launch code from import code, and why without this guard `multiprocessing`, tests, and module reuse break. For anyone who has written simple scripts and wants to understand how imports work.
 
