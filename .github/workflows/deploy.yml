@@ -86,6 +86,9 @@ jobs:
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Check deploy secrets
         env:
@@ -99,18 +102,23 @@ jobs:
 
       - name: Deploy via SSH (pull only, без сборки)
         uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          envs: GHCR_USER,GHCR_TOKEN
           # Запас на медленный pull из ghcr.io в РФ-локацию (первый раз тянет
           # все слои; дальше докачиваются только изменённые).
           command_timeout: 40m
           script: |
-            set -e
-            # Протухший docker login на сервере даёт ghcr 403 denied на публичный
-            # образ. Сброс до update.sh: сам скрипт на диске обновится только
-            # внутри этого запуска и уже не успеет выполнить свой logout.
-            sudo docker logout ghcr.io >/dev/null 2>&1 || true
-            sudo /bin/bash ${{ secrets.DEPLOY_REPO_PATH }}/deploy/update.sh
+            set -eu
+            test -n "$GHCR_TOKEN"
+            test -n "$GHCR_USER"
+            printf '%s' "$GHCR_TOKEN" | sudo sh -c 'umask 077; cat > /run/dotlearn-ghcr-token'
+            # git pull до запуска update.sh: на диске ещё скрипт прошлого
+            # деплоя, он делает docker logout и снова получает denied.
+            sudo /bin/bash -c 'set -euo pipefail; trap "rm -f /run/dotlearn-ghcr-token" EXIT; cd "$1"; git pull --ff-only; export GHCR_USER="$2"; GHCR_TOKEN=$(cat /run/dotlearn-ghcr-token); rm -f /run/dotlearn-ghcr-token; export GHCR_TOKEN; exec bash deploy/update.sh' bash '${{ secrets.DEPLOY_REPO_PATH }}' "$GHCR_USER"
