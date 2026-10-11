@@ -19,7 +19,9 @@ const indexHtml = join(distDir, 'index.html');
 // 2026-07-13: 368 -> 372 after /en/interview routes + personalization/sync/
 // hidden-topics landed (measured 368.3 KB). Router chunk is eager; interview
 // data and pages stay lazy.
-const INITIAL_JS_GZIP_BUDGET = 372 * 1024;
+// 2026-10-12: 372 -> 376 after the seroval 1.6 security bump moved
+// @tanstack/react-router to 1.170.42. Router chunk stays eager (measured 373.5 KB).
+const INITIAL_JS_GZIP_BUDGET = 376 * 1024;
 const HEAVY = /(monaco|pyodide|sqljs|sql-wasm)/i;
 
 let html;
