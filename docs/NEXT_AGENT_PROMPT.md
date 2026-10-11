@@ -1,5 +1,7 @@
 # Handoff prompt for DotLearn
 
+Текущая незаконченная линия, не этот старый бриф: `docs/onec-lab-roadmap.md`. MVP стенда учёта уже в дереве (`onec-lab`, `/workbench`, `topics/onec-workbench`). Дальше стадия 2 из того файла.
+
 Copy the block below into a fresh chat with Cursor or Claude Code at the repository root (`<repo-root>`). It briefs the next agent on context, conventions, and the first concrete tasks.
 
 ---
