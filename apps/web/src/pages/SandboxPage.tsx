@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 
-import { Database, FlaskConical, Terminal } from 'lucide-react';
+import { Database, FlaskConical, Terminal, Warehouse } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -30,6 +30,11 @@ const SqlPlayground = lazy(() =>
 const PythonPlayground = lazy(() =>
   import('@/components/playground/PythonPlayground').then((module) => ({
     default: module.PythonPlayground,
+  })),
+);
+const StandPlayground = lazy(() =>
+  import('@/components/playground/StandPlayground').then((module) => ({
+    default: module.StandPlayground,
   })),
 );
 
@@ -100,6 +105,7 @@ export const SandboxPage = () => {
 
   useEffect(() => {
     if (loaded === undefined) return;
+    if (activeTab === 'stand') return;
     if (isConstrainedConnection()) return;
     const prewarm = activeTab === 'python' ? prewarmPythonRuntime : prewarmSqlRuntime;
     const win = window as typeof window & {
@@ -122,6 +128,7 @@ export const SandboxPage = () => {
   const segments: { id: PlaygroundTab; label: string; icon: typeof Database }[] = [
     { id: 'sql', label: t('tabs.sql'), icon: Database },
     { id: 'python', label: t('tabs.python'), icon: Terminal },
+    { id: 'stand', label: t('tabs.stand'), icon: Warehouse },
   ];
 
   return (
@@ -174,6 +181,9 @@ export const SandboxPage = () => {
           </div>
           <div className={cx(activeTab === 'python' ? 'block' : 'hidden')}>
             <PythonPlayground initialState={loaded.python} />
+          </div>
+          <div className={cx(activeTab === 'stand' ? 'block' : 'hidden')}>
+            <StandPlayground />
           </div>
         </Suspense>
       )}

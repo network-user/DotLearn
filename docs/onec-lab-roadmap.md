@@ -4,7 +4,7 @@
 
 ## Что уже есть
 
-Тип упражнения `onec-lab`. Движок без DOM: `packages/lesson-engine/src/runtime/onec/`. Золотое `solution` гоняет `pnpm validate`. UI: `apps/web/src/components/onec/OnecStand.tsx`, раннер `OnecLabRunner.tsx`. Свободный режим: `/workbench` (`robots=noindex`). Урок: `topics/onec-workbench/`. Трек `onec` начинается с этой темы.
+Тип упражнения `onec-lab`. Движок без DOM: `packages/lesson-engine/src/runtime/onec/`. Золотое `solution` гоняет `pnpm validate`. UI: `apps/web/src/components/onec/OnecStand.tsx`, раннер `OnecLabRunner.tsx`. Свободный режим без зачёта: вкладка «Стенд» на `/sandbox` и страница `/workbench`. Команды стенда пишутся в IndexedDB (`playground:stand`) и общие для обеих страниц. Урок их не трогает. Тема: `topics/onec-workbench/`. Трек `onec` начинается с неё.
 
 Конфигурация одна и зашита в код: контрагенты, номенклатура, склады, документ «Поступление товаров», приход в остатки, отчёт. Проведение декларативное, не скрипт. «Записать» не двигает остаток. Отмена проведения снимает движения.
 

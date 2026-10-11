@@ -103,7 +103,7 @@ const HUBS = {
   map: { title: 'Карта знаний', description: 'Связи между темами и концептами .learn.' },
   sandbox: {
     title: 'Песочница',
-    description: 'Запуск Python и SQL прямо в браузере, без установки.',
+    description: 'Запуск Python, SQL и учебного стенда учёта прямо в браузере, без установки.',
   },
 };
 
@@ -1124,7 +1124,7 @@ for (const topic of topics) {
       [
         `<h1>${escapeHtml(HUBS.sandbox.title)}</h1>`,
         `<p>${escapeHtml(HUBS.sandbox.description)}</p>`,
-        '<p>В песочнице можно писать и запускать Python (Pyodide) и SQL (sql.js) без установки окружения. Теория с живыми примерами - в темах:</p>',
+        '<p>В песочнице можно писать и запускать Python (Pyodide) и SQL (sql.js), а на вкладке «Стенд» работать с учебным окном учёта. Установки нет. Теория с живыми примерами - в темах:</p>',
         `<ul>${topicListItems()}</ul>`,
       ].join('\n'),
   };

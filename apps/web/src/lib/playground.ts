@@ -1,3 +1,5 @@
+import { OnecCommand } from '@dotlearn/contracts';
+
 import { db, type PlaygroundRecord, type PlaygroundSnippetRecord } from '@/lib/progress-db';
 
 export class PlaygroundStateError extends Error {
@@ -7,7 +9,7 @@ export class PlaygroundStateError extends Error {
   }
 }
 
-export type PlaygroundTab = 'sql' | 'python';
+export type PlaygroundTab = 'sql' | 'python' | 'stand';
 
 export type PlaygroundView = 'gallery' | 'workspace';
 
@@ -44,6 +46,7 @@ export interface SandboxIncoming {
 const ACTIVE_TAB_KEY = 'playground:active-tab';
 const SQL_STATE_KEY = 'playground:sql';
 const PYTHON_STATE_KEY = 'playground:python';
+const STAND_COMMANDS_KEY = 'playground:stand';
 const INCOMING_KEY = 'playground:incoming';
 
 const writeRecord = async (id: string, value: string): Promise<void> => {
@@ -55,7 +58,7 @@ const readRecord = async (id: string): Promise<PlaygroundRecord | undefined> =>
 
 export const loadActiveTab = async (): Promise<PlaygroundTab | undefined> => {
   const record = await readRecord(ACTIVE_TAB_KEY);
-  if (record?.value === 'sql' || record?.value === 'python') {
+  if (record?.value === 'sql' || record?.value === 'python' || record?.value === 'stand') {
     return record.value;
   }
   return undefined;
@@ -63,6 +66,21 @@ export const loadActiveTab = async (): Promise<PlaygroundTab | undefined> => {
 
 export const saveActiveTab = async (tab: PlaygroundTab): Promise<void> => {
   await writeRecord(ACTIVE_TAB_KEY, tab);
+};
+
+export const loadStandCommands = async (): Promise<OnecCommand[]> => {
+  const record = await readRecord(STAND_COMMANDS_KEY);
+  if (!record) return [];
+  try {
+    const parsed = OnecCommand.array().safeParse(JSON.parse(record.value));
+    return parsed.success ? parsed.data : [];
+  } catch {
+    return [];
+  }
+};
+
+export const saveStandCommands = async (commands: readonly OnecCommand[]): Promise<void> => {
+  await writeRecord(STAND_COMMANDS_KEY, JSON.stringify(commands));
 };
 
 const parseState = <T>(raw: string, predicate: (value: unknown) => value is T): T => {
