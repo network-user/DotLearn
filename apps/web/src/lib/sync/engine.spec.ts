@@ -92,6 +92,10 @@ const bookmarkRow = (id: string, createdAt = '2026-07-01T00:00:00.000Z') => ({
   createdAt,
 });
 
+// pruneTombstoneTable drops rows older than 90 days by wall clock, so a fixed
+// deletedAt goes stale and the assertion starts failing once that date ages out.
+const freshDeletedAt = (): string => new Date().toISOString();
+
 describe('applyMerged', () => {
   it('bulkPuts stable-key tables by primary key', async () => {
     await db.progress.put(progressRow('python:ex1', 1));
@@ -188,7 +192,7 @@ describe('applyMerged tombstones', () => {
           id: 'bookmarks:t:c1',
           table: 'bookmarks',
           recordKey: 't:c1',
-          deletedAt: '2026-07-05T00:00:00.000Z',
+          deletedAt: freshDeletedAt(),
         },
       ],
     };
@@ -217,7 +221,7 @@ describe('applyMerged tombstones', () => {
           id: 'bookmarks:t:c1',
           table: 'bookmarks',
           recordKey: 't:c1',
-          deletedAt: '2026-07-05T00:00:00.000Z',
+          deletedAt: freshDeletedAt(),
         },
       ],
     };
