@@ -242,7 +242,7 @@ export const GitChallengeExercise = BaseExercise.extend({
 });
 export type GitChallengeExercise = z.infer<typeof GitChallengeExercise>;
 
-export const OnecSection = z.enum(['home', 'catalogs', 'documents', 'reports']);
+export const OnecSection = z.enum(['home', 'catalogs', 'documents', 'reports', 'config']);
 export type OnecSection = z.infer<typeof OnecSection>;
 
 export const OnecCatalog = z.enum(['counterparties', 'products', 'warehouses']);
@@ -253,6 +253,7 @@ export const OnecList = z.enum([
   'products',
   'warehouses',
   'receipts',
+  'sales',
   'balances',
 ]);
 export type OnecList = z.infer<typeof OnecList>;
@@ -266,11 +267,33 @@ export const ONEC_FOCI = [
   'receipt-fields',
   'post',
   'report-nav',
+  'sale-create',
+  'query',
+  'metadata',
+  'mark',
 ] as const;
 export const OnecFocus = z.enum(ONEC_FOCI);
 export type OnecFocus = z.infer<typeof OnecFocus>;
 
 const OnecNamed = z.object({ name: z.string().min(1).max(120) }).strict();
+
+const OnecSeedLine = z
+  .object({
+    product: z.string().min(1),
+    qty: z.number().positive(),
+    price: z.number().nonnegative(),
+  })
+  .strict();
+
+const OnecSeedDoc = z
+  .object({
+    posted: z.boolean().default(false),
+    deletionMark: z.boolean().default(false),
+    counterparty: z.string().min(1),
+    warehouse: z.string().min(1),
+    lines: z.array(OnecSeedLine).min(1).max(20),
+  })
+  .strict();
 
 export const OnecSeed = z
   .object({
@@ -278,6 +301,8 @@ export const OnecSeed = z
     counterparties: z.array(OnecNamed).max(20).default([]),
     products: z.array(OnecNamed).max(20).default([]),
     warehouses: z.array(OnecNamed).max(20).default([]),
+    receipts: z.array(OnecSeedDoc).max(20).default([]),
+    sales: z.array(OnecSeedDoc).max(20).default([]),
   })
   .strict();
 export type OnecSeed = z.infer<typeof OnecSeed>;
@@ -292,14 +317,19 @@ const OnecLine = z
 const OnecSectionAssertion = z.object({ kind: z.literal('section'), equals: OnecSection }).strict();
 const OnecListAssertion = z.object({ kind: z.literal('list'), object: OnecList }).strict();
 const OnecFormAssertion = z
-  .object({ kind: z.literal('form'), equals: z.enum(['receipt', 'none']) })
+  .object({ kind: z.literal('form'), equals: z.enum(['receipt', 'sale', 'none']) })
   .strict();
 const OnecCatalogAssertion = z
   .object({ kind: z.literal('catalog-item'), catalog: OnecCatalog, name: z.string().min(1) })
   .strict();
+export const OnecDocKind = z.enum(['receipt', 'sale']);
+export type OnecDocKind = z.infer<typeof OnecDocKind>;
+
 const OnecPostedAssertion = z
   .object({
     kind: z.literal('document-posted'),
+    doc: OnecDocKind.default('receipt'),
+    posted: z.boolean().default(true),
     counterparty: z.string().min(1),
     warehouse: z.string().min(1),
     lines: z.array(OnecLine).min(1).max(20),
@@ -314,6 +344,35 @@ const OnecBalanceAssertion = z
   })
   .strict();
 
+const OnecNoPostedAssertion = z.object({ kind: z.literal('no-posted'), doc: OnecDocKind }).strict();
+
+const OnecMarkedCatalogAssertion = z
+  .object({
+    kind: z.literal('marked-catalog'),
+    catalog: OnecCatalog,
+    name: z.string().min(1),
+    marked: z.boolean(),
+  })
+  .strict();
+
+const OnecMarkedDocAssertion = z
+  .object({
+    kind: z.literal('marked-document'),
+    doc: OnecDocKind,
+    number: z.string().min(1),
+    marked: z.boolean(),
+  })
+  .strict();
+
+const OnecQueryValue = z.union([z.string(), z.number(), z.boolean()]);
+
+const OnecQueryAssertion = z
+  .object({
+    kind: z.literal('query-result'),
+    rows: z.array(z.record(z.string(), OnecQueryValue)).max(40),
+  })
+  .strict();
+
 export const OnecStepExpect = z.discriminatedUnion('kind', [
   OnecSectionAssertion,
   OnecListAssertion,
@@ -321,6 +380,10 @@ export const OnecStepExpect = z.discriminatedUnion('kind', [
   OnecCatalogAssertion,
   OnecPostedAssertion,
   OnecBalanceAssertion,
+  OnecNoPostedAssertion,
+  OnecMarkedCatalogAssertion,
+  OnecMarkedDocAssertion,
+  OnecQueryAssertion,
 ]);
 export type OnecStepExpect = z.infer<typeof OnecStepExpect>;
 
@@ -328,6 +391,10 @@ export const OnecGoal = z.discriminatedUnion('kind', [
   OnecCatalogAssertion,
   OnecPostedAssertion,
   OnecBalanceAssertion,
+  OnecNoPostedAssertion,
+  OnecMarkedCatalogAssertion,
+  OnecMarkedDocAssertion,
+  OnecQueryAssertion,
 ]);
 export type OnecGoal = z.infer<typeof OnecGoal>;
 
@@ -371,6 +438,36 @@ export const OnecCommand = z.discriminatedUnion('op', [
   z.object({ op: z.literal('save-receipt') }).strict(),
   z.object({ op: z.literal('post-receipt') }).strict(),
   z.object({ op: z.literal('unpost-receipt') }).strict(),
+  z.object({ op: z.literal('open-new-sale') }).strict(),
+  z.object({ op: z.literal('open-sale'), id: z.string().min(1) }).strict(),
+  z
+    .object({
+      op: z.literal('set-sale-field'),
+      field: z.enum(['counterparty', 'warehouse']),
+      value: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('add-sale-line'),
+      product: z.string().min(1),
+      qty: z.number().positive(),
+      price: z.number().nonnegative(),
+    })
+    .strict(),
+  z.object({ op: z.literal('remove-sale-line'), index: z.number().int().nonnegative() }).strict(),
+  z.object({ op: z.literal('save-sale') }).strict(),
+  z.object({ op: z.literal('post-sale') }).strict(),
+  z.object({ op: z.literal('unpost-sale') }).strict(),
+  z
+    .object({
+      op: z.literal('toggle-mark-catalog'),
+      catalog: OnecCatalog,
+      name: z.string().min(1),
+    })
+    .strict(),
+  z.object({ op: z.literal('toggle-mark-doc') }).strict(),
+  z.object({ op: z.literal('run-query'), text: z.string().min(1).max(500) }).strict(),
   z.object({ op: z.literal('close-form') }).strict(),
 ]);
 export type OnecCommand = z.infer<typeof OnecCommand>;

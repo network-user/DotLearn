@@ -275,7 +275,9 @@ Step `expect` kinds: `section`, `list`, `form`, `catalog-item`, `document-posted
     - { op: post-receipt }
 ```
 
-Command `op` values: `open-section`, `open-list`, `create-catalog`, `open-new-receipt`, `open-receipt`, `set-receipt-field`, `add-receipt-line`, `remove-receipt-line`, `save-receipt`, `post-receipt`, `unpost-receipt`, `close-form`.
+Command `op` values: `open-section`, `open-list`, `create-catalog`, `open-new-receipt`, `open-receipt`, `set-receipt-field`, `add-receipt-line`, `remove-receipt-line`, `save-receipt`, `post-receipt`, `unpost-receipt`, `open-new-sale`, `open-sale`, `set-sale-field`, `add-sale-line`, `remove-sale-line`, `save-sale`, `post-sale`, `unpost-sale`, `toggle-mark-catalog`, `toggle-mark-doc`, `run-query`, `close-form`.
+
+`document-posted` accepts `doc: receipt|sale` (default `receipt`) and `posted` (default `true`). Other goal kinds: `no-posted`, `marked-catalog`, `marked-document`, `query-result`. Seed may include `receipts` and `sales`. A sale post fails when the warehouse would go negative. A deletion mark does not unpost. `run-query` text is one statement: `ВЫБРАТЬ fields ИЗ Остатки|Поступления|Реализации` with an optional single `ГДЕ`. This is not the platform query language.
 
 Shell copy and scenario text are Russian. Do not put the 1C logo or the wordmark into the chrome. Layout may stay close. The stage plan lives in `docs/onec-lab-roadmap.md`.
 

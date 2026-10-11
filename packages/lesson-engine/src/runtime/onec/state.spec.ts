@@ -9,6 +9,8 @@ const seed = (): OnecSeed => ({
   counterparties: [],
   products: [{ name: 'Бумага А4' }],
   warehouses: [{ name: 'Основной' }],
+  receipts: [],
+  sales: [],
 });
 
 const posted = () => {
@@ -90,6 +92,62 @@ describe('onec state', () => {
     expect(() => applyOnecCommand(saved, { op: 'open-receipt', id: 'missing' })).toThrow(
       OnecCommandError,
     );
+  });
+
+  it('refuses a sale that exceeds stock and keeps a deletion mark on a posted receipt', () => {
+    const base = replayOnec(seed(), [
+      { op: 'create-catalog', catalog: 'counterparties', name: 'ООО Ромашка' },
+      { op: 'open-new-receipt' },
+      { op: 'set-receipt-field', field: 'counterparty', value: 'ООО Ромашка' },
+      { op: 'set-receipt-field', field: 'warehouse', value: 'Основной' },
+      { op: 'add-receipt-line', product: 'Бумага А4', qty: 10, price: 100 },
+      { op: 'post-receipt' },
+    ]);
+    const opened = applyOnecCommand(base, { op: 'open-new-sale' });
+    const filled = replayOnec(seed(), [
+      { op: 'create-catalog', catalog: 'counterparties', name: 'ООО Ромашка' },
+      { op: 'open-new-receipt' },
+      { op: 'set-receipt-field', field: 'counterparty', value: 'ООО Ромашка' },
+      { op: 'set-receipt-field', field: 'warehouse', value: 'Основной' },
+      { op: 'add-receipt-line', product: 'Бумага А4', qty: 10, price: 100 },
+      { op: 'post-receipt' },
+      { op: 'open-new-sale' },
+      { op: 'set-sale-field', field: 'counterparty', value: 'ООО Ромашка' },
+      { op: 'set-sale-field', field: 'warehouse', value: 'Основной' },
+      { op: 'add-sale-line', product: 'Бумага А4', qty: 15, price: 100 },
+    ]);
+    expect(opened.ui.draft?.kind).toBe('sale');
+    expect(() => applyOnecCommand(filled, { op: 'post-sale' })).toThrow(OnecCommandError);
+    const sold = replayOnec(seed(), [
+      { op: 'create-catalog', catalog: 'counterparties', name: 'ООО Ромашка' },
+      { op: 'open-new-receipt' },
+      { op: 'set-receipt-field', field: 'counterparty', value: 'ООО Ромашка' },
+      { op: 'set-receipt-field', field: 'warehouse', value: 'Основной' },
+      { op: 'add-receipt-line', product: 'Бумага А4', qty: 10, price: 100 },
+      { op: 'post-receipt' },
+      { op: 'open-new-sale' },
+      { op: 'set-sale-field', field: 'counterparty', value: 'ООО Ромашка' },
+      { op: 'set-sale-field', field: 'warehouse', value: 'Основной' },
+      { op: 'add-sale-line', product: 'Бумага А4', qty: 4, price: 100 },
+      { op: 'post-sale' },
+    ]);
+    expect(onecBalances(sold)).toEqual([
+      { productName: 'Бумага А4', warehouseName: 'Основной', qty: 6, sum: 600 },
+    ]);
+    const marked = applyOnecCommand(
+      applyOnecCommand(base, { op: 'open-receipt', id: 'receipt-1' }),
+      {
+        op: 'toggle-mark-doc',
+      },
+    );
+    expect(marked.receipts[0]?.deletionMark).toBe(true);
+    expect(marked.receipts[0]?.posted).toBe(true);
+    expect(onecBalances(marked)[0]?.qty).toBe(10);
+    const queried = applyOnecCommand(sold, {
+      op: 'run-query',
+      text: 'ВЫБРАТЬ Номенклатура, Количество ИЗ Остатки ГДЕ Склад = "Основной"',
+    });
+    expect(queried.lastQuery?.rows).toEqual([{ Номенклатура: 'Бумага А4', Количество: 6 }]);
   });
 
   it('drops an unsaved draft when the section changes and removes a line', () => {

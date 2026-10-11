@@ -50,7 +50,29 @@ const commandLine = (command: OnecCommand): string => {
     case 'post-receipt':
       return 'провести';
     case 'unpost-receipt':
-      return 'отмена проведения';
+      return 'отмена проведения поступления';
+    case 'open-new-sale':
+      return 'новая реализация';
+    case 'open-sale':
+      return `открыть реализацию ${command.id}`;
+    case 'set-sale-field':
+      return `реализация ${command.field} = ${command.value}`;
+    case 'add-sale-line':
+      return `расход ${command.product}, ${command.qty} x ${command.price}`;
+    case 'remove-sale-line':
+      return `удалить строку реализации ${command.index + 1}`;
+    case 'save-sale':
+      return 'записать реализацию';
+    case 'post-sale':
+      return 'провести реализацию';
+    case 'unpost-sale':
+      return 'отмена проведения реализации';
+    case 'toggle-mark-catalog':
+      return `пометка ${command.catalog}: ${command.name}`;
+    case 'toggle-mark-doc':
+      return 'пометка документа';
+    case 'run-query':
+      return command.text;
     case 'close-form':
       return 'закрыть форму';
   }

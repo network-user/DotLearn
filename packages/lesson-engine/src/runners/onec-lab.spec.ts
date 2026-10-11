@@ -15,6 +15,8 @@ const exercise = (): OnecLabExercise => ({
     counterparties: [],
     products: [{ name: 'Бумага А4' }],
     warehouses: [{ name: 'Основной' }],
+    receipts: [],
+    sales: [],
   },
   steps: [
     {
@@ -27,6 +29,8 @@ const exercise = (): OnecLabExercise => ({
   goal: [
     {
       kind: 'document-posted',
+      doc: 'receipt',
+      posted: true,
       counterparty: 'ООО Ромашка',
       warehouse: 'Основной',
       lines: [{ product: 'Бумага А4', qty: 10 }],

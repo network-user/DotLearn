@@ -8,10 +8,14 @@ const seed: OnecSeed = {
   counterparties: [],
   products: [{ name: 'Бумага А4' }],
   warehouses: [{ name: 'Основной' }],
+  receipts: [],
+  sales: [],
 };
 
 const postedGoal = (name: string, qty: number): OnecGoal => ({
   kind: 'document-posted',
+  doc: 'receipt',
+  posted: true,
   counterparty: name,
   warehouse: 'Основной',
   lines: [{ product: 'Бумага А4', qty }],

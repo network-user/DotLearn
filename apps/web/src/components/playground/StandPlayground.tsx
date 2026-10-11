@@ -13,6 +13,8 @@ const SEED: OnecSeed = {
   counterparties: [],
   products: [{ name: 'Бумага А4' }],
   warehouses: [{ name: 'Основной' }],
+  receipts: [],
+  sales: [],
 };
 
 export const StandPlayground = () => {

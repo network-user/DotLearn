@@ -15,7 +15,7 @@ import {
   OnecCommandError,
   replayOnec,
 } from '@dotlearn/lesson-engine';
-import { BarChart3, BookOpen, FileText, Home } from 'lucide-react';
+import { BarChart3, BookOpen, FileText, FolderTree, Home } from 'lucide-react';
 
 import { cx } from '@/components/ui/cx';
 
@@ -32,6 +32,7 @@ const SECTIONS: { id: OnecSection; label: string; icon: typeof Home }[] = [
   { id: 'catalogs', label: 'Справочники', icon: BookOpen },
   { id: 'documents', label: 'Документы', icon: FileText },
   { id: 'reports', label: 'Отчёты', icon: BarChart3 },
+  { id: 'config', label: 'Конфигурация', icon: FolderTree },
 ];
 
 const CATALOGS: { id: OnecCatalog; label: string }[] = [
@@ -61,6 +62,7 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
   const [lineQty, setLineQty] = useState('10');
   const [linePrice, setLinePrice] = useState('100');
   const [showMoves, setShowMoves] = useState(false);
+  const [queryText, setQueryText] = useState('ВЫБРАТЬ Номенклатура, Склад, Количество\nИЗ Остатки');
 
   useEffect(() => {
     setBanner(null);
@@ -180,6 +182,19 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
           >
             Поступление товаров
           </button>
+          <button
+            type="button"
+            onClick={() => openCatalog('sales')}
+            className={cx(
+              'min-h-11 rounded-md px-3 text-sm',
+              state.ui.list === 'sales'
+                ? 'bg-[#2c3848] text-white'
+                : 'text-[#2c3848] hover:bg-[#f3eadb]',
+              focus === 'sale-create' && 'ring-2 ring-[#c9890a] ring-offset-2',
+            )}
+          >
+            Реализация товаров
+          </button>
         </div>
       ) : null}
 
@@ -217,10 +232,26 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
 
         {state.ui.section === 'home' ? <HomePane /> : null}
 
-        {state.ui.list && state.ui.list !== 'receipts' && state.ui.list !== 'balances' && !draft ? (
+        {state.ui.list &&
+        (state.ui.list === 'counterparties' ||
+          state.ui.list === 'products' ||
+          state.ui.list === 'warehouses') &&
+        !draft ? (
           <CatalogPane
             title={CATALOGS.find((item) => item.id === state.ui.list)?.label ?? 'Справочник'}
             rows={state[state.ui.list]}
+            highlightMark={focus === 'mark'}
+            onToggleMark={(name) => {
+              const catalog = state.ui.list;
+              if (
+                catalog !== 'counterparties' &&
+                catalog !== 'products' &&
+                catalog !== 'warehouses'
+              ) {
+                return;
+              }
+              send({ op: 'toggle-mark-catalog', catalog, name });
+            }}
             creating={creating}
             name={catalogName}
             highlightCreate={focus === 'counterparty-create' && state.ui.list === 'counterparties'}
@@ -248,6 +279,7 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
 
         {state.ui.list === 'receipts' && !draft ? (
           <ReceiptList
+            title="Поступление товаров"
             rows={state.receipts}
             highlightCreate={focus === 'receipt-create'}
             onCreate={() => send({ op: 'open-new-receipt' })}
@@ -255,10 +287,22 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
           />
         ) : null}
 
+        {state.ui.list === 'sales' && !draft ? (
+          <ReceiptList
+            title="Реализация товаров"
+            rows={state.sales}
+            highlightCreate={focus === 'sale-create'}
+            onCreate={() => send({ op: 'open-new-sale' })}
+            onOpen={(id) => send({ op: 'open-sale', id })}
+          />
+        ) : null}
+
         {draft ? (
           <ReceiptForm
+            title={draft.kind === 'sale' ? 'Реализация товаров' : 'Поступление товаров'}
             draft={draft}
             posted={receipt?.posted ?? false}
+            marked={receipt?.deletionMark ?? false}
             counterparties={state.counterparties}
             warehouses={state.warehouses}
             products={state.products}
@@ -269,7 +313,13 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
             warehouseName={draft.warehouseName}
             highlightFields={focus === 'receipt-fields'}
             highlightPost={focus === 'post'}
-            onField={(field, value) => send({ op: 'set-receipt-field', field, value })}
+            onField={(field, value) =>
+              send(
+                draft.kind === 'sale'
+                  ? { op: 'set-sale-field', field, value }
+                  : { op: 'set-receipt-field', field, value },
+              )
+            }
             onLineProduct={setLineProduct}
             onLineQty={setLineQty}
             onLinePrice={setLinePrice}
@@ -286,12 +336,30 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
                 setBanner('Проверьте номенклатуру, количество и цену');
                 return;
               }
-              send({ op: 'add-receipt-line', product: lineProduct, qty, price });
+              send(
+                draft.kind === 'sale'
+                  ? { op: 'add-sale-line', product: lineProduct, qty, price }
+                  : { op: 'add-receipt-line', product: lineProduct, qty, price },
+              );
             }}
-            onRemoveLine={(index) => send({ op: 'remove-receipt-line', index })}
-            onPost={() => send({ op: 'post-receipt' })}
-            onSave={() => send({ op: 'save-receipt' })}
-            onUnpost={() => send({ op: 'unpost-receipt' })}
+            onRemoveLine={(index) =>
+              send(
+                draft.kind === 'sale'
+                  ? { op: 'remove-sale-line', index }
+                  : { op: 'remove-receipt-line', index },
+              )
+            }
+            onPost={() =>
+              send(draft.kind === 'sale' ? { op: 'post-sale' } : { op: 'post-receipt' })
+            }
+            onSave={() =>
+              send(draft.kind === 'sale' ? { op: 'save-sale' } : { op: 'save-receipt' })
+            }
+            onUnpost={() =>
+              send(draft.kind === 'sale' ? { op: 'unpost-sale' } : { op: 'unpost-receipt' })
+            }
+            onMark={() => send({ op: 'toggle-mark-doc' })}
+            highlightMark={focus === 'mark'}
             onClose={() => {
               setShowMoves(false);
               send({ op: 'close-form' });
@@ -300,9 +368,36 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
           />
         ) : null}
 
-        {state.ui.list === 'balances' && !draft ? <BalancePane rows={balances} /> : null}
+        {state.ui.list === 'balances' && !draft ? (
+          <div className="space-y-4">
+            <BalancePane rows={balances} />
+            <QueryPane
+              text={queryText}
+              rows={state.lastQuery?.rows}
+              highlight={focus === 'query'}
+              onText={setQueryText}
+              onRun={() => send({ op: 'run-query', text: queryText })}
+            />
+          </div>
+        ) : null}
 
-        {state.ui.section !== 'home' && !state.ui.list && !draft ? (
+        {state.ui.section === 'config' && !draft ? (
+          <div className={cx('space-y-4', mark('metadata'))}>
+            <ConfigPane />
+            <QueryPane
+              text={queryText}
+              rows={state.lastQuery?.rows}
+              highlight={focus === 'query'}
+              onText={setQueryText}
+              onRun={() => send({ op: 'run-query', text: queryText })}
+            />
+          </div>
+        ) : null}
+
+        {state.ui.section !== 'home' &&
+        state.ui.section !== 'config' &&
+        !state.ui.list &&
+        !draft ? (
           <p className="text-sm text-[#5c6b7a]">
             Выберите команду раздела. Она откроет список или отчёт.
           </p>
@@ -324,7 +419,7 @@ const HomePane = () => (
     />
     <InfoCard
       title="Проведение"
-      text="Кнопка проведения записывает движения. Отчёт остатков читает только проведённые документы, а не черновик."
+      text="Проведение пишет движения. Реализация списывает остаток и не пройдёт, если товара не хватает. Черновик и пометка удаления остаток не меняют."
     />
   </div>
 );
@@ -342,20 +437,24 @@ const CatalogPane = ({
   creating,
   name,
   highlightCreate,
+  highlightMark,
   onStartCreate,
   onName,
   onCancel,
   onSave,
+  onToggleMark,
 }: {
   title: string;
-  rows: { id: string; code: string; name: string }[];
+  rows: { id: string; code: string; name: string; deletionMark: boolean }[];
   creating: boolean;
   name: string;
   highlightCreate: boolean;
+  highlightMark: boolean;
   onStartCreate: () => void;
   onName: (value: string) => void;
   onCancel: () => void;
   onSave: () => void;
+  onToggleMark: (name: string) => void;
 }) => (
   <div className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -409,20 +508,35 @@ const CatalogPane = ({
           <tr>
             <th className="px-3 py-2 font-medium">Наименование</th>
             <th className="px-3 py-2 font-medium">Код</th>
+            <th className="px-3 py-2 font-medium">Пометка</th>
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td className="px-3 py-3 text-[#5c6b7a]" colSpan={2}>
+              <td className="px-3 py-3 text-[#5c6b7a]" colSpan={3}>
                 Список пуст
               </td>
             </tr>
           ) : (
             rows.map((row) => (
               <tr key={row.id} className="border-b border-[#f0e6d6] last:border-0">
-                <td className="px-3 py-2">{row.name}</td>
+                <td className={cx('px-3 py-2', row.deletionMark && 'line-through text-[#8a341c]')}>
+                  {row.name}
+                </td>
                 <td className="px-3 py-2 tabular-nums">{row.code}</td>
+                <td className="px-3 py-2">
+                  <button
+                    type="button"
+                    className={cx(
+                      'min-h-11 text-sm text-[#5c6b7a]',
+                      highlightMark && 'ring-2 ring-[#c9890a]',
+                    )}
+                    onClick={() => onToggleMark(row.name)}
+                  >
+                    {row.deletionMark ? 'Снять пометку' : 'Пометить'}
+                  </button>
+                </td>
               </tr>
             ))
           )}
@@ -433,19 +547,28 @@ const CatalogPane = ({
 );
 
 const ReceiptList = ({
+  title,
   rows,
   highlightCreate,
   onCreate,
   onOpen,
 }: {
-  rows: { id: string; number: string; date: string; counterpartyName: string; posted: boolean }[];
+  title: string;
+  rows: {
+    id: string;
+    number: string;
+    date: string;
+    counterpartyName: string;
+    posted: boolean;
+    deletionMark: boolean;
+  }[];
   highlightCreate: boolean;
   onCreate: () => void;
   onOpen: (id: string) => void;
 }) => (
   <div className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className="text-base font-semibold">Поступление товаров</h2>
+      <h2 className="text-base font-semibold">{title}</h2>
       <button
         type="button"
         onClick={onCreate}
@@ -488,7 +611,10 @@ const ReceiptList = ({
                 </td>
                 <td className="px-3 py-2 tabular-nums">{formatDate(row.date)}</td>
                 <td className="px-3 py-2">{row.counterpartyName}</td>
-                <td className="px-3 py-2">{row.posted ? 'Проведен' : 'Записан'}</td>
+                <td className="px-3 py-2">
+                  {row.posted ? 'Проведен' : 'Записан'}
+                  {row.deletionMark ? ', помечен' : ''}
+                </td>
               </tr>
             ))
           )}
@@ -499,8 +625,12 @@ const ReceiptList = ({
 );
 
 const ReceiptForm = ({
+  title,
   draft,
   posted,
+  marked,
+  highlightMark,
+  onMark,
   counterparties,
   warehouses,
   products,
@@ -523,6 +653,7 @@ const ReceiptForm = ({
   onClose,
   onToggleMoves,
 }: {
+  title: string;
   draft: {
     number: string;
     date: string;
@@ -531,6 +662,9 @@ const ReceiptForm = ({
     lines: { productName: string; qty: number; price: number }[];
   };
   posted: boolean;
+  marked: boolean;
+  highlightMark: boolean;
+  onMark: () => void;
   counterparties: { id: string; name: string }[];
   warehouses: { id: string; name: string }[];
   products: { id: string; name: string }[];
@@ -556,7 +690,8 @@ const ReceiptForm = ({
   <div className="space-y-3">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <h2 className="text-base font-semibold">
-        Поступление товаров {draft.number} от {formatDate(draft.date)}
+        {title} {draft.number} от {formatDate(draft.date)}
+        {marked ? ' (пометка удаления)' : ''}
       </h2>
       <span className={cx('text-sm font-semibold', posted ? 'text-[#0f7a3a]' : 'text-[#5c6b7a]')}>
         {posted ? 'Проведен' : 'Не проведен'}
@@ -593,6 +728,16 @@ const ReceiptForm = ({
         className="min-h-11 rounded-md px-3 text-sm text-[#5c6b7a]"
       >
         Движения
+      </button>
+      <button
+        type="button"
+        onClick={onMark}
+        className={cx(
+          'min-h-11 rounded-md px-3 text-sm text-[#5c6b7a]',
+          highlightMark && 'ring-2 ring-[#c9890a]',
+        )}
+      >
+        {marked ? 'Снять пометку' : 'Пометить на удаление'}
       </button>
       <button
         type="button"
@@ -743,7 +888,9 @@ const ReceiptForm = ({
             <tbody>
               {draft.lines.map((line, index) => (
                 <tr key={`move-${index}`} className="border-t border-[#f0e6d6]">
-                  <td className="px-3 py-2">Приход</td>
+                  <td className="px-3 py-2">
+                    {title.startsWith('Реализация') ? 'Расход' : 'Приход'}
+                  </td>
                   <td className="px-3 py-2">{line.productName}</td>
                   <td className="px-3 py-2">{warehouseName}</td>
                   <td className="px-3 py-2 tabular-nums">{formatQty(line.qty)}</td>
@@ -799,5 +946,94 @@ const BalancePane = ({
         </tbody>
       </table>
     </div>
+  </div>
+);
+
+const QueryPane = ({
+  text,
+  rows,
+  highlight,
+  onText,
+  onRun,
+}: {
+  text: string;
+  rows: Record<string, string | number | boolean>[] | undefined;
+  highlight: boolean;
+  onText: (value: string) => void;
+  onRun: () => void;
+}) => {
+  const columns = rows && rows.length > 0 ? Object.keys(rows[0] ?? {}) : [];
+  return (
+    <form
+      className={cx(
+        'space-y-2 rounded-lg border border-[#e4d8c6] bg-white p-3',
+        highlight && 'ring-2 ring-[#c9890a]',
+      )}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onRun();
+      }}
+    >
+      <h2 className="text-base font-semibold">Консоль запроса</h2>
+      <p className="text-sm text-[#5c6b7a]">
+        ВЫБРАТЬ поля ИЗ Остатки, Поступления или Реализации. Одно условие: ГДЕ Поле =
+        &quot;текст&quot;, число или Да/Нет.
+      </p>
+      <textarea
+        value={text}
+        onChange={(event) => onText(event.target.value)}
+        rows={4}
+        className="w-full rounded-md border border-[#d7cbb8] p-3 text-[16px] text-[#1c2430] sm:text-sm"
+      />
+      <button
+        type="submit"
+        className="min-h-11 rounded-md bg-[#2c3848] px-4 text-sm font-semibold text-white"
+      >
+        Выполнить
+      </button>
+      {rows ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[18rem] text-left text-sm">
+            <thead>
+              <tr>
+                {columns.map((column) => (
+                  <th key={column} className="px-2 py-1 font-medium text-[#5c6b7a]">
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="px-2 py-2 text-[#5c6b7a]">Пустой результат</td>
+                </tr>
+              ) : (
+                rows.map((row, index) => (
+                  <tr key={index} className="border-t border-[#f0e6d6]">
+                    {columns.map((column) => (
+                      <td key={column} className="px-2 py-1">
+                        {String(row[column])}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </form>
+  );
+};
+
+const ConfigPane = () => (
+  <div className="space-y-2 rounded-lg border border-[#e4d8c6] bg-white p-3 text-sm leading-relaxed">
+    <h2 className="text-base font-semibold">Дерево, только чтение</h2>
+    <p>Справочники: Контрагенты, Номенклатура, Склады.</p>
+    <p>Документ «Поступление товаров» пишет приход в регистр «Товары на складах».</p>
+    <p>Документ «Реализация товаров» пишет расход и не проводится, если остаток уйдёт ниже нуля.</p>
+    <p>Пометка удаления не снимает проведение и не стирает движения.</p>
+    <p>Отчёт и таблица Остатки читают только проведённые документы.</p>
   </div>
 );
