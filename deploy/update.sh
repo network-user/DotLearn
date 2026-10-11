@@ -40,34 +40,6 @@ if ! grep -q '^GHCR_OWNER=' .env 2>/dev/null; then
 	exit 1
 fi
 
-# Тянем отдельным docker-конфигом. В /root/.docker остаётся credsStore или
-# протухший PAT: logout его не вычищает, и ghcr на публичный образ отвечает
-# 403 denied. pull_policy: always есть и у up, поэтому тот же конфиг нужен
-# на оба вызова. GHCR_TOKEN (GITHUB_TOKEN из CI) кладётся только сюда и
-# вместе с каталогом удаляется.
-pull_docker_config="$(mktemp -d)"
-trap 'rm -rf "$pull_docker_config"' EXIT
-for plugins in \
-	/usr/libexec/docker/cli-plugins \
-	/usr/lib/docker/cli-plugins \
-	/usr/local/lib/docker/cli-plugins \
-	"${HOME:-/root}/.docker/cli-plugins"; do
-	if [ -d "$plugins" ]; then
-		ln -s "$plugins" "$pull_docker_config/cli-plugins"
-		break
-	fi
-done
-if [ -n "${GHCR_TOKEN:-}" ]; then
-	if [ -z "${GHCR_USER:-}" ]; then
-		echo "Ошибка: задан GHCR_TOKEN, но нет GHCR_USER." >&2
-		exit 1
-	fi
-	echo "==> Логин в ghcr.io временным токеном..."
-	printf '%s' "$GHCR_TOKEN" | DOCKER_CONFIG="$pull_docker_config" docker login ghcr.io -u "$GHCR_USER" --password-stdin
-	unset GHCR_TOKEN
-fi
-export DOCKER_CONFIG="$pull_docker_config"
-
 echo "==> Тяну свежие образы из ghcr.io..."
 "${COMPOSE[@]}" pull
 
