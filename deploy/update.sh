@@ -41,6 +41,9 @@ if ! grep -q '^GHCR_OWNER=' .env 2>/dev/null; then
 fi
 
 echo "==> Тяну свежие образы из ghcr.io..."
+# Образы публичные. Сохранённый docker login с протухшим PAT заставляет ghcr
+# ответить 403 denied, хотя анонимный pull того же тега проходит.
+docker logout ghcr.io >/dev/null 2>&1 || true
 "${COMPOSE[@]}" pull
 
 echo "==> Перезапуск контейнеров на новых образах (без сборки)..."
