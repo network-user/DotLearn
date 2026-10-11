@@ -225,6 +225,60 @@ Goal field reference (only the fields each kind reads are honored):
     - git commit -m "add notes"
 ```
 
+## `onec-lab`
+
+Learner drives a small accounting stand in the browser: sections, catalogs, a goods-receipt document, posting, and a stock report. The stand is a teaching shell, not 1C software. Topic `runtime` stays `none`. The engine is pure JavaScript in `packages/lesson-engine/src/runtime/onec/`.
+
+`mode` chooses the grade:
+
+- `hybrid` latches every step (each `expect` must become true at least once) and checks `goal` on the final state.
+- `steps` checks steps only.
+- `snapshot` checks `goal` only.
+
+`seed.today` is `YYYY-MM-DD`. Catalog arrays (`counterparties`, `products`, `warehouses`) hold `{ name }`. `solution` is the gold command list. `pnpm validate` replays it.
+
+Step `expect` kinds: `section`, `list`, `form`, `catalog-item`, `document-posted`, `balance`. Goal kinds: `catalog-item`, `document-posted`, `balance`. Optional `focus` highlights a control: `sections`, `catalog-nav`, `counterparty-create`, `document-nav`, `receipt-create`, `receipt-fields`, `post`, `report-nav`.
+
+```yaml
+- id: first-receipt
+  concept: screens
+  type: onec-lab
+  difficulty: 2
+  mode: hybrid
+  prompt: 'Проведите поступление и откройте остатки.'
+  seed:
+    today: '2026-03-20'
+    products:
+      - { name: 'Бумага А4' }
+    warehouses:
+      - { name: 'Основной' }
+  steps:
+    - id: open-catalogs
+      title: 'Откройте справочники'
+      coach: 'Раздел сверху.'
+      focus: sections
+      expect:
+        - { kind: section, equals: catalogs }
+  goal:
+    - kind: document-posted
+      counterparty: ООО Ромашка
+      warehouse: Основной
+      lines:
+        - { product: Бумага А4, qty: 10 }
+  solution:
+    - { op: open-section, section: catalogs }
+    - { op: create-catalog, catalog: counterparties, name: ООО Ромашка }
+    - { op: open-new-receipt }
+    - { op: set-receipt-field, field: counterparty, value: ООО Ромашка }
+    - { op: set-receipt-field, field: warehouse, value: Основной }
+    - { op: add-receipt-line, product: Бумага А4, qty: 10, price: 100 }
+    - { op: post-receipt }
+```
+
+Command `op` values: `open-section`, `open-list`, `create-catalog`, `open-new-receipt`, `open-receipt`, `set-receipt-field`, `add-receipt-line`, `remove-receipt-line`, `save-receipt`, `post-receipt`, `unpost-receipt`, `close-form`.
+
+Shell copy and scenario text are Russian. Do not put the 1C logo or the wordmark into the chrome. Layout may stay close. The stage plan lives in `docs/onec-lab-roadmap.md`.
+
 ## Variants (randomized practice)
 
 Every exercise type accepts an optional `variants` array. Each variant is a **full alternative version of the same task**: same skill being tested, different surface (different data, different prompt, different expected answer). The runner picks a random variant per attempt and offers «другой вариант» after a pass, so learners internalize the principle instead of memorizing the answer.
@@ -232,7 +286,7 @@ Every exercise type accepts an optional `variants` array. Each variant is a **fu
 Rules:
 
 - The base exercise fields are variant 0; `variants` adds more.
-- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output, `goal`+`solution` for git-challenge). `prompt`, `fixture`, `starter`, `setup` are optional overrides - omit them to inherit from the base.
+- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output, `goal`+`solution` for git-challenge, `steps`+`goal`+`solution` for onec-lab). `prompt`, `fixture`, `starter`, `setup`, `seed` are optional overrides - omit them to inherit from the base.
 - A variant that differs only in wording is useless; vary the data or the target so the correct answer actually changes.
 - Translations of an exercise must define the **same number of variants in the same order** (the validator enforces parity).
 - Gold solutions of every sql-query variant are executed by `pnpm validate`; variant solutions for other runtimes follow the same manual verification rule as the base (see G6).

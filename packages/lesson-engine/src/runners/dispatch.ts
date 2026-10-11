@@ -6,6 +6,7 @@ import type { SqlRuntime } from '../runtime/sql';
 
 import { runFillInBlanks } from './fill-in-blanks';
 import { runGitChallenge } from './git-challenge';
+import { runOnecLab } from './onec-lab';
 import { runJavascriptFunction } from './javascript-function';
 import { runPredictOutput } from './predict-output';
 import { runPythonFunction } from './python-function';
@@ -81,6 +82,8 @@ export const runExercise = async (
       }
       return runGitChallenge(exercise, answer);
     }
+    case 'onec-lab':
+      return runOnecLab(exercise, answer);
   }
 };
 

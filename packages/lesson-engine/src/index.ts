@@ -9,6 +9,7 @@ export { runJavascriptFunction } from './runners/javascript-function';
 export { runFillInBlanks } from './runners/fill-in-blanks';
 export { runPredictOutput } from './runners/predict-output';
 export { runGitChallenge } from './runners/git-challenge';
+export { runOnecLab } from './runners/onec-lab';
 
 export type { SqlExecution, SqlRuntime } from './runtime/sql';
 export { SqlExecutionError } from './runtime/sql';
@@ -18,6 +19,16 @@ export type { JavascriptExecution, JavascriptRuntime } from './runtime/javascrip
 export { inlineJavascriptRuntime } from './runtime/javascript';
 
 export { createGitRepo, evaluateGitGoals, GitError, GitRepo } from './runtime/git';
+export {
+  applyOnecCommand,
+  createOnecState,
+  draftReceipt,
+  gradeOnecSession,
+  onecBalances,
+  OnecCommandError,
+  replayOnec,
+} from './runtime/onec';
+export type { BalanceRow, OnecGrade, OnecState, Receipt, ReceiptDraft } from './runtime/onec';
 export type {
   CommitSnapshot,
   ExecResult,

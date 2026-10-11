@@ -24,6 +24,8 @@ const expectedShape = (exercise: Exercise): string => {
       return `${exercise.type}:blanks=${Object.keys(exercise.blanks).length}`;
     case 'git-challenge':
       return `${exercise.type}:goals=${exercise.goal.length}`;
+    case 'onec-lab':
+      return `${exercise.type}:steps=${exercise.steps.length}:goals=${exercise.goal.length}`;
     default:
       return (exercise as Exercise).type;
   }

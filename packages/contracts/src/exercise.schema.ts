@@ -242,6 +242,165 @@ export const GitChallengeExercise = BaseExercise.extend({
 });
 export type GitChallengeExercise = z.infer<typeof GitChallengeExercise>;
 
+export const OnecSection = z.enum(['home', 'catalogs', 'documents', 'reports']);
+export type OnecSection = z.infer<typeof OnecSection>;
+
+export const OnecCatalog = z.enum(['counterparties', 'products', 'warehouses']);
+export type OnecCatalog = z.infer<typeof OnecCatalog>;
+
+export const OnecList = z.enum([
+  'counterparties',
+  'products',
+  'warehouses',
+  'receipts',
+  'balances',
+]);
+export type OnecList = z.infer<typeof OnecList>;
+
+export const ONEC_FOCI = [
+  'sections',
+  'catalog-nav',
+  'counterparty-create',
+  'document-nav',
+  'receipt-create',
+  'receipt-fields',
+  'post',
+  'report-nav',
+] as const;
+export const OnecFocus = z.enum(ONEC_FOCI);
+export type OnecFocus = z.infer<typeof OnecFocus>;
+
+const OnecNamed = z.object({ name: z.string().min(1).max(120) }).strict();
+
+export const OnecSeed = z
+  .object({
+    today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    counterparties: z.array(OnecNamed).max(20).default([]),
+    products: z.array(OnecNamed).max(20).default([]),
+    warehouses: z.array(OnecNamed).max(20).default([]),
+  })
+  .strict();
+export type OnecSeed = z.infer<typeof OnecSeed>;
+
+const OnecLine = z
+  .object({
+    product: z.string().min(1),
+    qty: z.number().positive(),
+  })
+  .strict();
+
+const OnecSectionAssertion = z.object({ kind: z.literal('section'), equals: OnecSection }).strict();
+const OnecListAssertion = z.object({ kind: z.literal('list'), object: OnecList }).strict();
+const OnecFormAssertion = z
+  .object({ kind: z.literal('form'), equals: z.enum(['receipt', 'none']) })
+  .strict();
+const OnecCatalogAssertion = z
+  .object({ kind: z.literal('catalog-item'), catalog: OnecCatalog, name: z.string().min(1) })
+  .strict();
+const OnecPostedAssertion = z
+  .object({
+    kind: z.literal('document-posted'),
+    counterparty: z.string().min(1),
+    warehouse: z.string().min(1),
+    lines: z.array(OnecLine).min(1).max(20),
+  })
+  .strict();
+const OnecBalanceAssertion = z
+  .object({
+    kind: z.literal('balance'),
+    product: z.string().min(1),
+    warehouse: z.string().min(1),
+    qty: z.number().nonnegative(),
+  })
+  .strict();
+
+export const OnecStepExpect = z.discriminatedUnion('kind', [
+  OnecSectionAssertion,
+  OnecListAssertion,
+  OnecFormAssertion,
+  OnecCatalogAssertion,
+  OnecPostedAssertion,
+  OnecBalanceAssertion,
+]);
+export type OnecStepExpect = z.infer<typeof OnecStepExpect>;
+
+export const OnecGoal = z.discriminatedUnion('kind', [
+  OnecCatalogAssertion,
+  OnecPostedAssertion,
+  OnecBalanceAssertion,
+]);
+export type OnecGoal = z.infer<typeof OnecGoal>;
+
+export const OnecStep = z
+  .object({
+    id: ExerciseId,
+    title: z.string().min(1).max(160),
+    coach: z.string().min(1).max(600),
+    focus: OnecFocus.optional(),
+    expect: z.array(OnecStepExpect).min(1).max(6),
+  })
+  .strict();
+export type OnecStep = z.infer<typeof OnecStep>;
+
+export const OnecCommand = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('open-section'), section: OnecSection }).strict(),
+  z.object({ op: z.literal('open-list'), object: OnecList }).strict(),
+  z
+    .object({ op: z.literal('create-catalog'), catalog: OnecCatalog, name: z.string().min(1) })
+    .strict(),
+  z.object({ op: z.literal('open-new-receipt') }).strict(),
+  z.object({ op: z.literal('open-receipt'), id: z.string().min(1) }).strict(),
+  z
+    .object({
+      op: z.literal('set-receipt-field'),
+      field: z.enum(['counterparty', 'warehouse']),
+      value: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal('add-receipt-line'),
+      product: z.string().min(1),
+      qty: z.number().positive(),
+      price: z.number().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({ op: z.literal('remove-receipt-line'), index: z.number().int().nonnegative() })
+    .strict(),
+  z.object({ op: z.literal('save-receipt') }).strict(),
+  z.object({ op: z.literal('post-receipt') }).strict(),
+  z.object({ op: z.literal('unpost-receipt') }).strict(),
+  z.object({ op: z.literal('close-form') }).strict(),
+]);
+export type OnecCommand = z.infer<typeof OnecCommand>;
+
+export const OnecLabMode = z.enum(['hybrid', 'steps', 'snapshot']);
+export type OnecLabMode = z.infer<typeof OnecLabMode>;
+
+export const OnecLabVariant = z
+  .object({
+    prompt: z.string().min(5).optional(),
+    mode: OnecLabMode.optional(),
+    seed: OnecSeed.optional(),
+    steps: z.array(OnecStep).min(1).optional(),
+    goal: z.array(OnecGoal).min(1).optional(),
+    solution: z.array(OnecCommand).min(1).optional(),
+  })
+  .strict();
+export type OnecLabVariant = z.infer<typeof OnecLabVariant>;
+
+export const OnecLabExercise = BaseExercise.extend({
+  type: z.literal('onec-lab'),
+  mode: OnecLabMode,
+  seed: OnecSeed,
+  steps: z.array(OnecStep).min(1).max(24),
+  goal: z.array(OnecGoal).min(1).max(12),
+  solution: z.array(OnecCommand).min(1),
+  variants: z.array(OnecLabVariant).min(1).optional(),
+});
+export type OnecLabExercise = z.infer<typeof OnecLabExercise>;
+
 export const Exercise = z.discriminatedUnion('type', [
   TheoryQuizExercise,
   SqlQueryExercise,
@@ -250,6 +409,7 @@ export const Exercise = z.discriminatedUnion('type', [
   FillInBlanksExercise,
   PredictOutputExercise,
   GitChallengeExercise,
+  OnecLabExercise,
 ]);
 export type Exercise = z.infer<typeof Exercise>;
 
@@ -269,6 +429,9 @@ export const isInteractiveExercise = (
 
 export const isGitChallenge = (exercise: Exercise): exercise is GitChallengeExercise =>
   exercise.type === 'git-challenge';
+
+export const isOnecLab = (exercise: Exercise): exercise is OnecLabExercise =>
+  exercise.type === 'onec-lab';
 
 export const exerciseVariantCount = (exercise: Exercise): number =>
   1 + (exercise.variants?.length ?? 0);

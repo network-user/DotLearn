@@ -8,6 +8,7 @@ import { ExerciseCard } from '@/components/sandbox/ExerciseCard';
 
 import { FillInBlanksRunner } from './FillInBlanksRunner';
 import { GitChallengeRunner } from './GitChallengeRunner';
+import { OnecLabRunner } from './OnecLabRunner';
 import { PredictOutputRunner } from './PredictOutputRunner';
 import { PythonFunctionRunner } from './PythonFunctionRunner';
 import { SqlExerciseRunner } from './SqlExerciseRunner';
@@ -44,6 +45,9 @@ const RunnerDispatch = ({ topicSlug, exercise, conceptId }: ExerciseRunnerProps)
   }
   if (exercise.type === 'git-challenge') {
     return <GitChallengeRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
+  }
+  if (exercise.type === 'onec-lab') {
+    return <OnecLabRunner topicSlug={topicSlug} exercise={exercise} conceptId={conceptId} />;
   }
   return (
     <UnknownRunner type={exercise.type} difficulty={exercise.difficulty} prompt={exercise.prompt} />

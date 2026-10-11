@@ -11,6 +11,8 @@ export type RunFailureCode =
   | 'blanks-incorrect'
   | 'git-command-error'
   | 'git-goal-unmet'
+  | 'onec-command-error'
+  | 'onec-check-unmet'
   | 'invalid-answer';
 
 export type RunFailureParams = Record<string, string | number>;

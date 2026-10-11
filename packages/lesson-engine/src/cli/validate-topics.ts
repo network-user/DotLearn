@@ -7,6 +7,7 @@ import { exerciseVariantCount, resolveExerciseVariant } from '@dotlearn/contract
 import { runSqlQuery } from '../runners/sql-query';
 import { runPythonFunction } from '../runners/python-function';
 import { runGitChallenge } from '../runners/git-challenge';
+import { runOnecLab } from '../runners/onec-lab';
 import type { RunResult } from '../runners/result';
 import { parseFlashcardDeck } from '../loader/parse';
 import { TopicLoadError, TopicNotFoundError, type TopicBundle } from '../loader/source';
@@ -185,7 +186,8 @@ const validateGoldSolutions = async (
         if (
           exercise.type !== 'sql-query' &&
           exercise.type !== 'python-function' &&
-          exercise.type !== 'git-challenge'
+          exercise.type !== 'git-challenge' &&
+          exercise.type !== 'onec-lab'
         ) {
           continue;
         }
@@ -201,6 +203,8 @@ const validateGoldSolutions = async (
             outcome = await runPythonFunction(resolved, resolved.solution, runtimes.python);
           } else if (resolved.type === 'git-challenge') {
             outcome = runGitChallenge(resolved, resolved.solution);
+          } else if (resolved.type === 'onec-lab') {
+            outcome = runOnecLab(resolved, resolved.solution);
           } else {
             continue;
           }
