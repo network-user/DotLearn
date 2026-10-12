@@ -6,6 +6,7 @@ import { RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { OnecCoach } from '@/components/onec/OnecCoach';
 import { OnecStand } from '@/components/onec/OnecStand';
 import { ExerciseCard, type ExerciseCardStatus } from '@/components/sandbox/ExerciseCard';
 import { HintBlock } from '@/components/sandbox/HintBlock';
@@ -89,8 +90,11 @@ export const OnecLabRunner = ({ topicSlug, exercise, conceptId }: OnecLabRunnerP
   const [hintsExhausted, setHintsExhausted] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const passedRecorded = useRef(false);
+  const standRef = useRef<HTMLDivElement>(null);
 
   const live = useMemo(() => gradeOnecSession(exercise, commands), [exercise, commands]);
+  const doneCount = live.steps.filter((step) => step.ok).length;
+  const allDone = live.steps.length > 0 && doneCount === live.steps.length;
   const current = live.steps.find((step) => !step.ok) ?? live.steps[live.steps.length - 1] ?? null;
   const currentStep = exercise.steps.find((step) => step.id === current?.id) ?? exercise.steps[0];
 
@@ -143,16 +147,31 @@ export const OnecLabRunner = ({ topicSlug, exercise, conceptId }: OnecLabRunnerP
     >
       <RunnerStatus message={statusMessage} />
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_17rem]">
-        <OnecStand
-          seed={exercise.seed}
-          commands={commands}
-          onChange={update}
-          focus={currentStep?.focus}
-        />
+        <div ref={standRef} className="relative min-w-0">
+          <OnecStand
+            seed={exercise.seed}
+            commands={commands}
+            onChange={update}
+            focus={allDone ? undefined : currentStep?.focus}
+          />
+          {currentStep && !allDone ? (
+            <OnecCoach
+              rootRef={standRef}
+              title={currentStep.title}
+              body={currentStep.coach}
+              index={Math.max(
+                0,
+                exercise.steps.findIndex((step) => step.id === currentStep.id),
+              )}
+              total={exercise.steps.length}
+              revision={`${commands.length}:${currentStep.id}`}
+            />
+          ) : null}
+        </div>
         <aside className="space-y-3 rounded-xl border border-border bg-surface p-3">
           <p className="text-xs text-fg-muted">
             {t('onec.stepProgress', {
-              current: live.steps.filter((step) => step.ok).length,
+              current: doneCount,
               total: live.steps.length,
             })}
           </p>
@@ -180,7 +199,7 @@ export const OnecLabRunner = ({ topicSlug, exercise, conceptId }: OnecLabRunnerP
               );
             })}
           </ol>
-          {currentStep ? (
+          {currentStep && allDone ? (
             <p className="text-sm leading-relaxed text-fg">{currentStep.coach}</p>
           ) : null}
           <div className="flex flex-col gap-2">
