@@ -21,7 +21,10 @@ const indexHtml = join(distDir, 'index.html');
 // data and pages stay lazy.
 // 2026-10-12: 372 -> 376 after the seroval 1.6 security bump moved
 // @tanstack/react-router to 1.170.42. Router chunk stays eager (measured 373.5 KB).
-const INITIAL_JS_GZIP_BUDGET = 376 * 1024;
+// 2026-10-12: 376 -> 377 after the clinic link landed in the eager shell
+// (nav item, locale strings, lazy route record). The clinic page and its
+// engine stay out of the lesson-engine chunk (measured 376.4 KB).
+const INITIAL_JS_GZIP_BUDGET = 377 * 1024;
 const HEAVY = /(monaco|pyodide|sqljs|sql-wasm)/i;
 
 let html;

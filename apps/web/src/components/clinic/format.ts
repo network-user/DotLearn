@@ -3,7 +3,7 @@ import {
   type Appointment,
   type ClinicState,
   type PersonRecord,
-} from '@dotlearn/lesson-engine';
+} from '@dotlearn/lesson-engine/clinic';
 
 export const formatStamp = (value: string): string => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);

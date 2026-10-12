@@ -29,41 +29,6 @@ export {
   replayOnec,
 } from './runtime/onec';
 export type { BalanceRow, OnecGrade, OnecState, Receipt, ReceiptDraft } from './runtime/onec';
-export {
-  ClinicError,
-  demoClinic,
-  doctorLoad,
-  emptyClinic,
-  parseClinicState,
-  personName,
-  saveAppointment,
-  saveNamed,
-  savePerson,
-  saveReception,
-  toggleAppointmentMark,
-  toggleCatalogMark,
-  toggleReceptionMark,
-  workloadTable,
-} from './runtime/clinic';
-export type {
-  Appointment,
-  AppointmentDraft,
-  CatalogKind,
-  ClinicState,
-  DoctorLoad,
-  Movement,
-  NamedDraft,
-  NamedRecord,
-  PersonDraft,
-  PersonRecord,
-  Reception,
-  ReceptionDraft,
-  ReceptionLineDraft,
-  SavedRecord,
-  ServiceLine,
-  WorkloadRow,
-  WriteMode,
-} from './runtime/clinic';
 export type {
   CommitSnapshot,
   ExecResult,

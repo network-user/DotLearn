@@ -12,7 +12,7 @@ import {
   type ClinicState,
   type NamedRecord,
   type Reception,
-} from '@dotlearn/lesson-engine';
+} from '@dotlearn/lesson-engine/clinic';
 
 import {
   ActionButton,

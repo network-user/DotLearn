@@ -1,4 +1,4 @@
-import { doctorLoad, workloadTable, type ClinicState } from '@dotlearn/lesson-engine';
+import { doctorLoad, workloadTable, type ClinicState } from '@dotlearn/lesson-engine/clinic';
 
 import { ActionButton, CommandBar, PanelTitle } from '@/components/clinic/chrome';
 import { doctorName, formatNumber, formatStamp, serviceName } from '@/components/clinic/format';

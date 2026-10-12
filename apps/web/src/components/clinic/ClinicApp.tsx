@@ -9,7 +9,7 @@ import {
   toggleReceptionMark,
   type ClinicState,
   type Reception,
-} from '@dotlearn/lesson-engine';
+} from '@dotlearn/lesson-engine/clinic';
 
 import {
   AppointmentForm,

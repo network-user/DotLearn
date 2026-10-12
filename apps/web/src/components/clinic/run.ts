@@ -1,4 +1,4 @@
-import { ClinicError, type ClinicState, type SavedRecord } from '@dotlearn/lesson-engine';
+import { ClinicError, type ClinicState, type SavedRecord } from '@dotlearn/lesson-engine/clinic';
 
 const isSaved = (value: SavedRecord | ClinicState): value is SavedRecord =>
   'state' in value && 'id' in value && !('doctors' in value);

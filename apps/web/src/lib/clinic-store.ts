@@ -1,4 +1,4 @@
-import { demoClinic, parseClinicState, type ClinicState } from '@dotlearn/lesson-engine';
+import { demoClinic, parseClinicState, type ClinicState } from '@dotlearn/lesson-engine/clinic';
 
 import { db } from '@/lib/progress-db';
 
