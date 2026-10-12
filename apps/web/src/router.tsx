@@ -74,6 +74,11 @@ const WorkbenchPage = lazy(() =>
     default: module.WorkbenchPage,
   })),
 );
+const ClinicPage = lazy(() =>
+  import('./pages/ClinicPage').then((module) => ({
+    default: module.ClinicPage,
+  })),
+);
 const LearningMapPage = lazy(() =>
   import('./pages/LearningMapPage').then((module) => ({
     default: module.LearningMapPage,
@@ -476,6 +481,12 @@ const workbenchRoute = new Route({
   component: WorkbenchPage,
 });
 
+const clinicRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/clinic',
+  component: ClinicPage,
+});
+
 const mapRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/map',
@@ -561,6 +572,7 @@ const routeTree = rootRoute.addChildren([
   flashcardReviewRoute,
   sandboxRoute,
   workbenchRoute,
+  clinicRoute,
   mapRoute,
   todayRoute,
   settingsRoute,

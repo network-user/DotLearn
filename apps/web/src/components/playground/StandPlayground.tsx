@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { OnecCommand, OnecSeed } from '@dotlearn/contracts';
+import { Link } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import { OnecStand } from '@/components/onec/OnecStand';
@@ -47,6 +48,12 @@ export const StandPlayground = () => {
   return (
     <div className="space-y-4">
       <p className="max-w-prose text-sm text-fg-muted">{t('stand.note')}</p>
+      <Link
+        to="/clinic"
+        className="inline-flex min-h-[var(--tap)] items-center text-sm font-medium text-accent underline-offset-2 hover:underline"
+      >
+        {t('stand.openClinic')}
+      </Link>
       <OnecStand seed={SEED} commands={commands} onChange={update} />
       <Button type="button" variant="outline" className="h-11 sm:h-9" onClick={() => update([])}>
         {t('stand.reset')}
