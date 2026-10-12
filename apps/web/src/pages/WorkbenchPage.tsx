@@ -26,13 +26,21 @@ export const WorkbenchPage = () => {
         <p className="max-w-prose text-sm text-fg-muted">{t('subtitle')}</p>
       </header>
       <StandPlayground />
-      <Link
-        to="/topics/$slug"
-        params={{ slug: 'onec-workbench' }}
-        className="inline-flex h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-surface sm:h-9"
-      >
-        {t('openLesson')}
-      </Link>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Link
+          to="/clinic"
+          className="inline-flex h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-medium text-fg sm:h-9"
+        >
+          {t('openClinic')}
+        </Link>
+        <Link
+          to="/topics/$slug"
+          params={{ slug: 'onec-workbench' }}
+          className="inline-flex h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-surface sm:h-9"
+        >
+          {t('openLesson')}
+        </Link>
+      </div>
     </div>
   );
 };

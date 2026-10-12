@@ -366,7 +366,10 @@ export default defineConfig({
           if (normalized.includes('/packages/contracts/') || id.includes('node_modules/zod')) {
             return 'contracts';
           }
-          if (normalized.includes('/packages/lesson-engine/')) return 'lesson-engine';
+          if (normalized.includes('/packages/lesson-engine/')) {
+            if (normalized.includes('/runtime/clinic/')) return undefined;
+            return 'lesson-engine';
+          }
           if (normalized.includes('/src/lib/interview.ts')) return 'interview-data';
           if (normalized.includes('\0virtual:search-index/en')) return 'search-index-en';
           if (normalized.includes('\0virtual:search-index')) return 'search-index-ru';

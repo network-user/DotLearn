@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { OnecCommand, OnecSeed } from '@dotlearn/contracts';
 import { gradeOnecSession } from '@dotlearn/lesson-engine';
+import { Link } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import { GUIDE_GOAL, GUIDE_STEPS } from '@/components/onec/guide-script';
@@ -66,6 +67,12 @@ export const StandPlayground = () => {
   return (
     <div className="space-y-4">
       <p className="max-w-prose text-sm text-fg-muted">{t('stand.note')}</p>
+      <Link
+        to="/clinic"
+        className="inline-flex min-h-[var(--tap)] items-center text-sm font-medium text-accent underline-offset-2 hover:underline"
+      >
+        {t('stand.openClinic')}
+      </Link>
       <div ref={standRef} className="relative">
         <OnecStand
           seed={SEED}
