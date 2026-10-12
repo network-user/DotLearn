@@ -34,7 +34,15 @@ import {
   today,
 } from '@/components/clinic/format';
 import { runClinic } from '@/components/clinic/run';
-import { listScreen, type ClinicScreen } from '@/components/clinic/screen';
+import {
+  appointmentScreen,
+  listScreen,
+  namedScreen,
+  personScreen,
+  receptionScreen,
+  registerScreen,
+  type ClinicScreen,
+} from '@/components/clinic/screen';
 
 interface EditorProps {
   state: ClinicState;
@@ -71,17 +79,24 @@ export const PersonForm = ({
   state,
   catalog,
   recordId,
+  copyFrom,
   onState,
   onError,
   onNotice,
   onOpen,
-}: EditorProps & { catalog: 'doctors' | 'patients'; recordId: string | null }) => {
+}: EditorProps & {
+  catalog: 'doctors' | 'patients';
+  recordId: string | null;
+  copyFrom: string | null;
+}) => {
   const items = catalog === 'doctors' ? state.doctors : state.patients;
   const existing = recordId ? items.find((item) => item.id === recordId) : undefined;
-  const [lastName, setLastName] = useState(existing?.lastName ?? '');
-  const [firstName, setFirstName] = useState(existing?.firstName ?? '');
-  const [middleName, setMiddleName] = useState(existing?.middleName ?? '');
-  if (recordId && !existing) {
+  const copied = !recordId && copyFrom ? items.find((item) => item.id === copyFrom) : undefined;
+  const source = existing ?? copied;
+  const [lastName, setLastName] = useState(source?.lastName ?? '');
+  const [firstName, setFirstName] = useState(source?.firstName ?? '');
+  const [middleName, setMiddleName] = useState(source?.middleName ?? '');
+  if ((recordId && !existing) || (copyFrom && !recordId && !copied)) {
     return <MissingRecord onBack={() => onOpen(listScreen(catalog))} />;
   }
   const persist = (close: boolean): void => {
@@ -92,7 +107,7 @@ export const PersonForm = ({
     );
     finish(result, onNotice, 'Записано', (id) => {
       if (close) onOpen(listScreen(catalog));
-      else onOpen({ kind: 'person', catalog, id });
+      else onOpen(personScreen(catalog, id));
     });
   };
   const mark = (): void => {
@@ -114,8 +129,13 @@ export const PersonForm = ({
         </ActionButton>
         <ActionButton onClick={() => persist(true)}>Записать и закрыть</ActionButton>
         {recordId ? (
+          <ActionButton onClick={() => onOpen(personScreen(catalog, null, recordId))}>
+            Создать копию
+          </ActionButton>
+        ) : null}
+        {recordId ? (
           <ActionButton tone="danger" onClick={mark}>
-            {existing?.marked ? 'Снять пометку' : 'Пометить на удаление'}
+            {existing?.marked ? 'Восстановить' : 'Пометить на удаление'}
           </ActionButton>
         ) : null}
       </CommandBar>
@@ -153,15 +173,22 @@ export const NamedForm = ({
   state,
   catalog,
   recordId,
+  copyFrom,
   onState,
   onError,
   onNotice,
   onOpen,
-}: EditorProps & { catalog: 'offices' | 'services'; recordId: string | null }) => {
+}: EditorProps & {
+  catalog: 'offices' | 'services';
+  recordId: string | null;
+  copyFrom: string | null;
+}) => {
   const items = catalog === 'offices' ? state.offices : state.services;
   const existing = recordId ? items.find((item) => item.id === recordId) : undefined;
-  const [name, setName] = useState(existing?.name ?? '');
-  if (recordId && !existing) {
+  const copied = !recordId && copyFrom ? items.find((item) => item.id === copyFrom) : undefined;
+  const source = existing ?? copied;
+  const [name, setName] = useState(source?.name ?? '');
+  if ((recordId && !existing) || (copyFrom && !recordId && !copied)) {
     return <MissingRecord onBack={() => onOpen(listScreen(catalog))} />;
   }
   const persist = (close: boolean): void => {
@@ -172,7 +199,7 @@ export const NamedForm = ({
     );
     finish(result, onNotice, 'Записано', (id) => {
       if (close) onOpen(listScreen(catalog));
-      else onOpen({ kind: 'named', catalog, id });
+      else onOpen(namedScreen(catalog, id));
     });
   };
   const mark = (): void => {
@@ -194,8 +221,13 @@ export const NamedForm = ({
         </ActionButton>
         <ActionButton onClick={() => persist(true)}>Записать и закрыть</ActionButton>
         {recordId ? (
+          <ActionButton onClick={() => onOpen(namedScreen(catalog, null, recordId))}>
+            Создать копию
+          </ActionButton>
+        ) : null}
+        {recordId ? (
           <ActionButton tone="danger" onClick={mark}>
-            {existing?.marked ? 'Снять пометку' : 'Пометить на удаление'}
+            {existing?.marked ? 'Восстановить' : 'Пометить на удаление'}
           </ActionButton>
         ) : null}
       </CommandBar>
@@ -239,18 +271,22 @@ const SelectField = ({
 export const AppointmentForm = ({
   state,
   recordId,
+  copyFrom,
   onState,
   onError,
   onNotice,
   onOpen,
-}: EditorProps & { recordId: string | null }) => {
+}: EditorProps & { recordId: string | null; copyFrom: string | null }) => {
   const existing = recordId ? state.appointments.find((item) => item.id === recordId) : undefined;
-  const [createdAt, setCreatedAt] = useState(existing?.createdAt ?? nowStamp());
-  const [visitDate, setVisitDate] = useState(existing?.visitDate ?? today());
-  const [patientId, setPatientId] = useState(existing?.patientId ?? '');
-  const [doctorId, setDoctorId] = useState(existing?.doctorId ?? '');
-  const [officeId, setOfficeId] = useState(existing?.officeId ?? '');
-  if (recordId && !existing) {
+  const copied =
+    !recordId && copyFrom ? state.appointments.find((item) => item.id === copyFrom) : undefined;
+  const source = existing ?? copied;
+  const [createdAt, setCreatedAt] = useState(source?.createdAt ?? nowStamp());
+  const [visitDate, setVisitDate] = useState(source?.visitDate ?? today());
+  const [patientId, setPatientId] = useState(source?.patientId ?? '');
+  const [doctorId, setDoctorId] = useState(source?.doctorId ?? '');
+  const [officeId, setOfficeId] = useState(source?.officeId ?? '');
+  if ((recordId && !existing) || (copyFrom && !recordId && !copied)) {
     return <MissingRecord onBack={() => onOpen(listScreen('appointments'))} />;
   }
   const persist = (close: boolean): void => {
@@ -269,7 +305,7 @@ export const AppointmentForm = ({
     );
     finish(result, onNotice, 'Записано', (id) => {
       if (close) onOpen(listScreen('appointments'));
-      else onOpen({ kind: 'appointment', id });
+      else onOpen(appointmentScreen(id));
     });
   };
   const mark = (): void => {
@@ -295,15 +331,18 @@ export const AppointmentForm = ({
         </ActionButton>
         <ActionButton onClick={() => persist(true)}>Записать и закрыть</ActionButton>
         {recordId ? (
-          <ActionButton
-            onClick={() => onOpen({ kind: 'reception', id: null, fromAppointmentId: recordId })}
-          >
-            Оформить приём
+          <ActionButton onClick={() => onOpen(receptionScreen(null, recordId))}>
+            Приём на основании
+          </ActionButton>
+        ) : null}
+        {recordId ? (
+          <ActionButton onClick={() => onOpen(appointmentScreen(null, recordId))}>
+            Создать копию
           </ActionButton>
         ) : null}
         {recordId ? (
           <ActionButton tone="danger" onClick={mark}>
-            {existing?.marked ? 'Снять пометку' : 'Пометить на удаление'}
+            {existing?.marked ? 'Восстановить' : 'Пометить на удаление'}
           </ActionButton>
         ) : null}
       </CommandBar>
@@ -373,19 +412,27 @@ export const ReceptionForm = ({
   state,
   recordId,
   fromAppointmentId,
+  copyFrom,
   onState,
   onError,
   onNotice,
   onOpen,
-}: EditorProps & { recordId: string | null; fromAppointmentId: string | null }) => {
+}: EditorProps & {
+  recordId: string | null;
+  fromAppointmentId: string | null;
+  copyFrom: string | null;
+}) => {
   const existing = recordId ? state.receptions.find((item) => item.id === recordId) : undefined;
-  const [createdAt, setCreatedAt] = useState(existing?.createdAt ?? nowStamp());
+  const copied =
+    !recordId && copyFrom ? state.receptions.find((item) => item.id === copyFrom) : undefined;
+  const source = existing ?? copied;
+  const [createdAt, setCreatedAt] = useState(source?.createdAt ?? nowStamp());
   const [appointmentId, setAppointmentId] = useState(
-    existing?.appointmentId ?? fromAppointmentId ?? '',
+    source?.appointmentId ?? fromAppointmentId ?? '',
   );
-  const [duration, setDuration] = useState(existing ? String(existing.duration) : '');
-  const [lines, setLines] = useState<LineInput[]>(() => lineInputsOf(existing));
-  if (recordId && !existing) {
+  const [duration, setDuration] = useState(source ? String(source.duration) : '');
+  const [lines, setLines] = useState<LineInput[]>(() => lineInputsOf(source));
+  if ((recordId && !existing) || (copyFrom && !recordId && !copied)) {
     return <MissingRecord onBack={() => onOpen(listScreen('receptions'))} />;
   }
   const selected = state.appointments.find((item) => item.id === appointmentId);
@@ -423,7 +470,18 @@ export const ReceptionForm = ({
     );
     finish(result, onNotice, message, (id) => {
       if (close) onOpen(listScreen('receptions'));
-      else onOpen({ kind: 'reception', id, fromAppointmentId: null });
+      else onOpen(receptionScreen(id));
+    });
+  };
+  const moveLine = (index: number, direction: -1 | 1): void => {
+    setLines((current) => {
+      const target = index + direction;
+      const item = current[index];
+      if (item === undefined || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      next.splice(index, 1);
+      next.splice(target, 0, item);
+      return next;
     });
   };
   const mark = (): void => {
@@ -455,9 +513,17 @@ export const ReceptionForm = ({
             Отменить проведение
           </ActionButton>
         ) : null}
+        {existing?.posted ? (
+          <ActionButton onClick={() => onOpen(registerScreen(recordId))}>Движения</ActionButton>
+        ) : null}
+        {recordId ? (
+          <ActionButton onClick={() => onOpen(receptionScreen(null, null, recordId))}>
+            Создать копию
+          </ActionButton>
+        ) : null}
         {recordId ? (
           <ActionButton tone="danger" onClick={mark}>
-            {existing?.marked ? 'Снять пометку' : 'Пометить на удаление'}
+            {existing?.marked ? 'Восстановить' : 'Пометить на удаление'}
           </ActionButton>
         ) : null}
       </CommandBar>
@@ -579,14 +645,30 @@ export const ReceptionForm = ({
                 </td>
                 <td className="px-2 py-2 tabular-nums">{formatNumber(lineAmount(line))}</td>
                 <td className="px-2 py-2">
-                  <ActionButton
-                    aria-label={`Удалить строку ${index + 1}`}
-                    onClick={() =>
-                      setLines((current) => current.filter((_, itemIndex) => itemIndex !== index))
-                    }
-                  >
-                    Удалить
-                  </ActionButton>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <ActionButton
+                      aria-label={`Поднять строку ${index + 1}`}
+                      disabled={index === 0}
+                      onClick={() => moveLine(index, -1)}
+                    >
+                      Вверх
+                    </ActionButton>
+                    <ActionButton
+                      aria-label={`Опустить строку ${index + 1}`}
+                      disabled={index === lines.length - 1}
+                      onClick={() => moveLine(index, 1)}
+                    >
+                      Вниз
+                    </ActionButton>
+                    <ActionButton
+                      aria-label={`Удалить строку ${index + 1}`}
+                      onClick={() =>
+                        setLines((current) => current.filter((_, itemIndex) => itemIndex !== index))
+                      }
+                    >
+                      Удалить
+                    </ActionButton>
+                  </div>
                 </td>
               </tr>
             ))}

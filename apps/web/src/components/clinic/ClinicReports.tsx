@@ -2,19 +2,40 @@ import { doctorLoad, workloadTable, type ClinicState } from '@dotlearn/lesson-en
 
 import { ActionButton, CommandBar, PanelTitle } from '@/components/clinic/chrome';
 import { doctorName, formatNumber, formatStamp, serviceName } from '@/components/clinic/format';
-import type { ClinicScreen } from '@/components/clinic/screen';
+import { registerScreen, type ClinicScreen } from '@/components/clinic/screen';
 
 const EmptyNote = ({ text }: { text: string }) => (
   <p className="p-4 text-sm text-[#5c6b7a]">{text}</p>
 );
 
-export const RegisterView = ({ state }: { state: ClinicState }) => {
-  const rows = [...state.movements].sort(
-    (left, right) => right.period.localeCompare(left.period) || right.id.localeCompare(left.id),
-  );
+export const RegisterView = ({
+  state,
+  registrarId,
+  onOpen,
+}: {
+  state: ClinicState;
+  registrarId: string | null;
+  onOpen: (screen: ClinicScreen) => void;
+}) => {
+  const reception = registrarId
+    ? state.receptions.find((item) => item.id === registrarId)
+    : undefined;
+  const rows = state.movements
+    .filter((row) => registrarId === null || row.registrarId === registrarId)
+    .sort(
+      (left, right) => right.period.localeCompare(left.period) || right.id.localeCompare(left.id),
+    );
   return (
     <div>
-      <PanelTitle title="Загруженность врачей" meta="движения регистра" />
+      <PanelTitle
+        title="Загруженность врачей"
+        meta={reception ? `приём №${reception.number}` : 'все движения'}
+      />
+      {registrarId ? (
+        <CommandBar>
+          <ActionButton onClick={() => onOpen(registerScreen(null))}>Все движения</ActionButton>
+        </CommandBar>
+      ) : null}
       {rows.length === 0 ? (
         <EmptyNote text="Движений нет. Проведите приём пациента, и строки появятся здесь." />
       ) : (
@@ -34,12 +55,12 @@ export const RegisterView = ({ state }: { state: ClinicState }) => {
             </thead>
             <tbody>
               {rows.map((row) => {
-                const reception = state.receptions.find((item) => item.id === row.registrarId);
+                const registrar = state.receptions.find((item) => item.id === row.registrarId);
                 return (
                   <tr key={row.id} className="border-t border-[#e4d8c6]">
                     <td className="px-3 py-2">{formatStamp(row.period)}</td>
                     <td className="px-3 py-2">
-                      {reception ? `№${reception.number}` : 'не найден'}
+                      {registrar ? `№${registrar.number}` : 'не найден'}
                     </td>
                     <td className="px-3 py-2">{doctorName(state, row.doctorId)}</td>
                     <td className="px-3 py-2">{serviceName(state, row.serviceId)}</td>
@@ -110,6 +131,20 @@ export const ReportView = ({
                   <td className="px-3 py-2">{formatNumber(row.duration)}</td>
                 </tr>
               ))}
+              <tr className="border-t border-[#d7cbb8] font-semibold">
+                <td className="px-3 py-2" colSpan={2}>
+                  Итого
+                </td>
+                <td className="px-3 py-2">
+                  {formatNumber(rows.reduce((sum, row) => sum + row.count, 0))}
+                </td>
+                <td className="px-3 py-2">
+                  {formatNumber(rows.reduce((sum, row) => sum + row.revenue, 0))}
+                </td>
+                <td className="px-3 py-2">
+                  {formatNumber(rows.reduce((sum, row) => sum + row.duration, 0))}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -119,9 +154,21 @@ export const ReportView = ({
 };
 
 const chartMetrics = [
-  { title: 'Количество приёмов', pick: (row: { count: number }) => row.count },
-  { title: 'Длительность, мин', pick: (row: { duration: number }) => row.duration },
-  { title: 'Выручка', pick: (row: { revenue: number }) => row.revenue },
+  {
+    title: 'Количество приёмов',
+    color: '#c9890a',
+    pick: (row: { count: number }) => row.count,
+  },
+  {
+    title: 'Длительность, мин',
+    color: '#2c3848',
+    pick: (row: { duration: number }) => row.duration,
+  },
+  {
+    title: 'Выручка',
+    color: '#3f6b4e',
+    pick: (row: { revenue: number }) => row.revenue,
+  },
 ] as const;
 
 export const ChartView = ({
@@ -144,37 +191,54 @@ export const ChartView = ({
       {rows.length === 0 ? (
         <EmptyNote text="График появится после проведения приёма." />
       ) : (
-        <div className="space-y-6 p-3">
-          {chartMetrics.map((metric) => {
-            const max = Math.max(...rows.map((row) => metric.pick(row)), 1);
-            return (
-              <section key={metric.title} aria-label={metric.title}>
-                <h3 className="mb-2 text-sm font-semibold text-[#2c3848]">{metric.title}</h3>
-                <ul className="space-y-3">
-                  {rows.map((row) => {
+        <div className="space-y-4 p-3">
+          <ul className="flex flex-wrap gap-3 text-xs text-[#5c6b7a]">
+            {chartMetrics.map((metric) => (
+              <li key={metric.title} className="inline-flex items-center gap-2">
+                <span
+                  className="inline-block size-3 rounded-sm"
+                  style={{ backgroundColor: metric.color }}
+                />
+                {metric.title}
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-end gap-6 overflow-x-auto pb-2">
+            {rows.map((row) => (
+              <div key={row.doctorId} className="flex min-w-28 flex-col items-center">
+                <div className="flex h-48 items-end gap-1">
+                  {chartMetrics.map((metric) => {
                     const value = metric.pick(row);
+                    const max = Math.max(...rows.map((item) => metric.pick(item)), 1);
                     return (
-                      <li key={row.doctorId}>
-                        <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-                          <span>{row.name}</span>
-                          <span className="tabular-nums text-[#5c6b7a]">{formatNumber(value)}</span>
-                        </div>
-                        <div className="h-3 overflow-hidden rounded-full bg-[#f6f1e8]">
-                          <div
-                            className="h-3 rounded-full bg-[#c9890a]"
-                            style={{ width: `${Math.max(0, (value / max) * 100)}%` }}
-                          />
-                        </div>
-                      </li>
+                      <div
+                        key={metric.title}
+                        className="flex w-8 flex-col items-center justify-end"
+                      >
+                        <span className="mb-1 text-[10px] tabular-nums text-[#5c6b7a]">
+                          {formatNumber(value)}
+                        </span>
+                        <div
+                          className="w-6 rounded-t"
+                          style={{
+                            height: `${Math.max(4, (value / max) * 140)}px`,
+                            backgroundColor: metric.color,
+                          }}
+                        />
+                      </div>
                     );
                   })}
-                </ul>
-              </section>
-            );
-          })}
+                </div>
+                <p className="mt-2 max-w-28 truncate text-center text-xs text-[#2c3848]">
+                  {row.name}
+                </p>
+              </div>
+            ))}
+          </div>
           <p className="max-w-prose text-xs leading-relaxed text-[#5c6b7a]">
-            Показатели совпадают с отчётом проекта: врач и три меры. Каждая строка услуг
-            проведённого приёма пишет одно движение, длительность приёма копируется в каждую строку.
+            По оси врача три показателя из отчёта проекта. Высота каждого цвета считается по своему
+            максимуму, рядом написано само число. Каждая строка услуг проведённого приёма даёт одно
+            движение.
           </p>
         </div>
       )}

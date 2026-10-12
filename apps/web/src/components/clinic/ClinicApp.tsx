@@ -4,6 +4,9 @@ import {
   demoClinic,
   emptyClinic,
   personName,
+  toggleAppointmentMark,
+  toggleCatalogMark,
+  toggleReceptionMark,
   type ClinicState,
   type Reception,
 } from '@dotlearn/lesson-engine';
@@ -24,8 +27,14 @@ import {
   officeName,
   patientName,
 } from '@/components/clinic/format';
+import { runClinic } from '@/components/clinic/run';
 import {
+  appointmentScreen,
   listScreen,
+  namedScreen,
+  personScreen,
+  receptionScreen,
+  registerScreen,
   sectionOf,
   type ClinicScreen,
   type ListObject,
@@ -49,7 +58,7 @@ const NAV: { title: string; items: { id: string; label: string; screen: ClinicSc
     items: [
       { id: 'appointments', label: 'Запись на приём', screen: listScreen('appointments') },
       { id: 'receptions', label: 'Приём пациента', screen: listScreen('receptions') },
-      { id: 'register', label: 'Движения регистра', screen: { kind: 'register' } },
+      { id: 'register', label: 'Движения регистра', screen: registerScreen() },
     ],
   },
   {
@@ -136,21 +145,24 @@ const rowsOf = (state: ClinicState, object: ListObject): Row[] => {
 };
 
 const openCreated = (object: ListObject): ClinicScreen => {
-  if (object === 'doctors' || object === 'patients') {
-    return { kind: 'person', catalog: object, id: null };
-  }
-  if (object === 'offices' || object === 'services') {
-    return { kind: 'named', catalog: object, id: null };
-  }
-  if (object === 'appointments') return { kind: 'appointment', id: null };
-  return { kind: 'reception', id: null, fromAppointmentId: null };
+  if (object === 'doctors' || object === 'patients') return personScreen(object, null);
+  if (object === 'offices' || object === 'services') return namedScreen(object, null);
+  if (object === 'appointments') return appointmentScreen(null);
+  return receptionScreen(null);
 };
 
 const openExisting = (object: ListObject, id: string): ClinicScreen => {
-  if (object === 'doctors' || object === 'patients') return { kind: 'person', catalog: object, id };
-  if (object === 'offices' || object === 'services') return { kind: 'named', catalog: object, id };
-  if (object === 'appointments') return { kind: 'appointment', id };
-  return { kind: 'reception', id, fromAppointmentId: null };
+  if (object === 'doctors' || object === 'patients') return personScreen(object, id);
+  if (object === 'offices' || object === 'services') return namedScreen(object, id);
+  if (object === 'appointments') return appointmentScreen(id);
+  return receptionScreen(id);
+};
+
+const openCopy = (object: ListObject, id: string): ClinicScreen => {
+  if (object === 'doctors' || object === 'patients') return personScreen(object, null, id);
+  if (object === 'offices' || object === 'services') return namedScreen(object, null, id);
+  if (object === 'appointments') return appointmentScreen(null, id);
+  return receptionScreen(null, null, id);
 };
 
 const countActive = (items: readonly { marked: boolean }[]): number =>
@@ -206,6 +218,22 @@ const HomeView = ({
           </div>
         ))}
       </dl>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={() => onOpen(appointmentScreen(null))}
+          className="inline-flex min-h-[var(--tap)] items-center justify-center rounded-md bg-[#c9890a] px-4 text-sm font-medium text-white"
+        >
+          Новая запись
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpen(receptionScreen(null))}
+          className="inline-flex min-h-[var(--tap)] items-center justify-center rounded-md border border-[#d7cbb8] bg-white px-4 text-sm font-medium text-[#1c2430]"
+        >
+          Новый приём
+        </button>
+      </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {cards.map((card) => (
           <button
@@ -231,6 +259,9 @@ const ListView = ({
   onQuery,
   onShowMarked,
   onOpen,
+  onState,
+  onError,
+  onNotice,
 }: {
   state: ClinicState;
   object: ListObject;
@@ -239,8 +270,15 @@ const ListView = ({
   onQuery: (value: string) => void;
   onShowMarked: (value: boolean) => void;
   onOpen: (screen: ClinicScreen) => void;
+  onState: (state: ClinicState) => void;
+  onError: (message: string | null) => void;
+  onNotice: (message: string | null) => void;
 }) => {
   const rows = useMemo(() => rowsOf(state, object), [state, object]);
+  const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    setSelected(null);
+  }, [object]);
   const needle = query.trim().toLocaleLowerCase('ru');
   const visible = rows.filter((row) => {
     if (!showMarked && row.marked) return false;
@@ -249,12 +287,79 @@ const ListView = ({
   });
   const wide = LIST_HEADERS[object].length > 2;
   const showMarkedId = useId();
+  const selectedRow = rows.find((row) => row.id === selected);
   return (
     <div>
       <PanelTitle title={LIST_TITLES[object]} meta={String(visible.length)} />
       <CommandBar>
         <ActionButton tone="primary" onClick={() => onOpen(openCreated(object))}>
           Создать
+        </ActionButton>
+        <ActionButton
+          disabled={selected === null}
+          onClick={() => {
+            if (!selected) return;
+            onOpen(openExisting(object, selected));
+          }}
+        >
+          Открыть
+        </ActionButton>
+        <ActionButton
+          disabled={selected === null}
+          onClick={() => {
+            if (!selected) return;
+            onOpen(openCopy(object, selected));
+          }}
+        >
+          Скопировать
+        </ActionButton>
+        {object === 'appointments' ? (
+          <ActionButton
+            disabled={selected === null}
+            onClick={() => {
+              if (!selected) return;
+              onOpen(receptionScreen(null, selected));
+            }}
+          >
+            Приём на основании
+          </ActionButton>
+        ) : null}
+        {object === 'receptions' ? (
+          <ActionButton
+            disabled={selected === null}
+            onClick={() => {
+              if (!selected) return;
+              onOpen(registerScreen(selected));
+            }}
+          >
+            Движения
+          </ActionButton>
+        ) : null}
+        <ActionButton
+          tone="danger"
+          disabled={selected === null}
+          onClick={() => {
+            if (!selected) return;
+            const result = runClinic(
+              () => {
+                if (
+                  object === 'doctors' ||
+                  object === 'patients' ||
+                  object === 'offices' ||
+                  object === 'services'
+                ) {
+                  return toggleCatalogMark(state, object, selected);
+                }
+                if (object === 'appointments') return toggleAppointmentMark(state, selected);
+                return toggleReceptionMark(state, selected);
+              },
+              onState,
+              onError,
+            );
+            if (result.ok) onNotice('Пометка изменена');
+          }}
+        >
+          {selectedRow?.marked ? 'Восстановить' : 'Пометить на удаление'}
         </ActionButton>
         <label
           htmlFor={showMarkedId}
@@ -300,8 +405,10 @@ const ListView = ({
               {visible.map((row) => (
                 <tr
                   key={row.id}
+                  onClick={() => setSelected(row.id)}
                   className={cx(
-                    'border-t border-[#e4d8c6]',
+                    'cursor-pointer border-t border-[#e4d8c6]',
+                    selected === row.id && 'bg-[#fff6e4]',
                     row.marked && 'text-[#8a8175] line-through',
                   )}
                 >
@@ -517,40 +624,56 @@ export const ClinicApp = () => {
               onQuery={setQuery}
               onShowMarked={setShowMarked}
               onOpen={open}
+              onState={setState}
+              onError={setError}
+              onNotice={setNotice}
             />
           ) : null}
           {screen.kind === 'person' ? (
             <PersonForm
-              key={`${screen.catalog}-${screen.id ?? 'new'}`}
+              key={`${screen.catalog}-${screen.id ?? 'new'}-${screen.copyFrom ?? ''}`}
               {...editor}
               catalog={screen.catalog}
               recordId={screen.id}
+              copyFrom={screen.copyFrom}
             />
           ) : null}
           {screen.kind === 'named' ? (
             <NamedForm
-              key={`${screen.catalog}-${screen.id ?? 'new'}`}
+              key={`${screen.catalog}-${screen.id ?? 'new'}-${screen.copyFrom ?? ''}`}
               {...editor}
               catalog={screen.catalog}
               recordId={screen.id}
+              copyFrom={screen.copyFrom}
             />
           ) : null}
           {screen.kind === 'appointment' ? (
-            <AppointmentForm key={screen.id ?? 'new'} {...editor} recordId={screen.id} />
+            <AppointmentForm
+              key={`${screen.id ?? 'new'}-${screen.copyFrom ?? ''}`}
+              {...editor}
+              recordId={screen.id}
+              copyFrom={screen.copyFrom}
+            />
           ) : null}
           {screen.kind === 'reception' ? (
             <ReceptionForm
-              key={`${screen.id ?? 'new'}-${screen.fromAppointmentId ?? ''}`}
+              key={`${screen.id ?? 'new'}-${screen.fromAppointmentId ?? ''}-${screen.copyFrom ?? ''}`}
               {...editor}
               recordId={screen.id}
               fromAppointmentId={screen.fromAppointmentId}
+              copyFrom={screen.copyFrom}
             />
           ) : null}
-          {screen.kind === 'register' ? <RegisterView state={state} /> : null}
+          {screen.kind === 'register' ? (
+            <RegisterView state={state} registrarId={screen.registrarId} onOpen={open} />
+          ) : null}
           {screen.kind === 'report' ? <ReportView state={state} onOpen={open} /> : null}
           {screen.kind === 'chart' ? <ChartView state={state} onOpen={open} /> : null}
         </div>
       </div>
+      <p className="border-t border-[#e4d8c6] bg-[#fffdf8] px-3 py-2 text-xs text-[#5c6b7a]">
+        {`Записей ${countActive(state.appointments)} · приёмов ${countActive(state.receptions)} · движений ${state.movements.length}`}
+      </p>
     </div>
   );
 };
