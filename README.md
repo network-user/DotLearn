@@ -4,36 +4,26 @@
   <img src="https://img.shields.io/badge/Node.js-22%2B-339933?style=flat" alt="Node.js" />
   <img src="https://img.shields.io/badge/Platform-Web%20%7C%20Docker-555?style=flat" alt="Platform" />
   <img src="https://img.shields.io/badge/Category-Learning-orange?style=flat" alt="Category" />
-  <!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-322k%2B-lightgrey?style=flat" alt="322k+ lines of code" /><!-- loc:end -->
+  <!-- loc:start --><img src="https://img.shields.io/badge/lines_of_code-336k%2B-lightgrey?style=flat" alt="336k+ lines of code" /><!-- loc:end -->
 </p>
 
-<img src="docs/cover.svg" width="720" alt=".learn" />
+<img src="docs/cover.svg" width="720" alt="DotLearn" />
 
-<!-- audit:start -->
-<p>
-  <a href="docs/audit/latest.md"><img src="https://img.shields.io/badge/security_audit-passed-3fb950?style=flat" alt="security audit passed · full, leaks + code" /></a>
-  <a href="docs/audit/2026-07-13-cobalt-lattice.md"><img src="https://img.shields.io/badge/date-2026--07--13-555?style=flat" alt="audit date" /></a>
-</p>
-<!-- audit:end -->
-
-Local-first монорепо для обучения программированию, где урок - не статический текст, а интерактивный модуль. Каждая тема - типобезопасный пакет (теория в MDX, упражнения в YAML, всё под Zod): теорию сопровождают встроенные визуализации, а задачи проверяются прямо в браузере через sql.js и Pyodide в Web Workers. Контент генерируется офлайн скиллом `lesson-forge`; рантайм работает на чистой логике, без AI, `apps/api` опционален.
+Local-first монорепо: тема - модуль из MDX и YAML под Zod, а не статическая страница. SQL и Python считаются в браузере (sql.js, Pyodide, Web Workers); `apps/web` открывается без `apps/api`. Контент тем собирается офлайн скиллом `lesson-forge`, в рантайме AI нет.
 
 ## Что внутри
 
-- **Интерактивная теория, не стена текста.** Более 50 визуализаций и схем встроены в уроки: JOIN-ы и GROUP BY, B-tree и планы запросов, хеш-таблицы и консистентное кольцо, attention и токенизация, градиентный спуск и перцептрон, IoU и NMS. Плюс графики, иллюстрации, сноски, чекпойнты и глоссарий по ходу чтения (MDX + Shiki).
-- **62 темы, 408 концептов, каталог по разделам.** От полки «Основы: начни отсюда» (Python и JavaScript с нуля, регулярные выражения) и фронтенда (HTML/CSS) до продвинутого Python (ООП, дескрипторы, GIL, конкурентность), алгоритмы и структуры данных, базы данных (SQL, индексы, масштабирование), Web и API (включая HTTP с нуля), архитектура, ML и AI, инструменты (git, командная строка Linux). Плюс 6 курируемых треков, фасетные фильтры и полнотекстовый поиск.
-- **Банк собеседований.** ~1449 вопросов с ответами (ru+en), хаб `/interview`, markdown-зеркала и JSON-LD QAPage на пререндере.
-- **Проверочные вопросы почти в каждой теме.** theory-quiz с мгновенной проверкой и разбором - закрепить теорию, не уходя со страницы.
-- **Задачи с живым рантаймом и результатом в реальном времени.** 7 типов упражнений (theory-quiz, sql-query, python-function, javascript-function, fill-in-blanks, predict-output, git-challenge) исполняются прямо в браузере на Monaco-редакторе, sql.js и Pyodide в Web Workers. Результат виден сразу: визуализатор SQL-запросов, пошаговый разбор Python (PyStepper), интерактивные git-задачи с проверкой состояния репозитория.
-- **Проверка не только знаний, но и уверенности.** Перед ответом отмечаешь «уверен / не уверен / наугад», статистика калибровки считается по Брайеру, лестница повторных экзаменов на 1-35 дней и блок свободного припоминания после каждой теории.
-- **Свободная песочница.** Отдельная страница `/sandbox` - интерактивные SQL- и Python-окружения для экспериментов вне уроков: Monaco-редактор, готовые шаблоны, мгновенный запуск в браузере (sql.js / Pyodide в Web Workers), без установки и без сервера.
-- **Анимации и обратная связь.** Переходы между страницами, анимированные счётчики и микро-взаимодействия (framer-motion), конфетти при решении задач и достижении целей.
-- **Интервальное повторение.** Флэшкарды с FSRS-планировщиком (ts-fsrs) по всем 62 темам.
-- **Прогресс как привычка, с бэкапом.** Серия (streak), GitHub-style heatmap активности, карта обучения, «что дальше», возобновление чтения с места - всё в IndexedDB (Dexie), без аккаунта. Экспорт и импорт всего прогресса для бэкапа и переноса между устройствами (заметки и закладки выгружаются отдельно).
-- **Быстрая работа.** Командная палитра Ctrl+K, прогрессивные подсказки, горячие клавиши, онбординг, установка как PWA, нижняя таб-панель на мобиле.
-- **Живой онлайн, анонимно.** Счётчик «кто сейчас здесь» с мини-графиками за сутки и по дням, без cookies и IP. На развёрнутой версии включается расширенная аналитика (уникальные за всё время через HyperLogLog, за 7 и 30 дней, разбивка «сейчас читают» по темам) и отдельная интерактивная страница `/analytics`.
-- **Открытость для поисковиков и ИИ-агентов.** Сборка пререндерит ~3000 статических HTML-страниц (темы ru+en, главные, глоссарий, хабы flashcards/tracks/map/sandbox с crawlable body, банк interview ru+en) с JSON-LD (Course + free Offer, BreadcrumbList, WebSite, DefinedTermSet, QAPage, CollectionPage), canonical, hreflang и lastmod в sitemap; генерирует robots.txt (private UI disallow, AI-боты allow), llms.txt / llms-full.txt, markdown-зеркала (`/topics/<slug>.md`, interview, glossary) и OG-карточки (ru + en). Краулеры без JS видят полный контент, SPA поверх статики оживает без гидрации. Webmaster-кабинеты не требуются.
-- **Два языка.** Русский (основной) и английский: 46 из 62 тем с en-изданием на `/en/topics/<slug>` и hreflang-парами; остальные - ru-only с редиректом en→ru. UI и interview bank - двуязычные.
+- **Темы**: 64 каталога с `manifest.json` под `topics/` (так считает `loadTopics` и валидатор). 416 концептов в манифестах. Английское издание у 46 тем, остальные только ru.
+- **Каталог**: 11 разделов в `catalog-categories.data.json`, 6 треков в `tracks.data.json`, глоссарий на 148 терминов.
+- **Упражнения**: 9 вариантов `Exercise` (`z.discriminatedUnion('type')` в `packages/contracts`): `theory-quiz`, `sql-query`, `python-function`, `javascript-function`, `fill-in-blanks`, `predict-output`, `git-challenge`, `onec-lab`, `onec-designer`.
+- **1С**: одна страница `/onec` и один пункт меню «1С». Прямые окна: `/workbench` (учёт товаров, тип `onec-lab`, тема `onec-workbench`), `/plant` (учёт завода, тип `onec-designer`, тема `plant-case`), `/clinic` (база клиники; в трек `onec` не входит).
+- **Собеседования**: 1455 вопросов в `interview/index.json`, страницы ru и en, хаб `/interview`.
+- **Рантайм в браузере**: Monaco, sql.js и Pyodide в Web Workers. Отдельная песочница `/sandbox`. Визуализации теории: 54 имени в `VIZ_NAMES` пререндера.
+- **Повторение и прогресс**: флэшкарды на `ts-fsrs`, прогресс в IndexedDB (Dexie), лестница повторного экзамена 1, 3, 7, 16 и 35 дней, калибровка ответов по Брайеру. Экспорт прогресса включает заметки и закладки. Кросс-девайс синк по коду: blob на api, merge на клиенте.
+- **Онлайн**: анонимный presence. При `PRESENCE_ANALYTICS` считаются уникальные (HyperLogLog), окна 7 и 30 дней, разбивка по темам и страница `/analytics`.
+- **Интерфейс**: палитра Ctrl/Cmd+K, нижняя панель на узком экране, PWA (`vite-plugin-pwa`), анимации `framer-motion`, конфетти при решении.
+- **Пререндер**: 3032 HTML. Состав: 64 ru-темы, 46 en-тем, главная ru+en, глоссарий ru+en, 1455 вопросов на двух языках, хаб interview ru+en, хабы `flashcards`, `tracks`, `map`, `sandbox`, `onec`, страница 404. Хаб `onec` есть в `prerender.mjs` и в `HUB_ORDER` (`seo-artifacts.mjs`). `workbox.globIgnores` содержит `onec/**`.
+- **Языки**: русский основной, английский вторичный. UI и банк вопросов двуязычные. Тема без en с `/en/topics/<slug>` уходит на ru.
 
 ## Запуск
 
@@ -42,15 +32,17 @@ pnpm install
 pnpm dev:web
 ```
 
-http://localhost:5173 - в репозитории 62 темы (`python-basics`, `sql-fundamentals`, `javascript-basics`, `db-indexes` и др.).
+http://localhost:5173. Node.js 22+, pnpm 11 (`package.json`: `node >=22`, `pnpm >=11`, `packageManager` `pnpm@11.13.1`).
 
-Новая тема - попроси Cursor или Claude Code в этом репо:
+Новая тема:
 
 ```
 Используй lesson-forge, добавь тему по SQL JOINs
 ```
 
-Скилл: `.cursor/skills/lesson-forge/`, зеркало `.claude/skills/lesson-forge/`. Прочие агенты - `AGENTS.md`.
+Скилл: `.cursor/skills/lesson-forge/`, зеркало `.claude/skills/lesson-forge/`.
+
+`pnpm dev:api` поднимает NestJS на порту 3000 (`HOST` по умолчанию `127.0.0.1`). Вне production Swagger на `/docs`. Префикс API: `/api`.
 
 ### Docker
 
@@ -58,27 +50,44 @@ http://localhost:5173 - в репозитории 62 темы (`python-basics`, 
 docker compose up --build -d
 ```
 
-`web` на :8080, `api` на :3000 (Swagger `/docs`), `elasticsearch` на :9200. `api` читает секреты из `.env` (admin-логин, JWT, TOTP); fuzzy-поиск заявок in-memory по умолчанию, `ES_ENABLED=true` включает Elasticsearch.
+Нужна внешняя сеть `dotsound` (имя: `DOTSOUND_NETWORK`, иначе `dotsoundbackend_dotsound`). Контейнер `web` слушает 8080 и наружу порт не публикует. API на хосте: `127.0.0.1:3000` (`API_PORT`). Elasticsearch только с профилем `search`, порт `127.0.0.1:9200` (`ES_PORT`). Поиск заявок in-memory, пока `ES_ENABLED` не `true`.
 
-Bare-metal без Docker (основной путь деплоя): `sudo bash scripts/deploy.sh` - идемпотентный скрипт сам ставит Node 22/pnpm/Caddy, генерит секреты, выставляет `VITE_SITE_URL`/`VITE_API_BASE` и поднимает web + api под systemd. Полный гайд по self-hosting (оба пути, ротация секретов, бэкап) - в [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
+Прод-образы (сервер не собирает):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
+```
+
+`GHCR_OWNER` задаёт `ghcr.io/<owner>/dotlearn-web` и `dotlearn-api`. В этом overlay `TRUSTED_PROXY_HOPS` по умолчанию `2` (Caddy и nginx). В базовом compose дефолт `1`.
+
+Bare-metal, без Docker: `sudo bash scripts/deploy.sh`. Короткие цели: `make deploy`, `make update`, `make status`, `make logs`, `make logs-web`, `make restart`, `make backup`, `make restore FILE=...`. Подробности: [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
 ## Команды
 
-| Команда              | Назначение                                            |
-| -------------------- | ----------------------------------------------------- |
-| `pnpm dev:web`       | Vite SPA, offline-first плеер                         |
-| `pnpm dev:api`       | NestJS API (submissions, admin, поиск)                |
-| `pnpm dev`           | web + api параллельно (Turborepo)                     |
-| `pnpm build`         | production-сборка (web: + пререндер, sitemap/llms/OG) |
-| `pnpm typecheck`     | TypeScript по монорепо                                |
-| `pnpm test`          | unit-тесты пакетов (vitest)                           |
-| `pnpm validate`      | Zod-контракт тем + прогон gold-решений                |
-| `pnpm lint`          | ESLint по репозиторию                                 |
-| `pnpm check:i18n`    | паритет ключей локалей ru/en                          |
-| `pnpm check:bundle`  | бюджет eager-JS после build                           |
-| `pnpm check:headers` | CSP/security headers в синхроне (vite/nginx/Caddy)    |
-| `pnpm sync:skills`   | `.cursor/skills/` → `.claude/skills/`                 |
-| `pnpm check:skills`  | CI: зеркала скиллов идентичны                         |
+| Команда                             | Назначение                             |
+| ----------------------------------- | -------------------------------------- |
+| `pnpm dev:web`                      | Vite SPA                               |
+| `pnpm dev:api`                      | NestJS API                             |
+| `pnpm dev`                          | web и api параллельно (Turborepo)      |
+| `pnpm build`                        | сборка; у web ещё пререндер и OG       |
+| `pnpm typecheck`                    | TypeScript по монорепо                 |
+| `pnpm test`                         | vitest                                 |
+| `pnpm validate`                     | Zod-контракт тем и gold-решения        |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                                 |
+| `pnpm format` / `pnpm format:check` | Prettier                               |
+| `pnpm check:i18n`                   | паритет ключей ru/en                   |
+| `pnpm check:bundle`                 | бюджет eager-JS после build            |
+| `pnpm check:headers`                | CSP: vite, nginx, Caddy                |
+| `pnpm sync:skills`                  | `.cursor/skills/` в `.claude/skills/`  |
+| `pnpm check:skills`                 | зеркала скиллов совпадают              |
+| `pnpm audit:prod`                   | `pnpm audit --prod --audit-level high` |
+| `pnpm check:interview`              | проверка банка interview               |
+| `pnpm validate:interview-exercises` | упражнения interview                   |
+| `pnpm build:interview-index`        | `interview/index.json`                 |
+| `pnpm build:interview-flashcards`   | флэшкарты interview                    |
+
+Ещё в корневом `package.json`: `import:interview`, `reorg:interview`, `verify:interview-py`.
 
 ## Стек
 
@@ -86,6 +95,7 @@ Bare-metal без Docker (основной путь деплоя): `sudo bash sc
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
   <img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
   <img src="https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white" alt="NestJS" />
   <img src="https://img.shields.io/badge/pnpm-F69220?style=for-the-badge&logo=pnpm&logoColor=white" alt="pnpm" />
   <img src="https://img.shields.io/badge/Turborepo-EF4444?style=for-the-badge&logo=turborepo&logoColor=white" alt="Turborepo" />
@@ -106,35 +116,37 @@ pnpm validate
 pnpm test
 ```
 
+CI (`.github/workflows/ci.yml`, Node 22): `check:skills`, `check:headers`, `check:i18n`, `format:check`, `typecheck`, `lint`, `test`, `validate`, `audit:prod`, `build`, `check:bundle`.
+
 ## Архитектура
 
-Modular monolith в pnpm workspaces. Frontend и backend разделены пакетами, без cross-imports. `apps/web` читает `topics/` через Vite `import.meta.glob`, гоняет sandbox в Web Workers и работает офлайн без AI в рантайме. `apps/api` опционален: submissions, admin, presence, sync и fuzzy-поиск заявок (in-memory по умолчанию, Elasticsearch по флагу). Сборка web несёт build-time SEO-слой (`apps/web/scripts/`): пререндер (~3000 HTML, включая interview), sitemap/robots/llms, markdown-зеркала, OG-карточки; рантайм от этого не тяжелеет.
+pnpm workspaces и Turborepo. `apps/web` и `apps/api` друг из друга не импортируют. Общие типы только в `packages/contracts`. Web читает `topics/` через Vite `import.meta.glob`, sandbox крутится в Web Workers и живёт без API и без AI. API опционален: заявки, admin, поиск (in-memory или Elasticsearch), presence, sync. Сборка web дописывает пререндер, sitemap, robots, llms, markdown-зеркала и OG; в eager-бандл и в прекэш service worker это не входит.
 
 ```
 .learn/
 ├── apps/
-│   ├── web/                  # Vite + React SPA, local-first
-│   └── api/                  # NestJS (DDD): submissions, admin, search, presence, sync
+│   ├── web/                  # Vite + React, local-first; /onec, /workbench, /plant, /clinic
+│   └── api/                  # NestJS: submissions, admin, search, presence, sync
 ├── packages/
-│   ├── contracts/            # Zod-схемы, общие типы
+│   ├── contracts/            # Zod, в том числе 9 типов Exercise
 │   ├── lesson-engine/        # загрузчик тем, раннеры, CLI-валидатор
 │   └── sandbox/              # sql.js + Pyodide в Web Workers
-├── topics/                   # 62 темы (manifest + MDX + YAML)
-├── interview/                # банк вопросов (~1449) + exercises
-├── deploy/                   # Caddyfile + systemd (bare-metal)
-├── scripts/                  # deploy.sh, sync/checks, контент-тулинг
+├── topics/                   # 64 темы (46 с en)
+├── interview/                # 1455 вопросов (index.json) + exercises
+├── deploy/                   # Caddyfile + systemd
+├── scripts/                  # deploy.sh, проверки, контент-тулинг
 ├── .cursor/skills/           # lesson-forge, generate-readme, sync-project-rules
 ├── .claude/skills/           # зеркало (pnpm sync:skills)
 ├── docker-compose.yml
 └── AGENTS.md
 ```
 
-- **Local-first**: `apps/web` работает без `apps/api`
-- **Pure-logic**: рантайм без AI; LLM только офлайн для генерации контента
-- **contracts**: единственный общий слой web ↔ api
-- **topics**: не импортируют из `apps/*`
-- **lesson-forge**: владеет контрактом темы; CI `pnpm check:skills` ловит drift зеркал
-- **SEO build-time**: пререндер и артефакты генерятся при сборке, в SW-прекэш и eager-бандл не попадают
+- **Local-first**: `apps/web` работает без `apps/api`.
+- **Pure-logic**: в рантайме нет AI. LLM только офлайн, через `lesson-forge`.
+- **contracts**: единственный общий слой web и api. Схемы задаёт Zod.
+- **topics**: не импортируют из `apps/*`.
+- **Один вход 1С**: меню ведёт на `/onec`. `/workbench`, `/plant` и `/clinic` остаются прямыми маршрутами, отдельных пунктов нет.
+- **SEO build-time**: пререндер и артефакты, включая `onec/**`, не попадают в SW-прекэш (`workbox.globIgnores`).
 
 ## Лицензия
 
