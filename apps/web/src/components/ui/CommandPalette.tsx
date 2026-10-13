@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Warehouse,
   Waypoints,
 } from 'lucide-react';
 import { useRouterState } from '@tanstack/react-router';
@@ -77,6 +78,7 @@ const navIcon: Record<string, React.ReactNode> = {
   '/admin': <ShieldCheck size={14} />,
   '/submit': <PencilLine size={14} />,
   '/proposals': <Inbox size={14} />,
+  '/onec': <Warehouse size={14} />,
 };
 
 interface CommandPaletteProps {
@@ -202,6 +204,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
   const navItems = useMemo(
     () => [
       { path: '/', label: t('topics') },
+      { path: '/onec', label: t('onec') },
       { path: '/search', label: t('openSearch') },
       { path: '/today', label: t('today') },
       { path: '/map', label: t('map') },

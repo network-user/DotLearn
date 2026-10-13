@@ -105,6 +105,10 @@ const HUBS = {
     title: 'Песочница',
     description: 'Запуск Python, SQL и учебного стенда учёта прямо в браузере, без установки.',
   },
+  onec: {
+    title: 'Учёт и платформа',
+    description: 'Учебные окна учёта, конструктор завода и темы по платформе. Это не платформа 1С.',
+  },
 };
 
 const round1 = (value) => Math.round((Number(value) || 0) * 10) / 10;
@@ -1127,6 +1131,25 @@ for (const topic of topics) {
         '<p>В песочнице можно писать и запускать Python (Pyodide) и SQL (sql.js), а на вкладке «Стенд» работать с учебным окном учёта. Установки нет. Теория с живыми примерами - в темах:</p>',
         `<ul>${topicListItems()}</ul>`,
       ].join('\n'),
+    onec: () => {
+      const track = tracksData.find((item) => item.id === 'onec');
+      const lis = (track?.topicSlugs ?? [])
+        .map(
+          (slug) =>
+            `<li><a href="/topics/${escapeAttr(slug)}">${escapeHtml(topicTitleOf(slug))}</a></li>`,
+        )
+        .join('');
+      return [
+        `<h1>${escapeHtml(HUBS.onec.title)}</h1>`,
+        `<p>${escapeHtml(HUBS.onec.description)}</p>`,
+        '<ul>',
+        '<li><a href="/workbench">Учёт товаров</a></li>',
+        '<li><a href="/plant">Учёт завода</a></li>',
+        '<li><a href="/clinic">Клиника</a></li>',
+        '</ul>',
+        `<ol>${lis}</ol>`,
+      ].join('\n');
+    },
   };
 
   const hubJsonLd = (hub, meta) => {

@@ -76,6 +76,12 @@ export const PlantPage = () => {
           {t('reset')}
         </Button>
         <Link
+          to="/onec"
+          className="inline-flex h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-medium text-fg sm:h-9"
+        >
+          {t('openHub')}
+        </Link>
+        <Link
           to="/topics/$slug"
           params={{ slug: 'plant-case' }}
           className="inline-flex h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-surface sm:h-9"

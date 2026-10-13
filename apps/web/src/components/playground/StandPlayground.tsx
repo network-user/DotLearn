@@ -68,10 +68,10 @@ export const StandPlayground = () => {
     <div className="space-y-4">
       <p className="max-w-prose text-sm text-fg-muted">{t('stand.note')}</p>
       <Link
-        to="/clinic"
+        to="/onec"
         className="inline-flex min-h-[var(--tap)] items-center text-sm font-medium text-accent underline-offset-2 hover:underline"
       >
-        {t('stand.openClinic')}
+        {t('stand.openOnec')}
       </Link>
       <div ref={standRef} className="relative">
         <OnecStand

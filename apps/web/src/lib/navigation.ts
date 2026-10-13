@@ -4,3 +4,11 @@ export const isNavPathActive = (pathname: string, path: string): boolean => {
   }
   return pathname.startsWith(path);
 };
+
+export const isNavItemActive = (
+  pathname: string,
+  item: { to: string; matchPrefixes?: readonly string[] },
+): boolean =>
+  isNavPathActive(pathname, item.to) ||
+  (item.matchPrefixes?.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) ??
+    false);

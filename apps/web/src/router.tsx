@@ -84,6 +84,11 @@ const PlantPage = lazy(() =>
     default: module.PlantPage,
   })),
 );
+const OnecHubPage = lazy(() =>
+  import('./pages/OnecHubPage').then((module) => ({
+    default: module.OnecHubPage,
+  })),
+);
 const LearningMapPage = lazy(() =>
   import('./pages/LearningMapPage').then((module) => ({
     default: module.LearningMapPage,
@@ -498,6 +503,12 @@ const plantRoute = new Route({
   component: PlantPage,
 });
 
+const onecRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/onec',
+  component: OnecHubPage,
+});
+
 const mapRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/map',
@@ -585,6 +596,7 @@ const routeTree = rootRoute.addChildren([
   workbenchRoute,
   clinicRoute,
   plantRoute,
+  onecRoute,
   mapRoute,
   todayRoute,
   settingsRoute,

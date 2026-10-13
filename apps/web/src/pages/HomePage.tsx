@@ -504,6 +504,8 @@ export const HomePage = () => {
 
       <TodayCard />
 
+      <OnecDoor />
+
       <TracksBand progressRecords={progressRecords} readByTopic={readByTopic} />
 
       <section className="space-y-5" id="topics">
@@ -771,6 +773,29 @@ const TodayCard = () => {
         </div>
       </Surface>
     </Link>
+  );
+};
+
+const OnecDoor = () => {
+  const { t } = useTranslation('onec');
+  return (
+    <section>
+      <Surface rule="left">
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="eyebrow text-fg-subtle">{t('eyebrow')}</p>
+            <h2 className="mt-1 text-xl font-semibold tracking-tightish text-fg">{t('title')}</h2>
+            <p className="mt-1 max-w-prose text-sm text-fg-muted">{t('homeLead')}</p>
+          </div>
+          <Link
+            to="/onec"
+            className="inline-flex h-11 w-full shrink-0 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-surface sm:w-auto"
+          >
+            {t('open')}
+          </Link>
+        </div>
+      </Surface>
+    </section>
   );
 };
 

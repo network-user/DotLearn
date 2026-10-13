@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { Dialog } from '@/components/ui/Dialog';
-import { isNavPathActive } from '@/lib/navigation';
+import { isNavItemActive, isNavPathActive } from '@/lib/navigation';
 import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
 import { adminPath } from '@/router';
 
@@ -24,7 +24,7 @@ export const BottomTabBar = () => {
     return null;
   }
 
-  const moreActive = moreLinks.some((link) => isNavPathActive(pathname, link.to));
+  const moreActive = moreLinks.some((link) => isNavItemActive(pathname, link));
 
   const indicator = (active: boolean) =>
     active &&
@@ -113,12 +113,13 @@ export const BottomTabBar = () => {
         size="sm"
       >
         <ul className="-mx-2 space-y-1">
-          {moreLinks.map(({ to, icon: Icon, labelKey }) => {
-            const active = isNavPathActive(pathname, to);
+          {moreLinks.map((item) => {
+            const Icon = item.icon;
+            const active = isNavItemActive(pathname, item);
             return (
-              <li key={to}>
+              <li key={item.key}>
                 <Link
-                  to={to}
+                  to={item.to}
                   onClick={() => setMoreOpen(false)}
                   aria-current={active ? 'page' : undefined}
                   className={cx(
@@ -129,7 +130,7 @@ export const BottomTabBar = () => {
                   <span className="grid place-items-center size-9 rounded-lg border border-border-base text-fg-muted">
                     <Icon size={18} aria-hidden />
                   </span>
-                  <span className="text-[15px] font-medium">{t(labelKey)}</span>
+                  <span className="text-[15px] font-medium">{t(item.labelKey)}</span>
                 </Link>
               </li>
             );

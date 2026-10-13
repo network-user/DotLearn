@@ -7,11 +7,9 @@ import {
   Layers,
   LayoutGrid,
   Library,
-  Factory,
   Warehouse,
   MessagesSquare,
   PencilLine,
-  Stethoscope,
   Route,
   Settings,
   Waypoints,
@@ -24,6 +22,7 @@ export interface NavItem {
   labelKey: string;
   icon: LucideIcon;
   primary: boolean;
+  matchPrefixes?: readonly string[];
 }
 
 export const navItems: readonly NavItem[] = [
@@ -39,9 +38,14 @@ export const navItems: readonly NavItem[] = [
   },
   { key: 'progress', to: '/progress', labelKey: 'progress', icon: BarChart3, primary: true },
   { key: 'sandbox', to: '/sandbox', labelKey: 'sandbox', icon: FlaskConical, primary: false },
-  { key: 'workbench', to: '/workbench', labelKey: 'workbench', icon: Warehouse, primary: false },
-  { key: 'clinic', to: '/clinic', labelKey: 'clinic', icon: Stethoscope, primary: false },
-  { key: 'plant', to: '/plant', labelKey: 'plant', icon: Factory, primary: false },
+  {
+    key: 'onec',
+    to: '/onec',
+    labelKey: 'onec',
+    icon: Warehouse,
+    primary: false,
+    matchPrefixes: ['/workbench', '/plant', '/clinic'],
+  },
   { key: 'tracks', to: '/tracks', labelKey: 'tracks', icon: Route, primary: false },
   { key: 'map', to: '/map', labelKey: 'map', icon: Waypoints, primary: false },
   { key: 'library', to: '/library', labelKey: 'library', icon: Library, primary: false },

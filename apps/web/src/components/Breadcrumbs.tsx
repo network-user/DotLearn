@@ -25,6 +25,8 @@ const KNOWN_SEGMENT_KEYS: Record<string, string> = {
   search: 'openSearch',
   clinic: 'clinic',
   plant: 'plant',
+  workbench: 'workbench',
+  onec: 'onec',
 };
 
 const interviewQuestionId = (segments: string[]): number | undefined => {

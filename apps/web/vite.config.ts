@@ -253,6 +253,7 @@ export default defineConfig({
           'tracks/**',
           'map/**',
           'sandbox/**',
+          'onec/**',
           '404.html',
           '**/*.md',
           'llms.txt',

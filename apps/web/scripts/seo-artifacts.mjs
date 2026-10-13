@@ -77,7 +77,7 @@ const topicDescription = (manifest, lang) => {
     : manifest.descriptions.ru;
 };
 
-const HUB_ORDER = ['flashcards', 'glossary', 'interview', 'tracks', 'map', 'sandbox'];
+const HUB_ORDER = ['flashcards', 'glossary', 'interview', 'tracks', 'map', 'sandbox', 'onec'];
 
 // Same catalogue as prerender.mjs's renderHome: group already-alphabetical
 // topics by category bucket, then flatten in catalogData.order.
@@ -950,6 +950,7 @@ function buildLlmsTxt({ siteUrl, topics, catalogData, interviewIndex }) {
     `- [Треки обучения](${siteUrl}/tracks)`,
     `- [Карта знаний](${siteUrl}/map)`,
     `- [Песочница Python/SQL](${siteUrl}/sandbox)`,
+    `- [Учёт и платформа](${siteUrl}/onec): учебные окна учёта, конструктор завода и темы по платформе`,
     '',
     '## Собеседования',
     `- [Вопросы для собеседований](${siteUrl}/interview): ${interviewIndex.length} вопросов с ответами; markdown-зеркало каждого вопроса - ${siteUrl}/interview/<id>.md`,

@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 
 import { ClinicApp } from '@/components/clinic/ClinicApp';
@@ -21,6 +22,12 @@ export const ClinicPage = () => {
         <p className="max-w-prose text-sm text-fg-muted">{t('subtitle')}</p>
       </header>
       <ClinicApp />
+      <Link
+        to="/onec"
+        className="inline-flex h-11 w-full items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-medium text-fg sm:w-auto"
+      >
+        {t('openHub')}
+      </Link>
     </div>
   );
 };

@@ -28,16 +28,10 @@ export const WorkbenchPage = () => {
       <StandPlayground />
       <div className="flex flex-col gap-2 sm:flex-row">
         <Link
-          to="/plant"
+          to="/onec"
           className="inline-flex h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-medium text-fg sm:h-9"
         >
-          {t('openPlant')}
-        </Link>
-        <Link
-          to="/clinic"
-          className="inline-flex h-11 items-center justify-center rounded-md border border-border-strong bg-surface px-4 text-sm font-medium text-fg sm:h-9"
-        >
-          {t('openClinic')}
+          {t('openHub')}
         </Link>
         <Link
           to="/topics/$slug"

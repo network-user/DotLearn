@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { cx } from '@/components/ui/cx';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { openCommandPalette } from '@/lib/command-palette';
-import { isNavPathActive } from '@/lib/navigation';
+import { isNavItemActive, isNavPathActive } from '@/lib/navigation';
 import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
 import { openPersonalizeWizard } from '@/lib/personalize-wizard';
 import { adminPath } from '@/router';
@@ -73,7 +73,7 @@ export const Layout = ({ children }: LayoutProps) => {
   };
 
   const overflowItems = secondaryNavItems.filter((item) => item.to !== '/settings');
-  const overflowActive = overflowItems.some((item) => isActive(item.to));
+  const overflowActive = overflowItems.some((item) => isNavItemActive(pathname, item));
 
   return (
     <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
@@ -130,7 +130,7 @@ export const Layout = ({ children }: LayoutProps) => {
                 <div className="absolute right-0 top-[calc(100%+6px)] z-[var(--z-sheet)] min-w-[180px] rounded-xl border border-border-base glass-strong bg-surface/95 p-1.5 shadow-float">
                   {overflowItems.map((item) => {
                     const Icon = item.icon;
-                    const active = isActive(item.to);
+                    const active = isNavItemActive(pathname, item);
                     return (
                       <Link
                         key={item.key}
