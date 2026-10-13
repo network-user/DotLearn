@@ -24,7 +24,10 @@ const indexHtml = join(distDir, 'index.html');
 // 2026-10-12: 376 -> 377 after the clinic link landed in the eager shell
 // (nav item, locale strings, lazy route record). The clinic page and its
 // engine stay out of the lesson-engine chunk (measured 376.4 KB).
-const INITIAL_JS_GZIP_BUDGET = 377 * 1024;
+// 2026-10-13: 377 -> 380 after the 1C hub, plant topic and home door landed
+// in the eager shell (nav item, locale strings, topic manifest, lazy routes).
+// The plant designer stays out of the lesson-engine chunk (measured 379.3 KB).
+const INITIAL_JS_GZIP_BUDGET = 380 * 1024;
 const HEAVY = /(monaco|pyodide|sqljs|sql-wasm)/i;
 
 let html;

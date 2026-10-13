@@ -14,7 +14,7 @@ import {
   DesignerCommandError,
   replayDesigner,
   type DesignerState,
-} from '@dotlearn/lesson-engine';
+} from '@dotlearn/lesson-engine/designer';
 
 import {
   onecCmdClass,

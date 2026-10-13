@@ -6,7 +6,6 @@ import type { SqlRuntime } from '../runtime/sql';
 
 import { runFillInBlanks } from './fill-in-blanks';
 import { runGitChallenge } from './git-challenge';
-import { runDesigner } from './designer';
 import { runOnecLab } from './onec-lab';
 import { runJavascriptFunction } from './javascript-function';
 import { runPredictOutput } from './predict-output';
@@ -85,8 +84,12 @@ export const runExercise = async (
     }
     case 'onec-lab':
       return runOnecLab(exercise, answer);
-    case 'onec-designer':
+    case 'onec-designer': {
+      // Static import would pull the plant runtime into the shared lesson-engine
+      // chunk, which the shell downloads up front.
+      const { runDesigner } = await import('./designer');
       return runDesigner(exercise, answer);
+    }
   }
 };
 

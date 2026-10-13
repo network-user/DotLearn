@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 
 import type { DesignerCommand, DesignerExercise } from '@dotlearn/contracts';
-import { gradeDesignerSession, runExercise } from '@dotlearn/lesson-engine';
+import { runExercise } from '@dotlearn/lesson-engine';
+import { gradeDesignerSession } from '@dotlearn/lesson-engine/designer';
 import { RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

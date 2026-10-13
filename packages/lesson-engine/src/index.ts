@@ -10,7 +10,6 @@ export { runFillInBlanks } from './runners/fill-in-blanks';
 export { runPredictOutput } from './runners/predict-output';
 export { runGitChallenge } from './runners/git-challenge';
 export { runOnecLab } from './runners/onec-lab';
-export { runDesigner } from './runners/designer';
 
 export type { SqlExecution, SqlRuntime } from './runtime/sql';
 export { SqlExecutionError } from './runtime/sql';
@@ -30,15 +29,6 @@ export {
   replayOnec,
 } from './runtime/onec';
 export type { BalanceRow, OnecGrade, OnecState, Receipt, ReceiptDraft } from './runtime/onec';
-export {
-  applyDesignerCommand,
-  createDesignerState,
-  designerBalances,
-  DesignerCommandError,
-  gradeDesignerSession,
-  replayDesigner,
-} from './runtime/designer';
-export type { BalanceLine, DesignerGrade, DesignerState } from './runtime/designer';
 export type {
   CommitSnapshot,
   ExecResult,

@@ -368,7 +368,14 @@ export default defineConfig({
             return 'contracts';
           }
           if (normalized.includes('/packages/lesson-engine/')) {
+            // Separate package exports. A shared chunk would ship them with the shell.
             if (normalized.includes('/runtime/clinic/')) return undefined;
+            if (
+              normalized.includes('/runtime/designer/') ||
+              normalized.includes('/runners/designer')
+            ) {
+              return undefined;
+            }
             return 'lesson-engine';
           }
           if (normalized.includes('/src/lib/interview.ts')) return 'interview-data';
