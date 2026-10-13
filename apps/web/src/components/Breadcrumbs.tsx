@@ -24,6 +24,7 @@ const KNOWN_SEGMENT_KEYS: Record<string, string> = {
   flashcards: 'flashcards',
   search: 'openSearch',
   clinic: 'clinic',
+  plant: 'plant',
 };
 
 const interviewQuestionId = (segments: string[]): number | undefined => {

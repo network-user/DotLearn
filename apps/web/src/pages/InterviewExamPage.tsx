@@ -907,6 +907,8 @@ const answerLines = (exercise: Exercise): string[] => {
       return exercise.solution;
     case 'onec-lab':
       return exercise.solution.map((command) => command.op);
+    case 'onec-designer':
+      return exercise.solution.map((command) => command.op);
     default:
       return [];
   }

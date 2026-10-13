@@ -79,6 +79,11 @@ const ClinicPage = lazy(() =>
     default: module.ClinicPage,
   })),
 );
+const PlantPage = lazy(() =>
+  import('./pages/PlantPage').then((module) => ({
+    default: module.PlantPage,
+  })),
+);
 const LearningMapPage = lazy(() =>
   import('./pages/LearningMapPage').then((module) => ({
     default: module.LearningMapPage,
@@ -487,6 +492,12 @@ const clinicRoute = new Route({
   component: ClinicPage,
 });
 
+const plantRoute = new Route({
+  getParentRoute: () => rootRoute,
+  path: '/plant',
+  component: PlantPage,
+});
+
 const mapRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/map',
@@ -573,6 +584,7 @@ const routeTree = rootRoute.addChildren([
   sandboxRoute,
   workbenchRoute,
   clinicRoute,
+  plantRoute,
   mapRoute,
   todayRoute,
   settingsRoute,
