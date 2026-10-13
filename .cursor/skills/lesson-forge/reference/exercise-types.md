@@ -281,6 +281,51 @@ Command `op` values: `open-section`, `open-list`, `create-catalog`, `open-new-re
 
 Shell copy and scenario text are Russian. Do not put the 1C logo or the wordmark into the chrome. Layout may stay close. The stage plan lives in `docs/onec-lab-roadmap.md`.
 
+## `onec-designer`
+
+Learner builds metadata and then posts documents in a second teaching window, «Учёт завода». It is a declarative constructor for one plant case, not a script language and not the goods stand. Topic `runtime` stays `none`. The engine is `packages/lesson-engine/src/runtime/designer/`.
+
+`mode` is the same idea as `onec-lab`: `hybrid` latches steps and checks `goal` at the end, `steps` checks steps only, `snapshot` checks `goal` only.
+
+`seed.today` is `YYYY-MM-DD`. Seed may already contain `catalogs`, `documents`, `registers`, `items`, and `docs`. A catalog has an implicit name field `Наименование`. Field `type` is `string`, `number`, `enum`, `ref`, or `datetime` (`YYYY-MM-DDTHH:mm`). A register dimension points at a catalog. A movement maps every dimension to a ref field and takes quantity from a number field, direction `in` or `out`. Guards: `equals`, `probe-count`, `linked-status`, `linked-min-minutes`, `linked-max-minutes`. Balances come only from posted documents. An out that would go negative is refused. `save` writes an item or an unposted document. `post` is documents only.
+
+`solution` is the gold command list. `pnpm validate` replays it.
+
+Step and goal kinds: `mode`, `list`, `form`, `has-catalog`, `has-document`, `has-register`, `has-field`, `has-dimension`, `has-movement`, `has-guard`, `item`, `posted`, `not-posted`, `balance`. `has-guard` may set `minutes` and `rules`. A missing balance row counts as quantity 0. Optional `focus`: `mode-designer`, `mode-enterprise`, `mode-report`, `add-catalog`, `add-document`, `add-register`, `meta-tree`, `add-field`, `add-movement`, `add-guard`, `object-list`, `doc-form`, `post`.
+
+```yaml
+- id: add-nomenclature
+  concept: catalogs
+  type: onec-designer
+  difficulty: 2
+  mode: hybrid
+  prompt: 'Добавьте справочник Номенклатура с видом Сырьё.'
+  seed:
+    today: '2024-06-03'
+  steps:
+    - id: catalog
+      title: 'Справочник'
+      coach: 'Кнопка «Справочник» в конструкторе.'
+      focus: add-catalog
+      expect:
+        - { kind: has-catalog, name: Номенклатура }
+  goal:
+    - { kind: has-field, object: Номенклатура, name: Вид, type: enum }
+  solution:
+    - { op: add-catalog, name: Номенклатура }
+    - {
+        op: add-field,
+        object: Номенклатура,
+        name: Вид,
+        type: enum,
+        enumValues: [Сырьё, Тара, Препарат],
+      }
+```
+
+Command `op` values: `open-mode`, `add-catalog`, `add-document`, `add-register`, `add-dimension`, `add-field`, `add-movement`, `add-guard`, `open-object`, `open-new`, `set-value`, `save`, `post`, `close`.
+
+The window badge is «УЗ». Do not put the 1C logo or the wordmark into the chrome. A guard may name another document only after that document exists. Referenced seed documents must be present before the guarding document.
+
 ## Variants (randomized practice)
 
 Every exercise type accepts an optional `variants` array. Each variant is a **full alternative version of the same task**: same skill being tested, different surface (different data, different prompt, different expected answer). The runner picks a random variant per attempt and offers «другой вариант» after a pass, so learners internalize the principle instead of memorizing the answer.
@@ -288,7 +333,7 @@ Every exercise type accepts an optional `variants` array. Each variant is a **fu
 Rules:
 
 - The base exercise fields are variant 0; `variants` adds more.
-- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output, `goal`+`solution` for git-challenge, `steps`+`goal`+`solution` for onec-lab). `prompt`, `fixture`, `starter`, `setup`, `seed` are optional overrides - omit them to inherit from the base.
+- A variant must redefine the **core task fields** of its type (`choices`+`correct` for theory-quiz, `expected`+`solution` for sql-query, `cases`+`solution` for functions, `template`+`blanks` for fill-in-blanks, `snippet`+`expected` for predict-output, `goal`+`solution` for git-challenge, `steps`+`goal`+`solution` for onec-lab and onec-designer). `prompt`, `fixture`, `starter`, `setup`, `seed` are optional overrides - omit them to inherit from the base.
 - A variant that differs only in wording is useless; vary the data or the target so the correct answer actually changes.
 - Translations of an exercise must define the **same number of variants in the same order** (the validator enforces parity).
 - Gold solutions of every sql-query variant are executed by `pnpm validate`; variant solutions for other runtimes follow the same manual verification rule as the base (see G6).

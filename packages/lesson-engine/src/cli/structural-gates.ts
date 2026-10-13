@@ -25,6 +25,7 @@ const expectedShape = (exercise: Exercise): string => {
     case 'git-challenge':
       return `${exercise.type}:goals=${exercise.goal.length}`;
     case 'onec-lab':
+    case 'onec-designer':
       return `${exercise.type}:steps=${exercise.steps.length}:goals=${exercise.goal.length}`;
     default:
       return (exercise as Exercise).type;

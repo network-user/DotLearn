@@ -1,5 +1,6 @@
 export * from './topic.schema';
 export * from './exercise.schema';
+export * from './designer.schema';
 export * from './flashcard.schema';
 export * from './interview.schema';
 export * from './submission.schema';

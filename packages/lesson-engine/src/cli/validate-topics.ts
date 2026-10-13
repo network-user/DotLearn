@@ -7,6 +7,7 @@ import { exerciseVariantCount, resolveExerciseVariant } from '@dotlearn/contract
 import { runSqlQuery } from '../runners/sql-query';
 import { runPythonFunction } from '../runners/python-function';
 import { runGitChallenge } from '../runners/git-challenge';
+import { runDesigner } from '../runners/designer';
 import { runOnecLab } from '../runners/onec-lab';
 import type { RunResult } from '../runners/result';
 import { parseFlashcardDeck } from '../loader/parse';
@@ -187,7 +188,8 @@ const validateGoldSolutions = async (
           exercise.type !== 'sql-query' &&
           exercise.type !== 'python-function' &&
           exercise.type !== 'git-challenge' &&
-          exercise.type !== 'onec-lab'
+          exercise.type !== 'onec-lab' &&
+          exercise.type !== 'onec-designer'
         ) {
           continue;
         }
@@ -205,6 +207,8 @@ const validateGoldSolutions = async (
             outcome = runGitChallenge(resolved, resolved.solution);
           } else if (resolved.type === 'onec-lab') {
             outcome = runOnecLab(resolved, resolved.solution);
+          } else if (resolved.type === 'onec-designer') {
+            outcome = runDesigner(resolved, resolved.solution);
           } else {
             continue;
           }

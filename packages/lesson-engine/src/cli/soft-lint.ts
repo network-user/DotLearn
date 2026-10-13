@@ -113,6 +113,7 @@ const exerciseSolutionText = (exercise: Exercise): string[] => {
     case 'git-challenge':
       return exercise.solution;
     case 'onec-lab':
+    case 'onec-designer':
       return exercise.solution.map((command) => JSON.stringify(command));
     default:
       return [];

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { DesignerExercise } from './designer.schema';
 import { SLUG_PATTERN } from './topic.schema';
 
 export const ExerciseId = z.string().regex(/^[a-z0-9-]+$/);
@@ -507,6 +508,7 @@ export const Exercise = z.discriminatedUnion('type', [
   PredictOutputExercise,
   GitChallengeExercise,
   OnecLabExercise,
+  DesignerExercise,
 ]);
 export type Exercise = z.infer<typeof Exercise>;
 
@@ -529,6 +531,9 @@ export const isGitChallenge = (exercise: Exercise): exercise is GitChallengeExer
 
 export const isOnecLab = (exercise: Exercise): exercise is OnecLabExercise =>
   exercise.type === 'onec-lab';
+
+export const isDesigner = (exercise: Exercise): exercise is DesignerExercise =>
+  exercise.type === 'onec-designer';
 
 export const exerciseVariantCount = (exercise: Exercise): number =>
   1 + (exercise.variants?.length ?? 0);
