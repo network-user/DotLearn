@@ -128,7 +128,64 @@ export const DesignerRunner = ({ topicSlug, exercise, conceptId }: DesignerRunne
       pulse={pulse}
     >
       <RunnerStatus message={statusMessage} />
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_17rem]">
+      <div className="flex min-w-0 flex-col gap-3">
+        <aside className="space-y-2 rounded-xl border border-border bg-surface p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs text-fg-muted">
+              {t('designer.stepProgress', {
+                current: doneCount,
+                total: live.steps.length,
+              })}
+            </p>
+            <div className="flex flex-wrap gap-2 sm:ml-auto">
+              <Button
+                type="button"
+                variant="primary"
+                className="h-11 sm:h-9"
+                onClick={() => void grade(commands)}
+                disabled={state.kind === 'pass'}
+              >
+                {t('designer.check')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 sm:h-9"
+                leadingIcon={<RotateCcw size={14} />}
+                onClick={() => update([])}
+              >
+                {t('designer.reset')}
+              </Button>
+            </div>
+          </div>
+          <ol className="flex min-w-0 gap-1.5 overflow-x-auto pb-1">
+            {exercise.steps.map((step, index) => {
+              const done = live.steps[index]?.ok === true;
+              const active = step.id === currentStep?.id;
+              return (
+                <li
+                  key={step.id}
+                  className={cx(
+                    'shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm',
+                    active ? 'bg-surface-2 text-fg' : 'text-fg-muted',
+                  )}
+                >
+                  <span
+                    className={cx(
+                      'mr-2 inline-block h-2 w-2 rounded-full align-middle',
+                      done ? 'bg-accent' : 'border border-border bg-transparent',
+                    )}
+                    aria-hidden
+                  />
+                  {step.title}
+                </li>
+              );
+            })}
+          </ol>
+          {currentStep && allDone ? (
+            <p className="text-sm leading-relaxed text-fg">{currentStep.coach}</p>
+          ) : null}
+        </aside>
         <div ref={standRef} className="relative min-w-0">
           <DesignerStand
             seed={exercise.seed}
@@ -150,61 +207,6 @@ export const DesignerRunner = ({ topicSlug, exercise, conceptId }: DesignerRunne
             />
           ) : null}
         </div>
-        <aside className="space-y-3 rounded-xl border border-border bg-surface p-3">
-          <p className="text-xs text-fg-muted">
-            {t('designer.stepProgress', {
-              current: doneCount,
-              total: live.steps.length,
-            })}
-          </p>
-          <ol className="space-y-1.5">
-            {exercise.steps.map((step, index) => {
-              const done = live.steps[index]?.ok === true;
-              const active = step.id === currentStep?.id;
-              return (
-                <li
-                  key={step.id}
-                  className={cx(
-                    'rounded-md px-2 py-1.5 text-sm',
-                    active ? 'bg-surface-2 text-fg' : 'text-fg-muted',
-                  )}
-                >
-                  <span
-                    className={cx(
-                      'mr-2 inline-block h-2 w-2 rounded-full align-middle',
-                      done ? 'bg-accent' : 'border border-border bg-transparent',
-                    )}
-                    aria-hidden
-                  />
-                  {step.title}
-                </li>
-              );
-            })}
-          </ol>
-          {currentStep && allDone ? (
-            <p className="text-sm leading-relaxed text-fg">{currentStep.coach}</p>
-          ) : null}
-          <div className="flex flex-col gap-2">
-            <Button
-              type="button"
-              variant="primary"
-              className="h-11 w-full sm:h-9"
-              onClick={() => void grade(commands)}
-              disabled={state.kind === 'pass'}
-            >
-              {t('designer.check')}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-11 w-full sm:h-9"
-              leadingIcon={<RotateCcw size={14} />}
-              onClick={() => update([])}
-            >
-              {t('designer.reset')}
-            </Button>
-          </div>
-        </aside>
       </div>
       <HintBlock hints={exercise.hints} onAllHintsShown={() => setHintsExhausted(true)} />
       <SolutionReveal

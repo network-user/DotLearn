@@ -22,6 +22,7 @@ import {
   PanelTitle,
   fieldClass,
 } from '@/components/clinic/chrome';
+import { standTableClass } from '@/components/onec/stand-layout';
 import {
   appointmentCaption,
   doctorName,
@@ -139,7 +140,7 @@ export const PersonForm = ({
           </ActionButton>
         ) : null}
       </CommandBar>
-      <div className="grid gap-3 p-3 sm:grid-cols-3">
+      <div className="grid gap-3 p-3 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-3">
         <Field label="Фамилия">
           <input
             className={fieldClass}
@@ -231,7 +232,7 @@ export const NamedForm = ({
           </ActionButton>
         ) : null}
       </CommandBar>
-      <div className="p-3 sm:max-w-md">
+      <div className="p-3 group-data-[tier=wide]/stand:max-w-md">
         <Field label="Наименование">
           <input
             className={fieldClass}
@@ -346,7 +347,7 @@ export const AppointmentForm = ({
           </ActionButton>
         ) : null}
       </CommandBar>
-      <div className="grid gap-3 p-3 sm:grid-cols-2">
+      <div className="grid gap-3 p-3 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-2">
         <Field label="Дата документа">
           <input
             className={fieldClass}
@@ -527,7 +528,7 @@ export const ReceptionForm = ({
           </ActionButton>
         ) : null}
       </CommandBar>
-      <div className="grid gap-3 p-3 sm:grid-cols-2">
+      <div className="grid gap-3 p-3 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-2">
         <Field label="Дата">
           <input
             className={fieldClass}
@@ -558,7 +559,7 @@ export const ReceptionForm = ({
         </Field>
       </div>
       {selected ? (
-        <dl className="mx-3 mb-3 grid gap-2 rounded-md border border-[#e4d8c6] bg-[#fffdf8] p-3 text-sm sm:grid-cols-2">
+        <dl className="mx-3 mb-3 grid gap-2 rounded-md border border-[#e4d8c6] bg-[#fffdf8] p-3 text-sm group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-2">
           <div>
             <dt className="text-xs text-[#5c6b7a]">Пациент</dt>
             <dd>{patientName(state, selected.patientId)}</dd>
@@ -577,8 +578,8 @@ export const ReceptionForm = ({
           </div>
         </dl>
       ) : null}
-      <div className="overflow-x-auto px-3 pb-3">
-        <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
+      <div className="min-w-0 overflow-x-auto px-3 pb-3">
+        <table className={`${standTableClass} text-sm`}>
           <caption className="sr-only">Список услуг приёма</caption>
           <thead>
             <tr className="text-xs font-medium text-[#5c6b7a]">
@@ -645,7 +646,7 @@ export const ReceptionForm = ({
                 </td>
                 <td className="px-2 py-2 tabular-nums">{formatNumber(lineAmount(line))}</td>
                 <td className="px-2 py-2">
-                  <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="flex min-w-0 flex-col gap-2 group-data-[tier=medium]/stand:flex-row group-data-[tier=wide]/stand:flex-row">
                     <ActionButton
                       aria-label={`Поднять строку ${index + 1}`}
                       disabled={index === 0}

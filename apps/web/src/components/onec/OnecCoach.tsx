@@ -95,8 +95,8 @@ export const OnecCoach = ({
     };
   }, [rootRef, revision, title, index]);
 
-  const cardWidth = Math.min(340, Math.max(220, frame.width - 16));
-  const cardHeight = 210;
+  const cardWidth = Math.min(340, Math.max(160, frame.width - 16));
+  const cardHeight = Math.min(220, Math.max(120, frame.height - 16));
   let cardLeft = 8;
   let cardTop = Math.max(8, frame.height - cardHeight - 8);
   if (box && frame.width > 0) {
@@ -124,6 +124,8 @@ export const OnecCoach = ({
       cardLeft = fits.left;
       cardTop = fits.top;
     }
+    cardLeft = Math.min(Math.max(8, cardLeft), Math.max(8, frame.width - cardWidth - 8));
+    cardTop = Math.min(Math.max(8, cardTop), Math.max(8, frame.height - cardHeight - 8));
   }
 
   return (
@@ -144,8 +146,8 @@ export const OnecCoach = ({
       )}
       <div
         role="note"
-        className="pointer-events-auto absolute rounded-md border border-[#e4d48a] bg-white text-[#1f1f1f] shadow-float"
-        style={{ left: cardLeft, top: cardTop, width: cardWidth }}
+        className="pointer-events-auto absolute overflow-auto rounded-md border border-[#e4d48a] bg-white text-[#1f1f1f] shadow-float"
+        style={{ left: cardLeft, top: cardTop, width: cardWidth, maxHeight: cardHeight }}
       >
         <div className="border-l-4 border-[#f8d20a] px-3 py-2.5">
           <p className="text-[11px] text-[#6b5a28]">

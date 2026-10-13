@@ -39,6 +39,11 @@ import {
   type ClinicScreen,
   type ListObject,
 } from '@/components/clinic/screen';
+import {
+  standTableClass,
+  standTableLaterClass,
+  useStandTier,
+} from '@/components/onec/stand-layout';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cx } from '@/components/ui/cx';
 import { loadClinicState, saveClinicState } from '@/lib/clinic-store';
@@ -204,13 +209,13 @@ const HomeView = ({
     ['Проведено', state.receptions.filter((item) => item.posted && !item.marked).length],
   ] as const;
   return (
-    <div className="space-y-4 p-3 sm:p-4">
+    <div className="space-y-4 p-3 group-data-[tier=medium]/stand:p-4 group-data-[tier=wide]/stand:p-4">
       <p className="max-w-prose text-sm leading-relaxed text-[#3d4b5c]">
         Заведите справочники, создайте запись на приём и проведите приём со списком услуг.
         Проведение заполняет регистр загруженности врачей. Демобаза уже содержит два приёма из
         итогового проекта.
       </p>
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-2 group-data-[tier=wide]/stand:grid-cols-4">
         {stats.map(([label, value]) => (
           <div key={label} className="rounded-md border border-[#e4d8c6] bg-[#fffdf8] px-3 py-2">
             <dt className="text-xs text-[#5c6b7a]">{label}</dt>
@@ -218,7 +223,7 @@ const HomeView = ({
           </div>
         ))}
       </dl>
-      <div className="flex flex-col gap-2 sm:flex-row">
+      <div className="flex flex-col gap-2 group-data-[tier=medium]/stand:flex-row group-data-[tier=wide]/stand:flex-row">
         <button
           type="button"
           onClick={() => onOpen(appointmentScreen(null))}
@@ -234,7 +239,7 @@ const HomeView = ({
           Новый приём
         </button>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-2">
         {cards.map((card) => (
           <button
             key={card.title}
@@ -285,7 +290,6 @@ const ListView = ({
     if (needle.length === 0) return true;
     return row.cells.join(' ').toLocaleLowerCase('ru').includes(needle);
   });
-  const wide = LIST_HEADERS[object].length > 2;
   const showMarkedId = useId();
   const selectedRow = rows.find((row) => row.id === selected);
   return (
@@ -375,7 +379,10 @@ const ListView = ({
           Показывать помеченные
         </label>
         <input
-          className={cx(fieldClass, 'sm:max-w-xs')}
+          className={cx(
+            fieldClass,
+            'group-data-[tier=medium]/stand:max-w-xs group-data-[tier=wide]/stand:max-w-xs',
+          )}
           value={query}
           placeholder="Найти"
           aria-label="Поиск в списке"
@@ -387,15 +394,19 @@ const ListView = ({
           {rows.length === 0 ? 'Список пуст. Нажмите «Создать».' : 'Ничего не найдено.'}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table
-            className={cx('w-full border-collapse text-left text-sm', wide && 'min-w-[52rem]')}
-          >
+        <div className="min-w-0 overflow-x-auto">
+          <table className={cx(standTableClass, 'text-sm')}>
             <caption className="sr-only">{LIST_TITLES[object]}</caption>
             <thead>
               <tr className="text-xs font-medium text-[#5c6b7a]">
-                {LIST_HEADERS[object].map((title) => (
-                  <th key={title} className="px-3 py-2 font-medium">
+                {LIST_HEADERS[object].map((title, index) => (
+                  <th
+                    key={title}
+                    className={cx(
+                      'px-3 py-2 font-medium',
+                      LIST_HEADERS[object].length > 4 && index > 2 && standTableLaterClass,
+                    )}
+                  >
                     {title}
                   </th>
                 ))}
@@ -413,7 +424,13 @@ const ListView = ({
                   )}
                 >
                   {row.cells.map((cell, index) => (
-                    <td key={`${row.id}-${index}`} className="px-3 py-1">
+                    <td
+                      key={`${row.id}-${index}`}
+                      className={cx(
+                        'px-3 py-1',
+                        row.cells.length > 4 && index > 2 && standTableLaterClass,
+                      )}
+                    >
                       {index === 0 ? (
                         <button
                           type="button"
@@ -439,6 +456,7 @@ const ListView = ({
 };
 
 export const ClinicApp = () => {
+  const { ref: frameRef, tier } = useStandTier(760, 1040);
   const [state, setState] = useState<ClinicState | null>(null);
   const [screen, setScreen] = useState<ClinicScreen>({ kind: 'home' });
   const [error, setError] = useState<string | null>(null);
@@ -500,7 +518,11 @@ export const ClinicApp = () => {
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[#d7cbb8] bg-[#f6f1e8] text-[#1c2430] shadow-sm">
+    <div
+      ref={frameRef}
+      data-tier={tier}
+      className="group/stand w-full min-w-0 overflow-hidden rounded-xl border border-[#d7cbb8] bg-[#f6f1e8] text-[#1c2430] shadow-sm"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2 bg-[#2c3848] px-3 py-2.5 text-white">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">Учёт пациентов и приёмов</p>
@@ -530,7 +552,12 @@ export const ClinicApp = () => {
         </div>
       </div>
 
-      <div className="border-b border-[#e4d8c6] bg-[#fffdf8] p-2 md:hidden">
+      <div
+        className={cx(
+          'border-b border-[#e4d8c6] bg-[#fffdf8] p-2',
+          tier === 'compact' ? 'block' : 'hidden',
+        )}
+      >
         <label
           htmlFor={sectionId}
           className="flex flex-col gap-1 text-xs font-medium text-[#5c6b7a]"
@@ -564,10 +591,18 @@ export const ClinicApp = () => {
         </label>
       </div>
 
-      <div className="md:flex md:min-h-[36rem]">
+      <div
+        className={cx(
+          tier === 'compact' ? 'block' : 'flex min-h-[28rem]',
+          tier === 'wide' && 'min-h-[36rem]',
+        )}
+      >
         <nav
           aria-label="Разделы базы"
-          className="hidden w-60 shrink-0 flex-col gap-4 border-r border-[#e4d8c6] bg-[#f6f1e8] p-3 md:flex"
+          className={cx(
+            'w-60 shrink-0 flex-col gap-4 border-r border-[#e4d8c6] bg-[#f6f1e8] p-3',
+            tier === 'compact' ? 'hidden' : 'flex',
+          )}
         >
           <button
             type="button"

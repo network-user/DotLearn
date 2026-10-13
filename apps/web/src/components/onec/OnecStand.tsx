@@ -16,6 +16,15 @@ import {
   replayOnec,
 } from '@dotlearn/lesson-engine';
 
+import {
+  onecCmdClass,
+  onecCmdPrimary,
+  onecFieldClass,
+  standBodyClass,
+  standShellClass,
+  standTableClass,
+  useStandTier,
+} from '@/components/onec/stand-layout';
 import { cx } from '@/components/ui/cx';
 
 interface OnecStandProps {
@@ -74,14 +83,18 @@ const LIST_TITLE: Record<OnecList, string> = {
 
 type IconName = 'home' | 'book' | 'doc' | 'chart' | 'tree';
 
-const fieldClass =
-  'h-11 w-full rounded-sm border border-[#8f8f8f] bg-white px-2 text-[16px] text-[#1f1f1f] outline-none md:h-7 md:text-[13px]';
+const fieldClass = onecFieldClass;
+const cmdClass = onecCmdClass;
+const cmdPrimary = onecCmdPrimary;
 
-const cmdClass =
-  'inline-flex min-h-11 items-center rounded-sm border border-[#bdbdbd] bg-[#f7f7f7] px-2.5 text-[16px] text-[#1f1f1f] md:min-h-8 md:text-[13px]';
+const sectionNavClass =
+  'flex w-full min-w-0 shrink-0 gap-0.5 overflow-x-auto bg-[#f8d20a] p-1 group-data-[tier=medium]/stand:w-24 group-data-[tier=medium]/stand:flex-col group-data-[tier=medium]/stand:overflow-x-hidden group-data-[tier=medium]/stand:overflow-y-auto group-data-[tier=wide]/stand:w-48 group-data-[tier=wide]/stand:flex-col group-data-[tier=wide]/stand:overflow-x-hidden group-data-[tier=wide]/stand:overflow-y-auto';
 
-const cmdPrimary =
-  'inline-flex min-h-11 items-center rounded-sm border border-[#d6b000] bg-[#ffe14a] px-2.5 text-[16px] font-medium text-[#1f1f1f] md:min-h-8 md:text-[13px]';
+const functionNavClass =
+  'flex w-full min-w-0 shrink-0 gap-1 overflow-x-auto border-b border-[#e4d48a] bg-[#fff3b0] p-1 group-data-[tier=medium]/stand:w-40 group-data-[tier=medium]/stand:flex-col group-data-[tier=medium]/stand:overflow-x-hidden group-data-[tier=medium]/stand:overflow-y-auto group-data-[tier=medium]/stand:border-b-0 group-data-[tier=medium]/stand:border-r group-data-[tier=wide]/stand:w-56 group-data-[tier=wide]/stand:flex-col group-data-[tier=wide]/stand:overflow-x-hidden group-data-[tier=wide]/stand:overflow-y-auto group-data-[tier=wide]/stand:border-b-0 group-data-[tier=wide]/stand:border-r';
+
+const sectionButtonClass =
+  'flex min-h-11 min-w-[4.5rem] shrink-0 items-center gap-2 rounded-sm px-2 py-1 text-left group-data-[tier=medium]/stand:w-full group-data-[tier=medium]/stand:min-w-0 group-data-[tier=medium]/stand:flex-col group-data-[tier=medium]/stand:gap-0.5 group-data-[tier=medium]/stand:px-1 group-data-[tier=medium]/stand:text-center group-data-[tier=wide]/stand:min-h-8 group-data-[tier=wide]/stand:w-full group-data-[tier=wide]/stand:min-w-0 group-data-[tier=wide]/stand:flex-row group-data-[tier=wide]/stand:px-2 group-data-[tier=wide]/stand:text-left';
 
 const formatDate = (iso: string): string => {
   const [year, month, day] = iso.split('-');
@@ -214,6 +227,7 @@ const Glyph = ({ name }: { name: IconName }) => {
 };
 
 export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: OnecStandProps) => {
+  const { ref: frameRef, tier } = useStandTier();
   const state = useMemo(() => replayOnec(seed, commands), [seed, commands]);
   const [banner, setBanner] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -272,17 +286,14 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
         : null;
 
   return (
-    <div className="flex h-[min(44rem,calc(100dvh-9rem))] min-h-[32rem] flex-col overflow-hidden border border-[#b5b5b5] bg-white font-[Arial,Helvetica,sans-serif] text-[16px] text-[#1f1f1f] shadow-sm md:text-[13px]">
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+    <div ref={frameRef} data-tier={tier} className={standShellClass}>
+      <div className={standBodyClass}>
         <nav
-          className={cx(
-            'flex shrink-0 gap-0.5 overflow-x-auto bg-[#f8d20a] p-1 md:w-48 md:flex-col md:overflow-y-auto',
-            lit('sections'),
-          )}
+          className={cx(sectionNavClass, lit('sections'))}
           aria-label="Панель разделов"
           {...attr('sections')}
         >
-          <div className="hidden items-center gap-2 px-2 py-2 md:flex">
+          <div className="hidden items-center gap-2 px-2 py-2 group-data-[tier=wide]/stand:flex">
             <span className="grid h-8 w-8 place-items-center rounded-sm bg-white/80 text-[11px] font-semibold">
               УТ
             </span>
@@ -300,7 +311,7 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
                 type="button"
                 onClick={() => send({ op: 'open-section', section: section.id })}
                 className={cx(
-                  'flex min-h-11 min-w-[4.5rem] shrink-0 items-center gap-2 rounded-sm px-2 py-1 text-left md:min-w-0',
+                  sectionButtonClass,
                   active ? 'bg-[#fff8cc] font-semibold' : 'hover:bg-[#ffe56a]',
                   lit(section.spot),
                 )}
@@ -309,22 +320,23 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
                 <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/75">
                   <Glyph name={section.icon} />
                 </span>
-                <span className="text-[12px] leading-tight md:text-[13px]">{section.label}</span>
+                <span className="w-full break-words text-[11px] leading-tight group-data-[tier=wide]/stand:w-auto group-data-[tier=wide]/stand:text-[13px]">
+                  {section.label}
+                </span>
               </button>
             );
           })}
-          <div className="mt-auto hidden px-2 py-2 text-[11px] text-[#5a4a10] md:block">Ученик</div>
+          <div className="mt-auto hidden px-2 py-2 text-[11px] text-[#5a4a10] group-data-[tier=wide]/stand:block">
+            Ученик
+          </div>
         </nav>
 
         <aside
-          className={cx(
-            'flex shrink-0 gap-1 overflow-x-auto border-b border-[#e4d48a] bg-[#fff3b0] p-1 md:w-56 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r',
-            lit('function-panel'),
-          )}
+          className={cx(functionNavClass, lit('function-panel'))}
           aria-label="Панель функций"
           {...attr('function-panel')}
         >
-          <p className="hidden px-2 py-2 text-[12px] font-semibold text-[#6a5420] md:block">
+          <p className="hidden px-2 py-2 text-[12px] font-semibold text-[#6a5420] group-data-[tier=medium]/stand:block group-data-[tier=wide]/stand:block">
             {SECTIONS.find((item) => item.id === state.ui.section)?.label}
           </p>
           {state.ui.section === 'home' ? (
@@ -384,14 +396,14 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
           <div
-            className="flex h-11 shrink-0 items-end gap-1 overflow-x-auto border-b border-[#d0d0d0] bg-[#ececec] px-1 md:h-9"
+            className="flex h-11 shrink-0 items-end gap-1 overflow-x-auto border-b border-[#d0d0d0] bg-[#ececec] px-1 group-data-[tier=wide]/stand:h-9"
             aria-label="Панель открытых"
           >
             <button
               type="button"
               onClick={() => send({ op: 'open-section', section: 'home' })}
               className={cx(
-                'inline-flex min-h-11 items-center gap-1.5 px-3 text-[16px] md:min-h-8 md:text-[13px]',
+                'inline-flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap px-3 text-[16px] group-data-[tier=wide]/stand:min-h-8 group-data-[tier=wide]/stand:text-[13px]',
                 state.ui.section === 'home' && !draft
                   ? 'border border-b-white border-[#d0d0d0] bg-white'
                   : 'text-[#444]',
@@ -401,12 +413,12 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
               Начальная страница
             </button>
             {tabTitle ? (
-              <span className="inline-flex min-h-11 items-center border border-b-white border-[#d0d0d0] bg-white md:min-h-8">
-                <span className="px-3">{tabTitle}</span>
+              <span className="inline-flex min-h-11 shrink-0 items-center border border-b-white border-[#d0d0d0] bg-white group-data-[tier=wide]/stand:min-h-8">
+                <span className="whitespace-nowrap px-3">{tabTitle}</span>
                 <button
                   type="button"
                   aria-label="Закрыть"
-                  className="inline-flex min-h-11 min-w-11 items-center justify-center text-[#666] md:min-h-8 md:min-w-8"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center text-[#666] group-data-[tier=wide]/stand:min-h-8 group-data-[tier=wide]/stand:min-w-8"
                   onClick={() => {
                     if (creating) {
                       setCreating(false);
@@ -429,14 +441,14 @@ export const OnecStand = ({ seed, commands, onChange, focus, locked = false }: O
 
           {banner ? (
             <p
-              className="shrink-0 border-b border-[#e7b4a0] bg-[#fff4f0] px-3 py-2 text-[16px] text-[#8a341c] md:text-[13px]"
+              className="shrink-0 border-b border-[#e7b4a0] bg-[#fff4f0] px-3 py-2 text-[16px] text-[#8a341c] group-data-[tier=wide]/stand:text-[13px]"
               role="alert"
             >
               {banner}
             </p>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-auto bg-white">
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-white">
             {state.ui.section === 'home' && !draft ? <HomePane onOpen={openList} /> : null}
 
             {state.ui.list &&
@@ -659,7 +671,7 @@ const FunctionItem = ({
     type="button"
     onClick={onClick}
     className={cx(
-      'min-h-11 shrink-0 rounded-sm px-3 text-left text-[16px] md:min-h-8 md:text-[13px]',
+      'min-h-11 shrink-0 whitespace-nowrap rounded-sm px-3 text-left text-[16px] group-data-[tier=medium]/stand:w-full group-data-[tier=medium]/stand:whitespace-normal group-data-[tier=wide]/stand:min-h-8 group-data-[tier=wide]/stand:w-full group-data-[tier=wide]/stand:whitespace-normal group-data-[tier=wide]/stand:text-[13px]',
       active ? 'bg-white font-semibold' : 'hover:bg-[#fff8d6]',
       className,
     )}
@@ -670,9 +682,11 @@ const FunctionItem = ({
 );
 
 const HomePane = ({ onOpen }: { onOpen: (object: OnecList) => void }) => (
-  <div className="bg-[#f7f7f7] p-3 md:p-5">
-    <h2 className="mb-3 text-[16px] font-semibold md:text-[15px]">Начальная страница</h2>
-    <div className="grid gap-3 md:grid-cols-3">
+  <div className="bg-[#f7f7f7] p-3 group-data-[tier=wide]/stand:p-5">
+    <h2 className="mb-3 text-[16px] font-semibold group-data-[tier=wide]/stand:text-[15px]">
+      Начальная страница
+    </h2>
+    <div className="grid gap-3 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-3">
       <HomeGroup title="Справочники">
         <HomeLink label="Контрагенты" onClick={() => onOpen('counterparties')} />
         <HomeLink label="Номенклатура" onClick={() => onOpen('products')} />
@@ -702,7 +716,7 @@ const HomeLink = ({ label, onClick }: { label: string; onClick: () => void }) =>
   <button
     type="button"
     onClick={onClick}
-    className="min-h-11 border-b border-[#f2f2f2] px-3 text-left text-[16px] last:border-0 hover:bg-[#fff8dc] md:min-h-9 md:text-[13px]"
+    className="min-h-11 border-b border-[#f2f2f2] px-3 text-left text-[16px] last:border-0 hover:bg-[#fff8dc] group-data-[tier=wide]/stand:min-h-9 group-data-[tier=wide]/stand:text-[13px]"
   >
     {label}
   </button>
@@ -733,7 +747,7 @@ const CatalogList = ({
   onCreate: () => void;
   onToggleMark: (name: string) => void;
 }) => (
-  <div className="flex min-h-full flex-col">
+  <div className="flex min-h-full min-w-0 flex-col">
     <FormTitle title={title} />
     <div className="flex flex-wrap items-center gap-2 border-b border-[#e4e4e4] bg-[#f7f7f7] px-2 py-1">
       <button
@@ -755,12 +769,15 @@ const CatalogList = ({
           value={search}
           onChange={(event) => onSearch(event.target.value)}
           placeholder="Найти"
-          className={cx(fieldClass, 'md:max-w-xs')}
+          className={cx(
+            fieldClass,
+            'group-data-[tier=medium]/stand:max-w-xs group-data-[tier=wide]/stand:max-w-xs',
+          )}
         />
       </label>
     </div>
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[22rem] border-collapse text-left">
+    <div className="min-w-0 overflow-x-auto">
+      <table className={standTableClass}>
         <thead className="bg-[#f4f4f4] text-[#555]">
           <tr>
             <th className="border border-[#e4e4e4] px-2 py-1.5 font-medium">Наименование</th>
@@ -790,7 +807,10 @@ const CatalogList = ({
                 <td className="border border-[#eee] px-2 py-1.5">
                   <button
                     type="button"
-                    className={cx('min-h-11 text-[#444] md:min-h-8', index === 0 && litMark)}
+                    className={cx(
+                      'min-h-11 text-[#444] group-data-[tier=wide]/stand:min-h-8',
+                      index === 0 && litMark,
+                    )}
                     {...(index === 0 ? markAttr : {})}
                     onClick={() => onToggleMark(row.name)}
                   >
@@ -827,7 +847,7 @@ const CatalogForm = ({
   onSave: () => void;
 }) => (
   <form
-    className={cx('flex min-h-full flex-col', lit)}
+    className={cx('flex min-h-full min-w-0 flex-col', lit)}
     {...attrs}
     onSubmit={(event) => {
       event.preventDefault();
@@ -847,7 +867,7 @@ const CatalogForm = ({
       <p className="text-[13px] font-semibold text-[#c65c12]">Основное</p>
       <label
         htmlFor="onec-catalog-name"
-        className="grid items-center gap-1 md:grid-cols-[9rem_1fr]"
+        className="grid items-center gap-1 group-data-[tier=wide]/stand:grid-cols-[9rem_minmax(0,1fr)]"
       >
         <span className="text-[#555]">Наименование</span>
         <input
@@ -885,7 +905,7 @@ const DocList = ({
   onCreate: () => void;
   onOpen: (id: string) => void;
 }) => (
-  <div className="flex min-h-full flex-col">
+  <div className="flex min-h-full min-w-0 flex-col">
     <FormTitle title={title} />
     <div className="border-b border-[#e4e4e4] bg-[#f7f7f7] px-2 py-1">
       <button
@@ -897,8 +917,8 @@ const DocList = ({
         Создать
       </button>
     </div>
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[28rem] border-collapse text-left">
+    <div className="min-w-0 overflow-x-auto">
+      <table className={standTableClass}>
         <thead className="bg-[#f4f4f4] text-[#555]">
           <tr>
             <th className="border border-[#e4e4e4] px-2 py-1.5 font-medium">Номер</th>
@@ -921,7 +941,7 @@ const DocList = ({
                   <button
                     type="button"
                     className={cx(
-                      'min-h-11 text-left text-[#1a4f8b] underline-offset-2 hover:underline md:min-h-8',
+                      'min-h-11 text-left text-[#1a4f8b] underline-offset-2 hover:underline group-data-[tier=wide]/stand:min-h-8',
                       row.deletionMark && 'line-through',
                     )}
                     onClick={() => onOpen(row.id)}
@@ -950,9 +970,11 @@ const DocList = ({
 );
 
 const FormTitle = ({ title, extra }: { title: string; extra?: string }) => (
-  <div className="flex items-baseline justify-between gap-3 border-b border-[#e4e4e4] px-3 py-2">
-    <h2 className="text-[16px] font-semibold md:text-[15px]">{title}</h2>
-    {extra ? <span className="text-[12px] text-[#555]">{extra}</span> : null}
+  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-[#e4e4e4] px-3 py-2">
+    <h2 className="min-w-0 break-words text-[16px] font-semibold group-data-[tier=wide]/stand:text-[15px]">
+      {title}
+    </h2>
+    {extra ? <span className="shrink-0 text-[12px] text-[#555]">{extra}</span> : null}
   </div>
 );
 
@@ -1032,7 +1054,7 @@ const ReceiptForm = ({
   const qtyTotal = draft.lines.reduce((sum, line) => sum + line.qty, 0);
   const sumTotal = draft.lines.reduce((sum, line) => sum + line.qty * line.price, 0);
   return (
-    <div className={cx('flex min-h-full flex-col', formLit)} {...formAttr}>
+    <div className={cx('flex min-h-full min-w-0 flex-col', formLit)} {...formAttr}>
       <FormTitle
         title={`${title} ${draft.number} от ${formatDate(draft.date)}${marked ? ' (пометка удаления)' : ''}`}
         extra={posted ? 'Проведен' : 'Не проведен'}
@@ -1057,8 +1079,13 @@ const ReceiptForm = ({
           Закрыть
         </button>
       </div>
-      <div className={cx('grid gap-2 p-3 md:grid-cols-2', fieldsLit)} {...fieldsAttr}>
-        <p className="text-[13px] font-semibold text-[#c65c12] md:col-span-2">Шапка</p>
+      <div
+        className={cx('grid gap-2 p-3 group-data-[tier=wide]/stand:grid-cols-2', fieldsLit)}
+        {...fieldsAttr}
+      >
+        <p className="text-[13px] font-semibold text-[#c65c12] group-data-[tier=wide]/stand:col-span-2">
+          Шапка
+        </p>
         <Field label="Контрагент">
           <select
             aria-label="Контрагент"
@@ -1094,12 +1121,12 @@ const ReceiptForm = ({
           </select>
         </Field>
       </div>
-      <div className="border-t border-[#e4e4e4]">
+      <div className="min-w-0 border-t border-[#e4e4e4]">
         <p className="border-b border-[#eee] px-3 py-1.5 text-[13px] font-semibold text-[#c65c12]">
           Товары ({draft.lines.length})
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[32rem] border-collapse text-left">
+        <div className="min-w-0 overflow-x-auto">
+          <table className={standTableClass}>
             <thead className="bg-[#f4f4f4] text-[#555]">
               <tr>
                 <th className="border border-[#e4e4e4] px-2 py-1.5 font-medium">Номенклатура</th>
@@ -1127,7 +1154,7 @@ const ReceiptForm = ({
                   <td className="border border-[#eee] px-2 py-1.5">
                     <button
                       type="button"
-                      className="min-h-11 text-[#8a341c] md:min-h-8"
+                      className="min-h-11 text-[#8a341c] group-data-[tier=wide]/stand:min-h-8"
                       onClick={() => onRemoveLine(index)}
                     >
                       Удалить
@@ -1139,13 +1166,13 @@ const ReceiptForm = ({
           </table>
         </div>
         <form
-          className="grid gap-2 border-t border-[#eee] p-3 md:grid-cols-[1.4fr_0.6fr_0.6fr_auto] md:items-end"
+          className="grid gap-2 border-t border-[#eee] p-3 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-[minmax(0,1.4fr)_minmax(4.5rem,0.7fr)_minmax(4.5rem,0.7fr)_auto] group-data-[tier=wide]/stand:items-end"
           onSubmit={(event) => {
             event.preventDefault();
             onAddLine();
           }}
         >
-          <Field label="Номенклатура">
+          <Field label="Номенклатура" className="group-data-[tier=medium]/stand:col-span-2">
             <select
               aria-label="Номенклатура"
               className={fieldClass}
@@ -1178,7 +1205,10 @@ const ReceiptForm = ({
               onChange={(event) => onLinePrice(event.target.value)}
             />
           </Field>
-          <button type="submit" className={cmdClass}>
+          <button
+            type="submit"
+            className={cx(cmdClass, 'group-data-[tier=medium]/stand:col-span-2')}
+          >
             Добавить
           </button>
         </form>
@@ -1187,13 +1217,13 @@ const ReceiptForm = ({
         </p>
       </div>
       {showMoves ? (
-        <div className="border-t border-[#e4e4e4]">
+        <div className="min-w-0 border-t border-[#e4e4e4]">
           <p className="border-b border-[#eee] px-3 py-1.5 text-[13px] font-semibold">
             Движения: товары на складах
           </p>
           {posted ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[24rem] text-left">
+            <div className="min-w-0 overflow-x-auto">
+              <table className={standTableClass}>
                 <thead className="bg-[#f4f4f4] text-[#555]">
                   <tr>
                     <th className="px-2 py-1.5 font-medium">Вид</th>
@@ -1225,8 +1255,21 @@ const ReceiptForm = ({
   );
 };
 
-const Field = ({ label, children }: { label: string; children: ReactNode }) => (
-  <div className="grid items-center gap-1 md:grid-cols-[7.5rem_1fr]">
+const Field = ({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) => (
+  <div
+    className={cx(
+      'grid min-w-0 items-center gap-1 group-data-[tier=wide]/stand:grid-cols-[7.5rem_minmax(0,1fr)]',
+      className,
+    )}
+  >
     <span className="text-[#555]">{label}</span>
     {children}
   </div>
@@ -1239,8 +1282,8 @@ const BalancePane = ({
 }) => (
   <div>
     <FormTitle title="Остатки товаров" />
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[24rem] border-collapse text-left">
+    <div className="min-w-0 overflow-x-auto">
+      <table className={standTableClass}>
         <thead className="bg-[#f4f4f4] text-[#555]">
           <tr>
             <th className="border border-[#e4e4e4] px-2 py-1.5 font-medium">Номенклатура</th>
@@ -1294,7 +1337,7 @@ const QueryPane = ({
   const columns = rows && rows.length > 0 ? Object.keys(rows[0] ?? {}) : [];
   return (
     <form
-      className={cx('border-t border-[#e4e4e4] p-3', lit)}
+      className={cx('min-w-0 border-t border-[#e4e4e4] p-3', lit)}
       {...attrs}
       onSubmit={(event) => {
         event.preventDefault();
@@ -1311,14 +1354,14 @@ const QueryPane = ({
         value={text}
         onChange={(event) => onText(event.target.value)}
         rows={4}
-        className="mt-2 w-full rounded-sm border border-[#8f8f8f] p-2 text-[16px] text-[#1f1f1f] md:text-[13px]"
+        className="mt-2 w-full min-w-0 rounded-sm border border-[#8f8f8f] p-2 text-[16px] text-[#1f1f1f] group-data-[tier=wide]/stand:text-[13px]"
       />
       <button type="submit" className={cx(cmdPrimary, 'mt-2')}>
         Выполнить
       </button>
       {rows ? (
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full min-w-[18rem] text-left">
+        <div className="mt-2 min-w-0 overflow-x-auto">
+          <table className={standTableClass}>
             <thead className="bg-[#f4f4f4] text-[#555]">
               <tr>
                 {columns.map((column) => (

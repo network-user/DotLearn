@@ -1,6 +1,7 @@
 import { doctorLoad, workloadTable, type ClinicState } from '@dotlearn/lesson-engine/clinic';
 
 import { ActionButton, CommandBar, PanelTitle } from '@/components/clinic/chrome';
+import { standTableClass, standTableLaterClass } from '@/components/onec/stand-layout';
 import { doctorName, formatNumber, formatStamp, serviceName } from '@/components/clinic/format';
 import { registerScreen, type ClinicScreen } from '@/components/clinic/screen';
 
@@ -39,14 +40,21 @@ export const RegisterView = ({
       {rows.length === 0 ? (
         <EmptyNote text="Движений нет. Проведите приём пациента, и строки появятся здесь." />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[52rem] border-collapse text-left text-sm">
+        <div className="min-w-0 overflow-x-auto">
+          <table className={`${standTableClass} text-sm`}>
             <caption className="sr-only">Движения регистра загруженности врачей</caption>
             <thead>
               <tr className="text-xs font-medium text-[#5c6b7a]">
                 {['Период', 'Приём', 'Врач', 'Услуга', 'Количество', 'Выручка', 'Длительность'].map(
-                  (title) => (
-                    <th key={title} className="px-3 py-2 font-medium">
+                  (title, index) => (
+                    <th
+                      key={title}
+                      className={
+                        index > 2
+                          ? `px-3 py-2 font-medium ${standTableLaterClass}`
+                          : 'px-3 py-2 font-medium'
+                      }
+                    >
                       {title}
                     </th>
                   ),
@@ -63,10 +71,18 @@ export const RegisterView = ({
                       {registrar ? `№${registrar.number}` : 'не найден'}
                     </td>
                     <td className="px-3 py-2">{doctorName(state, row.doctorId)}</td>
-                    <td className="px-3 py-2">{serviceName(state, row.serviceId)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.count)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.revenue)}</td>
-                    <td className="px-3 py-2">{formatNumber(row.duration)}</td>
+                    <td className={`px-3 py-2 ${standTableLaterClass}`}>
+                      {serviceName(state, row.serviceId)}
+                    </td>
+                    <td className={`px-3 py-2 ${standTableLaterClass}`}>
+                      {formatNumber(row.count)}
+                    </td>
+                    <td className={`px-3 py-2 ${standTableLaterClass}`}>
+                      {formatNumber(row.revenue)}
+                    </td>
+                    <td className={`px-3 py-2 ${standTableLaterClass}`}>
+                      {formatNumber(row.duration)}
+                    </td>
                   </tr>
                 );
               })}
@@ -107,14 +123,21 @@ export const ReportView = ({
       {rows.length === 0 ? (
         <EmptyNote text="Отчёт пуст, пока нет проведённых приёмов." />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
+        <div className="min-w-0 overflow-x-auto">
+          <table className={`${standTableClass} text-sm`}>
             <caption className="sr-only">Отчёт по загруженности врачей</caption>
             <thead>
               <tr className="text-xs font-medium text-[#5c6b7a]">
                 {['Врач', 'Услуга', 'Количество приёмов', 'Выручка', 'Длительность, мин'].map(
-                  (title) => (
-                    <th key={title} className="px-3 py-2 font-medium">
+                  (title, index) => (
+                    <th
+                      key={title}
+                      className={
+                        index > 2
+                          ? `px-3 py-2 font-medium ${standTableLaterClass}`
+                          : 'px-3 py-2 font-medium'
+                      }
+                    >
                       {title}
                     </th>
                   ),
@@ -127,8 +150,12 @@ export const ReportView = ({
                   <td className="px-3 py-2">{row.doctor}</td>
                   <td className="px-3 py-2">{row.service}</td>
                   <td className="px-3 py-2">{formatNumber(row.count)}</td>
-                  <td className="px-3 py-2">{formatNumber(row.revenue)}</td>
-                  <td className="px-3 py-2">{formatNumber(row.duration)}</td>
+                  <td className={`px-3 py-2 ${standTableLaterClass}`}>
+                    {formatNumber(row.revenue)}
+                  </td>
+                  <td className={`px-3 py-2 ${standTableLaterClass}`}>
+                    {formatNumber(row.duration)}
+                  </td>
                 </tr>
               ))}
               <tr className="border-t border-[#d7cbb8] font-semibold">
@@ -138,10 +165,10 @@ export const ReportView = ({
                 <td className="px-3 py-2">
                   {formatNumber(rows.reduce((sum, row) => sum + row.count, 0))}
                 </td>
-                <td className="px-3 py-2">
+                <td className={`px-3 py-2 ${standTableLaterClass}`}>
                   {formatNumber(rows.reduce((sum, row) => sum + row.revenue, 0))}
                 </td>
-                <td className="px-3 py-2">
+                <td className={`px-3 py-2 ${standTableLaterClass}`}>
                   {formatNumber(rows.reduce((sum, row) => sum + row.duration, 0))}
                 </td>
               </tr>
@@ -203,7 +230,7 @@ export const ChartView = ({
               </li>
             ))}
           </ul>
-          <div className="flex items-end gap-6 overflow-x-auto pb-2">
+          <div className="flex min-w-0 items-end gap-6 overflow-x-auto pb-2">
             {rows.map((row) => (
               <div key={row.doctorId} className="flex min-w-28 flex-col items-center">
                 <div className="flex h-48 items-end gap-1">

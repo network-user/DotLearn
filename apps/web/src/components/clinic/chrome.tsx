@@ -9,7 +9,7 @@ import {
 import { cx } from '@/components/ui/cx';
 
 const buttonClass =
-  'inline-flex min-h-[var(--tap)] w-full items-center justify-center rounded-md px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9890a] disabled:opacity-50 sm:w-auto';
+  'inline-flex min-h-[var(--tap)] w-full items-center justify-center rounded-md px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9890a] disabled:opacity-50 group-data-[tier=medium]/stand:w-auto group-data-[tier=wide]/stand:w-auto';
 
 const tones = {
   primary: 'bg-[#c9890a] text-white hover:bg-[#b37808]',
@@ -31,10 +31,10 @@ export const ActionButton = ({
 );
 
 export const fieldClass =
-  'h-11 w-full rounded-md border border-[#d7cbb8] bg-white px-3 text-[16px] text-[#1c2430] outline-none focus-visible:ring-2 focus-visible:ring-[#c9890a] sm:h-9 sm:text-sm';
+  'h-11 w-full min-w-0 rounded-md border border-[#d7cbb8] bg-white px-3 text-[16px] text-[#1c2430] outline-none focus-visible:ring-2 focus-visible:ring-[#c9890a] group-data-[tier=wide]/stand:h-9 group-data-[tier=wide]/stand:text-sm';
 
 export const CommandBar = ({ children }: { children: ReactNode }) => (
-  <div className="flex flex-col gap-2 border-b border-[#e4d8c6] bg-[#fffdf8] px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center">
+  <div className="flex flex-col gap-2 border-b border-[#e4d8c6] bg-[#fffdf8] px-3 py-2 group-data-[tier=medium]/stand:flex-row group-data-[tier=medium]/stand:flex-wrap group-data-[tier=medium]/stand:items-center group-data-[tier=wide]/stand:flex-row group-data-[tier=wide]/stand:flex-wrap group-data-[tier=wide]/stand:items-center">
     {children}
   </div>
 );

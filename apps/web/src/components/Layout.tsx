@@ -44,7 +44,7 @@ const NavLink = ({ to, active, label }: NavLinkProps) => (
   <Link
     to={to}
     className={cx(
-      'my-2 px-2.5 lg:px-3.5 inline-flex items-center rounded-full text-[13px] font-medium tracking-snug transition-colors duration-fast',
+      'my-2 shrink-0 whitespace-nowrap px-2.5 lg:px-3.5 inline-flex items-center rounded-full text-[13px] font-medium tracking-snug transition-colors duration-fast',
       active ? 'bg-fg/[0.07] text-fg' : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
     )}
   >
@@ -85,7 +85,7 @@ export const Layout = ({ children }: LayoutProps) => {
       </a>
       <header className="sticky top-0 z-[var(--z-nav)] glass-chrome border-b border-border-base/70">
         <div className="mx-auto max-w-layout px-[var(--layout-content-gutter)]">
-          <div className="flex items-center justify-between gap-2 lg:gap-4 h-14">
+          <div className="flex h-14 min-w-0 items-center justify-between gap-2 lg:gap-4">
             <Link to="/" className="group flex items-baseline gap-0.5 shrink-0">
               <span className="font-display font-semibold text-[22px] leading-none text-accent">
                 .
@@ -97,7 +97,7 @@ export const Layout = ({ children }: LayoutProps) => {
 
             <nav
               aria-label={t('primaryNavigation')}
-              className="hidden md:flex items-center gap-0.5 self-stretch [&>a]:h-full"
+              className="hidden min-w-0 flex-1 items-center gap-0.5 self-stretch overflow-x-auto md:flex [&>a]:h-full [scrollbar-width:thin]"
             >
               {primaryNavItems.map((item) => (
                 <NavLink
@@ -114,7 +114,7 @@ export const Layout = ({ children }: LayoutProps) => {
                 <summary
                   aria-label={t('more')}
                   className={cx(
-                    'px-2.5 lg:px-3.5 h-9 inline-flex items-center gap-1 rounded-full text-[13px] font-medium tracking-snug cursor-pointer transition-colors duration-fast',
+                    'h-9 shrink-0 cursor-pointer inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium tracking-snug transition-colors duration-fast lg:px-3.5',
                     overflowActive
                       ? 'bg-fg/[0.07] text-fg'
                       : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
@@ -161,14 +161,14 @@ export const Layout = ({ children }: LayoutProps) => {
                 className="group inline-flex items-center gap-2 h-9 rounded-full border border-border-base/70 text-fg-muted hover:text-fg hover:bg-fg/[0.04] transition-colors px-2.5 lg:px-3.5"
               >
                 <Search size={15} aria-hidden />
-                <span className="hidden md:inline text-[13px]">{t('openSearch')}</span>
+                <span className="hidden text-[13px] lg:inline">{t('openSearch')}</span>
               </button>
               <button
                 type="button"
                 onClick={openShortcuts}
                 aria-label={t('openShortcuts')}
                 title={t('openShortcuts')}
-                className="hidden md:inline-flex items-center justify-center rounded-md border border-border-base px-2 py-1.5 text-fg-muted hover:text-fg hover:bg-surface-2 transition-colors"
+                className="hidden items-center justify-center rounded-md border border-border-base px-2 py-1.5 text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg lg:inline-flex"
               >
                 <Keyboard size={15} aria-hidden />
               </button>

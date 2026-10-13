@@ -16,6 +16,15 @@ import {
   type DesignerState,
 } from '@dotlearn/lesson-engine';
 
+import {
+  onecCmdClass,
+  onecCmdPrimary,
+  onecFieldClass,
+  standBodyClass,
+  standShellClass,
+  standTableClass,
+  useStandTier,
+} from '@/components/onec/stand-layout';
 import { cx } from '@/components/ui/cx';
 
 interface DesignerStandProps {
@@ -47,12 +56,15 @@ const MODES: { id: DesignerScreen; label: string; spot: Spot }[] = [
   { id: 'report', label: 'Остатки', spot: 'mode-report' },
 ];
 
-const fieldClass =
-  'h-11 w-full rounded-sm border border-[#8f8f8f] bg-white px-2 text-[16px] text-[#1f1f1f] outline-none md:h-7 md:text-[13px]';
-const cmdClass =
-  'inline-flex min-h-11 items-center rounded-sm border border-[#bdbdbd] bg-[#f7f7f7] px-2.5 text-[16px] text-[#1f1f1f] md:min-h-8 md:text-[13px]';
-const cmdPrimary =
-  'inline-flex min-h-11 items-center rounded-sm border border-[#d6b000] bg-[#ffe14a] px-2.5 text-[16px] font-medium text-[#1f1f1f] md:min-h-8 md:text-[13px]';
+const fieldClass = onecFieldClass;
+const cmdClass = onecCmdClass;
+const cmdPrimary = onecCmdPrimary;
+
+const sectionNavClass =
+  'flex w-full min-w-0 shrink-0 gap-0.5 overflow-x-auto bg-[#f8d20a] p-1 group-data-[tier=medium]/stand:w-[7.5rem] group-data-[tier=medium]/stand:flex-col group-data-[tier=medium]/stand:overflow-x-hidden group-data-[tier=medium]/stand:overflow-y-auto group-data-[tier=wide]/stand:w-48 group-data-[tier=wide]/stand:flex-col group-data-[tier=wide]/stand:overflow-x-hidden group-data-[tier=wide]/stand:overflow-y-auto';
+
+const modeButtonClass =
+  'flex min-h-11 min-w-[6.5rem] shrink-0 items-center rounded-sm px-2 py-1 text-left group-data-[tier=medium]/stand:w-full group-data-[tier=medium]/stand:min-w-0 group-data-[tier=medium]/stand:whitespace-normal group-data-[tier=wide]/stand:min-h-8 group-data-[tier=wide]/stand:w-full group-data-[tier=wide]/stand:min-w-0';
 
 const formatQty = (value: number): string =>
   Number.isInteger(value) ? String(value) : String(Math.round(value * 1000) / 1000);
@@ -91,6 +103,7 @@ export const DesignerStand = ({
   focus,
   locked = false,
 }: DesignerStandProps) => {
+  const { ref: frameRef, tier } = useStandTier();
   const state = useMemo(() => replayDesigner(seed, commands), [seed, commands]);
   const [banner, setBanner] = useState<string | null>(null);
   const [objectName, setObjectName] = useState('');
@@ -133,13 +146,10 @@ export const DesignerStand = ({
   };
 
   return (
-    <div className="flex h-[min(46rem,calc(100dvh-9rem))] min-h-[34rem] flex-col overflow-hidden border border-[#b5b5b5] bg-white font-[Arial,Helvetica,sans-serif] text-[16px] text-[#1f1f1f] shadow-sm md:text-[13px]">
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <nav
-          className="flex shrink-0 gap-0.5 overflow-x-auto bg-[#f8d20a] p-1 md:w-48 md:flex-col md:overflow-y-auto"
-          aria-label="Панель разделов"
-        >
-          <div className="hidden items-center gap-2 px-2 py-2 md:flex">
+    <div ref={frameRef} data-tier={tier} className={standShellClass}>
+      <div className={standBodyClass}>
+        <nav className={sectionNavClass} aria-label="Панель разделов">
+          <div className="hidden items-center gap-2 px-2 py-2 group-data-[tier=wide]/stand:flex">
             <span className="grid h-8 w-8 place-items-center rounded-sm bg-white/80 text-[11px] font-semibold">
               УЗ
             </span>
@@ -155,7 +165,7 @@ export const DesignerStand = ({
               type="button"
               onClick={() => sendBatch([{ op: 'open-mode', mode: mode.id }])}
               className={cx(
-                'flex min-h-11 min-w-[6.5rem] shrink-0 items-center rounded-sm px-2 py-1 text-left md:min-w-0',
+                modeButtonClass,
                 state.ui.mode === mode.id ? 'bg-[#fff8cc] font-semibold' : 'hover:bg-[#ffe56a]',
                 lit(mode.spot),
               )}
@@ -174,7 +184,7 @@ export const DesignerStand = ({
               {banner}
             </p>
           ) : null}
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto">
             {state.ui.mode === 'designer' ? (
               <DesignerPane
                 state={state}
@@ -218,7 +228,7 @@ const DesignerPane = ({
   lit: (id: Spot) => string;
   attr: (id: Spot) => { 'data-onec-focus'?: string };
 }) => (
-  <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+  <div className="grid min-w-0 gap-3 p-3 group-data-[tier=medium]/stand:grid-cols-[minmax(0,1fr)_16rem] group-data-[tier=wide]/stand:grid-cols-[minmax(0,1fr)_18rem]">
     <div className={cx('min-w-0', lit('meta-tree'))} {...attr('meta-tree')}>
       <h2 className="mb-2 text-[15px] font-semibold">Конфигурация</h2>
       <MetaTree state={state} />
@@ -920,7 +930,7 @@ const EnterprisePane = ({
   return (
     <div className={cx('p-3', lit('object-list'))} {...attr('object-list')}>
       {!list ? (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 group-data-[tier=medium]/stand:grid-cols-2 group-data-[tier=wide]/stand:grid-cols-2">
           <HomeGroup
             title="Справочники"
             names={catalogs.map((item) => item.name)}
@@ -955,7 +965,7 @@ const HomeGroup = ({
         key={name}
         type="button"
         onClick={() => onOpen(name)}
-        className="block min-h-11 w-full border-b border-[#f2f2f2] px-3 text-left last:border-0 hover:bg-[#fff8dc] md:min-h-9"
+        className="block min-h-11 w-full border-b border-[#f2f2f2] px-3 text-left last:border-0 hover:bg-[#fff8dc] group-data-[tier=wide]/stand:min-h-9"
       >
         {name}
       </button>
@@ -994,28 +1004,30 @@ const ObjectList = ({
           Назад
         </button>
       </div>
-      <table className="w-full border-collapse text-left">
-        <thead className="bg-[#f7f7f7]">
-          <tr>
-            <th className="px-2 py-1 font-medium">{isDoc ? 'Номер' : 'Наименование'}</th>
-            {isDoc ? <th className="px-2 py-1 font-medium">Проведён</th> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {isDoc
-            ? docs.map((doc) => (
-                <tr key={doc.id} className="border-t border-[#eee]">
-                  <td className="px-2 py-1">{doc.number}</td>
-                  <td className="px-2 py-1">{doc.posted ? 'да' : 'нет'}</td>
-                </tr>
-              ))
-            : items.map((item) => (
-                <tr key={item.id} className="border-t border-[#eee]">
-                  <td className="px-2 py-1">{item.name}</td>
-                </tr>
-              ))}
-        </tbody>
-      </table>
+      <div className="min-w-0 overflow-x-auto">
+        <table className={standTableClass}>
+          <thead className="bg-[#f7f7f7]">
+            <tr>
+              <th className="px-2 py-1 font-medium">{isDoc ? 'Номер' : 'Наименование'}</th>
+              {isDoc ? <th className="px-2 py-1 font-medium">Проведён</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {isDoc
+              ? docs.map((doc) => (
+                  <tr key={doc.id} className="border-t border-[#eee]">
+                    <td className="px-2 py-1">{doc.number}</td>
+                    <td className="px-2 py-1">{doc.posted ? 'да' : 'нет'}</td>
+                  </tr>
+                ))
+              : items.map((item) => (
+                  <tr key={item.id} className="border-t border-[#eee]">
+                    <td className="px-2 py-1">{item.name}</td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };
@@ -1230,37 +1242,39 @@ const ReportPane = ({
   return (
     <div className={cx('p-3', lit('object-list'))} {...attr('object-list')}>
       <h2 className="mb-2 font-semibold">Остатки</h2>
-      <table className="w-full border-collapse text-left">
-        <thead className="bg-[#f7f7f7]">
-          <tr>
-            <th className="px-2 py-1 font-medium">Регистр</th>
-            <th className="px-2 py-1 font-medium">Измерения</th>
-            <th className="px-2 py-1 font-medium">Количество</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
+      <div className="min-w-0 overflow-x-auto">
+        <table className={standTableClass}>
+          <thead className="bg-[#f7f7f7]">
             <tr>
-              <td className="px-2 py-2 text-[#777]" colSpan={3}>
-                Проведённых движений нет.
-              </td>
+              <th className="px-2 py-1 font-medium">Регистр</th>
+              <th className="px-2 py-1 font-medium">Измерения</th>
+              <th className="px-2 py-1 font-medium">Количество</th>
             </tr>
-          ) : (
-            rows.map((row) => (
-              <tr
-                key={`${row.register}:${row.dims.map((dim) => dim.value).join('|')}`}
-                className="border-t border-[#eee]"
-              >
-                <td className="px-2 py-1">{row.register}</td>
-                <td className="px-2 py-1">
-                  {row.dims.map((dim) => `${dim.name}: ${dim.value}`).join(', ')}
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td className="px-2 py-2 text-[#777]" colSpan={3}>
+                  Проведённых движений нет.
                 </td>
-                <td className="px-2 py-1">{formatQty(row.qty)}</td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              rows.map((row) => (
+                <tr
+                  key={`${row.register}:${row.dims.map((dim) => dim.value).join('|')}`}
+                  className="border-t border-[#eee]"
+                >
+                  <td className="px-2 py-1">{row.register}</td>
+                  <td className="break-words px-2 py-1">
+                    {row.dims.map((dim) => `${dim.name}: ${dim.value}`).join(', ')}
+                  </td>
+                  <td className="px-2 py-1">{formatQty(row.qty)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };

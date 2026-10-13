@@ -1077,9 +1077,9 @@ const ConceptStrip = ({
   }, [activeConceptId, reduceMotion]);
 
   return (
-    <div className="lg:hidden sticky top-[calc(var(--layout-nav-h)+2px)] z-[var(--z-aside)]">
+    <div className="sticky top-[calc(var(--layout-nav-h)+2px)] z-[var(--z-aside)] min-w-0 lg:hidden">
       <Surface variant="chrome" className="rounded-lg">
-        <div className="flex items-center gap-2 px-2 py-2">
+        <div className="flex min-w-0 items-center gap-2 px-2 py-2">
           <button
             type="button"
             onClick={() => setListOpen(true)}
@@ -1088,7 +1088,7 @@ const ConceptStrip = ({
           >
             <ListTree size={18} />
           </button>
-          <ol className="flex items-center gap-2 overflow-x-auto snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <ol className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {bundle.manifest.concepts.map((concept, index) => {
               const active = concept.id === activeConceptId;
               const { ratio, done } = conceptStatOf(bundle, progress, concept.id);
@@ -1589,15 +1589,14 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
   const { t } = useTranslation('topic');
   if (!prevTitle && !nextTitle) return null;
   return (
-    <div className="flex items-stretch justify-between gap-3 pt-4 border-t border-border-base">
+    <div className="flex min-w-0 items-stretch justify-between gap-3 border-t border-border-base pt-4">
       <button
         type="button"
         onClick={onPrev}
         disabled={!prevTitle}
         className={cx(
-          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] px-2 py-2 text-left transition-colors',
+          'flex min-w-0 flex-1 items-center gap-3 max-w-none px-2 py-2 text-left transition-colors sm:max-w-[280px] min-h-[var(--tap-comfort)]',
           'disabled:opacity-30 disabled:cursor-not-allowed group',
-          'flex items-center gap-3',
         )}
       >
         <ArrowLeft size={16} className="text-fg-subtle group-hover:text-accent transition-colors" />
@@ -1618,9 +1617,8 @@ const ConceptNav = ({ prevTitle, nextTitle, onPrev, onNext }: ConceptNavProps) =
         onClick={onNext}
         disabled={!nextTitle}
         className={cx(
-          'flex-1 max-w-none sm:max-w-[280px] min-h-[var(--tap-comfort)] px-2 py-2 text-right transition-colors',
+          'flex min-w-0 flex-1 items-center justify-end gap-3 max-w-none px-2 py-2 text-right transition-colors sm:max-w-[280px] min-h-[var(--tap-comfort)]',
           'disabled:opacity-30 disabled:cursor-not-allowed group',
-          'flex items-center justify-end gap-3',
         )}
       >
         <div className="min-w-0">
