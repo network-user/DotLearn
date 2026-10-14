@@ -1,14 +1,14 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router';
-import { ChevronDown, Keyboard, Search, Settings } from 'lucide-react';
+import { ChevronDown, Keyboard, Search, Settings, Shield } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cx } from '@/components/ui/cx';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { openCommandPalette } from '@/lib/command-palette';
 import { isNavItemActive, isNavPathActive } from '@/lib/navigation';
-import { primaryNavItems, secondaryNavItems } from '@/lib/navigation-items';
+import { primaryNavItems, secondaryNavItems, type NavItem } from '@/lib/navigation-items';
 import { openPersonalizeWizard } from '@/lib/personalize-wizard';
 import { adminPath } from '@/router';
 
@@ -38,19 +38,141 @@ interface NavLinkProps {
   to: string;
   active: boolean;
   label: string;
+  clipped: boolean;
 }
 
-const NavLink = ({ to, active, label }: NavLinkProps) => (
+const adminNavItem = (path: string): NavItem => ({
+  key: 'admin',
+  to: path,
+  labelKey: 'admin',
+  icon: Shield,
+  primary: true,
+});
+
+const NavLink = ({ to, active, label, clipped }: NavLinkProps) => (
   <Link
     to={to}
+    data-nav-link=""
+    tabIndex={clipped ? -1 : undefined}
+    aria-hidden={clipped ? true : undefined}
     className={cx(
-      'my-2 shrink-0 whitespace-nowrap px-2.5 lg:px-3.5 inline-flex items-center rounded-full text-[13px] font-medium tracking-snug transition-colors duration-fast',
+      'inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium tracking-snug transition-colors duration-fast lg:px-3.5',
+      clipped && 'pointer-events-none invisible',
       active ? 'bg-fg/[0.07] text-fg' : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
     )}
   >
     {label}
   </Link>
 );
+
+const DesktopNav = ({ pathname, showAdminLink }: { pathname: string; showAdminLink: boolean }) => {
+  const { t, i18n } = useTranslation('nav');
+  const rowRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const links = showAdminLink ? [...primaryNavItems, adminNavItem(adminPath)] : primaryNavItems;
+  const [visibleCount, setVisibleCount] = useState(primaryNavItems.length + 1);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    const track = trackRef.current;
+    if (!row || !track) return;
+
+    let alive = true;
+    const update = (): void => {
+      if (!alive) return;
+      const available = row.clientWidth;
+      const nodes = track.querySelectorAll<HTMLElement>(':scope > [data-nav-link]');
+      let next = nodes.length;
+      for (let index = 0; index < nodes.length; index += 1) {
+        const node = nodes.item(index);
+        if (node.offsetLeft + node.offsetWidth > available + 1) {
+          next = index;
+          break;
+        }
+      }
+      setVisibleCount((current) => (current === next ? current : next));
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(row);
+    observer.observe(track);
+    void document.fonts?.ready.then(update);
+    return () => {
+      alive = false;
+      observer.disconnect();
+    };
+  }, [showAdminLink, i18n.language]);
+
+  const menuItems = [
+    ...links.slice(visibleCount),
+    ...secondaryNavItems.filter((item) => item.to !== '/settings'),
+  ];
+  const menuActive = menuItems.some((item) => isNavItemActive(pathname, item));
+
+  return (
+    <nav aria-label={t('primaryNavigation')} className="hidden min-w-0 flex-1 items-center md:flex">
+      <div className="flex min-w-0 flex-1 items-center gap-0.5">
+        <div ref={rowRef} className="relative min-w-0 overflow-hidden">
+          <div ref={trackRef} className="flex w-max items-center gap-0.5">
+            {links.map((item, index) => (
+              <NavLink
+                key={item.key}
+                to={item.to}
+                active={isNavItemActive(pathname, item)}
+                label={t(item.labelKey)}
+                clipped={index >= visibleCount}
+              />
+            ))}
+          </div>
+        </div>
+        <details
+          key={pathname}
+          className="group/more relative shrink-0 [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden"
+        >
+          <summary
+            aria-label={t('more')}
+            className={cx(
+              'inline-flex h-9 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium tracking-snug transition-colors duration-fast lg:px-3.5',
+              menuActive
+                ? 'bg-fg/[0.07] text-fg'
+                : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+            )}
+          >
+            {t('more')}
+            <ChevronDown
+              size={14}
+              aria-hidden
+              className="transition-transform duration-fast group-open/more:rotate-180"
+            />
+          </summary>
+          <div className="absolute right-0 top-[calc(100%+6px)] z-[var(--z-sheet)] min-w-[180px] rounded-xl border border-border-base glass-strong bg-surface/95 p-1.5 shadow-float">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const active = isNavItemActive(pathname, item);
+              return (
+                <Link
+                  key={item.key}
+                  to={item.to}
+                  aria-current={active ? 'page' : undefined}
+                  className={cx(
+                    'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors duration-fast',
+                    active
+                      ? 'bg-accent/[0.08] text-accent'
+                      : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
+                  )}
+                >
+                  <Icon size={15} aria-hidden />
+                  {t(item.labelKey)}
+                </Link>
+              );
+            })}
+          </div>
+        </details>
+      </div>
+    </nav>
+  );
+};
 
 const githubUrl: string = import.meta.env.VITE_GITHUB_URL ?? '';
 
@@ -72,9 +194,6 @@ export const Layout = ({ children }: LayoutProps) => {
     void navigate({ to: '/search' });
   };
 
-  const overflowItems = secondaryNavItems.filter((item) => item.to !== '/settings');
-  const overflowActive = overflowItems.some((item) => isNavItemActive(pathname, item));
-
   return (
     <div className="min-h-full flex flex-col pb-[calc(var(--mobile-tabbar-h)+var(--safe-bottom)+16px)] md:pb-0">
       <a
@@ -95,62 +214,7 @@ export const Layout = ({ children }: LayoutProps) => {
               </span>
             </Link>
 
-            <nav
-              aria-label={t('primaryNavigation')}
-              className="hidden min-w-0 flex-1 items-center gap-0.5 self-stretch overflow-x-auto md:flex [&>a]:h-full [scrollbar-width:thin]"
-            >
-              {primaryNavItems.map((item) => (
-                <NavLink
-                  key={item.key}
-                  to={item.to}
-                  active={isActive(item.to)}
-                  label={t(item.labelKey)}
-                />
-              ))}
-              {showAdminLink && (
-                <NavLink to={adminPath} active={isActive(adminPath)} label={t('admin')} />
-              )}
-              <details className="group/more relative my-2 [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden">
-                <summary
-                  aria-label={t('more')}
-                  className={cx(
-                    'h-9 shrink-0 cursor-pointer inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium tracking-snug transition-colors duration-fast lg:px-3.5',
-                    overflowActive
-                      ? 'bg-fg/[0.07] text-fg'
-                      : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
-                  )}
-                >
-                  {t('more')}
-                  <ChevronDown
-                    size={14}
-                    aria-hidden
-                    className="transition-transform duration-fast group-open/more:rotate-180"
-                  />
-                </summary>
-                <div className="absolute right-0 top-[calc(100%+6px)] z-[var(--z-sheet)] min-w-[180px] rounded-xl border border-border-base glass-strong bg-surface/95 p-1.5 shadow-float">
-                  {overflowItems.map((item) => {
-                    const Icon = item.icon;
-                    const active = isNavItemActive(pathname, item);
-                    return (
-                      <Link
-                        key={item.key}
-                        to={item.to}
-                        aria-current={active ? 'page' : undefined}
-                        className={cx(
-                          'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors duration-fast',
-                          active
-                            ? 'bg-accent/[0.08] text-accent'
-                            : 'text-fg-muted hover:text-fg hover:bg-fg/[0.04]',
-                        )}
-                      >
-                        <Icon size={15} aria-hidden />
-                        {t(item.labelKey)}
-                      </Link>
-                    );
-                  })}
-                </div>
-              </details>
-            </nav>
+            <DesktopNav pathname={pathname} showAdminLink={showAdminLink} />
 
             <div className="flex items-center gap-1.5 shrink-0">
               <button
